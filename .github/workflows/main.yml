@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+          cache: true
+          cache-dependency-path: |
+            **/packages.lock.json
+            **/*.csproj
+
+      - name: Restore
+        shell: bash
+        run: |
+          if ls **/packages.lock.json >/dev/null 2>&1; then
+            dotnet restore --locked-mode
+          else
+            dotnet restore
+          fi
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: |
+          mkdir -p TestResults
+          dotnet test --configuration Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory TestResults
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-trx
+          path: TestResults/*.trx
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Summarize test results
+        if: always()
+        shell: pwsh
+        run: |
+          $trxFiles = Get-ChildItem -Path "TestResults/*.trx" -Recurse -ErrorAction SilentlyContinue
+          if (-not $trxFiles) {
+            "No TRX files found. Check if 'dotnet test' produced them." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            exit 0
+          }
+
+          $total = 0
+          $passed = 0
+          $failed = 0
+          $skipped = 0
+          $failedTests = @()
+
+          foreach ($file in $trxFiles) {
+            [xml]$xml = Get-Content -Path $file.FullName
+            $summary = $xml.TestRun.ResultSummary
+            if ($summary -and $summary.Counters) {
+              $c = $summary.Counters
+              $total   += [int]($c.total       ?? 0)
+              $passed  += [int]($c.passed      ?? 0)
+              $failed  += [int]($c.failed      ?? 0)
+              $skipped += [int]($c.notExecuted ?? 0)
+            }
+
+            $results = @()
+            if ($xml.TestRun.Results -and $xml.TestRun.Results.UnitTestResult) {
+              $results = @($xml.TestRun.Results.UnitTestResult)
+            }
+
+            if ($results.Count -gt 0) {
+              foreach ($t in ($results | Where-Object { $_.outcome -eq 'Failed' })) {
+                $name = $t.testName
+                $msg  = $t.Output?.ErrorInfo?.Message
+                if (-not $msg) { $msg = '' }
+                $failedTests += [pscustomobject]@{ Name = $name; Message = $msg.Trim() }
+              }
+            }
+          }
+
+          @"
+          # Test Summary
+          Total: $total
+          Passed: $passed
+          Failed: $failed
+          Skipped: $skipped
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          if ($failedTests.Count -gt 0) {
+            "## Failed tests" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            foreach ($t in $failedTests) {
+              "* $($t.Name): $($t.Message)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+          }
