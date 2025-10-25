@@ -31,5 +31,5 @@ public class Group
 
     public bool IsIntegrityValid() => Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
 
-    public void GenerateIngetiryHash() => IntegrityHash = CalculateIntegrityHash();
+    public void GenerateIntegrityHash() => IntegrityHash = CalculateIntegrityHash();
 }

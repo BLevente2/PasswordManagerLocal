@@ -1,41 +1,36 @@
-﻿namespace PasswordManagerLocal.Backend.DTOs
+﻿using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
+
+namespace PasswordManagerLocalBackend.DTOs;
+
+public sealed class RegistrationDTO
 {
-    public class RegistrationDTO : IDisposable
+    public string Username { get; set; } = string.Empty;
+    public byte[] Password { get; set; } = [];
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public bool RememberMe { get; set; } = false;
+
+
+    public bool Validate(out List<string> errors)
     {
-        public string Username { get; set; } = string.Empty;
-        public byte[] Password { get; set; } = [];
-        public string FirstName { get; set; } = string.Empty;
-        public string LastName { get; set; } = string.Empty;
-        public string Email { get; set; } = string.Empty;
-        public bool RememberMe { get; set; } = false;
+        errors = new List<string>();
 
-        private bool _disposed;
+        if (!IsValidEmail(Email))
+            errors.Add($"Email: {Email}");
 
-        ~RegistrationDTO()
-        {
-            Dispose(disposing: false);
-        }
+        if (!IsValidUsername(Username))
+            errors.Add($"Username: {Username}");
 
-        public void Dispose()
-        {
-            Dispose(disposing: true);
-            GC.SuppressFinalize(this);
-        }
+        if (!IsValidFirstName(FirstName))
+            errors.Add($"FirstName: {FirstName}");
 
-        protected virtual void Dispose(bool disposing)
-        {
-            if (_disposed)
-                return;
+        if (!IsValidLastName(LastName))
+            errors.Add($"LastName: {LastName}");
 
-                Array.Clear(Password, 0, Password.Length);
-                Password = Array.Empty<byte>();
+        if (!IsValidPassword(Password))
+            errors.Add("Password");
 
-            Username = string.Empty;
-            FirstName = string.Empty;
-            LastName = string.Empty;
-            Email = string.Empty;
-
-            _disposed = true;
-        }
+        return errors.Count == 0;
     }
 }

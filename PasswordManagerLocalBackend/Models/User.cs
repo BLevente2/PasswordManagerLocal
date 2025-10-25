@@ -18,6 +18,8 @@ public class User
     public ICollection<Device> Devices { get; set; } = [];
 
 
+
+
     public byte[] IntegrityHash { get; set; } = [];
 
     public byte[] CalculateIntegrityHash()
@@ -42,5 +44,5 @@ public class User
 
     public bool IsIntegrityValid() => Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
 
-    public void GenerateIngetiryHash() => IntegrityHash = CalculateIntegrityHash();
+    public void GenerateIntegrityHash() => IntegrityHash = CalculateIntegrityHash();
 }
