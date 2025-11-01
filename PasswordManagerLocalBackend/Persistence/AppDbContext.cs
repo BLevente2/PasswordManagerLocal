@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocalBackend.Models;
 
-namespace PasswordManagerLocalBackend.Context;
+namespace PasswordManagerLocalBackend.Persistence;
 
 public class AppDbContext : DbContext
 {

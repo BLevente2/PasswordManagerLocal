@@ -1,0 +1,16 @@
+﻿using Microsoft.EntityFrameworkCore;
+using PasswordManagerLocalBackend.Abstractions.Repositories;
+using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Persistence;
+
+namespace PasswordManagerLocalBackend.Repositories;
+
+public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepository
+{
+    public UserRepository(AppDbContext db) : base(db.Users) { }
+
+
+
+    public override async Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        await Set.FirstOrDefaultAsync(u => u.UId == id, ct);
+}
