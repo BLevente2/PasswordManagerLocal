@@ -2,7 +2,7 @@
 
 namespace PasswordManagerLocalBackend.Models;
 
-public sealed class UserProfile : IDisposable
+public sealed class UserData : IDisposable
 {
     private bool _disposed;
 
@@ -14,7 +14,7 @@ public sealed class UserProfile : IDisposable
     public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
     public DateTime LastLoginDate { get; set; } = DateTime.UtcNow;
 
-    ~UserProfile()
+    ~UserData()
     {
         Dispose(disposing: true);
     }
@@ -56,10 +56,9 @@ public sealed class UserProfile : IDisposable
 
     private void Dispose(bool disposing)
     {
-        if (_disposed) return;
+        if (_disposed)
+            return;
 
-        if (disposing)
-        {
             UId = Guid.Empty;
             Username = string.Empty;
             FirstName = string.Empty;
@@ -67,7 +66,6 @@ public sealed class UserProfile : IDisposable
             Email = string.Empty;
             RegistrationDate = DateTime.MinValue;
             LastLoginDate = DateTime.MinValue;
-        }
 
         _disposed = true;
     }

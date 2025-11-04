@@ -1,8 +1,7 @@
-﻿using System.Buffers.Binary;
+﻿using PasswordManagerLocalBackend.Abstractions.Security;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
-#if WINDOWS
-using System.Runtime.Versioning;
-#endif
+using static PasswordManagerLocalBackend.Constants.KeyProtectorConstants;
 
 namespace PasswordManagerLocalBackend.Security;
 
@@ -13,11 +12,16 @@ public sealed class PassphraseKeyProtector : IKeyProtector, IDisposable
     private readonly int _saltLen;
     private bool _disposed;
 
-    public PassphraseKeyProtector(ReadOnlySpan<byte> passphrase, int iterations = 100_000, int saltLen = 16)
+    public PassphraseKeyProtector(ReadOnlySpan<byte> passphrase, int iterations = DefaultNumOfIterations, int saltLen = DefaultSaltLength)
     {
-        if (passphrase.Length == 0) throw new ArgumentException("Empty passphrase.");
-        if (iterations <= 0) throw new ArgumentOutOfRangeException(nameof(iterations));
-        if (saltLen <= 0) throw new ArgumentOutOfRangeException(nameof(saltLen));
+        if (passphrase.Length == 0)
+            throw new ArgumentException("Empty passphrase.");
+
+        if (iterations <= 0)
+            throw new ArgumentOutOfRangeException(nameof(iterations));
+
+        if (saltLen <= 0)
+            throw new ArgumentOutOfRangeException(nameof(saltLen));
 
         _passphrase = passphrase.ToArray();
         _iterations = iterations;
@@ -102,24 +106,4 @@ public sealed class PassphraseKeyProtector : IKeyProtector, IDisposable
         _disposed = true;
         GC.SuppressFinalize(this);
     }
-
-
 }
-
-#if WINDOWS
-[SupportedOSPlatform("windows")]
-public sealed class DpapiKeyProtector : IKeyProtector
-{
-public byte[] Protect(ReadOnlySpan<byte> plaintext)
-{
-return ProtectedData.Protect(plaintext.ToArray(), null, DataProtectionScope.CurrentUser);
-}
-
-public byte[] Unprotect(ReadOnlySpan<byte> protectedBlob)
-{
-    return ProtectedData.Unprotect(protectedBlob.ToArray(), null, DataProtectionScope.CurrentUser);
-}
-
-
-}
-#endif

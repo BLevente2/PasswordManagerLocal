@@ -13,7 +13,7 @@ public sealed class UserDTO
 
 
 
-    public static UserDTO ConvertToUserDTO(UserProfile user) => new UserDTO
+    public static UserDTO ConvertToUserDTO(UserData user) => new UserDTO
     {
         Username = user.Username,
         FirstName = user.FirstName,

@@ -1,11 +1,10 @@
 ﻿using System.Security.Cryptography;
+using static PasswordManagerLocalBackend.Constants.EncryptionKeyConstants;
 
 namespace PasswordManagerLocalBackend.Security;
 
 public sealed class EncryptionKey : IDisposable
 {
-    public const int Size = 32;
-
     private readonly byte[] _key;
     private bool _disposed;
 
@@ -16,20 +15,27 @@ public sealed class EncryptionKey : IDisposable
 
     public static EncryptionKey FromRaw(ReadOnlySpan<byte> raw)
     {
-        if (raw.Length != Size) throw new ArgumentException("Invalid key size.");
-        var k = new byte[Size];
+        if (raw.Length != KeySize)
+            throw new ArgumentException("Invalid key size.");
+
+        var k = new byte[KeySize];
         raw.CopyTo(k);
         return new EncryptionKey(k);
     }
 
-    public static EncryptionKey FromPassword(ReadOnlySpan<byte> password, ReadOnlySpan<byte> salt, int iterations = 100_000, HashAlgorithmName alg = default)
+    public static EncryptionKey FromPassword(ReadOnlySpan<byte> password, ReadOnlySpan<byte> salt, int iterations = Iterations, HashAlgorithmName alg = default)
     {
-        if (password.Length == 0) throw new ArgumentException("Empty password.");
-        if (salt.Length == 0) throw new ArgumentException("Empty salt.");
-        if (alg == default) alg = HashAlgorithmName.SHA512;
+        if (password.Length == 0)
+            throw new ArgumentException("Empty password.");
+
+        if (salt.Length == 0)
+            throw new ArgumentException("Empty salt.");
+
+        if (alg == default)
+            alg = HashAlgorithmName.SHA512;
 
         using var kdf = new Rfc2898DeriveBytes(password.ToArray(), salt.ToArray(), iterations, alg);
-        var key = kdf.GetBytes(Size);
+        var key = kdf.GetBytes(KeySize);
         return new EncryptionKey(key);
     }
 
@@ -44,7 +50,7 @@ public sealed class EncryptionKey : IDisposable
         return _key.AsSpan();
     }
 
-    public byte[] ExportCopy()
+    internal byte[] ExportCopy()
     {
         ThrowIfDisposed();
         var copy = new byte[_key.Length];
@@ -54,7 +60,9 @@ public sealed class EncryptionKey : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
+        if (_disposed)
+            return;
+
         CryptographicOperations.ZeroMemory(_key);
         _disposed = true;
         GC.SuppressFinalize(this);

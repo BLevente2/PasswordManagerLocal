@@ -12,6 +12,7 @@ public class User
     public byte[] EncryptedPayload { get; set; } = [];
     public byte[] EncryptedPayloadSalt { get; set; } = [];
     public byte[] EncryptedPayloadIV { get; set; } = [];
+    public byte[]? SavedKey { get; set; } = null;
 
 
     public ICollection<Group> Groups { get; set; } = [];

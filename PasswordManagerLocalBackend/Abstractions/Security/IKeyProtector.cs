@@ -1,4 +1,4 @@
-﻿namespace PasswordManagerLocalBackend.Security;
+﻿namespace PasswordManagerLocalBackend.Abstractions.Security;
 
 public interface IKeyProtector
 {
