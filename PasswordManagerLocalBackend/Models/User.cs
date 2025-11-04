@@ -11,7 +11,6 @@ public class User
     public byte[] PasswordSalt { get; set; } = [];
     public byte[] EncryptedPayload { get; set; } = [];
     public byte[] EncryptedPayloadSalt { get; set; } = [];
-    public byte[] EncryptedPayloadIV { get; set; } = [];
     public byte[]? SavedKey { get; set; } = null;
 
 
@@ -35,7 +34,6 @@ public class User
         bw.Write(PasswordSalt);
         bw.Write(EncryptedPayload);
         bw.Write(EncryptedPayloadSalt);
-        bw.Write(EncryptedPayloadIV);
 
         bw.Write(Groups.Count);
         bw.Write(Devices.Count);
