@@ -1,12 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="using:PasswordManagerLocal.ViewModels"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:views="clr-namespace:PasswordManagerLocal.Views"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="PasswordManagerLocal.Views.MainWindow"
-        Icon="/Assets/avalonia-logo.ico"
-        Title="PasswordManagerLocal">
-        <views:MainView />
+        Width="480"
+        Height="640"
+        CanResize="True"
+        WindowStartupLocation="CenterScreen"
+        Title="Password Manager Local"
+        Icon="avares://PasswordManagerLocal/Assets/Icons/app_icon.ico">
+
+  <views:MainView />
+
 </Window>

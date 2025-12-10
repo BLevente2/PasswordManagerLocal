@@ -1,15 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="using:PasswordManagerLocal"
-             x:Class="PasswordManagerLocal.App"
-             RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+             xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
+             x:Class="PasswordManagerLocal.App">
 
-    <Application.DataTemplates>
-        <local:ViewLocator/>
-    </Application.DataTemplates>
+  <!-- Alap Fluent téma (világos/sötét váltást a ViewModel-ben a RequestedThemeVariant állítja) -->
+  <Application.Styles>
+    <fluent:FluentTheme />
+  </Application.Styles>
 
-    <Application.Styles>
-        <FluentTheme />
-    </Application.Styles>
+  <!-- Globális erőforrások (brushok, padding) -->
+  <Application.Resources>
+    <ResourceDictionary>
+      <!-- Háttér a fő oldalhoz -->
+      <SolidColorBrush x:Key="PageBackgroundBrush" Color="#FF101010" />
+      <!-- Kártyák (login/registráció panel) háttere és kerete -->
+      <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF1E1E1E" />
+      <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3C3C3C" />
+      <!-- Akcentus szín (gombokhoz, highlight-hoz, ha kell) -->
+      <SolidColorBrush x:Key="AccentBrush" Color="#FF0078D4" />
+      <!-- Oldal margó -->
+      <Thickness x:Key="PagePadding">16</Thickness>
+    </ResourceDictionary>
+  </Application.Resources>
 </Application>
