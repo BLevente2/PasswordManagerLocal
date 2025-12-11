@@ -9,5 +9,5 @@ public sealed class LoginDTO
     public bool RememberMe { get; set; } = false;
 
 
-    public bool Validate => IsValidUsername(Username) && IsValidPassword(Password);
+    public bool Validate() => IsValidUsername(Username) && IsValidPassword(Password);
 }
