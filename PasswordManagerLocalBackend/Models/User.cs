@@ -8,9 +8,7 @@ public class User
     public byte[] UsernameHash { get; set; } = [];
     public byte[] UsernameSalt { get; set; } = [];
     public byte[] PasswordHash { get; set; } = [];
-    public byte[] PasswordSalt { get; set; } = [];
     public byte[] EncryptedPayload { get; set; } = [];
-    public byte[] EncryptedPayloadSalt { get; set; } = [];
     public byte[]? SavedKey { get; set; } = null;
 
 
@@ -31,9 +29,10 @@ public class User
         bw.Write(UsernameHash);
         bw.Write(UsernameSalt);
         bw.Write(PasswordHash);
-        bw.Write(PasswordSalt);
         bw.Write(EncryptedPayload);
-        bw.Write(EncryptedPayloadSalt);
+
+        if (SavedKey is not null)
+            bw.Write(SavedKey);
 
         bw.Write(Groups.Count);
         bw.Write(Devices.Count);
