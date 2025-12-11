@@ -13,4 +13,10 @@ public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepositor
 
     public override async Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         await Set.FirstOrDefaultAsync(u => u.UId == id, ct);
+
+
+    public async Task<IReadOnlyList<User>> GetAllRememberMeEnabledUsersAsync(CancellationToken ct = default) =>
+        await Set.AsNoTracking()
+        .Where(u => u.SavedKey != null)
+        .ToListAsync();
 }

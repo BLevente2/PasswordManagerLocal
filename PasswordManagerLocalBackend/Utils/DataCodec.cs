@@ -1,13 +1,14 @@
-﻿using System.Text.Json;
+﻿using PasswordManagerLocalBackend.Security;
+using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using PasswordManagerLocalBackend.Security;
-using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Utils;
 
 internal static class DataCodec
 {
     private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions { WriteIndented = false };
+
+
 
     internal static async Task<byte[]> SerializeCompressEncryptAsync<T>(T value, EncryptionKey key, int level = 11, byte[]? associatedData = null, int aesFrameSize = AES256.DefaultFrameSize, CancellationToken ct = default) where T : class
     {
@@ -29,6 +30,8 @@ internal static class DataCodec
         cipherOut.Dispose();
         return res;
     }
+
+
 
     internal static async Task<byte[]> SerializeCompressEncryptAsync<T>(T value, EncryptionKey key, JsonTypeInfo<T> typeInfo, int level = 11, byte[]? associatedData = null, int aesFrameSize = AES256.DefaultFrameSize, CancellationToken ct = default) where T : class
     {

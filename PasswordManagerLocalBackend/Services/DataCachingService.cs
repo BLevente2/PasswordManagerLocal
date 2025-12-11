@@ -16,7 +16,10 @@ public sealed class DataCachingService : IDataCachingService
     private readonly TimeSpan _groupTtl;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _tokenCts = new(StringComparer.Ordinal);
 
-    public DataCachingService(SafeMemoryCache cache, ITokenService tokens) : this(cache, tokens, CacheExpirationTime, CacheExpirationTime) { }
+    public DataCachingService(SafeMemoryCache cache, ITokenService tokens) : this(cache, tokens, UserDataCacheExpirationTime, GroupDataCacheExpirationTime)
+    {
+
+    }
 
     public DataCachingService(SafeMemoryCache cache, ITokenService tokens, TimeSpan userTtl, TimeSpan groupTtl)
     {
