@@ -7,7 +7,7 @@ public class User
     public Guid UId { get; set; } = Guid.NewGuid();
     public byte[] UsernameHash { get; set; } = [];
     public byte[] UsernameSalt { get; set; } = [];
-    public byte[] PasswordHash { get; set; } = [];
+    public byte[] PasswordSalt { get; set; } = [];
     public byte[] EncryptedPayload { get; set; } = [];
     public byte[]? SavedKey { get; set; } = null;
 
@@ -28,7 +28,7 @@ public class User
         bw.Write(UId.ToByteArray());
         bw.Write(UsernameHash);
         bw.Write(UsernameSalt);
-        bw.Write(PasswordHash);
+        bw.Write(PasswordSalt);
         bw.Write(EncryptedPayload);
 
         if (SavedKey is not null)

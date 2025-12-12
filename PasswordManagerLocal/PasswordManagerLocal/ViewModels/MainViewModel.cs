@@ -1,14 +1,21 @@
 ﻿using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.DTOs;
 using ReactiveUI;
 using System;
 using System.Reactive;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace PasswordManagerLocal.ViewModels;
 
 public class MainViewModel : ViewModelBase
 {
+    private readonly IAuthService _authService;
+
     private AuthViewMode _authMode;
 
     private string _username = string.Empty;
@@ -51,13 +58,15 @@ public class MainViewModel : ViewModelBase
     private static IImage? _eyeShowImage;
     private static IImage? _eyeHideImage;
 
-    public MainViewModel()
+    public MainViewModel(IAuthService authService)
     {
+        _authService = authService;
+
         _authMode = AuthViewMode.Login;
 
         TogglePasswordVisibilityCommand = ReactiveCommand.Create<string>(TogglePasswordVisibility);
-        LoginCommand = ReactiveCommand.Create(ExecuteLogin);
-        RegisterCommand = ReactiveCommand.Create(ExecuteRegister);
+        LoginCommand = ReactiveCommand.CreateFromTask(ExecuteLoginAsync);
+        RegisterCommand = ReactiveCommand.CreateFromTask(ExecuteRegisterAsync);
         NavigateToRegisterCommand = ReactiveCommand.Create(ExecuteNavigateToRegister);
         NavigateToLoginWithExistingAccountCommand =
             ReactiveCommand.Create(ExecuteNavigateToLoginWithExistingAccount);
@@ -403,9 +412,6 @@ public class MainViewModel : ViewModelBase
         {
             PasswordErrorMessage = PasswordRequiredMessage;
         }
-
-        // Ha szeretnéd, itt hasonlóan újra be lehet állítani
-        // a regisztrációs hibákat is az új nyelvre.
     }
 
     private void TogglePasswordVisibility(string target)
@@ -424,22 +430,48 @@ public class MainViewModel : ViewModelBase
         }
     }
 
-    private void ExecuteLogin()
+    private async Task ExecuteLoginAsync()
     {
         ClearLoginErrors();
 
         if (string.IsNullOrWhiteSpace(Username))
-        {
             UsernameErrorMessage = UsernameRequiredMessage;
-        }
 
         if (string.IsNullOrWhiteSpace(Password))
-        {
             PasswordErrorMessage = PasswordRequiredMessage;
+
+        if (HasUsernameError || HasPasswordError)
+            return;
+
+        var passwordBytes = Encoding.UTF8.GetBytes(Password);
+        var passwordHash = PasswordManagerLocalBackend.Security.Hashing.SHA512Hash(passwordBytes);
+        CryptographicOperations.ZeroMemory(passwordBytes);
+        Password = string.Empty;
+
+        try
+        {
+            var dto = new LoginDTO
+            {
+                Username = Username,
+                Password = passwordHash,
+                RememberMe = RememberMe
+            };
+
+            var token = await _authService.LoginAsync(dto);
+
+            App.AuthSessionRegistry.TryAdd(token);
+        }
+        catch (Exception ex)
+        {
+            PasswordErrorMessage = ex.Message;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(passwordHash);
         }
     }
 
-    private void ExecuteRegister()
+    private async Task ExecuteRegisterAsync()
     {
         ClearRegistrationErrors();
 
@@ -468,11 +500,6 @@ public class MainViewModel : ViewModelBase
             RegisterEmailErrorMessage = GetTranslation("Validation_Email_Required");
             hasError = true;
         }
-        else if (!RegisterEmail.Contains('@', StringComparison.Ordinal))
-        {
-            RegisterEmailErrorMessage = GetTranslation("Validation_Email_Invalid");
-            hasError = true;
-        }
 
         if (string.IsNullOrWhiteSpace(RegisterPassword))
         {
@@ -495,10 +522,39 @@ public class MainViewModel : ViewModelBase
         }
 
         if (hasError)
-        {
             return;
-        }
 
+        var passwordBytes = Encoding.UTF8.GetBytes(RegisterPassword);
+        var passwordHash = PasswordManagerLocalBackend.Security.Hashing.SHA512Hash(passwordBytes);
+        CryptographicOperations.ZeroMemory(passwordBytes);
+        RegisterPassword = string.Empty;
+        RegisterConfirmPassword = string.Empty;
+
+        try
+        {
+            var dto = new RegistrationDTO
+            {
+                Username = RegisterUsername,
+                Password = passwordHash,
+                FirstName = RegisterFirstName,
+                LastName = RegisterLastName,
+                Email = RegisterEmail,
+                RememberMe = RegisterRememberMe
+            };
+
+            var token = await _authService.RegisterAsync(dto);
+
+            App.AuthSessionRegistry.TryAdd(token);
+            ExecuteNavigateToLoginWithExistingAccount();
+        }
+        catch (Exception ex)
+        {
+            RegisterUsernameErrorMessage = ex.Message;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(passwordHash);
+        }
     }
 
     private void ExecuteNavigateToRegister()

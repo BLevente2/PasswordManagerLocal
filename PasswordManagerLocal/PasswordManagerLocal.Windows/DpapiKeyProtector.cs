@@ -1,9 +1,9 @@
-﻿#if WINDOWS
+﻿using PasswordManagerLocalBackend.Abstractions.Security;
+using System;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using PasswordManagerLocalBackend.Abstractions.Security;
 
-namespace PasswordManagerLocalBackend.Security;
+namespace PasswordManagerLocal.Windows;
 
 [SupportedOSPlatform("windows")]
 public sealed class DpapiKeyProtector : IKeyProtector
@@ -16,4 +16,3 @@ public sealed class DpapiKeyProtector : IKeyProtector
 
 
 }
-#endif

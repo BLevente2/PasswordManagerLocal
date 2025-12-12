@@ -22,14 +22,12 @@ public sealed class UserService : IUserService
 
 
 
-
     public async Task<UserData> GetUserDataAsync(Guid uid, string token, CancellationToken ct = default)
     {
         var userData = await _cache.GetOrLoadUserDataAsync(
             token,
             innerCt => LoadCachedUserDataAsync(uid, token, innerCt),
-            ct
-        );
+            ct);
 
         if (userData is null)
             throw new UserNotFoundException(uid);
@@ -43,22 +41,25 @@ public sealed class UserService : IUserService
         if (!_keys.TryGetEncryptionKey(token, out var key))
             return null;
 
-        var user = await _users.GetByIdAsync(uid, ct);
-        if (user is null)
-            return null;
+        try
+        {
+            var user = await _users.GetByIdAsNoTrackingAsync(uid, ct);
+            if (user is null)
+                return null;
 
-        if (!user.IsIntegrityValid())
-            throw new InvalidDataIntegrityException(typeof(User));
+            user.EnsureIntegrity();
 
-        var userData = await DecryptDecompressDeserializeAsync<UserData>(user.EncryptedPayload, key);
-        if (userData is null)
-            return null;
+            var userData = await DecryptDecompressDeserializeAsync<UserData>(user.EncryptedPayload, key);
+            if (userData is null)
+                return null;
 
-        if (!userData.IsIntegrityValid())
-            throw new InvalidDataIntegrityException(typeof(UserData));
-
-        key.Dispose();
-        return userData;
+            userData.EnsureIntegrity();
+            return userData;
+        }
+        finally
+        {
+            key.Dispose();
+        }
     }
 
 
@@ -67,22 +68,33 @@ public sealed class UserService : IUserService
         if (!_cache.TryGetUserData(token, out var userData) || userData is null)
             return null;
 
-        return await _users.GetByIdAsync(userData.UId, ct);
+        userData.EnsureIntegrity();
+
+        var user = await _users.GetByIdAsync(userData.UId, ct);
+        if (user is null)
+            return null;
+
+        user.EnsureIntegrity();
+        return user;
     }
 
 
     public async Task<User?> GetUserByUsernameAsync(byte[] username, CancellationToken ct = default)
     {
-        var users = await _users.ListAllAsync();
+        var users = await _users.ListAllAsync(ct);
         if (users.Count == 0)
             return null;
 
         foreach (var user in users)
         {
             var computedHash = Hashing.SHA256Hash(username, user.UsernameSalt);
-            if (Hashing.Verify(user.UsernameHash, computedHash))
-                return user;
+            if (!Hashing.Verify(user.UsernameHash, computedHash))
+                continue;
+
+            user.EnsureIntegrity();
+            return user;
         }
+
         return null;
     }
 }

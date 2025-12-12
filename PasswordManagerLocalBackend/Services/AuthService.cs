@@ -18,9 +18,16 @@ public sealed class AuthService : IAuthService
     private readonly IDataCachingService _cache;
     private readonly IKeyVaultService _keys;
     private readonly IRememberMeService _rememberMe;
-    private IUserRepository _users;
+    private readonly IUserRepository _users;
 
-    public AuthService(IUnitOfWork uow, IUserService userService, ITokenService tokens, IRememberMeService rememberMe, IDataCachingService cache, IKeyVaultService keys, IUserRepository users)
+    public AuthService(
+        IUnitOfWork uow,
+        IUserService userService,
+        ITokenService tokens,
+        IRememberMeService rememberMe,
+        IDataCachingService cache,
+        IKeyVaultService keys,
+        IUserRepository users)
     {
         _uow = uow;
         _userService = userService;
@@ -33,14 +40,13 @@ public sealed class AuthService : IAuthService
 
 
 
-
     public async Task<string> RegisterAsync(RegistrationDTO dto, CancellationToken ct = default)
     {
         if (!dto.Validate(out var errors))
             throw new InvalidInputException(errors);
 
         var usernameBytes = Encoding.UTF8.GetBytes(dto.Username);
-        var foundUser = _userService.GetUserByUsernameAsync(usernameBytes, ct);
+        var foundUser = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
         if (foundUser is not null)
             throw new InvalidInputException();
 
@@ -71,11 +77,12 @@ public sealed class AuthService : IAuthService
             PasswordSalt = passwordSalt,
             EncryptedPayload = encryptedUserdata
         };
+
         _rememberMe.SetRememberMe(user, dto.RememberMe, key);
         user.GenerateIntegrityHash();
 
         await _users.AddAsync(user, ct);
-        await _uow.SaveChangesAsync();
+        await _uow.SaveChangesAsync(ct);
 
         var token = _tokens.Issue();
         _keys.SetUserKey(token, key);
@@ -83,7 +90,6 @@ public sealed class AuthService : IAuthService
 
         return token;
     }
-
 
 
     public async Task<string> LoginAsync(LoginDTO dto, CancellationToken ct = default)
@@ -96,17 +102,17 @@ public sealed class AuthService : IAuthService
         if (user is null)
             throw new UserNotFoundException();
 
-        if (!user.IsIntegrityValid())
-            throw new InvalidDataIntegrityException(typeof(User));
+        user.EnsureIntegrity();
 
         var token = _tokens.Issue();
         using var key = EncryptionKey.FromPassword(dto.Password, user.PasswordSalt);
         _keys.SetUserKey(token, key);
 
-        UserData userData = await _userService.GetUserDataAsync(user.UId, token, ct);
+        var userData = await _userService.GetUserDataAsync(user.UId, token, ct);
         userData.LastLoginDate = DateTime.UtcNow;
         userData.GenerateIntegrityHash();
         _cache.SetUserData(token, userData);
+
         var encryptedUserData = await SerializeCompressEncryptAsync<UserData>(userData, key);
 
         user.EncryptedPayload = encryptedUserData;
@@ -114,7 +120,7 @@ public sealed class AuthService : IAuthService
         user.GenerateIntegrityHash();
         _users.Update(user);
 
-        await _uow.SaveChangesAsync();
+        await _uow.SaveChangesAsync(ct);
         return token;
     }
 }

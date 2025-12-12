@@ -9,14 +9,14 @@ public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepositor
 {
     public UserRepository(AppDbContext db) : base(db.Users) { }
 
-
-
     public override async Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         await Set.FirstOrDefaultAsync(u => u.UId == id, ct);
 
+    public async Task<User?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
+        await Set.AsNoTracking().FirstOrDefaultAsync(u => u.UId == id, ct);
 
     public async Task<IReadOnlyList<User>> GetAllRememberMeEnabledUsersAsync(CancellationToken ct = default) =>
         await Set.AsNoTracking()
-        .Where(u => u.SavedKey != null)
-        .ToListAsync();
+            .Where(u => u.SavedKey != null)
+            .ToListAsync(ct);
 }

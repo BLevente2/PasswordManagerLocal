@@ -5,6 +5,7 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
+using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -17,7 +18,13 @@ public class RememberMeService : IRememberMeService
     private readonly IKeyProtector _protector;
     private readonly IUserService _userService;
 
-    public RememberMeService(IUnitOfWork uow, ITokenService tokens, IKeyVaultService keys, IUserRepository users, IKeyProtector protector, IUserService userService)
+    public RememberMeService(
+        IUnitOfWork uow,
+        ITokenService tokens,
+        IKeyVaultService keys,
+        IUserRepository users,
+        IKeyProtector protector,
+        IUserService userService)
     {
         _uow = uow;
         _tokens = tokens;
@@ -26,6 +33,7 @@ public class RememberMeService : IRememberMeService
         _protector = protector;
         _userService = userService;
     }
+
 
 
     public async Task<IReadOnlyList<string>> InicializeAllRememberMeAsync(CancellationToken ct = default)
@@ -38,14 +46,22 @@ public class RememberMeService : IRememberMeService
 
         foreach (var user in usersEnabledRM)
         {
-            if (!user.IsIntegrityValid())
-                throw new InvalidDataIntegrityException(typeof(User));
+            user.EnsureIntegrity();
 
-            using var key = EncryptionKey.FromRaw(_protector.Unprotect(user.SavedKey));
-            var token = _tokens.Issue();
-            _keys.SetUserKey(token, key);
-            initializedTokens.Add(token);
+            var rawKey = _protector.Unprotect(user.SavedKey);
+            try
+            {
+                using var key = EncryptionKey.FromRaw(rawKey);
+                var token = _tokens.Issue();
+                _keys.SetUserKey(token, key);
+                initializedTokens.Add(token);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(rawKey);
+            }
         }
+
         return initializedTokens;
     }
 
@@ -56,32 +72,60 @@ public class RememberMeService : IRememberMeService
         if (user is null)
             throw new UserNotFoundException();
 
-        if (!user.IsIntegrityValid())
-            throw new InvalidDataIntegrityException(typeof(User));
+        user.EnsureIntegrity();
 
         if (rememberMe)
         {
             if (!_keys.TryGetEncryptionKey(token, out var key))
                 throw new InvalidTokenException();
 
-            user.SavedKey = _protector.Protect(key.ExportCopy());
-            key.Dispose();
+            try
+            {
+                var raw = key.ExportCopy();
+                try
+                {
+                    user.SavedKey = _protector.Protect(raw);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(raw);
+                }
+            }
+            finally
+            {
+                key.Dispose();
+            }
         }
-        else if (user.SavedKey is not null)
-            user.SavedKey = null;
         else
-            return;
+        {
+            if (user.SavedKey is null)
+                return;
+
+            user.SavedKey = null;
+        }
 
         user.GenerateIntegrityHash();
         _users.Update(user);
-        await _uow.SaveChangesAsync();
+        await _uow.SaveChangesAsync(ct);
     }
+
 
     public void SetRememberMe(User user, bool rememberMe, EncryptionKey key)
     {
-        if (rememberMe)
-            user.SavedKey = _protector.Protect(key.ExportCopy());
-        else
+        if (!rememberMe)
+        {
             user.SavedKey = null;
+            return;
+        }
+
+        var raw = key.ExportCopy();
+        try
+        {
+            user.SavedKey = _protector.Protect(raw);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(raw);
+        }
     }
 }
