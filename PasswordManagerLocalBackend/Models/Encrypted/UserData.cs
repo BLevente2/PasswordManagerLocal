@@ -1,6 +1,6 @@
 ﻿using PasswordManagerLocalBackend.Security;
 
-namespace PasswordManagerLocalBackend.Models;
+namespace PasswordManagerLocalBackend.Models.Encrypted;
 
 public sealed class UserData : IDisposable
 {

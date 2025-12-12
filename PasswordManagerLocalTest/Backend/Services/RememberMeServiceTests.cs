@@ -20,7 +20,7 @@ public sealed class RememberMeServiceTests
         var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
         var repo = (IUserRepository)host.Services.GetRequiredService(typeof(IUserRepository));
 
-        var reg = host.CreateValidRegistrationDto("carol");
+        var reg = host.CreateValidRegistrationRequest("carol");
         reg.RememberMe = false;
 
         var token = await auth.RegisterAsync(reg);

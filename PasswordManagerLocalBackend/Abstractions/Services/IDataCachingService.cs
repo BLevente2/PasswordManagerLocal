@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Models;
+﻿using PasswordManagerLocalBackend.Models.Encrypted;
 
 namespace PasswordManagerLocalBackend.Abstractions.Services;
 

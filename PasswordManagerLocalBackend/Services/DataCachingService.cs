@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Primitives;
 using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Security;
 using System.Collections.Concurrent;
 using static PasswordManagerLocalBackend.Constants.DataCachingConstants;

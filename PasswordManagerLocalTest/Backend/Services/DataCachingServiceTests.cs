@@ -1,6 +1,6 @@
 ﻿using global::PasswordManagerLocalTest.TestInfrastructure;
 using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 

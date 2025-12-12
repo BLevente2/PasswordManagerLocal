@@ -46,9 +46,8 @@ public sealed class BackendTestHost : IDisposable
 
     public IServiceProvider Services => _sp;
 
-    public RegistrationRequest CreateValidRegistrationDto(string username = "testuser")
-    {
-        return new RegistrationRequest
+    public RegistrationRequest CreateValidRegistrationRequest(string username = "testuser") =>
+        new RegistrationRequest
         {
             Username = username,
             Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
@@ -57,20 +56,17 @@ public sealed class BackendTestHost : IDisposable
             Email = "test@example.com",
             RememberMe = false
         };
-    }
 
-    public LoginRequest CreateValidLoginDto(string username = "testuser", bool rememberMe = false)
-    {
-        return new LoginRequest
+
+    public LoginRequest CreateValidLoginRequest(string username = "testuser", bool rememberMe = false) =>
+        new LoginRequest
         {
             Username = username,
             Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
             RememberMe = rememberMe
         };
-    }
 
-    public void Dispose()
-    {
+
+    public void Dispose() =>
         _sp.Dispose();
-    }
 }

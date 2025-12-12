@@ -18,7 +18,7 @@ public sealed class AuthServiceTests
         var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
         var keys = (IKeyVaultService)host.Services.GetRequiredService(typeof(IKeyVaultService));
 
-        var reg = host.CreateValidRegistrationDto("alice");
+        var reg = host.CreateValidRegistrationRequest("alice");
         var token1 = await auth.RegisterAsync(reg);
 
         Assert.IsTrue(keys.HasUserKey(token1));
@@ -26,7 +26,7 @@ public sealed class AuthServiceTests
         Assert.IsNotNull(ud1);
         Assert.AreEqual("alice", ud1.Username);
 
-        var login = host.CreateValidLoginDto("alice");
+        var login = host.CreateValidLoginRequest("alice");
         var token2 = await auth.LoginAsync(login);
 
         Assert.IsTrue(keys.HasUserKey(token2));
@@ -44,11 +44,11 @@ public sealed class AuthServiceTests
 
         var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
 
-        await auth.RegisterAsync(host.CreateValidRegistrationDto("bob"));
+        await auth.RegisterAsync(host.CreateValidRegistrationRequest("bob"));
 
         await Assert.ThrowsExceptionAsync<InvalidInputException>(async () =>
         {
-            await auth.RegisterAsync(host.CreateValidRegistrationDto("bob"));
+            await auth.RegisterAsync(host.CreateValidRegistrationRequest("bob"));
         });
     }
 }

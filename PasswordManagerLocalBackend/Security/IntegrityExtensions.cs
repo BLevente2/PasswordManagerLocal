@@ -1,5 +1,6 @@
 ﻿using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 
 namespace PasswordManagerLocalBackend.Security;
 
