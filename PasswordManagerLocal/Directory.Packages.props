@@ -17,5 +17,8 @@
         <PackageVersion Include="Avalonia.ReactiveUI" Version="11.3.6" />
 
         <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
+
+        <!-- ProtectedData (csak azokban a projektekben, ahol van hozzá PackageReference) -->
+        <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     </ItemGroup>
 </Project>
