@@ -1,6 +1,6 @@
 ﻿using PasswordManagerLocalBackend.Models;
 
-namespace PasswordManagerLocalBackend.DTOs;
+namespace PasswordManagerLocalBackend.Responses;
 
 public sealed class UserDTO
 {

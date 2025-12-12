@@ -1,9 +1,9 @@
-﻿using PasswordManagerLocalBackend.DTOs;
+﻿using PasswordManagerLocalBackend.Requests;
 
 namespace PasswordManagerLocalBackend.Abstractions.Services;
 
 public interface IAuthService
 {
-    Task<string> RegisterAsync(RegistrationDTO dto, CancellationToken ct = default);
-    Task<string> LoginAsync(LoginDTO dto, CancellationToken ct = default);
+    Task<string> RegisterAsync(RegistrationRequest request, CancellationToken ct = default);
+    Task<string> LoginAsync(LoginRequest request, CancellationToken ct = default);
 }

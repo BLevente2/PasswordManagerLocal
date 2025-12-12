@@ -3,7 +3,7 @@ using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
 using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.DTOs;
+using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalTest.Fakes;
@@ -46,9 +46,9 @@ public sealed class BackendTestHost : IDisposable
 
     public IServiceProvider Services => _sp;
 
-    public RegistrationDTO CreateValidRegistrationDto(string username = "testuser")
+    public RegistrationRequest CreateValidRegistrationDto(string username = "testuser")
     {
-        return new RegistrationDTO
+        return new RegistrationRequest
         {
             Username = username,
             Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
@@ -59,9 +59,9 @@ public sealed class BackendTestHost : IDisposable
         };
     }
 
-    public LoginDTO CreateValidLoginDto(string username = "testuser", bool rememberMe = false)
+    public LoginRequest CreateValidLoginDto(string username = "testuser", bool rememberMe = false)
     {
-        return new LoginDTO
+        return new LoginRequest
         {
             Username = username,
             Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),

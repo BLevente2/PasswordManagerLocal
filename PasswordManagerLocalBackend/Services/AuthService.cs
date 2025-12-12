@@ -1,9 +1,9 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.DTOs;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Security;
 using System.Text;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
@@ -40,12 +40,12 @@ public sealed class AuthService : IAuthService
 
 
 
-    public async Task<string> RegisterAsync(RegistrationDTO dto, CancellationToken ct = default)
+    public async Task<string> RegisterAsync(RegistrationRequest request, CancellationToken ct = default)
     {
-        if (!dto.Validate(out var errors))
+        if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var usernameBytes = Encoding.UTF8.GetBytes(dto.Username);
+        var usernameBytes = Encoding.UTF8.GetBytes(request.Username);
         var foundUser = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
         if (foundUser is not null)
             throw new InvalidInputException();
@@ -53,10 +53,10 @@ public sealed class AuthService : IAuthService
         var userData = new UserData
         {
             UId = Guid.NewGuid(),
-            Username = dto.Username,
-            FirstName = dto.FirstName,
-            LastName = dto.LastName,
-            Email = dto.Email,
+            Username = request.Username,
+            FirstName = request.FirstName,
+            LastName = request.LastName,
+            Email = request.Email,
             RegistrationDate = DateTime.UtcNow,
             LastLoginDate = DateTime.UtcNow
         };
@@ -66,7 +66,7 @@ public sealed class AuthService : IAuthService
         var usernameHash = Hashing.SHA256Hash(usernameBytes, usernameSalt);
 
         var passwordSalt = Hashing.GenerateSalt();
-        using var key = EncryptionKey.FromPassword(dto.Password, passwordSalt);
+        using var key = EncryptionKey.FromPassword(request.Password, passwordSalt);
         var encryptedUserdata = await SerializeCompressEncryptAsync<UserData>(userData, key);
 
         var user = new User
@@ -78,7 +78,7 @@ public sealed class AuthService : IAuthService
             EncryptedPayload = encryptedUserdata
         };
 
-        _rememberMe.SetRememberMe(user, dto.RememberMe, key);
+        _rememberMe.SetRememberMe(user, request.RememberMe, key);
         user.GenerateIntegrityHash();
 
         await _users.AddAsync(user, ct);
@@ -92,12 +92,12 @@ public sealed class AuthService : IAuthService
     }
 
 
-    public async Task<string> LoginAsync(LoginDTO dto, CancellationToken ct = default)
+    public async Task<string> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
-        if (!dto.Validate())
+        if (!request.Validate())
             throw new InvalidInputException();
 
-        var usernameBytes = Encoding.UTF8.GetBytes(dto.Username);
+        var usernameBytes = Encoding.UTF8.GetBytes(request.Username);
         var user = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
         if (user is null)
             throw new UserNotFoundException();
@@ -105,7 +105,7 @@ public sealed class AuthService : IAuthService
         user.EnsureIntegrity();
 
         var token = _tokens.Issue();
-        using var key = EncryptionKey.FromPassword(dto.Password, user.PasswordSalt);
+        using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
         _keys.SetUserKey(token, key);
 
         var userData = await _userService.GetUserDataAsync(user.UId, token, ct);
@@ -116,7 +116,7 @@ public sealed class AuthService : IAuthService
         var encryptedUserData = await SerializeCompressEncryptAsync<UserData>(userData, key);
 
         user.EncryptedPayload = encryptedUserData;
-        _rememberMe.SetRememberMe(user, dto.RememberMe, key);
+        _rememberMe.SetRememberMe(user, request.RememberMe, key);
         user.GenerateIntegrityHash();
         _users.Update(user);
 

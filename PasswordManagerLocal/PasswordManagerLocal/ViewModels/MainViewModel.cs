@@ -2,7 +2,7 @@
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.DTOs;
+using PasswordManagerLocalBackend.Requests;
 using ReactiveUI;
 using System;
 using System.Reactive;
@@ -450,14 +450,14 @@ public class MainViewModel : ViewModelBase
 
         try
         {
-            var dto = new LoginDTO
+            var request = new LoginRequest
             {
                 Username = Username,
                 Password = passwordHash,
                 RememberMe = RememberMe
             };
 
-            var token = await _authService.LoginAsync(dto);
+            var token = await _authService.LoginAsync(request);
 
             App.AuthSessionRegistry.TryAdd(token);
         }
@@ -532,7 +532,7 @@ public class MainViewModel : ViewModelBase
 
         try
         {
-            var dto = new RegistrationDTO
+            var request = new RegistrationRequest
             {
                 Username = RegisterUsername,
                 Password = passwordHash,
@@ -542,7 +542,7 @@ public class MainViewModel : ViewModelBase
                 RememberMe = RegisterRememberMe
             };
 
-            var token = await _authService.RegisterAsync(dto);
+            var token = await _authService.RegisterAsync(request);
 
             App.AuthSessionRegistry.TryAdd(token);
             ExecuteNavigateToLoginWithExistingAccount();

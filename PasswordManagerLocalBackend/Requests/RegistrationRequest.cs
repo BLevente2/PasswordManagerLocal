@@ -1,8 +1,8 @@
 ﻿using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
 
-namespace PasswordManagerLocalBackend.DTOs;
+namespace PasswordManagerLocalBackend.Requests;
 
-public sealed class RegistrationDTO
+public sealed class RegistrationRequest
 {
     public string Username { get; set; } = string.Empty;
     public byte[] Password { get; set; } = [];
