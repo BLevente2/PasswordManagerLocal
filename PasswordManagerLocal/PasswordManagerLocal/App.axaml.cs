@@ -7,7 +7,7 @@ using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels;
 using PasswordManagerLocal.Views;
 using PasswordManagerLocalBackend;
-using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions;
 
 namespace PasswordManagerLocal
 {
@@ -24,8 +24,8 @@ namespace PasswordManagerLocal
         {
             BackendHost.Initialize();
 
-            var authService = BackendHost.Services.GetRequiredService<IAuthService>();
-            var mainViewModel = new MainViewModel(authService);
+            var backendAPI = BackendHost.Services.GetRequiredService<IEndpoints>();
+            var mainViewModel = new MainViewModel(backendAPI);
 
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
@@ -76,6 +77,8 @@ namespace PasswordManagerLocalBackend
 
                             opts.UseSqlite(connStr);
                         });
+
+                        services.AddScoped<IEndpoints, Endpoints>();
 
                         services.AddScoped<IUnitOfWork, AppUnitOfWork>();
 

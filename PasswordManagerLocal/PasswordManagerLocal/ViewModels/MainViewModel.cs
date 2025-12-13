@@ -1,7 +1,7 @@
 ﻿using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Requests;
 using ReactiveUI;
 using System;
@@ -14,7 +14,7 @@ namespace PasswordManagerLocal.ViewModels;
 
 public class MainViewModel : ViewModelBase
 {
-    private readonly IAuthService _authService;
+    private readonly IEndpoints _backendAPI;
 
     private AuthViewMode _authMode;
 
@@ -58,9 +58,9 @@ public class MainViewModel : ViewModelBase
     private static IImage? _eyeShowImage;
     private static IImage? _eyeHideImage;
 
-    public MainViewModel(IAuthService authService)
+    public MainViewModel(IEndpoints backendAPI)
     {
-        _authService = authService;
+        _backendAPI = backendAPI;
 
         _authMode = AuthViewMode.Login;
 
@@ -457,7 +457,7 @@ public class MainViewModel : ViewModelBase
                 RememberMe = RememberMe
             };
 
-            var token = await _authService.LoginAsync(request);
+            var token = await _backendAPI.LoginAsync(request);
 
             App.AuthSessionRegistry.TryAdd(token);
         }
@@ -542,7 +542,7 @@ public class MainViewModel : ViewModelBase
                 RememberMe = RegisterRememberMe
             };
 
-            var token = await _authService.RegisterAsync(request);
+            var token = await _backendAPI.RegisterAsync(request);
 
             App.AuthSessionRegistry.TryAdd(token);
             ExecuteNavigateToLoginWithExistingAccount();
