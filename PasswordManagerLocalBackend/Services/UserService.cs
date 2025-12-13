@@ -23,7 +23,7 @@ public sealed class UserService : IUserService
 
 
 
-    public async Task<UserData> GetUserDataAsync(Guid uid, string token, CancellationToken ct = default)
+    public async Task<UserData> GetUserDataAsync(string token, Guid uid = default, CancellationToken ct = default)
     {
         var userData = await _cache.GetOrLoadUserDataAsync(
             token,

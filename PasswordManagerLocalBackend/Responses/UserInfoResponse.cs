@@ -2,7 +2,7 @@
 
 namespace PasswordManagerLocalBackend.Responses;
 
-public sealed class UserDTO
+public sealed class UserInfoResponse
 {
     public string Username { get; set; } = string.Empty;
     public string FirstName { get; set; } = string.Empty;
@@ -13,13 +13,14 @@ public sealed class UserDTO
 
 
 
-    public static UserDTO ConvertToUserDTO(UserData user) => new UserDTO
-    {
-        Username = user.Username,
-        FirstName = user.FirstName,
-        LastName = user.LastName,
-        Email = user.Email,
-        RegistrationDate = user.RegistrationDate,
-        LastLoginDate = user.LastLoginDate
-    };
+    public static UserInfoResponse ConvertToUserInfoResponse(UserData user) =>
+        new UserInfoResponse
+        {
+            Username = user.Username,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            Email = user.Email,
+            RegistrationDate = user.RegistrationDate,
+            LastLoginDate = user.LastLoginDate
+        };
 }

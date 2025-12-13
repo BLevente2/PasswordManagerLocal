@@ -1,4 +1,5 @@
 ﻿using PasswordManagerLocalBackend.Requests;
+using PasswordManagerLocalBackend.Responses;
 
 namespace PasswordManagerLocalBackend.Abstractions;
 
@@ -10,4 +11,7 @@ public interface IEndpoints
 
     Task<IReadOnlyList<string>> InicializeAllRememberMeAsync(CancellationToken ct = default);
     Task SetRememberMeAsync(string token, bool rememberMe, CancellationToken ct = default);
+
+
+    Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(string token, CancellationToken ct = default);
 }

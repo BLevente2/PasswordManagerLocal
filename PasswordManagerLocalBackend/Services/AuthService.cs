@@ -109,7 +109,7 @@ public sealed class AuthService : IAuthService
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
         _keys.SetUserKey(token, key);
 
-        var userData = await _userService.GetUserDataAsync(user.UId, token, ct);
+        var userData = await _userService.GetUserDataAsync(token, user.UId, ct);
         userData.LastLoginDate = DateTime.UtcNow;
         userData.GenerateIntegrityHash();
         _cache.SetUserData(token, userData);
