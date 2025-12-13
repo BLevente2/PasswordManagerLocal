@@ -48,13 +48,13 @@ public sealed class UserService : IUserService
             if (user is null)
                 return null;
 
-            user.EnsureIntegrity();
+            user.VerifyIntegrity();
 
             var userData = await DecryptDecompressDeserializeAsync<UserData>(user.EncryptedPayload, key);
             if (userData is null)
                 return null;
 
-            userData.EnsureIntegrity();
+            userData.VerifyIntegrity();
             return userData;
         }
         finally
@@ -69,13 +69,13 @@ public sealed class UserService : IUserService
         if (!_cache.TryGetUserData(token, out var userData) || userData is null)
             return null;
 
-        userData.EnsureIntegrity();
+        userData.VerifyIntegrity();
 
         var user = await _users.GetByIdAsync(userData.UId, ct);
         if (user is null)
             return null;
 
-        user.EnsureIntegrity();
+        user.VerifyIntegrity();
         return user;
     }
 
@@ -92,7 +92,7 @@ public sealed class UserService : IUserService
             if (!Hashing.Verify(user.UsernameHash, computedHash))
                 continue;
 
-            user.EnsureIntegrity();
+            user.VerifyIntegrity();
             return user;
         }
 

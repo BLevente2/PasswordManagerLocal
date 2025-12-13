@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
-public sealed class UserData : IDisposable
+public sealed class UserData : IntegrityCheckableBase, IDisposable
 {
     private bool _disposed;
 
@@ -21,37 +21,6 @@ public sealed class UserData : IDisposable
     {
         Dispose(disposing: true);
     }
-
-
-
-
-    public byte[] IntegrityHash { get; set; } = [];
-
-    public byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
-
-        bw.Write(UId.ToByteArray());
-        bw.Write(Username);
-        bw.Write(FirstName);
-        bw.Write(LastName);
-        bw.Write(Email);
-        bw.Write(RegistrationDate.ToBinary());
-        bw.Write(LastLoginDate.ToBinary());
-        bw.Write(Passwords.Count);
-
-        Passwords.ForEach(pw => bw.Write(pw.IntegrityHash));
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
-
-    public bool IsIntegrityValid() => Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
-
-    public void GenerateIntegrityHash() => IntegrityHash = CalculateIntegrityHash();
-
-
-
 
 
     public void Dispose()
@@ -79,5 +48,26 @@ public sealed class UserData : IDisposable
         Passwords.Clear();
 
         _disposed = true;
+    }
+
+
+
+    public override byte[] CalculateIntegrityHash()
+    {
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+
+        bw.Write(UId.ToByteArray());
+        bw.Write(Username);
+        bw.Write(FirstName);
+        bw.Write(LastName);
+        bw.Write(Email);
+        bw.Write(RegistrationDate.ToBinary());
+        bw.Write(LastLoginDate.ToBinary());
+        bw.Write(Passwords.Count);
+
+        Passwords.ForEach(pw => bw.Write(pw.IntegrityHash));
+
+        return Hashing.SHA512Hash(ms.ToArray());
     }
 }

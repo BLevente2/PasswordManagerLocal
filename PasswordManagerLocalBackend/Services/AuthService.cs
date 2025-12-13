@@ -103,7 +103,7 @@ public sealed class AuthService : IAuthService
         if (user is null)
             throw new UserNotFoundException();
 
-        user.EnsureIntegrity();
+        user.VerifyIntegrity();
 
         var token = _tokens.Issue();
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);

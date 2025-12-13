@@ -3,7 +3,7 @@ using System.Text;
 
 namespace PasswordManagerLocalBackend.Models;
 
-public class Device
+public sealed class Device : IntegrityCheckableBase
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public byte[] PublicKey { get; set; } = [];
@@ -24,10 +24,7 @@ public class Device
 
 
 
-
-    public byte[] IntegrityHash { get; set; } = [];
-
-    public byte[] CalculateIntegrityHash()
+    public override byte[] CalculateIntegrityHash()
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
@@ -46,8 +43,4 @@ public class Device
 
         return Hashing.SHA512Hash(ms.ToArray());
     }
-
-    public bool IsIntegrityValid() => Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
-
-    public void GenerateIntegrityHash() => IntegrityHash = CalculateIntegrityHash();
 }

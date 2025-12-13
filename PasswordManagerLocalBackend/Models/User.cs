@@ -2,7 +2,7 @@
 
 namespace PasswordManagerLocalBackend.Models;
 
-public class User
+public sealed class User : IntegrityCheckableBase
 {
     public Guid UId { get; set; } = Guid.NewGuid();
     public byte[] UsernameHash { get; set; } = [];
@@ -18,9 +18,8 @@ public class User
 
 
 
-    public byte[] IntegrityHash { get; set; } = [];
 
-    public byte[] CalculateIntegrityHash()
+    public override byte[] CalculateIntegrityHash()
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
@@ -39,8 +38,4 @@ public class User
 
         return Hashing.SHA512Hash(ms.ToArray());
     }
-
-    public bool IsIntegrityValid() => Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
-
-    public void GenerateIntegrityHash() => IntegrityHash = CalculateIntegrityHash();
 }

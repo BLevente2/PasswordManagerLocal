@@ -46,7 +46,7 @@ public class RememberMeService : IRememberMeService
 
         foreach (var user in usersEnabledRM)
         {
-            user.EnsureIntegrity();
+            user.VerifyIntegrity();
 
             var rawKey = _protector.Unprotect(user.SavedKey);
             try
@@ -72,7 +72,7 @@ public class RememberMeService : IRememberMeService
         if (user is null)
             throw new UserNotFoundException();
 
-        user.EnsureIntegrity();
+        user.VerifyIntegrity();
 
         if (rememberMe)
         {

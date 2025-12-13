@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
-public sealed class SecurePassword : IDisposable
+public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
 {
     private bool _disposed;
 
@@ -20,28 +20,6 @@ public sealed class SecurePassword : IDisposable
         Dispose(disposing: true);
     }
 
-
-    public byte[] IntegrityHash { get; set; } = [];
-
-    public byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
-
-        bw.Write(Id.ToByteArray());
-        bw.Write(Name);
-        bw.Write(Description);
-        bw.Write(Color);
-        bw.Write(Password);
-        bw.Write(CreatedAt.ToBinary());
-        bw.Write(LastUpdatedAt.ToBinary());
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
-
-    public bool IsIntegrityValid() => Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
-
-    public void GenerateIntegrityHash() => IntegrityHash = CalculateIntegrityHash();
 
     public void Dispose()
     {
@@ -64,5 +42,23 @@ public sealed class SecurePassword : IDisposable
         CryptographicOperations.ZeroMemory(IntegrityHash);
 
         _disposed = true;
+    }
+
+
+
+    public override byte[] CalculateIntegrityHash()
+    {
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+
+        bw.Write(Id.ToByteArray());
+        bw.Write(Name);
+        bw.Write(Description);
+        bw.Write(Color);
+        bw.Write(Password);
+        bw.Write(CreatedAt.ToBinary());
+        bw.Write(LastUpdatedAt.ToBinary());
+
+        return Hashing.SHA512Hash(ms.ToArray());
     }
 }
