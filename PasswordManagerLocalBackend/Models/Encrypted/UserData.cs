@@ -1,4 +1,5 @@
 ﻿using PasswordManagerLocalBackend.Security;
+using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -13,6 +14,8 @@ public sealed class UserData : IDisposable
     public string Email { get; set; } = string.Empty;
     public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
     public DateTime LastLoginDate { get; set; } = DateTime.UtcNow;
+
+    public List<SecurePassword> Passwords { get; set; } = [];
 
     ~UserData()
     {
@@ -36,6 +39,9 @@ public sealed class UserData : IDisposable
         bw.Write(Email);
         bw.Write(RegistrationDate.ToBinary());
         bw.Write(LastLoginDate.ToBinary());
+        bw.Write(Passwords.Count);
+
+        Passwords.ForEach(pw => bw.Write(pw.IntegrityHash));
 
         return Hashing.SHA512Hash(ms.ToArray());
     }
@@ -59,13 +65,18 @@ public sealed class UserData : IDisposable
         if (_disposed)
             return;
 
-            UId = Guid.Empty;
-            Username = string.Empty;
-            FirstName = string.Empty;
-            LastName = string.Empty;
-            Email = string.Empty;
-            RegistrationDate = DateTime.MinValue;
-            LastLoginDate = DateTime.MinValue;
+        UId = Guid.Empty;
+        Username = string.Empty;
+        FirstName = string.Empty;
+        LastName = string.Empty;
+        Email = string.Empty;
+        RegistrationDate = DateTime.MinValue;
+        LastLoginDate = DateTime.MinValue;
+        CryptographicOperations.ZeroMemory(IntegrityHash);
+
+        if (disposing)
+            Passwords.ForEach(pw => pw.Dispose());
+        Passwords.Clear();
 
         _disposed = true;
     }
