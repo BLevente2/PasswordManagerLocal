@@ -8,10 +8,10 @@ namespace PasswordManagerLocalTest.Backend.Services;
 [TestClass]
 public sealed class KeyVaultServiceTests
 {
-    private static string NewValidToken()
+    private static Guid NewValidToken()
     {
         ITokenService tokens = new TokenService();
-        return tokens.Issue();
+        return tokens.Issue(Guid.NewGuid());
     }
 
     [TestMethod]

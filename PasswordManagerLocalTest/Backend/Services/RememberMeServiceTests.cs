@@ -25,17 +25,27 @@ public sealed class RememberMeServiceTests
 
         var token = await auth.RegisterAsync(reg);
 
+        Assert.AreNotEqual(Guid.Empty, token);
+        Assert.IsTrue(tokens.TryGetUid(token, out var uid));
+        Assert.AreNotEqual(Guid.Empty, uid);
+
         await remember.SetRememberMeAsync(token, true);
 
         var users = await repo.ListAllAsync();
-        var carol = users.Single(u => u.UId != Guid.Empty);
+        var carol = users.Single(u => u.UId == uid);
         Assert.IsNotNull(carol.SavedKey);
         Assert.IsTrue(carol.SavedKey.Length > 0);
 
         var issued = await remember.InicializeAllRememberMeAsync();
 
         Assert.AreEqual(1, issued.Count);
-        Assert.IsTrue(tokens.Validate(issued[0]));
-        Assert.IsTrue(keys.HasUserKey(issued[0]));
+
+        var issuedToken = issued[0];
+        Assert.AreNotEqual(Guid.Empty, issuedToken);
+        Assert.IsTrue(tokens.Validate(issuedToken));
+        Assert.IsTrue(keys.HasUserKey(issuedToken));
+
+        Assert.IsTrue(tokens.TryGetUid(issuedToken, out var uid2));
+        Assert.AreEqual(uid, uid2);
     }
 }

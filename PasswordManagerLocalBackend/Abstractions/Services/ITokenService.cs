@@ -2,7 +2,10 @@
 
 public interface ITokenService
 {
-    string Issue();
-    bool Validate(string token);
+    Guid Issue(Guid uid);
+    bool Validate(Guid token);
+    bool TryGetUid(Guid token, out Guid uid);
+    Guid GetUidOrThrow(Guid token);
+    bool Revoke(Guid token);
     int PurgeExpired();
 }

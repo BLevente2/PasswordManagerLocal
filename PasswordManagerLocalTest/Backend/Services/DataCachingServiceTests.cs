@@ -17,7 +17,8 @@ public sealed class DataCachingServiceTests
         var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
         var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
 
-        var token = tokens.Issue();
+        var uid = Guid.NewGuid();
+        var token = tokens.Issue(uid);
 
         var calls = 0;
 

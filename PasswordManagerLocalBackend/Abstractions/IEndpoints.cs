@@ -5,13 +5,13 @@ namespace PasswordManagerLocalBackend.Abstractions;
 
 public interface IEndpoints
 {
-    Task<string> RegisterAsync(RegistrationRequest request, CancellationToken ct = default);
-    Task<string> LoginAsync(LoginRequest request, CancellationToken ct = default);
+    Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default);
+    Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default);
 
 
-    Task<IReadOnlyList<string>> InicializeAllRememberMeAsync(CancellationToken ct = default);
-    Task SetRememberMeAsync(string token, bool rememberMe, CancellationToken ct = default);
+    Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default);
+    Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default);
 
 
-    Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(string token, CancellationToken ct = default);
+    Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default);
 }

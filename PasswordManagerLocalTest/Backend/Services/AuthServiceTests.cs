@@ -17,10 +17,13 @@ public sealed class AuthServiceTests
         var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
         var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
         var keys = (IKeyVaultService)host.Services.GetRequiredService(typeof(IKeyVaultService));
+        var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
 
         var reg = host.CreateValidRegistrationRequest("alice");
         var token1 = await auth.RegisterAsync(reg);
 
+        Assert.AreNotEqual(Guid.Empty, token1);
+        Assert.IsTrue(tokens.Validate(token1));
         Assert.IsTrue(keys.HasUserKey(token1));
         Assert.IsTrue(cache.TryGetUserData(token1, out var ud1));
         Assert.IsNotNull(ud1);
@@ -29,10 +32,14 @@ public sealed class AuthServiceTests
         var login = host.CreateValidLoginRequest("alice");
         var token2 = await auth.LoginAsync(login);
 
+        Assert.AreNotEqual(Guid.Empty, token2);
+        Assert.IsTrue(tokens.Validate(token2));
         Assert.IsTrue(keys.HasUserKey(token2));
         Assert.IsTrue(cache.TryGetUserData(token2, out var ud2));
         Assert.IsNotNull(ud2);
         Assert.AreEqual("alice", ud2.Username);
+
+        Assert.AreNotEqual(token1, token2);
     }
 
     [TestMethod]

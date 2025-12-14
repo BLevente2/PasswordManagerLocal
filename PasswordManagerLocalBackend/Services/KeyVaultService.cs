@@ -1,6 +1,7 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Security;
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Constants.TokenConstrants;
 
 namespace PasswordManagerLocalBackend.Services;
@@ -11,36 +12,58 @@ public sealed class KeyVaultService : IKeyVaultService
     {
         public EncryptionKey Key;
         public DateTimeOffset ExpiresAt;
-        public Entry(EncryptionKey key, DateTimeOffset exp) { Key = key; ExpiresAt = exp; }
+
+        public Entry(EncryptionKey key, DateTimeOffset exp)
+        {
+            Key = key;
+            ExpiresAt = exp;
+        }
     }
 
-    private readonly ConcurrentDictionary<string, Entry> _map = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<Guid, Entry> _map = new();
 
-    private static string K(string token) => $"t:{TokenKey.HashToken(token)}";
-
-    public void SetUserKey(string token, EncryptionKey key, DateTimeOffset? expiresAt = null)
+    public void SetUserKey(Guid token, EncryptionKey key, DateTimeOffset? expiresAt = null)
     {
+        if (token == Guid.Empty)
+            return;
+
         var raw = key.ExportCopy();
         try
         {
             var owned = EncryptionKey.FromRaw(raw);
             var exp = expiresAt ?? DateTimeOffset.UtcNow.Add(TokenExpirationTime);
-            _map.AddOrUpdate(K(token), _ => new Entry(owned, exp), (_, old) =>
+
+            while (true)
             {
-                old.Key.Dispose();
-                return new Entry(owned, exp);
-            });
+                if (_map.TryGetValue(token, out var old))
+                {
+                    var replacement = new Entry(owned, exp);
+                    if (_map.TryUpdate(token, replacement, old))
+                    {
+                        old.Key.Dispose();
+                        return;
+                    }
+
+                    continue;
+                }
+
+                if (_map.TryAdd(token, new Entry(owned, exp)))
+                    return;
+            }
         }
         finally
         {
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(raw);
+            CryptographicOperations.ZeroMemory(raw);
         }
     }
 
-    public bool RotateUserKey(string token, EncryptionKey newKey, DateTimeOffset? newExpiresAt = null)
+    public bool RotateUserKey(Guid token, EncryptionKey newKey, DateTimeOffset? newExpiresAt = null)
     {
-        var id = K(token);
-        if (!_map.TryGetValue(id, out var entry)) return false;
+        if (token == Guid.Empty)
+            return false;
+
+        if (!_map.TryGetValue(token, out var entry))
+            return false;
 
         var raw = newKey.ExportCopy();
         try
@@ -49,7 +72,7 @@ public sealed class KeyVaultService : IKeyVaultService
             var exp = newExpiresAt ?? entry.ExpiresAt;
             var replacement = new Entry(owned, exp);
 
-            if (_map.TryUpdate(id, replacement, entry))
+            if (_map.TryUpdate(token, replacement, entry))
             {
                 entry.Key.Dispose();
                 return true;
@@ -60,19 +83,28 @@ public sealed class KeyVaultService : IKeyVaultService
         }
         finally
         {
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(raw);
+            CryptographicOperations.ZeroMemory(raw);
         }
     }
 
-    public bool HasUserKey(string token)
+    public bool HasUserKey(Guid token)
     {
-        return _map.TryGetValue(K(token), out var e) && e.ExpiresAt > DateTimeOffset.UtcNow;
+        if (token == Guid.Empty)
+            return false;
+
+        return _map.TryGetValue(token, out var e) && e.ExpiresAt > DateTimeOffset.UtcNow;
     }
 
-    public bool TryGetEncryptionKey(string token, out EncryptionKey key)
+    public bool TryGetEncryptionKey(Guid token, out EncryptionKey key)
     {
         key = default!;
-        if (!_map.TryGetValue(K(token), out var e)) return false;
+
+        if (token == Guid.Empty)
+            return false;
+
+        if (!_map.TryGetValue(token, out var e))
+            return false;
+
         if (e.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             InvalidateToken(token);
@@ -87,13 +119,16 @@ public sealed class KeyVaultService : IKeyVaultService
         }
         finally
         {
-            System.Security.Cryptography.CryptographicOperations.ZeroMemory(raw);
+            CryptographicOperations.ZeroMemory(raw);
         }
     }
 
-    public void InvalidateToken(string token)
+    public void InvalidateToken(Guid token)
     {
-        if (_map.TryRemove(K(token), out var e))
+        if (token == Guid.Empty)
+            return;
+
+        if (_map.TryRemove(token, out var e))
             e.Key.Dispose();
     }
 
@@ -101,6 +136,7 @@ public sealed class KeyVaultService : IKeyVaultService
     {
         var now = DateTimeOffset.UtcNow;
         var n = 0;
+
         foreach (var kv in _map)
         {
             if (kv.Value.ExpiresAt <= now && _map.TryRemove(kv.Key, out var e))
@@ -109,6 +145,7 @@ public sealed class KeyVaultService : IKeyVaultService
                 n++;
             }
         }
+
         return n;
     }
 }

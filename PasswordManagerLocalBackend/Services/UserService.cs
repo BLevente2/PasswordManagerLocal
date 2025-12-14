@@ -13,18 +13,27 @@ public sealed class UserService : IUserService
     private readonly IUserRepository _users;
     private readonly IDataCachingService _cache;
     private readonly IKeyVaultService _keys;
+    private readonly ITokenService _tokens;
 
-    public UserService(IUserRepository users, IDataCachingService cache, IKeyVaultService keys)
+    public UserService(IUserRepository users, IDataCachingService cache, IKeyVaultService keys, ITokenService tokens)
     {
         _users = users;
         _cache = cache;
         _keys = keys;
+        _tokens = tokens;
     }
 
 
 
-    public async Task<UserData> GetUserDataAsync(string token, Guid uid = default, CancellationToken ct = default)
+    public async Task<UserData> GetUserDataAsync(Guid token, Guid uid = default, CancellationToken ct = default)
     {
+        if (uid == default)
+        {
+            if (!_tokens.TryGetUid(token, out var foundUid))
+                throw new InvalidTokenException();
+            uid = foundUid;
+        }
+
         var userData = await _cache.GetOrLoadUserDataAsync(
             token,
             innerCt => LoadCachedUserDataAsync(uid, token, innerCt),
@@ -37,7 +46,7 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task<UserData?> LoadCachedUserDataAsync(Guid uid, string token, CancellationToken ct = default)
+    public async Task<UserData?> LoadCachedUserDataAsync(Guid uid, Guid token, CancellationToken ct = default)
     {
         if (!_keys.TryGetEncryptionKey(token, out var key))
             return null;
@@ -64,14 +73,12 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task<User?> GetUserByTokenAsync(string token, CancellationToken ct = default)
+    public async Task<User?> GetUserByTokenAsync(Guid token, CancellationToken ct = default)
     {
-        if (!_cache.TryGetUserData(token, out var userData) || userData is null)
+        if (!_tokens.TryGetUid(token, out var uid))
             return null;
 
-        userData.VerifyIntegrity();
-
-        var user = await _users.GetByIdAsync(userData.UId, ct);
+        var user = await _users.GetByIdAsync(uid, ct);
         if (user is null)
             return null;
 

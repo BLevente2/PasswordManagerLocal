@@ -1,11 +1,12 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 
 namespace PasswordManagerLocal.Abstractions.Services;
 
 public interface IAuthSessionRegistry
 {
-    string CurrentUserToken { get; set; }
-    bool TryAdd(string token);
-    bool TryRemove(string token);
-    IReadOnlyList<string> ListTokens();
+    Guid CurrentUserToken { get; set; }
+    bool TryAdd(Guid token);
+    bool TryRemove(Guid token);
+    IReadOnlyList<Guid> ListTokens();
 }

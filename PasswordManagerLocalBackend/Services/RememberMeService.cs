@@ -36,9 +36,9 @@ public class RememberMeService : IRememberMeService
 
 
 
-    public async Task<IReadOnlyList<string>> InicializeAllRememberMeAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default)
     {
-        var initializedTokens = new List<string>();
+        var initializedTokens = new List<Guid>();
 
         var usersEnabledRM = await _users.GetAllRememberMeEnabledUsersAsync(ct);
         if (usersEnabledRM.Count == 0)
@@ -52,7 +52,7 @@ public class RememberMeService : IRememberMeService
             try
             {
                 using var key = EncryptionKey.FromRaw(rawKey);
-                var token = _tokens.Issue();
+                var token = _tokens.Issue(user.UId);
                 _keys.SetUserKey(token, key);
                 initializedTokens.Add(token);
             }
@@ -66,13 +66,11 @@ public class RememberMeService : IRememberMeService
     }
 
 
-    public async Task SetRememberMeAsync(string token, bool rememberMe, CancellationToken ct = default)
+    public async Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default)
     {
         var user = await _userService.GetUserByTokenAsync(token, ct);
         if (user is null)
             throw new UserNotFoundException();
-
-        user.VerifyIntegrity();
 
         if (rememberMe)
         {

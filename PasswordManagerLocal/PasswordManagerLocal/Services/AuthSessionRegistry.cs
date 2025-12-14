@@ -1,4 +1,5 @@
 ﻿using PasswordManagerLocal.Abstractions.Services;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -6,69 +7,54 @@ namespace PasswordManagerLocal.Services;
 
 public sealed class AuthSessionRegistry : IAuthSessionRegistry
 {
-    private readonly List<string> _tokens = new();
-    private string _selection = string.Empty;
+    private readonly List<Guid> _tokens = new();
+    private Guid _selection = Guid.Empty;
 
-    public string CurrentUserToken
+    public Guid CurrentUserToken
     {
         get => _selection;
         set
         {
-            if (string.IsNullOrEmpty(value))
+            if (value == Guid.Empty)
             {
-                _selection = string.Empty;
+                _selection = Guid.Empty;
                 return;
             }
 
             if (_tokens.Contains(value))
-            {
                 _selection = value;
-            }
             else
-            {
-                _selection = string.Empty;
-            }
+                _selection = Guid.Empty;
         }
     }
 
-    public bool TryAdd(string token)
+    public bool TryAdd(Guid token)
     {
-        if (string.IsNullOrEmpty(token))
-        {
+        if (token == Guid.Empty)
             return false;
-        }
 
         if (!_tokens.Contains(token))
-        {
             _tokens.Add(token);
-        }
 
-        // akár új, akár már létező token, legyen ez az aktuális user
         CurrentUserToken = token;
         return true;
     }
 
-    public bool TryRemove(string token)
+    public bool TryRemove(Guid token)
     {
         if (!_tokens.Contains(token))
-        {
             return false;
-        }
 
         _tokens.Remove(token);
 
         if (_tokens.Count > 0)
-        {
             CurrentUserToken = _tokens.First();
-        }
         else
-        {
-            CurrentUserToken = string.Empty;
-        }
+            CurrentUserToken = Guid.Empty;
 
         return true;
     }
 
-    public IReadOnlyList<string> ListTokens() =>
+    public IReadOnlyList<Guid> ListTokens() =>
         _tokens.AsReadOnly();
 }

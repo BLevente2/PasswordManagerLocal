@@ -6,6 +6,7 @@ using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Security;
+using System.Security.Cryptography;
 using System.Text;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 
@@ -41,7 +42,7 @@ public sealed class AuthService : IAuthService
 
 
 
-    public async Task<string> RegisterAsync(RegistrationRequest request, CancellationToken ct = default)
+    public async Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default)
     {
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
@@ -85,7 +86,7 @@ public sealed class AuthService : IAuthService
         await _users.AddAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
 
-        var token = _tokens.Issue();
+        var token = _tokens.Issue(userData.UId);
         _keys.SetUserKey(token, key);
         _cache.SetUserData(token, userData);
 
@@ -93,7 +94,7 @@ public sealed class AuthService : IAuthService
     }
 
 
-    public async Task<string> LoginAsync(LoginRequest request, CancellationToken ct = default)
+    public async Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
         if (!request.Validate())
             throw new InvalidInputException();
@@ -105,7 +106,7 @@ public sealed class AuthService : IAuthService
 
         user.VerifyIntegrity();
 
-        var token = _tokens.Issue();
+        var token = _tokens.Issue(user.UId);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
         _keys.SetUserKey(token, key);
 
@@ -116,6 +117,7 @@ public sealed class AuthService : IAuthService
 
         var encryptedUserData = await SerializeCompressEncryptAsync<UserData>(userData, key);
 
+        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
         user.EncryptedPayload = encryptedUserData;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
         user.GenerateIntegrityHash();

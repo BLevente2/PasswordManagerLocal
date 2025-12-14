@@ -4,5 +4,5 @@ namespace PasswordManagerLocalBackend.Abstractions.Services;
 
 public interface IUserPasswordsService
 {
-    Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(string token, CancellationToken ct = default);
+    Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default);
 }

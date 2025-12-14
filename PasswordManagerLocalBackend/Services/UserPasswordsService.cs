@@ -15,7 +15,7 @@ public sealed class UserPasswordsService : IUserPasswordsService
 
 
 
-    public async Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(string token, CancellationToken ct = default)
+    public async Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
     {
         UserData userData = await _userService.GetUserDataAsync(token, ct: ct);
 

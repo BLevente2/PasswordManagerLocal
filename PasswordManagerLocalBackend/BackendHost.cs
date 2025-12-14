@@ -83,6 +83,10 @@ namespace PasswordManagerLocalBackend
                         services.AddScoped<IUnitOfWork, AppUnitOfWork>();
 
                         services.AddScoped<IUserRepository, UserRepository>();
+                        services.AddScoped<IUserPasswordsService, UserPasswordsService>();
+                        services.AddScoped<IPasswordService, PasswordService>();
+                        services.AddScoped<IGroupService, GroupService>();
+                        services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
                         services.AddScoped<IAuthService, AuthService>();
                         services.AddScoped<IUserService, UserService>();
                         services.AddScoped<IRememberMeService, RememberMeService>();
