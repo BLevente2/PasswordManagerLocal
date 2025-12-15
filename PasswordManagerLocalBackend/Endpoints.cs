@@ -57,4 +57,8 @@ public sealed class Endpoints : IEndpoints
 
     public Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default) =>
         _userPasswordsService.AddNewPasswordAsync(token, request, ct);
+
+
+    public Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default) =>
+        _userPasswordsService.RemovePasswordAsync(token, passwordId, ct);
 }

@@ -31,4 +31,12 @@ public sealed class UserPasswordsService : IUserPasswordsService
         await _passwordService.AddNewPassword(request, userData.Passwords);
         await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
     }
+
+
+    public async Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
+    {
+        var userData = await _userService.GetUserDataAsync(token, ct: ct);
+        _passwordService.RemovePassword(passwordId, userData.Passwords);
+        await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
+    }
 }

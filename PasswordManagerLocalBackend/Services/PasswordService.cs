@@ -21,13 +21,13 @@ public sealed class PasswordService : IPasswordService
 
     public async Task AddNewPassword(NewPasswordRequest request, SecurePasswords passwords)
     {
+        passwords.VerifyIntegrity();
+
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
         if (passwords.Passwords.Count >= MaxNumberOfPasswords)
             throw new LimitReachedException(MaxNumberOfPasswords, "password");
-
-        passwords.VerifyIntegrity();
 
         using var key = EncryptionKey.FromRaw(passwords.PasswordKey);
         var encryptedPassword = await AES256.EncryptAsync(request.Password, key);
@@ -46,5 +46,26 @@ public sealed class PasswordService : IPasswordService
 
         passwords.Passwords.Add(securePassword);
         passwords.GenerateIntegrityHash();
+    }
+
+
+    public void RemovePassword(Guid passwordId, SecurePasswords passwords)
+    {
+        using var password = GetAndVerifyPasswordById(passwordId, passwords);
+        passwords.Passwords.Remove(password);
+        password.GenerateIntegrityHash();
+    }
+
+
+    public SecurePassword GetAndVerifyPasswordById(Guid passwordId, SecurePasswords passwords)
+    {
+        passwords.VerifyIntegrity();
+
+        var password = passwords.Passwords.FirstOrDefault(pw => pw.Id == passwordId);
+        if (password is null)
+            throw new PasswordNotFoundException(passwordId);
+
+        password.VerifyIntegrity();
+        return password;
     }
 }
