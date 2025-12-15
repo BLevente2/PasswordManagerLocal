@@ -12,21 +12,23 @@ public sealed class RegistrationRequest
     public bool RememberMe { get; set; } = false;
 
 
+
+
     public bool Validate(out List<string> errors)
     {
         errors = new List<string>();
 
         if (!IsValidEmail(Email))
-            errors.Add($"Email: {Email}");
+            errors.Add("Email");
 
         if (!IsValidUsername(Username))
-            errors.Add($"Username: {Username}");
+            errors.Add("Username");
 
         if (!IsValidFirstName(FirstName))
-            errors.Add($"FirstName: {FirstName}");
+            errors.Add($"FirstName");
 
         if (!IsValidLastName(LastName))
-            errors.Add($"LastName: {LastName}");
+            errors.Add($"LastName");
 
         if (!IsValidPassword(Password))
             errors.Add("Password");

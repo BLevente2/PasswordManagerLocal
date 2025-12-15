@@ -35,6 +35,10 @@ public sealed class Endpoints : IEndpoints
         _authService.LoginAsync(request, ct);
 
 
+    public void Logout(Guid token) =>
+        _authService.Logout(token);
+
+
 
 
     public Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default) =>
@@ -49,4 +53,8 @@ public sealed class Endpoints : IEndpoints
 
     public Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default) =>
         _userPasswordsService.GetSavedPasswordsAsync(token, ct);
+
+
+    public Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default) =>
+        _userPasswordsService.AddNewPasswordAsync(token, request, ct);
 }

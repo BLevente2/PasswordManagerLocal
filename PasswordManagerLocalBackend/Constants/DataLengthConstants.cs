@@ -15,5 +15,13 @@ public static class DataLengthConstants
     public const int EmailMaxLength = 50;
 
     public const int PasswordMinLength = 1;
-    public const int PasswordMaxLength = 66;
+    public const int PasswordMaxLength = 300;
+
+    public const int DescriptionMinLength = 0;
+    public const int DescriptionMaxLength = 1000;
+
+    public const int ARGBColorLength = 9;
+
+    public const int PasswordNameMinLength = 1;
+    public const int PasswordNameMaxLength = 50;
 }

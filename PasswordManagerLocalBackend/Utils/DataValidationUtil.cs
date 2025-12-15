@@ -40,8 +40,26 @@ public static class DataValidationUtil
         return LastNameRegex.IsMatch(lastName);
     }
 
-    public static bool IsValidPassword(byte[] password)
+    public static bool IsValidPassword(byte[] password) =>
+        password.Length >= PasswordMinLength && password.Length <= PasswordMaxLength;
+
+
+    public static bool IsValidPasswordName(string passwordName) =>
+        passwordName.Length >= PasswordNameMinLength && passwordName.Length <= PasswordNameMaxLength;
+
+
+    public static bool IsValidDescription(string description) =>
+        description.Length >= DescriptionMinLength && description.Length <= DescriptionMaxLength;
+
+
+    public static bool IsValidARGBColor(string color)
     {
-        return password.Length >= PasswordMinLength && password.Length <= PasswordMaxLength;
+        if (color.Length != ARGBColorLength)
+            return false;
+
+        if (color[0] != '#')
+            return false;
+
+        return uint.TryParse(color.AsSpan(1), System.Globalization.NumberStyles.HexNumber, null, out _);
     }
 }

@@ -15,7 +15,7 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
     public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
     public DateTime LastLoginDate { get; set; } = DateTime.UtcNow;
 
-    public List<SecurePassword> Passwords { get; set; } = [];
+    public SecurePasswords Passwords { get; set; } = new();
 
 
     public void Dispose()
@@ -39,8 +39,7 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
         CryptographicOperations.ZeroMemory(IntegrityHash);
 
         if (disposing)
-            Passwords.ForEach(pw => pw.Dispose());
-        Passwords.Clear();
+            Passwords.Dispose();
 
         _disposed = true;
     }
@@ -59,9 +58,8 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
         bw.Write(Email);
         bw.Write(RegistrationDate.ToBinary());
         bw.Write(LastLoginDate.ToBinary());
-        bw.Write(Passwords.Count);
 
-        Passwords.ForEach(pw => bw.Write(pw.IntegrityHash));
+        bw.Write(Passwords.IntegrityHash);
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

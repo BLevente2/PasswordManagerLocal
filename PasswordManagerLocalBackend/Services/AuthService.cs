@@ -1,12 +1,9 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Persistence;
-using PasswordManagerLocalBackend.Abstractions.Repositories;
-using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Security;
-using System.Security.Cryptography;
 using System.Text;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 
@@ -14,30 +11,24 @@ namespace PasswordManagerLocalBackend.Services;
 
 public sealed class AuthService : IAuthService
 {
-    private readonly IUnitOfWork _uow;
     private readonly IUserService _userService;
     private readonly ITokenService _tokens;
     private readonly IDataCachingService _cache;
     private readonly IKeyVaultService _keys;
     private readonly IRememberMeService _rememberMe;
-    private readonly IUserRepository _users;
 
     public AuthService(
-        IUnitOfWork uow,
         IUserService userService,
         ITokenService tokens,
         IRememberMeService rememberMe,
         IDataCachingService cache,
-        IKeyVaultService keys,
-        IUserRepository users)
+        IKeyVaultService keys)
     {
-        _uow = uow;
         _userService = userService;
         _tokens = tokens;
         _rememberMe = rememberMe;
         _cache = cache;
         _keys = keys;
-        _users = users;
     }
 
 
@@ -62,6 +53,8 @@ public sealed class AuthService : IAuthService
             RegistrationDate = DateTime.UtcNow,
             LastLoginDate = DateTime.UtcNow
         };
+
+        userData.Passwords.PasswordKey = AES256.GenerateKey();
         userData.GenerateIntegrityHash();
 
         var usernameSalt = Hashing.GenerateSalt();
@@ -81,10 +74,7 @@ public sealed class AuthService : IAuthService
         };
 
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        user.GenerateIntegrityHash();
-
-        await _users.AddAsync(user, ct);
-        await _uow.SaveChangesAsync(ct);
+        await _userService.AddAndSaveAsync(user);
 
         var token = _tokens.Issue(userData.UId);
         _keys.SetUserKey(token, key);
@@ -100,29 +90,28 @@ public sealed class AuthService : IAuthService
             throw new InvalidInputException();
 
         var usernameBytes = Encoding.UTF8.GetBytes(request.Username);
-        var user = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
-        if (user is null)
-            throw new UserNotFoundException();
-
-        user.VerifyIntegrity();
+        var user = await _userService.GetAndVerifyUserByUsernameAsync(usernameBytes, ct);
 
         var token = _tokens.Issue(user.UId);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
         _keys.SetUserKey(token, key);
 
-        var userData = await _userService.GetUserDataAsync(token, user.UId, ct);
+        var userData = await _userService.GetAndVerifyUserDataAsync(user, key);
         userData.LastLoginDate = DateTime.UtcNow;
-        userData.GenerateIntegrityHash();
-
-        var encryptedUserData = await SerializeCompressEncryptAsync<UserData>(userData, key);
-
-        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
-        user.EncryptedPayload = encryptedUserData;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        user.GenerateIntegrityHash();
-        _users.Update(user);
-
-        await _uow.SaveChangesAsync(ct);
+        _cache.SetUserData(token, userData);
+        await _userService.UpdateAndSaveAsync(userData, user, key, ct: ct);
         return token;
+    }
+
+
+    public void Logout(Guid token)
+    {
+        if (!_tokens.Validate(token))
+            throw new InvalidTokenException();
+
+        _cache.InvalidateToken(token);
+        _keys.InvalidateToken(token);
+        _tokens.Revoke(token);
     }
 }

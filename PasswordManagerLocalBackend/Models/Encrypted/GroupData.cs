@@ -12,7 +12,7 @@ public sealed class GroupData : IntegrityCheckableBase, IDisposable
     public string Description { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
-    public List<SecurePassword> Passwords { get; set; } = [];
+    public SecurePasswords Passwords { get; set; } = new();
 
 
     public void Dispose()
@@ -34,8 +34,7 @@ public sealed class GroupData : IntegrityCheckableBase, IDisposable
         CryptographicOperations.ZeroMemory(IntegrityHash);
 
         if (disposing)
-            Passwords.ForEach(pw => pw.Dispose());
-        Passwords.Clear();
+            Passwords.Dispose();
 
         _disposed = true;
     }
@@ -52,9 +51,8 @@ public sealed class GroupData : IntegrityCheckableBase, IDisposable
         bw.Write(Description);
         bw.Write(CreatedAt.ToBinary());
         bw.Write(LastUpdatedAt.ToBinary());
-        bw.Write(Passwords.Count);
 
-        Passwords.ForEach(pw => bw.Write(pw.IntegrityHash));
+        bw.Write(Passwords.IntegrityHash);
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

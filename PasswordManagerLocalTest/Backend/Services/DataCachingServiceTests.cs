@@ -83,6 +83,12 @@ public sealed class DataCachingServiceTests
         };
         pw.GenerateIntegrityHash();
 
+        var pws = new SecurePasswords
+        {
+            Passwords = [pw],
+            PasswordKey = pwBytes
+        };
+
         var gd = new GroupData
         {
             Id = Guid.NewGuid(),
@@ -90,7 +96,7 @@ public sealed class DataCachingServiceTests
             Description = "desc",
             CreatedAt = DateTime.UtcNow,
             LastUpdatedAt = DateTime.UtcNow,
-            Passwords = [pw]
+            Passwords = pws
         };
         gd.GenerateIntegrityHash();
 
@@ -113,7 +119,7 @@ public sealed class DataCachingServiceTests
 
         Assert.AreEqual(Guid.Empty, gd.Id);
         Assert.AreEqual(string.Empty, gd.Name);
-        Assert.AreEqual(0, gd.Passwords.Count);
+        Assert.AreEqual(0, gd.Passwords.Passwords.Count);
 
         Assert.AreEqual(Guid.Empty, pw.Id);
         Assert.IsTrue(IsZeroed(pwBytes));
