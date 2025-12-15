@@ -15,11 +15,6 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
 
-    ~SecurePassword()
-    {
-        Dispose(disposing: true);
-    }
-
 
     public void Dispose()
     {

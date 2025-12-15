@@ -16,6 +16,7 @@ public sealed class DataCachingService : IDataCachingService
     private readonly TimeSpan _groupTtl;
 
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _tokenCts = new();
+    private readonly ConcurrentDictionary<string, object> _currentByKey = new();
 
     public DataCachingService(SafeMemoryCache cache, ITokenService tokens)
         : this(cache, tokens, UserDataCacheExpirationTime, GroupDataCacheExpirationTime)
@@ -50,15 +51,56 @@ public sealed class DataCachingService : IDataCachingService
         };
 
         opts.AddExpirationToken(new CancellationChangeToken(cts.Token));
+
+        opts.RegisterPostEvictionCallback((key, value, reason, state) =>
+        {
+            if (key is not string skey)
+                return;
+
+            var self = (DataCachingService)state!;
+
+            if (reason == EvictionReason.Replaced)
+            {
+                if (self._currentByKey.TryGetValue(skey, out var current) && ReferenceEquals(current, value))
+                    return;
+
+                if (value is IDisposable rd)
+                {
+                    try { rd.Dispose(); } catch { }
+                }
+
+                return;
+            }
+
+            if (value is IDisposable d)
+            {
+                try { d.Dispose(); } catch { }
+            }
+
+            if (self._currentByKey.TryGetValue(skey, out var cur) && ReferenceEquals(cur, value))
+            {
+                self._currentByKey.TryRemove(skey, out _);
+            }
+        }, this);
+
         return opts;
     }
 
     public async Task<UserData?> GetOrLoadUserDataAsync(Guid token, Func<CancellationToken, Task<UserData?>> loader, CancellationToken ct = default)
     {
         if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
             return default;
+        }
 
-        return await _cache.GetOrCreateAsync(UserKey(token), () => loader(ct), EntryOptions(token, _userTtl));
+        var key = UserKey(token);
+        var result = await _cache.GetOrCreateAsync(key, () => loader(ct), EntryOptions(token, _userTtl));
+
+        if (result != null)
+            _currentByKey[key] = result;
+
+        return result;
     }
 
     public Task<UserData?> GetOrLoadUserDataAsync(Guid token, Func<Task<UserData?>> loader)
@@ -68,27 +110,48 @@ public sealed class DataCachingService : IDataCachingService
     {
         if (!_tokens.Validate(token))
         {
+            InvalidateToken(token);
             value = default;
             return false;
         }
 
-        return _cache.TryGet(UserKey(token), out value);
+        var key = UserKey(token);
+        var ok = _cache.TryGet(key, out value);
+
+        if (ok && value != null)
+            _currentByKey[key] = value;
+
+        return ok;
     }
 
     public void SetUserData(Guid token, UserData value)
     {
         if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
             return;
+        }
 
-        _cache.Set(UserKey(token), value, EntryOptions(token, _userTtl));
+        var key = UserKey(token);
+        _currentByKey[key] = value;
+        _cache.Set(key, value, EntryOptions(token, _userTtl));
     }
 
     public async Task<GroupData?> GetOrLoadGroupDataAsync(Guid token, Guid groupId, Func<CancellationToken, Task<GroupData?>> loader, CancellationToken ct = default)
     {
         if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
             return default;
+        }
 
-        return await _cache.GetOrCreateAsync(GroupKey(token, groupId), () => loader(ct), EntryOptions(token, _groupTtl));
+        var key = GroupKey(token, groupId);
+        var result = await _cache.GetOrCreateAsync(key, () => loader(ct), EntryOptions(token, _groupTtl));
+
+        if (result != null)
+            _currentByKey[key] = result;
+
+        return result;
     }
 
     public Task<GroupData?> GetOrLoadGroupDataAsync(Guid token, Guid groupId, Func<Task<GroupData?>> loader)
@@ -98,19 +161,31 @@ public sealed class DataCachingService : IDataCachingService
     {
         if (!_tokens.Validate(token))
         {
+            InvalidateToken(token);
             value = default;
             return false;
         }
 
-        return _cache.TryGet(GroupKey(token, groupId), out value);
+        var key = GroupKey(token, groupId);
+        var ok = _cache.TryGet(key, out value);
+
+        if (ok && value != null)
+            _currentByKey[key] = value;
+
+        return ok;
     }
 
     public void SetGroupData(Guid token, Guid groupId, GroupData value)
     {
         if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
             return;
+        }
 
-        _cache.Set(GroupKey(token, groupId), value, EntryOptions(token, _groupTtl));
+        var key = GroupKey(token, groupId);
+        _currentByKey[key] = value;
+        _cache.Set(key, value, EntryOptions(token, _groupTtl));
     }
 
     public void InvalidateGroup(Guid token, Guid groupId)

@@ -17,11 +17,6 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
 
     public List<SecurePassword> Passwords { get; set; } = [];
 
-    ~UserData()
-    {
-        Dispose(disposing: true);
-    }
-
 
     public void Dispose()
     {

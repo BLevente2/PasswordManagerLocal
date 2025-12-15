@@ -15,12 +15,6 @@ public sealed class GroupData : IntegrityCheckableBase, IDisposable
     public List<SecurePassword> Passwords { get; set; } = [];
 
 
-    ~GroupData()
-    {
-        Dispose(disposing: true);
-    }
-
-
     public void Dispose()
     {
         Dispose(disposing: true);

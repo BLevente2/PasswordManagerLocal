@@ -13,6 +13,7 @@ using PasswordManagerLocalBackend.Persistence;
 using PasswordManagerLocalBackend.Repositories;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
+using PasswordManagerLocalBackend.Services.Hosted;
 using SQLitePCL;
 
 namespace PasswordManagerLocalBackend
@@ -98,6 +99,8 @@ namespace PasswordManagerLocalBackend
                         services.AddSingleton<SafeMemoryCache>();
                         services.AddSingleton<IDataCachingService, DataCachingService>();
                         services.AddSingleton<ITokenService, TokenService>();
+
+                        services.AddHostedService<ExpiredEntriesPurgeHostedService>();
                     })
                     .Build();
 

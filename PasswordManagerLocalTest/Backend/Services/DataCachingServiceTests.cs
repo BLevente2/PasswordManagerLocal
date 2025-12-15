@@ -55,4 +55,67 @@ public sealed class DataCachingServiceTests
         Assert.IsNotNull(c);
         Assert.AreEqual(2, calls);
     }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void InvalidateGroup_DisposesGroupDataOnRemove()
+    {
+        using var host = new BackendTestHost();
+
+        var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
+        var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
+
+        var token = tokens.Issue(Guid.NewGuid());
+        var groupId = Guid.NewGuid();
+
+        var pwBytes = new byte[] { 1, 2, 3, 4, 5 };
+
+        var pw = new SecurePassword
+        {
+            Id = Guid.NewGuid(),
+            Name = "n",
+            Description = "d",
+            Color = "#FFFFD700",
+            Password = pwBytes,
+            CreatedAt = DateTime.UtcNow,
+            LastUpdatedAt = DateTime.UtcNow
+        };
+        pw.GenerateIntegrityHash();
+
+        var gd = new GroupData
+        {
+            Id = Guid.NewGuid(),
+            Name = "g",
+            Description = "desc",
+            CreatedAt = DateTime.UtcNow,
+            LastUpdatedAt = DateTime.UtcNow,
+            Passwords = [pw]
+        };
+        gd.GenerateIntegrityHash();
+
+        cache.SetGroupData(token, groupId, gd);
+        cache.InvalidateGroup(token, groupId);
+
+        static bool IsZeroed(byte[] bytes)
+        {
+            for (int i = 0; i < bytes.Length; i++)
+                if (bytes[i] != 0)
+                    return false;
+            return true;
+        }
+
+        var disposed = SpinWait.SpinUntil(
+            () => gd.Id == Guid.Empty && pw.Id == Guid.Empty && IsZeroed(pwBytes),
+            TimeSpan.FromSeconds(2));
+
+        Assert.IsTrue(disposed);
+
+        Assert.AreEqual(Guid.Empty, gd.Id);
+        Assert.AreEqual(string.Empty, gd.Name);
+        Assert.AreEqual(0, gd.Passwords.Count);
+
+        Assert.AreEqual(Guid.Empty, pw.Id);
+        Assert.IsTrue(IsZeroed(pwBytes));
+    }
 }
