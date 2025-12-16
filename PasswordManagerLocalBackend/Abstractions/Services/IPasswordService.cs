@@ -10,4 +10,5 @@ public interface IPasswordService
     Task AddNewPassword(NewPasswordRequest request, SecurePasswords passwords);
     void RemovePassword(Guid passwordId, SecurePasswords passwords);
     SecurePassword GetAndVerifyPasswordById(Guid passwordId, SecurePasswords passwords);
+    Task<byte[]> GetUnsecurePasswordAsync(Guid passwordId, SecurePasswords passwords);
 }

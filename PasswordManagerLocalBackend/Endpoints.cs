@@ -61,4 +61,8 @@ public sealed class Endpoints : IEndpoints
 
     public Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default) =>
         _userPasswordsService.RemovePasswordAsync(token, passwordId, ct);
+
+
+    public Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default) =>
+        _userPasswordsService.GetUnsecurePasswordAsync(token, passwordId, ct);
 }

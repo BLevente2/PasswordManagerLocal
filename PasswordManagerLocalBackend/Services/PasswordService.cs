@@ -68,4 +68,12 @@ public sealed class PasswordService : IPasswordService
         password.VerifyIntegrity();
         return password;
     }
+
+
+    public async Task<byte[]> GetUnsecurePasswordAsync(Guid passwordId, SecurePasswords passwords)
+    {
+        var password = GetAndVerifyPasswordById(passwordId, passwords);
+        using var key = EncryptionKey.FromRaw(passwords.PasswordKey);
+        return await AES256.DecryptAsync(password.Password, key);
+    }
 }

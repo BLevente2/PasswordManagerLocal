@@ -39,4 +39,11 @@ public sealed class UserPasswordsService : IUserPasswordsService
         _passwordService.RemovePassword(passwordId, userData.Passwords);
         await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
     }
+
+
+    public async Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
+    {
+        var userData = await _userService.GetUserDataAsync(token, ct: ct);
+        return await _passwordService.GetUnsecurePasswordAsync(passwordId, userData.Passwords);
+    }
 }
