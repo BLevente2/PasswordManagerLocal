@@ -1,6 +1,5 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Security;
 using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
@@ -32,14 +31,12 @@ public class RememberMeService : IRememberMeService
     {
         var initializedTokens = new List<Guid>();
 
-        var usersEnabledRM = await _userService.GetRememberMeEnabledUsersAsync(ct);
+        var usersEnabledRM = await _userService.GetAndVerifyRememberMeEnabledUsersAsync(ct);
         if (usersEnabledRM.Count == 0)
             return initializedTokens;
 
         foreach (var user in usersEnabledRM)
         {
-            user.VerifyIntegrity();
-
             var rawKey = _protector.Unprotect(user.SavedKey);
             try
             {
@@ -60,20 +57,11 @@ public class RememberMeService : IRememberMeService
 
     public async Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default)
     {
-        var user = await _userService.GetUserByTokenAsync(token, ct);
+        var user = await _userService.GetAndVerifyUserAsync(token, ct);
+        using var key = _userService.GetEncryptionKeyFromToken(token);
 
-        if (!_keys.TryGetEncryptionKey(token, out var key))
-            throw new InvalidTokenException();
-
-        try
-        {
-            SetRememberMe(user, rememberMe, key);
-            await _userService.UpdateAndSaveAsync(user, ct);
-        }
-        finally
-        {
-            key.Dispose();
-        }
+        SetRememberMe(user, rememberMe, key);
+        await _userService.UpdateUserAsync(user, ct);
     }
 
 

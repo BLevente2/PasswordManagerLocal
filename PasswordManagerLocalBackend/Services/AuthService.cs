@@ -76,7 +76,7 @@ public sealed class AuthService : IAuthService
         };
 
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        await _userService.AddAndSaveAsync(user);
+        await _userService.AddNewUserAsync(user, ct);
 
         var token = _tokens.Issue(userData.UId);
         _keys.SetUserKey(token, key);
@@ -101,8 +101,8 @@ public sealed class AuthService : IAuthService
         var userData = await _userService.GetAndVerifyUserDataAsync(user, key);
         userData.LastLoginDate = DateTime.UtcNow;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
+        await _userService.UpdateUserDataAsync(userData, user, key, ct);
         _cache.SetUserData(token, userData);
-        await _userService.UpdateAndSaveAsync(userData, user, key, ct: ct);
         return token;
     }
 

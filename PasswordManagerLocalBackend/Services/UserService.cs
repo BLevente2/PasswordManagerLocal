@@ -30,9 +30,29 @@ public sealed class UserService : IUserService
 
 
 
+    public Guid GetUidFromToken(Guid token)
+    {
+        if (!_tokens.TryGetUid(token, out var uid))
+            throw new InvalidTokenException();
+        return uid;
+    }
+
+
+    public EncryptionKey GetEncryptionKeyFromToken(Guid token)
+    {
+        if (!_keys.TryGetEncryptionKey(token, out var key))
+            throw new InvalidTokenException();
+        return key;
+    }
+
+
+    public Task<User?> GetUserByUidAsync(Guid uid, CancellationToken ct = default) =>
+        _users.GetByIdAsync(uid, ct);
+
+
     public async Task<User> GetAndVerifyUserByUidAsync(Guid uid, CancellationToken ct = default)
     {
-        var user = await _users.GetByIdAsync(uid, ct);
+        var user = await GetUserByUidAsync(uid, ct);
         if (user is null)
             throw new UserNotFoundException();
 
@@ -41,11 +61,47 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task<UserData> GetAndVerifyUserDataAsync(User user, EncryptionKey? key = null, Guid token = default)
+    public async Task<User> GetAndVerifyUserAsync(Guid token, CancellationToken ct = default)
     {
-        if (key is null)
-            key = GetEncryptionKey(token);
+        var uid = GetUidFromToken(token);
+        return await GetAndVerifyUserByUidAsync(uid, ct);
+    }
 
+
+    public async Task<User?> GetUserByUsernameAsync(byte[] username, CancellationToken ct = default)
+    {
+        var users = await _users.ListAllAsync(ct);
+
+        foreach (var user in users)
+        {
+            var calcualtedHash = Hashing.SHA256Hash(username, user.UsernameSalt);
+            try
+            {
+                if (Hashing.Verify(user.UsernameHash, calcualtedHash))
+                    return user;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(calcualtedHash);
+            }
+        }
+        return null;
+    }
+
+
+    public async Task<User> GetAndVerifyUserByUsernameAsync(byte[] username, CancellationToken ct = default)
+    {
+        var user = await GetUserByUsernameAsync(username, ct);
+        if (user is null)
+            throw new UserNotFoundException();
+
+        user.VerifyIntegrity();
+        return user;
+    }
+
+
+    public async Task<UserData> GetAndVerifyUserDataAsync(User user, EncryptionKey key)
+    {
         var userData = await DecryptDecompressDeserializeAsync<UserData>(user.EncryptedPayload, key);
         if (userData is null)
             throw new UnauthorizedAccessException();
@@ -55,77 +111,41 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task<UserData> GetUserDataAsync(Guid token, Guid uid = default, CancellationToken ct = default)
+    public async Task<UserData> GetAndVerifyUserDataAsync(User user, Guid token)
     {
-        if (uid == default)
-            uid = GetUidFromToken(token);
-
-        var userData = await _cache.GetOrLoadUserDataAsync(
-            token,
-            innerCt => LoadCachedUserDataAsync(uid, token, innerCt),
-            ct);
-
-        if (userData is null)
-            throw new UserNotFoundException(uid);
-
-        return userData;
-    }
-
-
-    public async Task<UserData?> LoadCachedUserDataAsync(Guid uid, Guid token, CancellationToken ct = default)
-    {
-        using var key = GetEncryptionKey(token);
-
-        var user = await GetAndVerifyUserByUidAsync(uid, ct);
+        using var key = GetEncryptionKeyFromToken(token);
         return await GetAndVerifyUserDataAsync(user, key);
     }
 
 
-    public async Task<User> GetUserByTokenAsync(Guid token, CancellationToken ct = default)
+    public async Task<UserData> GetLoadAndVerifyUserDataAsync(Guid token, CancellationToken ct = default)
     {
-        var uid = GetUidFromToken(token);
-        return await GetAndVerifyUserByUidAsync(uid, ct);
-    }
-
-    public async Task<User> GetAndVerifyUserByUsernameAsync(byte[] username, CancellationToken ct = default)
-    {
-        var user = await GetUserByUsernameAsync(username, ct);
-        if (user is null)
-            throw new UserNotFoundException();
-        user.VerifyIntegrity();
-        return user;
-    }
-
-
-    public async Task<User?> GetUserByUsernameAsync(byte[] username, CancellationToken ct = default)
-    {
-        var users = await _users.ListAllAsync(ct);
-        if (users.Count == 0)
-            return null;
-
-        foreach (var user in users)
+        if (_cache.TryGetUserData(token, out var foundUserData) && foundUserData is not null)
         {
-            var computedHash = Hashing.SHA256Hash(username, user.UsernameSalt);
-            if (!Hashing.Verify(user.UsernameHash, computedHash))
-                continue;
-
-            user.VerifyIntegrity();
-            return user;
+            foundUserData.VerifyIntegrity();
+            return foundUserData;
         }
 
-        return null;
+        var user = await GetAndVerifyUserAsync(token, ct);
+
+        var userData = await GetAndVerifyUserDataAsync(user, token);
+        _cache.SetUserData(token, userData);
+        return userData;
     }
 
 
-    public async Task UpdateAndSaveAsync(User user, CancellationToken ct = default)
+    public async Task<IReadOnlyList<User>> GetAndVerifyRememberMeEnabledUsersAsync(CancellationToken ct = default)
     {
-        user.GenerateIntegrityHash();
-        _users.Update(user);
-        await _uow.SaveChangesAsync(ct);
+        var users = await _users.GetAllRememberMeEnabledUsersAsync(ct);
+        foreach (var user in users)
+        {
+            user.VerifyIntegrity();
+        }
+        return users;
     }
 
 
-    public async Task AddAndSaveAsync(User user, CancellationToken ct = default)
+    public async Task AddNewUserAsync(User user, CancellationToken ct = default)
     {
         user.GenerateIntegrityHash();
         await _users.AddAsync(user, ct);
@@ -133,46 +153,61 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task UpdateAndSaveAsync(UserData userData, User? user = null, EncryptionKey? key = null, Guid token = default, CancellationToken ct = default)
+    public async Task UpdateUserAsync(User user, CancellationToken ct = default)
     {
-        if (user is null)
-            user = await GetAndVerifyUserByUidAsync(userData.UId, ct);
+        user.GenerateIntegrityHash();
+        _users.Update(user);
+        await _uow.SaveChangesAsync(ct);
+    }
 
-        if (key is null)
-            key = GetEncryptionKey(token);
 
+    public async Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, CancellationToken ct = default)
+    {
         userData.GenerateIntegrityHash();
-
+        var newEncryptedPayload = await SerializeCompressEncryptAsync<UserData>(userData, key);
         CryptographicOperations.ZeroMemory(user.EncryptedPayload);
-        user.EncryptedPayload = await SerializeCompressEncryptAsync<UserData>(userData, key);
-
-        await UpdateAndSaveAsync(user, ct);
+        user.EncryptedPayload = newEncryptedPayload;
+        await UpdateUserAsync(user, ct);
     }
 
 
-
-    public Task<IReadOnlyList<User>> GetRememberMeEnabledUsersAsync(CancellationToken ct = default) =>
-        _users.GetAllRememberMeEnabledUsersAsync(ct);
-
-
-
-
-
-    private EncryptionKey GetEncryptionKey(Guid token)
+    public async Task UpdateUserDataAsync(UserData userData, Guid token, EncryptionKey key, CancellationToken ct = default)
     {
-        if (token == default)
-            throw new UnauthorizedAccessException();
-
-        if (!_keys.TryGetEncryptionKey(token, out var key))
-            throw new InvalidTokenException();
-
-        return key;
+        var user = await GetAndVerifyUserAsync(token, ct);
+        await UpdateUserDataAsync(userData, user, key, ct);
     }
 
-    private Guid GetUidFromToken(Guid token)
+
+    public async Task UpdateUserDataAsync(UserData userData, Guid token, CancellationToken ct = default)
     {
-        if (!_tokens.TryGetUid(token, out var uid))
-            throw new InvalidTokenException();
-        return uid;
+        using var key = GetEncryptionKeyFromToken(token);
+        await UpdateUserDataAsync(userData, token, key, ct);
+    }
+
+    public async Task<bool> UserExistsAsync(Guid uid, CancellationToken ct = default)
+    {
+        var user = await GetUserByUidAsync(uid, ct);
+        return user is not null;
+    }
+
+
+    public async Task DeleteUserAsync(User user, CancellationToken ct = default)
+    {
+        _users.Delete(user);
+        await _uow.SaveChangesAsync(ct);
+    }
+
+
+    public async Task DeleteUserAsync(Guid uid, CancellationToken ct = default)
+    {
+        var user = await GetAndVerifyUserByUidAsync(uid, ct);
+        await DeleteUserAsync(user, ct);
+    }
+
+
+    public async Task DeleteUserByTokenAsync(Guid token, CancellationToken ct = default)
+    {
+        var user = await GetAndVerifyUserAsync(token, ct);
+        await DeleteUserAsync(user, ct);
     }
 }

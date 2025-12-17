@@ -20,38 +20,38 @@ public sealed class UserPasswordsService : IUserPasswordsService
 
     public async Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
     {
-        UserData userData = await _userService.GetUserDataAsync(token, ct: ct);
+        UserData userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         return _passwordService.ConvertToPasswordInfoRespponses(userData.Passwords);
     }
 
 
     public async Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default)
     {
-        UserData userData = await _userService.GetUserDataAsync(token, ct: ct);
+        UserData userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         await _passwordService.AddNewPassword(request, userData.Passwords);
-        await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
+        await _userService.UpdateUserDataAsync(userData, token, ct);
     }
 
 
     public async Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
     {
-        var userData = await _userService.GetUserDataAsync(token, ct: ct);
+        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         _passwordService.RemovePassword(passwordId, userData.Passwords);
-        await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
+        await _userService.UpdateUserDataAsync(userData, token, ct);
     }
 
 
     public async Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
     {
-        var userData = await _userService.GetUserDataAsync(token, ct: ct);
+        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         return await _passwordService.GetUnsecurePasswordAsync(passwordId, userData.Passwords);
     }
 
 
     public async Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default)
     {
-        var userData = await _userService.GetUserDataAsync(token, ct: ct);
+        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         await _passwordService.UpdatePasswordAsync(request, userData.Passwords);
-        await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
+        await _userService.UpdateUserDataAsync(userData, token, ct);
     }
 }
