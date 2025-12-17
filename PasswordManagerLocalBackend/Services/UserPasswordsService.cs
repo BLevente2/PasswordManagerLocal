@@ -46,4 +46,12 @@ public sealed class UserPasswordsService : IUserPasswordsService
         var userData = await _userService.GetUserDataAsync(token, ct: ct);
         return await _passwordService.GetUnsecurePasswordAsync(passwordId, userData.Passwords);
     }
+
+
+    public async Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default)
+    {
+        var userData = await _userService.GetUserDataAsync(token, ct: ct);
+        await _passwordService.UpdatePasswordAsync(request, userData.Passwords);
+        await _userService.UpdateAndSaveAsync(userData, token: token, ct: ct);
+    }
 }

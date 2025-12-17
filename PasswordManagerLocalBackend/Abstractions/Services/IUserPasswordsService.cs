@@ -9,4 +9,5 @@ public interface IUserPasswordsService
     Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default);
     Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default);
     Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default);
+    Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default);
 }

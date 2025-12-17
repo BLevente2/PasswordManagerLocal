@@ -1,0 +1,44 @@
+﻿using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
+
+namespace PasswordManagerLocalBackend.Requests;
+
+public sealed class UpdatePasswordRequest
+{
+    public required Guid Id { get; set; }
+    public string? Name { get; set; } = null;
+    public string? Description { get; set; } = null;
+    public string? Color { get; set; } = null;
+    public byte[]? Password { get; set; } = null;
+
+
+
+    public bool Validate(out List<string> errors)
+    {
+        errors = new List<string>();
+
+        if (Id == default || Id == Guid.Empty)
+            errors.Add("PasswordId");
+
+        var nameEmpty = Name is null;
+        var descriptionEmpty = Description is null;
+        var colorEmpty = Color is null;
+        var passwordEmpty = Password is null;
+
+        if (nameEmpty && descriptionEmpty && colorEmpty && passwordEmpty)
+            errors.Add("NoDataUpdate");
+
+        if (!nameEmpty && (string.IsNullOrWhiteSpace(Name) || !IsValidPasswordName(Name)))
+            errors.Add("Name");
+
+        if (!descriptionEmpty && (string.IsNullOrWhiteSpace(Description) || !IsValidDescription(Description)))
+            errors.Add("Description");
+
+        if (!colorEmpty && (string.IsNullOrWhiteSpace(Color) || !IsValidARGBColor(Color)))
+            errors.Add("Color");
+
+        if (!passwordEmpty && (Password is null || !IsValidPassword(Password)))
+            errors.Add("Password");
+
+        return errors.Count == 0;
+    }
+}

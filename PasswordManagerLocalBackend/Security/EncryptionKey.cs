@@ -8,9 +8,24 @@ public sealed class EncryptionKey : IDisposable
     private readonly byte[] _key;
     private bool _disposed;
 
-    public EncryptionKey()
+    private EncryptionKey(byte[] key)
     {
-        _key = AES256.GenerateKey();
+        _key = key;
+    }
+
+    public static EncryptionKey Create()
+    {
+        var raw = AES256.GenerateKey();
+        try
+        {
+            var copy = new byte[KeySize];
+            Buffer.BlockCopy(raw, 0, copy, 0, KeySize);
+            return new EncryptionKey(copy);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(raw);
+        }
     }
 
     public static EncryptionKey FromRaw(ReadOnlySpan<byte> raw)
@@ -18,9 +33,9 @@ public sealed class EncryptionKey : IDisposable
         if (raw.Length != KeySize)
             throw new ArgumentException("Invalid key size.");
 
-        var k = new byte[KeySize];
-        raw.CopyTo(k);
-        return new EncryptionKey(k);
+        var copy = new byte[KeySize];
+        raw.CopyTo(copy);
+        return new EncryptionKey(copy);
     }
 
     public static EncryptionKey FromPassword(ReadOnlySpan<byte> password, ReadOnlySpan<byte> salt, int iterations = Iterations, HashAlgorithmName alg = default)
@@ -35,13 +50,8 @@ public sealed class EncryptionKey : IDisposable
             alg = HashAlgorithmName.SHA512;
 
         using var kdf = new Rfc2898DeriveBytes(password.ToArray(), salt.ToArray(), iterations, alg);
-        var key = kdf.GetBytes(KeySize);
-        return new EncryptionKey(key);
-    }
-
-    private EncryptionKey(byte[] key)
-    {
-        _key = key;
+        var raw = kdf.GetBytes(KeySize);
+        return new EncryptionKey(raw);
     }
 
     public ReadOnlySpan<byte> AsSpan()
@@ -70,6 +80,7 @@ public sealed class EncryptionKey : IDisposable
 
     private void ThrowIfDisposed()
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(EncryptionKey));
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(EncryptionKey));
     }
 }

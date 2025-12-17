@@ -1,4 +1,6 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using PasswordManagerLocalBackend;
+using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
@@ -40,6 +42,11 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserService, UserService>();
         sc.AddSingleton<IRememberMeService, RememberMeService>();
         sc.AddSingleton<IAuthService, AuthService>();
+        sc.AddSingleton<IPasswordService, PasswordService>();
+        sc.AddSingleton<IUserPasswordsService, UserPasswordsService>();
+        sc.AddSingleton<IGroupService, GroupService>();
+        sc.AddSingleton<IGroupPasswordsService, GroupPasswordsService>();
+        sc.AddSingleton<IEndpoints, Endpoints>();
 
         _sp = sc.BuildServiceProvider();
     }

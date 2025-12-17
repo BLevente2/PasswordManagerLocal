@@ -1,0 +1,149 @@
+﻿using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models.Encrypted;
+using PasswordManagerLocalBackend.Requests;
+using PasswordManagerLocalBackend.Services;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace PasswordManagerLocalTest.Backend.Services;
+
+[TestClass]
+public sealed class PasswordServiceTests
+{
+    private static SecurePasswords CreateEmptyPasswords()
+    {
+        var passwords = new SecurePasswords();
+        passwords.PasswordKey = RandomNumberGenerator.GetBytes(32);
+        passwords.GenerateIntegrityHash();
+        return passwords;
+    }
+
+    [TestMethod]
+    public async Task AddNewPassword_Valid_Works()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        var req = new NewPasswordRequest
+        {
+            Name = "Test",
+            Description = "Desc",
+            Color = "#FFFFFFFF",
+            Password = Encoding.UTF8.GetBytes("secret")
+        };
+
+        await service.AddNewPassword(req, passwords);
+
+        Assert.AreEqual(1, passwords.Passwords.Count);
+        passwords.VerifyIntegrity();
+    }
+
+    [TestMethod]
+    public async Task AddNewPassword_InvalidInput_Throws()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        var req = new NewPasswordRequest();
+
+        await Assert.ThrowsExceptionAsync<InvalidInputException>(async () =>
+        {
+            await service.AddNewPassword(req, passwords);
+        });
+    }
+
+    [TestMethod]
+    public async Task GetUnsecurePassword_Roundtrip_Works()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        var raw = Encoding.UTF8.GetBytes("supersecret");
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Test",
+            Password = raw
+        }, passwords);
+
+        var id = passwords.Passwords[0].Id;
+        var decrypted = await service.GetUnsecurePasswordAsync(id, passwords);
+
+        CollectionAssert.AreEqual(raw, decrypted);
+    }
+
+    [TestMethod]
+    public void RemovePassword_Existing_Works()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        var pw = new SecurePassword
+        {
+            Id = Guid.NewGuid(),
+            Name = "A",
+            Password = Encoding.UTF8.GetBytes("x")
+        };
+        pw.GenerateIntegrityHash();
+
+        passwords.Passwords.Add(pw);
+        passwords.GenerateIntegrityHash();
+
+        service.RemovePassword(pw.Id, passwords);
+
+        Assert.AreEqual(0, passwords.Passwords.Count);
+    }
+
+    [TestMethod]
+    public void RemovePassword_NonExisting_Throws()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        Assert.ThrowsException<PasswordNotFoundException>(() =>
+        {
+            service.RemovePassword(Guid.NewGuid(), passwords);
+        });
+    }
+
+    [TestMethod]
+    public async Task UpdatePassword_ChangesFields()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Old",
+            Password = Encoding.UTF8.GetBytes("oldpw")
+        }, passwords);
+
+        var id = passwords.Passwords[0].Id;
+
+        await service.UpdatePasswordAsync(new UpdatePasswordRequest
+        {
+            Id = id,
+            Name = "New",
+            Password = Encoding.UTF8.GetBytes("newpw")
+        }, passwords);
+
+        var decrypted = await service.GetUnsecurePasswordAsync(id, passwords);
+
+        Assert.AreEqual("New", passwords.Passwords[0].Name);
+        CollectionAssert.AreEqual(Encoding.UTF8.GetBytes("newpw"), decrypted);
+    }
+
+    [TestMethod]
+    public async Task EncryptDecrypt_Roundtrip_Works()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        var raw = Encoding.UTF8.GetBytes("abc");
+
+        var enc = await service.EncryptPasswordAsync(raw, passwords);
+        var dec = await service.DecryptPasswordAsync(enc, passwords);
+
+        CollectionAssert.AreEqual(raw, dec);
+    }
+}

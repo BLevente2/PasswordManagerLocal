@@ -76,8 +76,8 @@ public sealed class UserService : IUserService
     {
         using var key = GetEncryptionKey(token);
 
-        var user = await GetAndVerifyUserByUidAsync(uid);
-        return await GetAndVerifyUserDataAsync(user);
+        var user = await GetAndVerifyUserByUidAsync(uid, ct);
+        return await GetAndVerifyUserDataAsync(user, key);
     }
 
 

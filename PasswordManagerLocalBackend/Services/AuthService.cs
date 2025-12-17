@@ -54,7 +54,9 @@ public sealed class AuthService : IAuthService
             LastLoginDate = DateTime.UtcNow
         };
 
-        userData.Passwords.PasswordKey = AES256.GenerateKey();
+        using var passwordsKey = EncryptionKey.Create();
+        userData.Passwords.PasswordKey = passwordsKey.ExportCopy();
+        userData.Passwords.GenerateIntegrityHash();
         userData.GenerateIntegrityHash();
 
         var usernameSalt = Hashing.GenerateSalt();

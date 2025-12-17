@@ -65,4 +65,7 @@ public sealed class Endpoints : IEndpoints
 
     public Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default) =>
         _userPasswordsService.GetUnsecurePasswordAsync(token, passwordId, ct);
+
+    public Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default) =>
+        _userPasswordsService.UpdatePasswordAsync(token, request, ct);
 }

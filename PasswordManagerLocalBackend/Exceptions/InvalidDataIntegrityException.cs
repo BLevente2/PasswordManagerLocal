@@ -2,9 +2,9 @@
 
 public class InvalidDataIntegrityException : Exception
 {
-    public Type ObjectType { get; set; }
+    public Type ObjectType { get; private set; }
 
-    public InvalidDataIntegrityException(Type objectType) : base("Data integrity check failed. Data is corrupt or missing.")
+    public InvalidDataIntegrityException(Type objectType) : base($"Data integrity check failed. {objectType} is corrupt or missing.")
     {
         ObjectType = objectType;
     }
