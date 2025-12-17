@@ -54,6 +54,6 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
         bw.Write(CreatedAt.ToBinary());
         bw.Write(LastUpdatedAt.ToBinary());
 
-        return Hashing.SHA512Hash(ms.ToArray());
+        return Hashing.SHA256Hash(ms.ToArray());
     }
 }

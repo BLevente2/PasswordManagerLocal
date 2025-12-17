@@ -1,6 +1,6 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Security;
-using static PasswordManagerLocalBackend.Constants.PathConstants;
 using System.Security.Cryptography;
+using static PasswordManagerLocalBackend.Constants.PathConstants;
 
 namespace PasswordManagerLocalBackend.Security;
 
@@ -25,7 +25,8 @@ internal static class DbKeyManager
         }
         else
         {
-            var keyBytes = RandomNumberGenerator.GetBytes(32);
+            using var key = EncryptionKey.Create();
+            var keyBytes = key.ExportCopy();
             try
             {
                 var protectedBlob = protector.Protect(keyBytes);
