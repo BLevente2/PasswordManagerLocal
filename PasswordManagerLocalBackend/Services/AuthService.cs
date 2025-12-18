@@ -4,6 +4,7 @@ using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Security;
+using System.Security.Cryptography;
 using System.Text;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 
@@ -115,5 +116,38 @@ public sealed class AuthService : IAuthService
         _cache.InvalidateToken(token);
         _keys.InvalidateToken(token);
         _tokens.Revoke(token);
+    }
+
+
+    public async Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default)
+    {
+        if (!request.Validate(out var errors))
+            throw new InvalidInputException(errors);
+
+        var user = await _userService.GetAndVerifyUserAsync(request.Token, ct);
+        using var key = _userService.GetEncryptionKeyFromToken(request.Token);
+        using var confirmationKey = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
+
+        if (key != confirmationKey)
+            throw new InvalidInputException();
+
+        UserData userData;
+        if (_cache.TryGetUserData(request.Token, out var foundUserData) && foundUserData is not null)
+            userData = foundUserData;
+        else
+        {
+            userData = await _userService.GetAndVerifyUserDataAsync(user, key);
+            _cache.SetUserData(request.Token, userData);
+        }
+
+        CryptographicOperations.ZeroMemory(user.PasswordSalt);
+        user.PasswordSalt = Hashing.GenerateSalt();
+        using var newKey = EncryptionKey.FromPassword(request.NewPassword, user.PasswordSalt);
+        _keys.RotateUserKey(request.Token, newKey);
+
+        if (user.SavedKey is not null)
+            _rememberMe.SetRememberMe(user, true, newKey);
+
+        await _userService.UpdateUserDataAsync(userData, user, newKey, ct);
     }
 }

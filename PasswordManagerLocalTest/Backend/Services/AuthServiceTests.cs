@@ -1,6 +1,8 @@
 ﻿using global::PasswordManagerLocalTest.TestInfrastructure;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Requests;
+using System.Text;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -93,11 +95,66 @@ public sealed class AuthServiceTests
 
         var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
 
-        var invalidToken = Guid.NewGuid();
-
         Assert.ThrowsException<InvalidTokenException>(() =>
         {
-            auth.Logout(invalidToken);
+            auth.Logout(Guid.NewGuid());
+        });
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task ChangeMasterPassword_ValidRequest_Works()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("dave"));
+
+        var request = new MasterPasswordChangeRequest
+        {
+            Token = token,
+            Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
+            NewPassword = Encoding.UTF8.GetBytes("N3wP@ssw0rd_123456")
+        };
+
+        await auth.ChangeMasterPasswordAsync(request);
+
+        var login = new LoginRequest
+        {
+            Username = "dave",
+            Password = Encoding.UTF8.GetBytes("N3wP@ssw0rd_123456"),
+            RememberMe = false
+        };
+
+        var newToken = await auth.LoginAsync(login);
+
+        Assert.AreNotEqual(Guid.Empty, newToken);
+        Assert.AreNotEqual(token, newToken);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task ChangeMasterPassword_WrongCurrentPassword_Throws()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("eve"));
+
+        var request = new MasterPasswordChangeRequest
+        {
+            Token = token,
+            Password = Encoding.UTF8.GetBytes("WRONG_PASSWORD"),
+            NewPassword = Encoding.UTF8.GetBytes("AnotherValidPassword123")
+        };
+
+        await Assert.ThrowsExceptionAsync<InvalidInputException>(async () =>
+        {
+            await auth.ChangeMasterPasswordAsync(request);
         });
     }
 }

@@ -3,7 +3,7 @@ using static PasswordManagerLocalBackend.Constants.EncryptionKeyConstants;
 
 namespace PasswordManagerLocalBackend.Security;
 
-public sealed class EncryptionKey : IDisposable
+public sealed class EncryptionKey : IDisposable, IEquatable<EncryptionKey>
 {
     private readonly byte[] _key;
     private bool _disposed;
@@ -83,4 +83,35 @@ public sealed class EncryptionKey : IDisposable
         if (_disposed)
             throw new ObjectDisposedException(nameof(EncryptionKey));
     }
+
+    // === IEquatable és operátorok ===
+
+    public bool Equals(EncryptionKey? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+        ThrowIfDisposed();
+        other.ThrowIfDisposed();
+        return CryptographicOperations.FixedTimeEquals(_key, other._key);
+    }
+
+    public override bool Equals(object? obj) => Equals(obj as EncryptionKey);
+
+    public override int GetHashCode()
+    {
+        ThrowIfDisposed();
+        // Egyszerű hash, de nem kriptográfiailag biztonságos. Csak dictionary-hez kell.
+        int hash = 17;
+        foreach (var b in _key)
+            hash = hash * 31 + b;
+        return hash;
+    }
+
+    public static bool operator ==(EncryptionKey? left, EncryptionKey? right)
+    {
+        if (left is null) return right is null;
+        return left.Equals(right);
+    }
+
+    public static bool operator !=(EncryptionKey? left, EncryptionKey? right) => !(left == right);
 }
