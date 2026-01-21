@@ -653,6 +653,12 @@
           "Microsoft.Extensions.Logging.Abstractions": "8.0.0"
         }
       },
+      "libsodium": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.20.2, )",
+        "resolved": "1.0.20.2",
+        "contentHash": "FButtPK6HZvOewaE20F1HXNJn4qOoGAf7FEDm0VbWJ+xBX9pN9+2nkQQnfaLz+Ae5KuEzRoe1GHO00UpabgNxA=="
+      },
       "Makaretu.Dns.Multicast": {
         "type": "CentralTransitive",
         "requested": "[0.27.0, )",

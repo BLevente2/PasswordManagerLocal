@@ -27,7 +27,7 @@
     <PackageVersion Include="SkiaSharp.NativeAssets.iOS" Version="3.119.1" />
     <PackageVersion Include="SkiaSharp.NativeAssets.MacCatalyst" Version="3.119.1" />
 
-    <PackageVersion Include="libsodium" Version="1.0.21" />
+    <PackageVersion Include="libsodium" Version="1.0.20.2" />
 
     <!-- Windows -->
     <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.2" />
