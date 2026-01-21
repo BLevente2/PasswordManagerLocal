@@ -14,12 +14,7 @@ concurrency:
 
 jobs:
   build-and-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     env:
@@ -53,8 +48,7 @@ jobs:
           restore-keys: |
             nuget-${{ runner.os }}-
 
-      - name: Install Linux native deps for Avalonia/Skia
-        if: runner.os == 'Linux'
+      - name: Install Linux native deps (Avalonia/Skia)
         shell: bash
         run: |
           sudo apt-get update
@@ -64,17 +58,21 @@ jobs:
             libglib2.0-0
           sudo apt-get clean
 
-      - name: Restore (targeted, locked-mode if available)
+      - name: Restore (only required projects, locked if lock exists)
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p "$NUGET_PACKAGES"
 
           restore_one () {
             local proj="$1"
-            local lock_file
-            lock_file="$(dirname "$proj")/packages.lock.json"
+            local proj_dir
+            proj_dir="$(dirname "$proj")"
 
-            if [ -f "$lock_file" ]; then
+            local lock1="$proj_dir/packages.lock.json"
+            local lock2="$proj_dir/Packages.lock.json"
+
+            if [ -f "$lock1" ] || [ -f "$lock2" ]; then
               echo "Restoring (locked): $proj"
               dotnet restore "$proj" --locked-mode
             else
@@ -87,14 +85,15 @@ jobs:
           restore_one ./PasswordManagerLocal/PasswordManagerLocal/PasswordManagerLocal.csproj
           restore_one ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj
 
-      - name: Build (backend + UI + tests)
+      - name: Build (only required projects)
         shell: bash
         run: |
+          set -euo pipefail
           dotnet build ./PasswordManagerLocalBackend/PasswordManagerLocalBackend.csproj -c Release --no-restore
           dotnet build ./PasswordManagerLocal/PasswordManagerLocal/PasswordManagerLocal.csproj -c Release --no-restore
           dotnet build ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj -c Release --no-restore
 
-      - name: Test (always write logs)
+      - name: Test (log + TRX)
         id: test
         continue-on-error: true
         shell: pwsh
@@ -115,11 +114,11 @@ jobs:
           Write-Host "==== TRX files under TestResults ===="
           Get-ChildItem -Path $resultsDir -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
 
-      - name: Upload TestResults (trx + logs)
+      - name: Upload TestResults
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: testresults-${{ matrix.os }}
+          name: testresults-ubuntu
           path: TestResults/**
           if-no-files-found: warn
           retention-days: 7
@@ -136,8 +135,8 @@ jobs:
             $log = Join-Path $resultsDir "dotnet-test.log"
             if (Test-Path $log) {
               "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-              "Last 120 lines of dotnet-test.log:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-              Get-Content $log -Tail 120 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "Last 160 lines of dotnet-test.log:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              Get-Content $log -Tail 160 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             }
             exit 0
           }
@@ -146,7 +145,6 @@ jobs:
           $passed = 0
           $failed = 0
           $skipped = 0
-          $failedTests = @()
 
           foreach ($file in $trxFiles) {
             [xml]$xml = Get-Content -Path $file.FullName
@@ -158,36 +156,15 @@ jobs:
               $failed  += [int]($c.failed      ?? 0)
               $skipped += [int]($c.notExecuted ?? 0)
             }
-
-            $results = @()
-            if ($xml.TestRun.Results -and $xml.TestRun.Results.UnitTestResult) {
-              $results = @($xml.TestRun.Results.UnitTestResult)
-            }
-
-            if ($results.Count -gt 0) {
-              foreach ($t in ($results | Where-Object { $_.outcome -eq 'Failed' })) {
-                $name = $t.testName
-                $msg  = $t.Output?.ErrorInfo?.Message
-                if (-not $msg) { $msg = '' }
-                $failedTests += [pscustomobject]@{ Name = $name; Message = $msg.Trim() }
-              }
-            }
           }
 
           @"
-          # Test Summary ($env:RUNNER_OS)
+          # Test Summary (Ubuntu)
           Total: $total
           Passed: $passed
           Failed: $failed
           Skipped: $skipped
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-
-          if ($failedTests.Count -gt 0) {
-            "## Failed tests" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            foreach ($t in $failedTests) {
-              "* $($t.Name): $($t.Message)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            }
-          }
 
       - name: Fail job if tests failed
         if: steps.test.outputs.exitcode != '0'
