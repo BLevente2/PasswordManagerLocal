@@ -34,6 +34,20 @@ public sealed class DataCachingService : IDataCachingService
     private static string UserKey(Guid token) => $"t:{token:N}:user";
     private static string GroupKey(Guid token, Guid groupId) => $"t:{token:N}:g:{groupId:N}";
 
+    private void DisposeCurrentIfAny(string key)
+    {
+        if (_currentByKey.TryRemove(key, out var current) && current is IDisposable d)
+        {
+            try { d.Dispose(); } catch { }
+        }
+    }
+
+    private void DisposeCurrentAndRemove(string key)
+    {
+        DisposeCurrentIfAny(key);
+        _cache.Remove(key);
+    }
+
     private MemoryCacheEntryOptions EntryOptions(Guid token, TimeSpan ttl)
     {
         if (!_tokenCts.TryGetValue(token, out var cts))
@@ -190,11 +204,21 @@ public sealed class DataCachingService : IDataCachingService
 
     public void InvalidateGroup(Guid token, Guid groupId)
     {
-        _cache.Remove(GroupKey(token, groupId));
+        DisposeCurrentAndRemove(GroupKey(token, groupId));
     }
 
     public void InvalidateToken(Guid token)
     {
+        var prefix = $"t:{token:N}:";
+
+        foreach (var key in _currentByKey.Keys)
+        {
+            if (key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                DisposeCurrentAndRemove(key);
+            }
+        }
+
         if (_tokenCts.TryRemove(token, out var cts))
         {
             cts.Cancel();
