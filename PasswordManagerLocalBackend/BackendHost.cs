@@ -91,6 +91,7 @@ namespace PasswordManagerLocalBackend
                         services.AddScoped<IAuthService, AuthService>();
                         services.AddScoped<IUserService, UserService>();
                         services.AddScoped<IRememberMeService, RememberMeService>();
+                        services.AddScoped<IUserProfileService, UserProfileService>();
 
                         services.AddSingleton<IKeyVaultService, KeyVaultService>();
 

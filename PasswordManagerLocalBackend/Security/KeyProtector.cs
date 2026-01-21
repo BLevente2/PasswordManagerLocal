@@ -32,8 +32,8 @@ public sealed class PassphraseKeyProtector : IKeyProtector, IDisposable
     {
         var salt = new byte[_saltLen];
         RandomNumberGenerator.Fill(salt);
-        using var kdf = new Rfc2898DeriveBytes(_passphrase, salt, _iterations, HashAlgorithmName.SHA512);
-        var kek = kdf.GetBytes(AES256.KeySizeInBytes);
+
+        var kek = Rfc2898DeriveBytes.Pbkdf2(_passphrase, salt, _iterations, HashAlgorithmName.SHA512, AES256.KeySizeInBytes);
 
         var nonce = new byte[AES256.NonceSizeInBytes];
         RandomNumberGenerator.Fill(nonce);
@@ -82,8 +82,7 @@ public sealed class PassphraseKeyProtector : IKeyProtector, IDisposable
         var ct = protectedBlob.Slice(o, ctLen).ToArray(); o += ctLen;
         var tag = protectedBlob.Slice(o, AES256.TagSizeInBytes).ToArray();
 
-        using var kdf = new Rfc2898DeriveBytes(_passphrase, salt, iterations, HashAlgorithmName.SHA512);
-        var kek = kdf.GetBytes(AES256.KeySizeInBytes);
+        var kek = Rfc2898DeriveBytes.Pbkdf2(_passphrase, salt, iterations, HashAlgorithmName.SHA512, AES256.KeySizeInBytes);
 
         var pt = new byte[ctLen];
         using (var gcm = new AesGcm(kek, AES256.TagSizeInBytes))

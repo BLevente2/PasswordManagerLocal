@@ -8,4 +8,5 @@ public interface IAuthService
     Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default);
     void Logout(Guid token);
     Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default);
+    bool IsPasswordValid(Guid token, byte[] password, byte[] salt);
 }

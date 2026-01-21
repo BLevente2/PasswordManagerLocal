@@ -2,7 +2,7 @@
 
 namespace PasswordManagerLocalBackend.Responses;
 
-public sealed class UserInfoResponse
+public sealed class UserProfileInfoResponse
 {
     public string Username { get; set; } = string.Empty;
     public string FirstName { get; set; } = string.Empty;
@@ -13,8 +13,8 @@ public sealed class UserInfoResponse
 
 
 
-    public static UserInfoResponse ConvertToUserInfoResponse(UserData user) =>
-        new UserInfoResponse
+    public static UserProfileInfoResponse ConvertToUserProfileInfoResponse(UserData user) =>
+        new UserProfileInfoResponse
         {
             Username = user.Username,
             FirstName = user.FirstName,

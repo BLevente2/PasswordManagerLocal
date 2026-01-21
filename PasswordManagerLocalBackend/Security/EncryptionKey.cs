@@ -49,8 +49,7 @@ public sealed class EncryptionKey : IDisposable, IEquatable<EncryptionKey>
         if (alg == default)
             alg = HashAlgorithmName.SHA512;
 
-        using var kdf = new Rfc2898DeriveBytes(password.ToArray(), salt.ToArray(), iterations, alg);
-        var raw = kdf.GetBytes(KeySize);
+        var raw = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, alg, KeySize);
         return new EncryptionKey(raw);
     }
 

@@ -125,20 +125,11 @@ public sealed class AuthService : IAuthService
             throw new InvalidInputException(errors);
 
         var user = await _userService.GetAndVerifyUserAsync(request.Token, ct);
-        using var key = _userService.GetEncryptionKeyFromToken(request.Token);
-        using var confirmationKey = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
 
-        if (key != confirmationKey)
+        if (!IsPasswordValid(request.Token, request.Password, user.PasswordSalt))
             throw new InvalidInputException();
 
-        UserData userData;
-        if (_cache.TryGetUserData(request.Token, out var foundUserData) && foundUserData is not null)
-            userData = foundUserData;
-        else
-        {
-            userData = await _userService.GetAndVerifyUserDataAsync(user, key);
-            _cache.SetUserData(request.Token, userData);
-        }
+        var userData = await _userService.GetLoadAndVerifyUserDataAsync(request.Token, ct, user);
 
         CryptographicOperations.ZeroMemory(user.PasswordSalt);
         user.PasswordSalt = Hashing.GenerateSalt();
@@ -149,5 +140,13 @@ public sealed class AuthService : IAuthService
             _rememberMe.SetRememberMe(user, true, newKey);
 
         await _userService.UpdateUserDataAsync(userData, user, newKey, ct);
+    }
+
+
+    public bool IsPasswordValid(Guid token, byte[] password, byte[] salt)
+    {
+        using var currentKey = _userService.GetEncryptionKeyFromToken(token);
+        using var confirmationKey = EncryptionKey.FromPassword(password, salt);
+        return currentKey == confirmationKey;
     }
 }

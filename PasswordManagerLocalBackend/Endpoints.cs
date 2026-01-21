@@ -8,17 +8,20 @@ namespace PasswordManagerLocalBackend;
 public sealed class Endpoints : IEndpoints
 {
     private readonly IAuthService _authService;
+    private readonly IUserProfileService _userProfileService;
     private readonly IRememberMeService _rememberMeService;
     private readonly IUserPasswordsService _userPasswordsService;
 
     public Endpoints
         (
         IAuthService authService,
+        IUserProfileService userProfileService,
         IRememberMeService rememberMeService,
         IUserPasswordsService userPasswordsService
         )
     {
         _authService = authService;
+        _userProfileService = userProfileService;
         _rememberMeService = rememberMeService;
         _userPasswordsService = userPasswordsService;
     }
@@ -37,6 +40,28 @@ public sealed class Endpoints : IEndpoints
 
     public void Logout(Guid token) =>
         _authService.Logout(token);
+
+
+    public Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default) =>
+        _authService.ChangeMasterPasswordAsync(request, ct);
+
+
+
+
+    public Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default) =>
+        _userProfileService.GetUserProfileInfoAsync(token, ct);
+
+
+    public Task DeleteUserAccountAsync(Guid token, byte[] password, CancellationToken ct = default) =>
+        _userProfileService.DeleteUserAccountAsync(token, password, ct);
+
+
+    public Task ChangeUsernameAsync(Guid token, string newUsername, CancellationToken ct = default) =>
+        _userProfileService.ChangeUsernameAsync(token, newUsername, ct);
+
+
+    public Task UpdateUserProfileInfoAsync(UpdateUserProfileRequest request, CancellationToken ct = default) =>
+        _userProfileService.UpdateUserProfileInfoAsync(request, ct);
 
 
 

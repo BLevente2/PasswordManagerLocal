@@ -1,6 +1,11 @@
 ﻿using global::PasswordManagerLocalTest.TestInfrastructure;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using System.Linq;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -25,27 +30,27 @@ public sealed class RememberMeServiceTests
 
         var token = await auth.RegisterAsync(reg);
 
-        Assert.AreNotEqual(Guid.Empty, token);
-        Assert.IsTrue(tokens.TryGetUid(token, out var uid));
-        Assert.AreNotEqual(Guid.Empty, uid);
+        MSTestAssert.AreNotEqual(Guid.Empty, token);
+        MSTestAssert.IsTrue(tokens.TryGetUid(token, out var uid));
+        MSTestAssert.AreNotEqual(Guid.Empty, uid);
 
         await remember.SetRememberMeAsync(token, true);
 
         var users = await repo.ListAllAsync();
         var carol = users.Single(u => u.UId == uid);
-        Assert.IsNotNull(carol.SavedKey);
-        Assert.IsTrue(carol.SavedKey.Length > 0);
+        MSTestAssert.IsNotNull(carol.SavedKey);
+        MSTestAssert.IsNotEmpty(carol.SavedKey);
 
         var issued = await remember.InicializeAllRememberMeAsync();
 
-        Assert.AreEqual(1, issued.Count);
+        MSTestAssert.HasCount(1, issued);
 
         var issuedToken = issued[0];
-        Assert.AreNotEqual(Guid.Empty, issuedToken);
-        Assert.IsTrue(tokens.Validate(issuedToken));
-        Assert.IsTrue(keys.HasUserKey(issuedToken));
+        MSTestAssert.AreNotEqual(Guid.Empty, issuedToken);
+        MSTestAssert.IsTrue(tokens.Validate(issuedToken));
+        MSTestAssert.IsTrue(keys.HasUserKey(issuedToken));
 
-        Assert.IsTrue(tokens.TryGetUid(issuedToken, out var uid2));
-        Assert.AreEqual(uid, uid2);
+        MSTestAssert.IsTrue(tokens.TryGetUid(issuedToken, out var uid2));
+        MSTestAssert.AreEqual(uid, uid2);
     }
 }

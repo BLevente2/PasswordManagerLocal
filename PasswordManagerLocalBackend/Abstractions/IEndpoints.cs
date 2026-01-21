@@ -8,6 +8,13 @@ public interface IEndpoints
     Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default);
     Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default);
     void Logout(Guid token);
+    Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default);
+
+
+    Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default);
+    Task DeleteUserAccountAsync(Guid token, byte[] password, CancellationToken ct = default);
+    Task ChangeUsernameAsync(Guid token, string newUsername, CancellationToken ct = default);
+    Task UpdateUserProfileInfoAsync(UpdateUserProfileRequest request, CancellationToken ct = default);
 
 
     Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default);

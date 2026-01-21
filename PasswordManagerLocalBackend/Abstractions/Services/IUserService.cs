@@ -18,7 +18,8 @@ public interface IUserService
 
     Task<UserData> GetAndVerifyUserDataAsync(User user, EncryptionKey key);
     Task<UserData> GetAndVerifyUserDataAsync(User user, Guid token);
-    Task<UserData> GetLoadAndVerifyUserDataAsync(Guid token, CancellationToken ct = default);
+    bool TryGetAndVerifyUserDataFromCache(Guid token, out UserData? userData);
+    Task<UserData> GetLoadAndVerifyUserDataAsync(Guid token, CancellationToken ct = default, User? user = null);
 
     Task<IReadOnlyList<User>> GetAndVerifyRememberMeEnabledUsersAsync(CancellationToken ct = default);
 

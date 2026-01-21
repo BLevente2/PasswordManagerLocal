@@ -1,9 +1,12 @@
-﻿using PasswordManagerLocalBackend.Exceptions;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Services;
 using System.Security.Cryptography;
 using System.Text;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -34,7 +37,7 @@ public sealed class PasswordServiceTests
 
         await service.AddNewPassword(req, passwords);
 
-        Assert.AreEqual(1, passwords.Passwords.Count);
+        MSTestAssert.HasCount(1, passwords.Passwords);
         passwords.VerifyIntegrity();
     }
 
@@ -46,7 +49,7 @@ public sealed class PasswordServiceTests
 
         var req = new NewPasswordRequest();
 
-        await Assert.ThrowsExceptionAsync<InvalidInputException>(async () =>
+        await ExpectThrowsAsync<InvalidInputException>(async () =>
         {
             await service.AddNewPassword(req, passwords);
         });
@@ -91,7 +94,7 @@ public sealed class PasswordServiceTests
 
         service.RemovePassword(pw.Id, passwords);
 
-        Assert.AreEqual(0, passwords.Passwords.Count);
+        MSTestAssert.IsEmpty(passwords.Passwords);
     }
 
     [TestMethod]
@@ -100,7 +103,7 @@ public sealed class PasswordServiceTests
         var service = new PasswordService();
         var passwords = CreateEmptyPasswords();
 
-        Assert.ThrowsException<PasswordNotFoundException>(() =>
+        ExpectThrows<PasswordNotFoundException>(() =>
         {
             service.RemovePassword(Guid.NewGuid(), passwords);
         });
@@ -129,7 +132,7 @@ public sealed class PasswordServiceTests
 
         var decrypted = await service.GetUnsecurePasswordAsync(id, passwords);
 
-        Assert.AreEqual("New", passwords.Passwords[0].Name);
+        MSTestAssert.AreEqual("New", passwords.Passwords[0].Name);
         CollectionAssert.AreEqual(Encoding.UTF8.GetBytes("newpw"), decrypted);
     }
 
@@ -145,5 +148,29 @@ public sealed class PasswordServiceTests
         var dec = await service.DecryptPasswordAsync(enc, passwords);
 
         CollectionAssert.AreEqual(raw, dec);
+    }
+
+    private static void ExpectThrows<TException>(Action action) where TException : Exception
+    {
+        try
+        {
+            action();
+            MSTestAssert.Fail($"Expected exception: {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
+    }
+
+    private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
+            MSTestAssert.Fail($"Expected exception: {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
     }
 }

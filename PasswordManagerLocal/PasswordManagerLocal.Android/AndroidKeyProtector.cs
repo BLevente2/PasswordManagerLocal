@@ -15,17 +15,21 @@ public sealed class AndroidKeyProtector : IKeyProtector
 
     public AndroidKeyProtector()
     {
-        var context = Application.Context;
-        var prefs = context.GetSharedPreferences(PreferencesName, FileCreationMode.Private);
+        var context = Application.Context ?? throw new InvalidOperationException("Android Application.Context is null.");
+
+        var prefs = context.GetSharedPreferences(PreferencesName, FileCreationMode.Private)
+                    ?? throw new InvalidOperationException("Failed to open SharedPreferences.");
 
         var existing = prefs.GetString(KeyName, null);
+
         if (string.IsNullOrEmpty(existing))
         {
             var key = new byte[32];
             RandomNumberGenerator.Fill(key);
 
             var b64 = Convert.ToBase64String(key);
-            using var editor = prefs.Edit();
+
+            var editor = prefs.Edit() ?? throw new InvalidOperationException("Failed to edit SharedPreferences.");
             editor.PutString(KeyName, b64);
             editor.Commit();
 
@@ -45,7 +49,7 @@ public sealed class AndroidKeyProtector : IKeyProtector
         var ciphertext = new byte[plaintext.Length];
         var tag = new byte[16];
 
-        using var aes = new AesGcm(_masterKey);
+        using var aes = new AesGcm(_masterKey, tag.Length);
         aes.Encrypt(iv, plaintext, ciphertext, tag);
 
         var result = new byte[1 + iv.Length + 1 + tag.Length + ciphertext.Length];
@@ -73,7 +77,7 @@ public sealed class AndroidKeyProtector : IKeyProtector
             throw new CryptographicException("Invalid protected payload.");
 
         var ivLen = data[offset++];
-        if (ivLen <= 0 || ivLen > 32 || data.Length < 1 + ivLen + 1)
+        if (ivLen < AesGcm.NonceByteSizes.MinSize || ivLen > AesGcm.NonceByteSizes.MaxSize || data.Length < 1 + ivLen + 1)
             throw new CryptographicException("Invalid IV length.");
 
         var iv = new byte[ivLen];
@@ -81,7 +85,7 @@ public sealed class AndroidKeyProtector : IKeyProtector
         offset += ivLen;
 
         var tagLen = data[offset++];
-        if (tagLen <= 0 || tagLen > 32 || data.Length < 1 + ivLen + 1 + tagLen)
+        if (tagLen < AesGcm.TagByteSizes.MinSize || tagLen > AesGcm.TagByteSizes.MaxSize || data.Length < 1 + ivLen + 1 + tagLen)
             throw new CryptographicException("Invalid tag length.");
 
         var tag = new byte[tagLen];
@@ -97,7 +101,7 @@ public sealed class AndroidKeyProtector : IKeyProtector
 
         var plaintext = new byte[ciphertextLen];
 
-        using var aes = new AesGcm(_masterKey);
+        using var aes = new AesGcm(_masterKey, tagLen);
         aes.Decrypt(iv, ciphertext, tag, plaintext);
 
         return plaintext;

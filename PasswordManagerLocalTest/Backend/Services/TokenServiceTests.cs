@@ -1,5 +1,8 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Services;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -16,12 +19,12 @@ public sealed class TokenServiceTests
         var uid = Guid.NewGuid();
         var token = svc.Issue(uid);
 
-        Assert.IsTrue(svc.Validate(token));
+        MSTestAssert.IsTrue(svc.Validate(token));
 
-        Assert.IsTrue(svc.TryGetUid(token, out var uid2));
-        Assert.AreEqual(uid, uid2);
+        MSTestAssert.IsTrue(svc.TryGetUid(token, out var uid2));
+        MSTestAssert.AreEqual(uid, uid2);
 
-        Assert.AreEqual(uid, svc.GetUidOrThrow(token));
+        MSTestAssert.AreEqual(uid, svc.GetUidOrThrow(token));
     }
 
     [TestMethod]
@@ -34,10 +37,10 @@ public sealed class TokenServiceTests
         var uid = Guid.NewGuid();
         var token = svc.Issue(uid);
 
-        Assert.IsTrue(svc.Validate(token));
-        Assert.IsTrue(svc.Revoke(token));
-        Assert.IsFalse(svc.Validate(token));
-        Assert.IsFalse(svc.TryGetUid(token, out _));
+        MSTestAssert.IsTrue(svc.Validate(token));
+        MSTestAssert.IsTrue(svc.Revoke(token));
+        MSTestAssert.IsFalse(svc.Validate(token));
+        MSTestAssert.IsFalse(svc.TryGetUid(token, out _));
     }
 
     [TestMethod]
@@ -47,8 +50,8 @@ public sealed class TokenServiceTests
     {
         ITokenService svc = new TokenService();
 
-        Assert.IsFalse(svc.Validate(Guid.Empty));
-        Assert.IsFalse(svc.Validate(Guid.NewGuid()));
+        MSTestAssert.IsFalse(svc.Validate(Guid.Empty));
+        MSTestAssert.IsFalse(svc.Validate(Guid.NewGuid()));
     }
 
     [TestMethod]
@@ -58,11 +61,11 @@ public sealed class TokenServiceTests
     {
         ITokenService svc = new TokenService();
 
-        Assert.IsFalse(svc.TryGetUid(Guid.Empty, out var uid1));
-        Assert.AreEqual(Guid.Empty, uid1);
+        MSTestAssert.IsFalse(svc.TryGetUid(Guid.Empty, out var uid1));
+        MSTestAssert.AreEqual(Guid.Empty, uid1);
 
-        Assert.IsFalse(svc.TryGetUid(Guid.NewGuid(), out var uid2));
-        Assert.AreEqual(Guid.Empty, uid2);
+        MSTestAssert.IsFalse(svc.TryGetUid(Guid.NewGuid(), out var uid2));
+        MSTestAssert.AreEqual(Guid.Empty, uid2);
     }
 
     [TestMethod]
@@ -72,7 +75,7 @@ public sealed class TokenServiceTests
     {
         ITokenService svc = new TokenService();
 
-        Assert.IsFalse(svc.Revoke(Guid.Empty));
-        Assert.IsFalse(svc.Revoke(Guid.NewGuid()));
+        MSTestAssert.IsFalse(svc.Revoke(Guid.Empty));
+        MSTestAssert.IsFalse(svc.Revoke(Guid.NewGuid()));
     }
 }

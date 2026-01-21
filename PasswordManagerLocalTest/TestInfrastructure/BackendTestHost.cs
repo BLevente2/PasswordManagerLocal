@@ -40,6 +40,7 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
         sc.AddSingleton<IUserService, UserService>();
+        sc.AddSingleton<IUserProfileService, UserProfileService>();
         sc.AddSingleton<IRememberMeService, RememberMeService>();
         sc.AddSingleton<IAuthService, AuthService>();
         sc.AddSingleton<IPasswordService, PasswordService>();

@@ -1,8 +1,12 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalTest.TestInfrastructure;
 using System.Text;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -27,8 +31,8 @@ public sealed class UserPasswordsServiceTests
 
         var list = await svc.GetSavedPasswordsAsync(token);
 
-        Assert.AreEqual(1, list.Count);
-        Assert.AreEqual("Email", list[0].Name);
+        MSTestAssert.HasCount(1, list);
+        MSTestAssert.AreEqual("Email", list[0].Name);
     }
 
     [TestMethod]
@@ -53,7 +57,7 @@ public sealed class UserPasswordsServiceTests
         await svc.RemovePasswordAsync(token, id);
 
         var after = await svc.GetSavedPasswordsAsync(token);
-        Assert.AreEqual(0, after.Count);
+        MSTestAssert.IsEmpty(after);
     }
 
     [TestMethod]
@@ -109,7 +113,8 @@ public sealed class UserPasswordsServiceTests
         var updated = await svc.GetSavedPasswordsAsync(token);
         var decrypted = await svc.GetUnsecurePasswordAsync(token, id);
 
-        Assert.AreEqual("New", updated[0].Name);
+        MSTestAssert.HasCount(1, updated);
+        MSTestAssert.AreEqual("New", updated[0].Name);
         CollectionAssert.AreEqual(Encoding.UTF8.GetBytes("newpw"), decrypted);
     }
 
@@ -119,9 +124,21 @@ public sealed class UserPasswordsServiceTests
         using var host = new BackendTestHost();
         var svc = (IUserPasswordsService)host.Services.GetRequiredService(typeof(IUserPasswordsService));
 
-        await Assert.ThrowsExceptionAsync<InvalidTokenException>(async () =>
+        await ExpectThrowsAsync<InvalidTokenException>(async () =>
         {
             await svc.GetSavedPasswordsAsync(Guid.NewGuid());
         });
+    }
+
+    private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
+            MSTestAssert.Fail($"Expected exception: {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
     }
 }

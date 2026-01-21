@@ -1,7 +1,11 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalTest.TestInfrastructure;
 using System.Text;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -21,7 +25,7 @@ public sealed class UserServiceTests
 
         var fetched = await users.GetAndVerifyUserByUidAsync(uid);
 
-        Assert.AreEqual(uid, fetched.UId);
+        MSTestAssert.AreEqual(uid, fetched.UId);
     }
 
     [TestMethod]
@@ -30,8 +34,10 @@ public sealed class UserServiceTests
         using var host = new BackendTestHost();
         var users = host.Services.GetRequiredService<IUserService>();
 
-        await Assert.ThrowsExceptionAsync<UserNotFoundException>(() =>
-            users.GetAndVerifyUserByUidAsync(Guid.NewGuid()));
+        await ExpectThrowsAsync<UserNotFoundException>(async () =>
+        {
+            await users.GetAndVerifyUserByUidAsync(Guid.NewGuid());
+        });
     }
 
     [TestMethod]
@@ -46,7 +52,7 @@ public sealed class UserServiceTests
 
         var user = await users.GetAndVerifyUserByUsernameAsync(Encoding.UTF8.GetBytes("bob"));
 
-        Assert.IsNotNull(user);
+        MSTestAssert.IsNotNull(user);
     }
 
     [TestMethod]
@@ -57,7 +63,7 @@ public sealed class UserServiceTests
 
         var user = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("nobody"));
 
-        Assert.IsNull(user);
+        MSTestAssert.IsNull(user);
     }
 
     [TestMethod]
@@ -74,9 +80,9 @@ public sealed class UserServiceTests
         var data1 = await users.GetLoadAndVerifyUserDataAsync(token);
         var data2 = await users.GetLoadAndVerifyUserDataAsync(token);
 
-        Assert.IsNotNull(data1);
-        Assert.AreSame(data1, data2);
-        Assert.IsTrue(cache.TryGetUserData(token, out _));
+        MSTestAssert.IsNotNull(data1);
+        MSTestAssert.AreSame(data1, data2);
+        MSTestAssert.IsTrue(cache.TryGetUserData(token, out _));
     }
 
     [TestMethod]
@@ -85,8 +91,10 @@ public sealed class UserServiceTests
         using var host = new BackendTestHost();
         var users = host.Services.GetRequiredService<IUserService>();
 
-        await Assert.ThrowsExceptionAsync<InvalidTokenException>(() =>
-            users.GetLoadAndVerifyUserDataAsync(Guid.NewGuid()));
+        await ExpectThrowsAsync<InvalidTokenException>(async () =>
+        {
+            await users.GetLoadAndVerifyUserDataAsync(Guid.NewGuid());
+        });
     }
 
     [TestMethod]
@@ -106,7 +114,7 @@ public sealed class UserServiceTests
 
         var reloaded = await users.GetLoadAndVerifyUserDataAsync(token);
 
-        Assert.AreEqual("Updated", reloaded.FirstName);
+        MSTestAssert.AreEqual("Updated", reloaded.FirstName);
     }
 
     [TestMethod]
@@ -124,7 +132,7 @@ public sealed class UserServiceTests
 
         var exists = await users.UserExistsAsync(uid);
 
-        Assert.IsFalse(exists);
+        MSTestAssert.IsFalse(exists);
     }
 
     [TestMethod]
@@ -136,12 +144,25 @@ public sealed class UserServiceTests
         var users = host.Services.GetRequiredService<IUserService>();
 
         await auth.RegisterAsync(host.CreateValidRegistrationRequest("steve"));
+
         var rmEnabledUser = host.CreateValidRegistrationRequest("alice");
         rmEnabledUser.RememberMe = true;
         await auth.RegisterAsync(rmEnabledUser);
 
         var list = await users.GetAndVerifyRememberMeEnabledUsersAsync();
 
-        Assert.AreEqual(1, list.Count);
+        MSTestAssert.HasCount(1, list);
+    }
+
+    private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
+            MSTestAssert.Fail($"Expected exception: {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
     }
 }

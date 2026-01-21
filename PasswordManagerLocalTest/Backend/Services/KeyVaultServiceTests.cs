@@ -1,7 +1,10 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
 using System.Text;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -27,13 +30,13 @@ public sealed class KeyVaultServiceTests
         using var key = EncryptionKey.FromPassword(Encoding.UTF8.GetBytes("P@ssw0rd12345678"), salt);
         vault.SetUserKey(token, key, DateTimeOffset.UtcNow.AddMinutes(5));
 
-        Assert.IsTrue(vault.HasUserKey(token));
+        MSTestAssert.IsTrue(vault.HasUserKey(token));
 
-        Assert.IsTrue(vault.TryGetEncryptionKey(token, out var k2));
+        MSTestAssert.IsTrue(vault.TryGetEncryptionKey(token, out var k2));
         k2.Dispose();
 
         vault.InvalidateToken(token);
-        Assert.IsFalse(vault.HasUserKey(token));
+        MSTestAssert.IsFalse(vault.HasUserKey(token));
     }
 
     [TestMethod]
@@ -49,7 +52,7 @@ public sealed class KeyVaultServiceTests
         using var key = EncryptionKey.FromPassword(Encoding.UTF8.GetBytes("P@ssw0rd12345678"), salt);
         vault.SetUserKey(token, key, DateTimeOffset.UtcNow.AddMinutes(-1));
 
-        Assert.IsFalse(vault.HasUserKey(token));
-        Assert.IsFalse(vault.TryGetEncryptionKey(token, out _));
+        MSTestAssert.IsFalse(vault.HasUserKey(token));
+        MSTestAssert.IsFalse(vault.TryGetEncryptionKey(token, out _));
     }
 }

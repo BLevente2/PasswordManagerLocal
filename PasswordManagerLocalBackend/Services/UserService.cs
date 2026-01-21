@@ -118,15 +118,27 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task<UserData> GetLoadAndVerifyUserDataAsync(Guid token, CancellationToken ct = default)
+    public bool TryGetAndVerifyUserDataFromCache(Guid token, out UserData? userData)
     {
         if (_cache.TryGetUserData(token, out var foundUserData) && foundUserData is not null)
         {
             foundUserData.VerifyIntegrity();
-            return foundUserData;
+            userData = foundUserData;
+            return true;
         }
 
-        var user = await GetAndVerifyUserAsync(token, ct);
+        userData = null;
+        return false;
+    }
+
+
+    public async Task<UserData> GetLoadAndVerifyUserDataAsync(Guid token, CancellationToken ct = default, User? user = null)
+    {
+        if (TryGetAndVerifyUserDataFromCache(token, out var foundUserData) && foundUserData is not null)
+            return foundUserData;
+
+        if (user is null)
+            user = await GetAndVerifyUserAsync(token, ct);
 
         var userData = await GetAndVerifyUserDataAsync(user, token);
         _cache.SetUserData(token, userData);

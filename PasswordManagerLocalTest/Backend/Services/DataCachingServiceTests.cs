@@ -1,6 +1,10 @@
 ﻿using global::PasswordManagerLocalTest.TestInfrastructure;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models.Encrypted;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -44,16 +48,16 @@ public sealed class DataCachingServiceTests
         var a = await cache.GetOrLoadUserDataAsync(token, Loader);
         var b = await cache.GetOrLoadUserDataAsync(token, Loader);
 
-        Assert.IsNotNull(a);
-        Assert.IsNotNull(b);
-        Assert.AreEqual(1, calls);
+        MSTestAssert.IsNotNull(a);
+        MSTestAssert.IsNotNull(b);
+        MSTestAssert.AreEqual(1, calls);
 
         cache.InvalidateToken(token);
 
         var c = await cache.GetOrLoadUserDataAsync(token, Loader);
 
-        Assert.IsNotNull(c);
-        Assert.AreEqual(2, calls);
+        MSTestAssert.IsNotNull(c);
+        MSTestAssert.AreEqual(2, calls);
     }
 
     [TestMethod]
@@ -115,13 +119,13 @@ public sealed class DataCachingServiceTests
             () => gd.Id == Guid.Empty && pw.Id == Guid.Empty && IsZeroed(pwBytes),
             TimeSpan.FromSeconds(2));
 
-        Assert.IsTrue(disposed);
+        MSTestAssert.IsTrue(disposed);
 
-        Assert.AreEqual(Guid.Empty, gd.Id);
-        Assert.AreEqual(string.Empty, gd.Name);
-        Assert.AreEqual(0, gd.Passwords.Passwords.Count);
+        MSTestAssert.AreEqual(Guid.Empty, gd.Id);
+        MSTestAssert.AreEqual(string.Empty, gd.Name);
+        MSTestAssert.HasCount(0, gd.Passwords.Passwords);
 
-        Assert.AreEqual(Guid.Empty, pw.Id);
-        Assert.IsTrue(IsZeroed(pwBytes));
+        MSTestAssert.AreEqual(Guid.Empty, pw.Id);
+        MSTestAssert.IsTrue(IsZeroed(pwBytes));
     }
 }

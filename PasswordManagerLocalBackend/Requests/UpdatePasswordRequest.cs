@@ -16,9 +16,6 @@ public sealed class UpdatePasswordRequest
     {
         errors = new List<string>();
 
-        if (Id == default || Id == Guid.Empty)
-            errors.Add("PasswordId");
-
         var nameEmpty = Name is null;
         var descriptionEmpty = Description is null;
         var colorEmpty = Color is null;
