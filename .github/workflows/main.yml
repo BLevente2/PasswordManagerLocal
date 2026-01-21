@@ -14,8 +14,14 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -28,10 +34,10 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup .NET 10
+      - name: Setup .NET (global.json)
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
 
       - name: Show .NET SDK info
         shell: bash
@@ -47,7 +53,18 @@ jobs:
           restore-keys: |
             nuget-${{ runner.os }}-
 
-      - name: Restore (locked-mode per project if lock exists)
+      - name: Install Linux native deps for Avalonia/Skia
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-6 libice6 libsm6 libfontconfig1 \
+            libxext6 libxrender1 libxcursor1 libxinerama1 libxi6 libxrandr2 \
+            libglib2.0-0
+          sudo apt-get clean
+
+      - name: Restore (targeted, locked-mode if available)
         shell: bash
         run: |
           mkdir -p "$NUGET_PACKAGES"
@@ -77,18 +94,33 @@ jobs:
           dotnet build ./PasswordManagerLocal/PasswordManagerLocal/PasswordManagerLocal.csproj -c Release --no-restore
           dotnet build ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj -c Release --no-restore
 
-      - name: Test
-        shell: bash
+      - name: Test (always write logs)
+        id: test
+        continue-on-error: true
+        shell: pwsh
         run: |
-          mkdir -p TestResults
-          dotnet test ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj -c Release --no-build --logger "trx;LogFileName=tests.trx" --results-directory TestResults
+          $resultsDir = Join-Path $env:GITHUB_WORKSPACE "TestResults"
+          New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 
-      - name: Upload TRX
+          $logPath = Join-Path $resultsDir "dotnet-test.log"
+          dotnet test ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj `
+            -c Release `
+            --no-build `
+            --logger "trx;LogFileName=tests.trx" `
+            --results-directory "$resultsDir" 2>&1 | Tee-Object -FilePath $logPath
+
+          $exit = $LASTEXITCODE
+          "exitcode=$exit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          Write-Host "==== TRX files under TestResults ===="
+          Get-ChildItem -Path $resultsDir -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+
+      - name: Upload TestResults (trx + logs)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-trx
-          path: TestResults/*.trx
+          name: testresults-${{ matrix.os }}
+          path: TestResults/**
           if-no-files-found: warn
           retention-days: 7
 
@@ -96,9 +128,17 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $trxFiles = Get-ChildItem -Path "TestResults/*.trx" -Recurse -ErrorAction SilentlyContinue
+          $resultsDir = Join-Path $env:GITHUB_WORKSPACE "TestResults"
+          $trxFiles = Get-ChildItem -Path $resultsDir -Recurse -Filter *.trx -ErrorAction SilentlyContinue
+
           if (-not $trxFiles) {
-            "No TRX files found. Check if 'dotnet test' produced them." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "No TRX files found. See TestResults/dotnet-test.log artifact." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            $log = Join-Path $resultsDir "dotnet-test.log"
+            if (Test-Path $log) {
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "Last 120 lines of dotnet-test.log:" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              Get-Content $log -Tail 120 | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
             exit 0
           }
 
@@ -135,7 +175,7 @@ jobs:
           }
 
           @"
-          # Test Summary
+          # Test Summary ($env:RUNNER_OS)
           Total: $total
           Passed: $passed
           Failed: $failed
@@ -148,3 +188,8 @@ jobs:
               "* $($t.Name): $($t.Message)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             }
           }
+
+      - name: Fail job if tests failed
+        if: steps.test.outputs.exitcode != '0'
+        shell: bash
+        run: exit 1
