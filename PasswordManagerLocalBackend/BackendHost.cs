@@ -84,6 +84,10 @@ namespace PasswordManagerLocalBackend
                         services.AddScoped<IUnitOfWork, AppUnitOfWork>();
 
                         services.AddScoped<IUserRepository, UserRepository>();
+                        services.AddScoped<IDeviceRepository, DeviceRepository>();
+                        services.AddScoped<IGroupRepository, GroupRepository>();
+                        services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
+
                         services.AddScoped<IUserPasswordsService, UserPasswordsService>();
                         services.AddScoped<IPasswordService, PasswordService>();
                         services.AddScoped<IGroupService, GroupService>();
@@ -94,12 +98,14 @@ namespace PasswordManagerLocalBackend
                         services.AddScoped<IUserProfileService, UserProfileService>();
 
                         services.AddSingleton<IKeyVaultService, KeyVaultService>();
-
                         services.AddMemoryCache();
-
                         services.AddSingleton<SafeMemoryCache>();
                         services.AddSingleton<IDataCachingService, DataCachingService>();
                         services.AddSingleton<ITokenService, TokenService>();
+
+                        services.AddSingleton<IInMemorySyncQueueService, InMemorySyncQueueService>();
+                        services.AddScoped<ISyncQueueService, SyncQueueService>();
+                        services.AddScoped<ISyncService, SyncService>();
 
                         services.AddHostedService<ExpiredEntriesPurgeHostedService>();
                     })

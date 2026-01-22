@@ -16,13 +16,8 @@ public sealed class Device : IntegrityCheckableBase
     public bool IsBlocked { get; set; }
     public string BlockReason { get; set; } = string.Empty;
 
-
-
     public ICollection<User> Users { get; set; } = [];
-
-
-
-
+    public ICollection<SyncItem> SyncItemsNeedingSync { get; set; } = [];
 
     public override byte[] CalculateIntegrityHash()
     {
