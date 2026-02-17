@@ -20,9 +20,9 @@ namespace PasswordManagerLocal
             AvaloniaXamlLoader.Load(this);
         }
 
-        public override void OnFrameworkInitializationCompleted()
+        public override async void OnFrameworkInitializationCompleted()
         {
-            BackendHost.Initialize();
+            await BackendHost.InitializeAsync();
 
             var backendAPI = BackendHost.Services.GetRequiredService<IEndpoints>();
             var mainViewModel = new MainViewModel(backendAPI);

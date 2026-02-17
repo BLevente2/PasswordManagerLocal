@@ -21,99 +21,124 @@ namespace PasswordManagerLocalBackend
     public static class BackendHost
     {
         private static IHost? _host;
+        private static Task? _initTask;
         private static readonly object _lock = new();
 
         public static IServiceProvider Services
             => _host?.Services ?? throw new InvalidOperationException("BackendHost is not initialized.");
 
-        public static void Initialize(IKeyProtector? platformKeyProtector = null)
+        public static async Task InitializeAsync(IKeyProtector? platformKeyProtector = null)
         {
-            if (_host != null)
-                return;
+            Task initTask;
 
             lock (_lock)
             {
                 if (_host != null)
-                {
                     return;
+
+                if (_initTask != null)
+                {
+                    initTask = _initTask;
                 }
+                else
+                {
+                    Batteries_V2.Init();
+                    _initTask = InitializeInternal(platformKeyProtector);
+                    initTask = _initTask;
+                }
+            }
 
-                Batteries_V2.Init();
+            await initTask;
+        }
 
-                _host = Host.CreateDefaultBuilder(Array.Empty<string>())
-                    .ConfigureServices((context, services) =>
+        private static async Task InitializeInternal(IKeyProtector? platformKeyProtector)
+        {
+            var host = Host.CreateDefaultBuilder(Array.Empty<string>())
+                .ConfigureServices((context, services) =>
+                {
+                    var dbFolder = PathConstants.AppRootFolder;
+                    var dbPath = Path.Combine(dbFolder, PathConstants.DbFileName);
+
+                    if (platformKeyProtector is not null)
                     {
-                        var dbFolder = PathConstants.AppRootFolder;
-                        var dbPath = Path.Combine(dbFolder, PathConstants.DbFileName);
-
-                        if (platformKeyProtector is not null)
+                        services.AddSingleton<IKeyProtector>(platformKeyProtector);
+                    }
+                    else
+                    {
+                        services.AddSingleton<IKeyProtector>(sp =>
                         {
-                            services.AddSingleton<IKeyProtector>(platformKeyProtector);
-                        }
-                        else
-                        {
-                            services.AddSingleton<IKeyProtector>(sp =>
-                            {
-                                var cfg = sp.GetRequiredService<IConfiguration>();
-                                var passphrase =
-                                    cfg["Db:MasterPassphrase"] ??
-                                    Environment.GetEnvironmentVariable("APP_DB_MASTER_PASSPHRASE") ??
-                                    throw new InvalidOperationException(
-                                        "Provide master passphrase via config (Db:MasterPassphrase) or env (APP_DB_MASTER_PASSPHRASE).");
+                            var cfg = sp.GetRequiredService<IConfiguration>();
+                            var passphrase =
+                                cfg["Db:MasterPassphrase"] ??
+                                Environment.GetEnvironmentVariable("APP_DB_MASTER_PASSPHRASE") ??
+                                throw new InvalidOperationException(
+                                    "Provide master passphrase via config (Db:MasterPassphrase) or env (APP_DB_MASTER_PASSPHRASE).");
 
-                                return new PassphraseKeyProtector(System.Text.Encoding.UTF8.GetBytes(passphrase));
-                            });
-                        }
-
-                        services.AddDbContext<AppDbContext>((sp, opts) =>
-                        {
-                            var protector = sp.GetRequiredService<IKeyProtector>();
-                            var dbPassword = DbKeyManager.GetOrCreateSqlCipherPassword(protector);
-
-                            var connStr = new SqliteConnectionStringBuilder
-                            {
-                                DataSource = dbPath,
-                                Password = dbPassword
-                            }.ToString();
-
-                            opts.UseSqlite(connStr);
+                            return new PassphraseKeyProtector(System.Text.Encoding.UTF8.GetBytes(passphrase));
                         });
+                    }
 
-                        services.AddScoped<IEndpoints, Endpoints>();
+                    services.AddDbContext<AppDbContext>((sp, opts) =>
+                    {
+                        var protector = sp.GetRequiredService<IKeyProtector>();
+                        var dbPassword = DbKeyManager.GetOrCreateSqlCipherPassword(protector);
 
-                        services.AddScoped<IUnitOfWork, AppUnitOfWork>();
+                        var connStr = new SqliteConnectionStringBuilder
+                        {
+                            DataSource = dbPath,
+                            Password = dbPassword
+                        }.ToString();
 
-                        services.AddScoped<IUserRepository, UserRepository>();
-                        services.AddScoped<IDeviceRepository, DeviceRepository>();
-                        services.AddScoped<IGroupRepository, GroupRepository>();
-                        services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
+                        opts.UseSqlite(connStr);
+                    });
 
-                        services.AddScoped<IUserPasswordsService, UserPasswordsService>();
-                        services.AddScoped<IPasswordService, PasswordService>();
-                        services.AddScoped<IGroupService, GroupService>();
-                        services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
-                        services.AddScoped<IAuthService, AuthService>();
-                        services.AddScoped<IUserService, UserService>();
-                        services.AddScoped<IRememberMeService, RememberMeService>();
-                        services.AddScoped<IUserProfileService, UserProfileService>();
+                    services.AddScoped<IEndpoints, Endpoints>();
 
-                        services.AddSingleton<IKeyVaultService, KeyVaultService>();
-                        services.AddMemoryCache();
-                        services.AddSingleton<SafeMemoryCache>();
-                        services.AddSingleton<IDataCachingService, DataCachingService>();
-                        services.AddSingleton<ITokenService, TokenService>();
+                    services.AddScoped<IUnitOfWork, AppUnitOfWork>();
 
-                        services.AddSingleton<IInMemorySyncQueueService, InMemorySyncQueueService>();
-                        services.AddScoped<ISyncQueueService, SyncQueueService>();
-                        services.AddScoped<ISyncService, SyncService>();
+                    services.AddScoped<IUserRepository, UserRepository>();
+                    services.AddScoped<IDeviceRepository, DeviceRepository>();
+                    services.AddScoped<IGroupRepository, GroupRepository>();
+                    services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
+                    services.AddScoped<IDeviceIdentityRepository, DeviceIdentityRepository>();
 
-                        services.AddHostedService<ExpiredEntriesPurgeHostedService>();
-                    })
-                    .Build();
+                    services.AddScoped<IUserPasswordsService, UserPasswordsService>();
+                    services.AddScoped<IPasswordService, PasswordService>();
+                    services.AddScoped<IGroupService, GroupService>();
+                    services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
+                    services.AddScoped<IAuthService, AuthService>();
+                    services.AddScoped<IUserService, UserService>();
+                    services.AddScoped<IRememberMeService, RememberMeService>();
+                    services.AddScoped<IUserProfileService, UserProfileService>();
 
-                using var scope = _host.Services.CreateScope();
+                    services.AddSingleton<IKeyVaultService, KeyVaultService>();
+                    services.AddMemoryCache();
+                    services.AddSingleton<SafeMemoryCache>();
+                    services.AddSingleton<IDataCachingService, DataCachingService>();
+                    services.AddSingleton<ITokenService, TokenService>();
+
+                    services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
+                    services.AddSingleton<IGrpcClientService, GrpcClientService>();
+                    services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
+                    services.AddScoped<ISyncQueueService, SyncQueueService>();
+                    services.AddScoped<ISyncService, SyncService>();
+
+                    services.AddHostedService<ExpiredEntriesPurgeHostedService>();
+                })
+                .Build();
+
+            using (var scope = host.Services.CreateScope())
+            {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 db.Database.EnsureCreated();
+            }
+
+            var deviceKeyStore = host.Services.GetRequiredService<IDeviceIdentityService>();
+            await deviceKeyStore.InitializeAsync();
+
+            lock (_lock)
+            {
+                _host = host;
             }
         }
     }

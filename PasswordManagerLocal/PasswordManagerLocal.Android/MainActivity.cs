@@ -17,7 +17,7 @@ public class MainActivity : AvaloniaMainActivity<App>
 {
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
-        BackendHost.Initialize(new AndroidKeyProtector());
+        BackendHost.InitializeAsync(new AndroidKeyProtector()).GetAwaiter();
 
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()

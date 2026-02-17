@@ -2,6 +2,12 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "Google.Protobuf": {
+        "type": "Direct",
+        "requested": "[3.33.4, )",
+        "resolved": "3.33.4",
+        "contentHash": "8uRKKkDp+0Clqz1GqH6aTQtQsDJJyWhw9Owo1jsplIdNR7SIPehLVq4+5zccXkjOVbR6OcjEvL4MlrVSTme2IA=="
+      },
       "Grpc.Net.Client": {
         "type": "Direct",
         "requested": "[2.76.0, )",

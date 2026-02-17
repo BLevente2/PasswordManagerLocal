@@ -10,14 +10,15 @@ public sealed class Device : IntegrityCheckableBase
     public byte[] SignPublicKey { get; set; } = [];
     public string TlsCertFingerprint { get; set; } = string.Empty;
     public byte[] LastKnownHash { get; set; } = [];
+
     public DateTime LastSync { get; set; } = DateTime.UtcNow;
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
+
     public bool IsTrusted { get; set; }
     public bool IsBlocked { get; set; }
-    public string BlockReason { get; set; } = string.Empty;
 
     public ICollection<User> Users { get; set; } = [];
-    public ICollection<SyncItem> SyncItemsNeedingSync { get; set; } = [];
+    public ICollection<SyncQueueItem> ItemsNeedingSync { get; set; } = [];
 
     public override byte[] CalculateIntegrityHash()
     {
@@ -33,7 +34,6 @@ public sealed class Device : IntegrityCheckableBase
         bw.Write(LastSeen.ToBinary());
         bw.Write(IsTrusted ? (byte)1 : (byte)0);
         bw.Write(IsBlocked ? (byte)1 : (byte)0);
-        bw.Write(Encoding.UTF8.GetBytes(BlockReason));
         bw.Write(Users.Count);
 
         return Hashing.SHA512Hash(ms.ToArray());

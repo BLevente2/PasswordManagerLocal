@@ -975,6 +975,7 @@
       "passwordmanagerlocalbackend": {
         "type": "Project",
         "dependencies": {
+          "Google.Protobuf": "[3.33.4, )",
           "Grpc.Net.Client": "[2.76.0, )",
           "Makaretu.Dns.Multicast": "[0.27.0, )",
           "Microsoft.EntityFrameworkCore.Sqlite.Core": "[10.0.2, )",
@@ -1034,6 +1035,12 @@
         "dependencies": {
           "Avalonia": "11.3.11"
         }
+      },
+      "Google.Protobuf": {
+        "type": "CentralTransitive",
+        "requested": "[3.33.4, )",
+        "resolved": "3.33.4",
+        "contentHash": "8uRKKkDp+0Clqz1GqH6aTQtQsDJJyWhw9Owo1jsplIdNR7SIPehLVq4+5zccXkjOVbR6OcjEvL4MlrVSTme2IA=="
       },
       "Grpc.Net.Client": {
         "type": "CentralTransitive",
