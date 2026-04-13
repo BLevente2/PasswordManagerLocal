@@ -4,23 +4,65 @@
              xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
              x:Class="PasswordManagerLocal.App">
 
-  <!-- Alap Fluent téma (világos/sötét váltást a ViewModel-ben a RequestedThemeVariant állítja) -->
   <Application.Styles>
     <fluent:FluentTheme />
-  </Application.Styles>
 
-  <!-- Globális erőforrások (brushok, padding) -->
-  <Application.Resources>
-    <ResourceDictionary>
-      <!-- Háttér a fő oldalhoz -->
-      <SolidColorBrush x:Key="PageBackgroundBrush" Color="#FF101010" />
-      <!-- Kártyák (login/registráció panel) háttere és kerete -->
-      <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF1E1E1E" />
-      <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3C3C3C" />
-      <!-- Akcentus szín (gombokhoz, highlight-hoz, ha kell) -->
-      <SolidColorBrush x:Key="AccentBrush" Color="#FF0078D4" />
-      <!-- Oldal margó -->
-      <Thickness x:Key="PagePadding">16</Thickness>
-    </ResourceDictionary>
-  </Application.Resources>
+    <Style Selector="Border.card">
+      <Setter Property="Padding" Value="20" />
+      <Setter Property="CornerRadius" Value="18" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Background" Value="#11808080" />
+      <Setter Property="BorderBrush" Value="#33808080" />
+    </Style>
+
+    <Style Selector="Border.divider">
+      <Setter Property="Height" Value="1" />
+      <Setter Property="Background" Value="#33808080" />
+    </Style>
+
+    <Style Selector="Border.dangerZone">
+      <Setter Property="BorderBrush" Value="#66D13438" />
+      <Setter Property="Background" Value="#14D13438" />
+    </Style>
+
+    <Style Selector="Button.primary">
+      <Setter Property="MinHeight" Value="42" />
+      <Setter Property="Padding" Value="18,10" />
+      <Setter Property="Background" Value="#FF2D6AE3" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="Button.ghost">
+      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="Padding" Value="14,10" />
+    </Style>
+
+    <Style Selector="Button.danger">
+      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="Padding" Value="14,10" />
+      <Setter Property="Background" Value="#FFD13438" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBlock.pageTitle">
+      <Setter Property="FontSize" Value="28" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+
+    <Style Selector="TextBlock.sectionTitle">
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBlock.subtleText">
+      <Setter Property="Opacity" Value="0.78" />
+    </Style>
+
+    <Style Selector="TextBlock.errorText">
+      <Setter Property="Foreground" Value="#FFD13438" />
+      <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+  </Application.Styles>
 </Application>

@@ -1,659 +1,328 @@
-﻿using Avalonia.Media;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
+using PasswordManagerLocal.Abstractions.Services;
+using PasswordManagerLocal.Localization;
+using PasswordManagerLocal.Services;
+using PasswordManagerLocal.ViewModels.Auth;
+using PasswordManagerLocal.ViewModels.Pages;
 using PasswordManagerLocalBackend.Abstractions;
-using PasswordManagerLocalBackend.Requests;
+using PasswordManagerLocalBackend.Responses;
 using ReactiveUI;
-using System;
+using System.Linq;
 using System.Reactive;
-using System.Security.Cryptography;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace PasswordManagerLocal.ViewModels;
 
-public class MainViewModel : ViewModelBase
+public sealed class MainViewModel : ViewModelBase
 {
-    private readonly IEndpoints _backendAPI;
+    private readonly IEndpoints _endpoints;
+    private readonly IAuthSessionRegistry _authSessionRegistry;
 
-    private AuthViewMode _authMode;
+    private ViewModelBase _currentPageViewModel;
+    private bool _isAuthenticated;
+    private string _currentUserDisplayName = string.Empty;
+    private string _currentUserSubtitle = string.Empty;
+    private string? _statusMessage;
 
-    private string _username = string.Empty;
-    private string _password = string.Empty;
-    private bool _rememberMe;
-
-    private string? _usernameErrorMessage;
-    private string? _passwordErrorMessage;
-
-    private bool _isPasswordVisible;
-
-    private string _registerUsername = string.Empty;
-    private string _registerFirstName = string.Empty;
-    private string _registerLastName = string.Empty;
-    private string _registerEmail = string.Empty;
-    private string _registerPassword = string.Empty;
-    private string _registerConfirmPassword = string.Empty;
-    private bool _registerRememberMe;
-
-    private string? _registerUsernameErrorMessage;
-    private string? _registerFirstNameErrorMessage;
-    private string? _registerLastNameErrorMessage;
-    private string? _registerEmailErrorMessage;
-    private string? _registerPasswordErrorMessage;
-    private string? _registerConfirmPasswordErrorMessage;
-
-    private bool _isRegisterPasswordVisible;
-    private bool _isRegisterConfirmPasswordVisible;
-
-    private IImage? _passwordToggleIcon;
-    private IImage? _registerPasswordToggleIcon;
-    private IImage? _registerConfirmPasswordToggleIcon;
-
-    private static readonly Uri EyeShowIconUri =
-        new("avares://PasswordManagerLocal/Assets/Icons/eye_show.png");
-
-    private static readonly Uri EyeHideIconUri =
-        new("avares://PasswordManagerLocal/Assets/Icons/eye_hide.png");
-
-    private static IImage? _eyeShowImage;
-    private static IImage? _eyeHideImage;
-
-    public MainViewModel(IEndpoints backendAPI)
+    public MainViewModel(IEndpoints endpoints)
+        : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
     {
-        _backendAPI = backendAPI;
-
-        _authMode = AuthViewMode.Login;
-
-        TogglePasswordVisibilityCommand = ReactiveCommand.Create<string>(TogglePasswordVisibility);
-        LoginCommand = ReactiveCommand.CreateFromTask(ExecuteLoginAsync);
-        RegisterCommand = ReactiveCommand.CreateFromTask(ExecuteRegisterAsync);
-        NavigateToRegisterCommand = ReactiveCommand.Create(ExecuteNavigateToRegister);
-        NavigateToLoginWithExistingAccountCommand =
-            ReactiveCommand.Create(ExecuteNavigateToLoginWithExistingAccount);
-
-        UpdatePasswordToggleIcons();
     }
 
-    public AuthViewMode AuthMode
+    private MainViewModel(IEndpoints endpoints, IAuthSessionRegistry authSessionRegistry, UiPreferencesService uiPreferences)
+        : base(uiPreferences)
     {
-        get => _authMode;
+        _endpoints = endpoints;
+        _authSessionRegistry = authSessionRegistry;
+
+        LoginViewModel = new LoginViewModel(uiPreferences, _endpoints, NavigateToRegistration, OnAuthenticationSucceededAsync);
+        RegistrationViewModel = new RegistrationViewModel(uiPreferences, _endpoints, NavigateToLogin, OnAuthenticationSucceededAsync);
+        PasswordsViewModel = new PasswordsViewModel(uiPreferences, _endpoints);
+        ProfileViewModel = new ProfileViewModel(uiPreferences, _endpoints, RefreshAuthenticatedStateAsync, HandleAccountDeletedAsync);
+
+        _currentPageViewModel = LoginViewModel;
+
+        SetHungarianLanguageCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentLanguage = AppLanguage.Hungarian; });
+        SetEnglishLanguageCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentLanguage = AppLanguage.English; });
+        SetLightThemeCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentThemeMode = AppThemeMode.Light; });
+        SetDarkThemeCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentThemeMode = AppThemeMode.Dark; });
+        ShowPasswordsCommand = ReactiveCommand.Create(NavigateToPasswords);
+        ShowProfileCommand = ReactiveCommand.Create(NavigateToProfile);
+        ShowLoginCommand = ReactiveCommand.Create(NavigateToLogin);
+        ShowRegistrationCommand = ReactiveCommand.Create(NavigateToRegistration);
+        LogoutCommand = ReactiveCommand.CreateFromTask(LogoutAsync);
+        RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAuthenticatedStateAsync);
+    }
+
+    public LoginViewModel LoginViewModel { get; }
+
+    public RegistrationViewModel RegistrationViewModel { get; }
+
+    public PasswordsViewModel PasswordsViewModel { get; }
+
+    public ProfileViewModel ProfileViewModel { get; }
+
+    public ViewModelBase CurrentPageViewModel
+    {
+        get => _currentPageViewModel;
+        private set => this.RaiseAndSetIfChanged(ref _currentPageViewModel, value);
+    }
+
+    public bool IsAuthenticated
+    {
+        get => _isAuthenticated;
         private set
         {
-            if (value == _authMode)
-            {
-                return;
-            }
-
-            _authMode = value;
-            this.RaisePropertyChanged(nameof(AuthMode));
-            this.RaisePropertyChanged(nameof(IsLoginMode));
-            this.RaisePropertyChanged(nameof(IsRegisterMode));
+            this.RaiseAndSetIfChanged(ref _isAuthenticated, value);
+            this.RaisePropertyChanged(nameof(IsAnonymous));
         }
     }
 
-    public bool IsLoginMode => AuthMode == AuthViewMode.Login;
+    public bool IsAnonymous => !IsAuthenticated;
 
-    public bool IsRegisterMode => AuthMode == AuthViewMode.Register;
-
-    public string Username
+    public string CurrentUserDisplayName
     {
-        get => _username;
-        set => this.RaiseAndSetIfChanged(ref _username, value);
+        get => _currentUserDisplayName;
+        private set => this.RaiseAndSetIfChanged(ref _currentUserDisplayName, value);
     }
 
-    public string Password
+    public string CurrentUserSubtitle
     {
-        get => _password;
-        set => this.RaiseAndSetIfChanged(ref _password, value);
+        get => _currentUserSubtitle;
+        private set => this.RaiseAndSetIfChanged(ref _currentUserSubtitle, value);
     }
 
-    public bool RememberMe
+    public string? StatusMessage
     {
-        get => _rememberMe;
-        set => this.RaiseAndSetIfChanged(ref _rememberMe, value);
-    }
-
-    public string? UsernameErrorMessage
-    {
-        get => _usernameErrorMessage;
+        get => _statusMessage;
         private set
         {
-            this.RaiseAndSetIfChanged(ref _usernameErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasUsernameError));
+            this.RaiseAndSetIfChanged(ref _statusMessage, value);
+            this.RaisePropertyChanged(nameof(HasStatusMessage));
         }
     }
 
-    public string? PasswordErrorMessage
+    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
+
+    public ReactiveCommand<Unit, Unit> SetHungarianLanguageCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SetEnglishLanguageCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SetLightThemeCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SetDarkThemeCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ShowPasswordsCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ShowProfileCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ShowLoginCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ShowRegistrationCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> LogoutCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
+
+    public string AppTitle => GetTranslation("AppTitle");
+
+    public string SettingsLabel => GetTranslation("Settings");
+
+    public string SettingsLanguageLabel => GetTranslation("Settings_Language");
+
+    public string SettingsThemeLabel => GetTranslation("Settings_Theme");
+
+    public string EnglishLanguageDisplayName => GetTranslation("Language_English");
+
+    public string HungarianLanguageDisplayName => GetTranslation("Language_Hungarian");
+
+    public string ThemeLightLabel => GetTranslation("Theme_Light");
+
+    public string ThemeDarkLabel => GetTranslation("Theme_Dark");
+
+    public string PasswordVaultLabel => GetTranslation("Shell_PasswordVault");
+
+    public string ProfileLabel => GetTranslation("Shell_Profile");
+
+    public string LogoutLabel => GetTranslation("Shell_Logout");
+
+    public string WelcomeLabel => GetTranslation("Shell_Welcome");
+
+    public string NavigationLabel => GetTranslation("Shell_Navigation");
+
+    public string RefreshButtonLabel => GetTranslation("Common_Refresh");
+
+    public async Task InitializeAsync()
     {
-        get => _passwordErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _passwordErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasPasswordError));
-        }
-    }
-
-    public bool HasUsernameError => !string.IsNullOrEmpty(UsernameErrorMessage);
-
-    public bool HasPasswordError => !string.IsNullOrEmpty(PasswordErrorMessage);
-
-    public string RegisterUsername
-    {
-        get => _registerUsername;
-        set => this.RaiseAndSetIfChanged(ref _registerUsername, value);
-    }
-
-    public string RegisterFirstName
-    {
-        get => _registerFirstName;
-        set => this.RaiseAndSetIfChanged(ref _registerFirstName, value);
-    }
-
-    public string RegisterLastName
-    {
-        get => _registerLastName;
-        set => this.RaiseAndSetIfChanged(ref _registerLastName, value);
-    }
-
-    public string RegisterEmail
-    {
-        get => _registerEmail;
-        set => this.RaiseAndSetIfChanged(ref _registerEmail, value);
-    }
-
-    public string RegisterPassword
-    {
-        get => _registerPassword;
-        set => this.RaiseAndSetIfChanged(ref _registerPassword, value);
-    }
-
-    public string RegisterConfirmPassword
-    {
-        get => _registerConfirmPassword;
-        set => this.RaiseAndSetIfChanged(ref _registerConfirmPassword, value);
-    }
-
-    public bool RegisterRememberMe
-    {
-        get => _registerRememberMe;
-        set => this.RaiseAndSetIfChanged(ref _registerRememberMe, value);
-    }
-
-    public string? RegisterUsernameErrorMessage
-    {
-        get => _registerUsernameErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _registerUsernameErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasRegisterUsernameError));
-        }
-    }
-
-    public string? RegisterFirstNameErrorMessage
-    {
-        get => _registerFirstNameErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _registerFirstNameErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasRegisterFirstNameError));
-        }
-    }
-
-    public string? RegisterLastNameErrorMessage
-    {
-        get => _registerLastNameErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _registerLastNameErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasRegisterLastNameError));
-        }
-    }
-
-    public string? RegisterEmailErrorMessage
-    {
-        get => _registerEmailErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _registerEmailErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasRegisterEmailError));
-        }
-    }
-
-    public string? RegisterPasswordErrorMessage
-    {
-        get => _registerPasswordErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _registerPasswordErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasRegisterPasswordError));
-        }
-    }
-
-    public string? RegisterConfirmPasswordErrorMessage
-    {
-        get => _registerConfirmPasswordErrorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _registerConfirmPasswordErrorMessage, value);
-            this.RaisePropertyChanged(nameof(HasRegisterConfirmPasswordError));
-        }
-    }
-
-    public bool HasRegisterUsernameError => !string.IsNullOrEmpty(RegisterUsernameErrorMessage);
-
-    public bool HasRegisterFirstNameError => !string.IsNullOrEmpty(RegisterFirstNameErrorMessage);
-
-    public bool HasRegisterLastNameError => !string.IsNullOrEmpty(RegisterLastNameErrorMessage);
-
-    public bool HasRegisterEmailError => !string.IsNullOrEmpty(RegisterEmailErrorMessage);
-
-    public bool HasRegisterPasswordError => !string.IsNullOrEmpty(RegisterPasswordErrorMessage);
-
-    public bool HasRegisterConfirmPasswordError => !string.IsNullOrEmpty(RegisterConfirmPasswordErrorMessage);
-
-    public bool IsPasswordVisible
-    {
-        get => _isPasswordVisible;
-        private set
-        {
-            if (value == _isPasswordVisible)
-            {
-                return;
-            }
-
-            _isPasswordVisible = value;
-            this.RaisePropertyChanged(nameof(IsPasswordVisible));
-            this.RaisePropertyChanged(nameof(PasswordMaskCharacter));
-            UpdatePasswordToggleIcons();
-        }
-    }
-
-    public bool IsRegisterPasswordVisible
-    {
-        get => _isRegisterPasswordVisible;
-        private set
-        {
-            if (value == _isRegisterPasswordVisible)
-            {
-                return;
-            }
-
-            _isRegisterPasswordVisible = value;
-            this.RaisePropertyChanged(nameof(IsRegisterPasswordVisible));
-            this.RaisePropertyChanged(nameof(RegisterPasswordMaskCharacter));
-            UpdatePasswordToggleIcons();
-        }
-    }
-
-    public bool IsRegisterConfirmPasswordVisible
-    {
-        get => _isRegisterConfirmPasswordVisible;
-        private set
-        {
-            if (value == _isRegisterConfirmPasswordVisible)
-            {
-                return;
-            }
-
-            _isRegisterConfirmPasswordVisible = value;
-            this.RaisePropertyChanged(nameof(IsRegisterConfirmPasswordVisible));
-            this.RaisePropertyChanged(nameof(RegisterConfirmPasswordMaskCharacter));
-            UpdatePasswordToggleIcons();
-        }
-    }
-
-    public char PasswordMaskCharacter => IsPasswordVisible ? '\0' : '●';
-
-    public char RegisterPasswordMaskCharacter => IsRegisterPasswordVisible ? '\0' : '●';
-
-    public char RegisterConfirmPasswordMaskCharacter => IsRegisterConfirmPasswordVisible ? '\0' : '●';
-
-    public IImage? PasswordToggleIcon
-    {
-        get => _passwordToggleIcon;
-        private set => this.RaiseAndSetIfChanged(ref _passwordToggleIcon, value);
-    }
-
-    public IImage? RegisterPasswordToggleIcon
-    {
-        get => _registerPasswordToggleIcon;
-        private set => this.RaiseAndSetIfChanged(ref _registerPasswordToggleIcon, value);
-    }
-
-    public IImage? RegisterConfirmPasswordToggleIcon
-    {
-        get => _registerConfirmPasswordToggleIcon;
-        private set => this.RaiseAndSetIfChanged(ref _registerConfirmPasswordToggleIcon, value);
-    }
-
-    public ReactiveCommand<string, Unit> TogglePasswordVisibilityCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> LoginCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> RegisterCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> NavigateToRegisterCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> NavigateToLoginWithExistingAccountCommand { get; }
-
-    public string LoginTitle => GetTranslation("Login_Title");
-
-    public string LoginUsernameLabel => GetTranslation("Login_Username_Label");
-
-    public string LoginPasswordLabel => GetTranslation("Login_Password_Label");
-
-    public string LoginRememberMeLabel => GetTranslation("Login_RememberMe_Label");
-
-    public string LoginButtonLabel => GetTranslation("Login_Button");
-
-    public string LoginNoAccountText => GetTranslation("Login_NoAccount_Text");
-
-    public string LoginExistingOnDeviceText => GetTranslation("Login_ExistingOnDevice_Text");
-
-    public string LoginExistingOtherDeviceText => GetTranslation("Login_ExistingOtherDevice_Text");
-
-    public string LoginNavigateToRegisterButtonLabel =>
-        GetTranslation("Login_NavigateToRegister_Button");
-
-    public string LoginUsernamePlaceholder => GetTranslation("Login_Username_Placeholder");
-
-    public string LoginPasswordPlaceholder => GetTranslation("Login_Password_Placeholder");
-
-    public string UsernameRequiredMessage => GetTranslation("Validation_Username_Required");
-
-    public string PasswordRequiredMessage => GetTranslation("Validation_Password_Required");
-
-    public string RegisterTitle => GetTranslation("Register_Title");
-
-    public string RegisterUsernameLabel => GetTranslation("Register_Username_Label");
-
-    public string RegisterFirstNameLabel => GetTranslation("Register_FirstName_Label");
-
-    public string RegisterLastNameLabel => GetTranslation("Register_LastName_Label");
-
-    public string RegisterEmailLabel => GetTranslation("Register_Email_Label");
-
-    public string RegisterPasswordLabel => GetTranslation("Register_Password_Label");
-
-    public string RegisterConfirmPasswordLabel => GetTranslation("Register_ConfirmPassword_Label");
-
-    public string RegisterRememberMeLabel => GetTranslation("Register_RememberMe_Label");
-
-    public string RegisterButtonLabel => GetTranslation("Register_Button");
-
-    public string RegisterAlreadyHaveAccountText => GetTranslation("Register_AlreadyHaveAccount_Text");
-
-    public string RegisterExistingOtherDeviceText => GetTranslation("Register_ExistingOtherDevice_Text");
-
-    public string RegisterUsernamePlaceholder => GetTranslation("Register_Username_Placeholder");
-
-    public string RegisterFirstNamePlaceholder => GetTranslation("Register_FirstName_Placeholder");
-
-    public string RegisterLastNamePlaceholder => GetTranslation("Register_LastName_Placeholder");
-
-    public string RegisterEmailPlaceholder => GetTranslation("Register_Email_Placeholder");
-
-    public string RegisterPasswordPlaceholder => GetTranslation("Register_Password_Placeholder");
-
-    public string RegisterConfirmPasswordPlaceholder => GetTranslation("Register_ConfirmPassword_Placeholder");
-
-    protected override void OnLanguageChanged()
-    {
-        base.OnLanguageChanged();
-
-        RaiseAuthTranslationPropertiesChanged();
-
-        if (!string.IsNullOrEmpty(_usernameErrorMessage))
-        {
-            UsernameErrorMessage = UsernameRequiredMessage;
-        }
-
-        if (!string.IsNullOrEmpty(_passwordErrorMessage))
-        {
-            PasswordErrorMessage = PasswordRequiredMessage;
-        }
-    }
-
-    private void TogglePasswordVisibility(string target)
-    {
-        switch (target)
-        {
-            case "LoginPassword":
-                IsPasswordVisible = !IsPasswordVisible;
-                break;
-            case "RegisterPassword":
-                IsRegisterPasswordVisible = !IsRegisterPasswordVisible;
-                break;
-            case "RegisterConfirmPassword":
-                IsRegisterConfirmPasswordVisible = !IsRegisterConfirmPasswordVisible;
-                break;
-        }
-    }
-
-    private async Task ExecuteLoginAsync()
-    {
-        ClearLoginErrors();
-
-        if (string.IsNullOrWhiteSpace(Username))
-            UsernameErrorMessage = UsernameRequiredMessage;
-
-        if (string.IsNullOrWhiteSpace(Password))
-            PasswordErrorMessage = PasswordRequiredMessage;
-
-        if (HasUsernameError || HasPasswordError)
-            return;
-
-        var passwordBytes = Encoding.UTF8.GetBytes(Password);
-        var passwordHash = PasswordManagerLocalBackend.Security.Hashing.SHA512Hash(passwordBytes);
-        CryptographicOperations.ZeroMemory(passwordBytes);
-        Password = string.Empty;
-
         try
         {
-            var request = new LoginRequest
+            var rememberedTokens = await _endpoints.InicializeAllRememberMeAsync();
+
+            foreach (var token in rememberedTokens)
             {
-                Username = Username,
-                Password = passwordHash,
-                RememberMe = RememberMe
-            };
-
-            var token = await _backendAPI.LoginAsync(request);
-
-            App.AuthSessionRegistry.TryAdd(token);
-        }
-        catch (Exception ex)
-        {
-            PasswordErrorMessage = ex.Message;
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(passwordHash);
-        }
-    }
-
-    private async Task ExecuteRegisterAsync()
-    {
-        ClearRegistrationErrors();
-
-        var hasError = false;
-
-        if (string.IsNullOrWhiteSpace(RegisterUsername))
-        {
-            RegisterUsernameErrorMessage = GetTranslation("Validation_Username_Required");
-            hasError = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(RegisterFirstName))
-        {
-            RegisterFirstNameErrorMessage = GetTranslation("Validation_FirstName_Required");
-            hasError = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(RegisterLastName))
-        {
-            RegisterLastNameErrorMessage = GetTranslation("Validation_LastName_Required");
-            hasError = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(RegisterEmail))
-        {
-            RegisterEmailErrorMessage = GetTranslation("Validation_Email_Required");
-            hasError = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(RegisterPassword))
-        {
-            RegisterPasswordErrorMessage = GetTranslation("Validation_RegisterPassword_Required");
-            hasError = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(RegisterConfirmPassword))
-        {
-            RegisterConfirmPasswordErrorMessage = GetTranslation("Validation_RegisterConfirmPassword_Required");
-            hasError = true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(RegisterPassword) &&
-            !string.IsNullOrWhiteSpace(RegisterConfirmPassword) &&
-            !string.Equals(RegisterPassword, RegisterConfirmPassword, StringComparison.Ordinal))
-        {
-            RegisterConfirmPasswordErrorMessage = GetTranslation("Validation_RegisterPassword_Mismatch");
-            hasError = true;
-        }
-
-        if (hasError)
-            return;
-
-        var passwordBytes = Encoding.UTF8.GetBytes(RegisterPassword);
-        var passwordHash = PasswordManagerLocalBackend.Security.Hashing.SHA512Hash(passwordBytes);
-        CryptographicOperations.ZeroMemory(passwordBytes);
-        RegisterPassword = string.Empty;
-        RegisterConfirmPassword = string.Empty;
-
-        try
-        {
-            var request = new RegistrationRequest
-            {
-                Username = RegisterUsername,
-                Password = passwordHash,
-                FirstName = RegisterFirstName,
-                LastName = RegisterLastName,
-                Email = RegisterEmail,
-                RememberMe = RegisterRememberMe
-            };
-
-            var token = await _backendAPI.RegisterAsync(request);
-
-            App.AuthSessionRegistry.TryAdd(token);
-            ExecuteNavigateToLoginWithExistingAccount();
-        }
-        catch (Exception ex)
-        {
-            RegisterUsernameErrorMessage = ex.Message;
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(passwordHash);
-        }
-    }
-
-    private void ExecuteNavigateToRegister()
-    {
-        ClearLoginErrors();
-        ClearRegistrationErrors();
-        AuthMode = AuthViewMode.Register;
-    }
-
-    private void ExecuteNavigateToLoginWithExistingAccount()
-    {
-        ClearLoginErrors();
-        ClearRegistrationErrors();
-        AuthMode = AuthViewMode.Login;
-    }
-
-    private void ClearLoginErrors()
-    {
-        UsernameErrorMessage = null;
-        PasswordErrorMessage = null;
-    }
-
-    private void ClearRegistrationErrors()
-    {
-        RegisterUsernameErrorMessage = null;
-        RegisterFirstNameErrorMessage = null;
-        RegisterLastNameErrorMessage = null;
-        RegisterEmailErrorMessage = null;
-        RegisterPasswordErrorMessage = null;
-        RegisterConfirmPasswordErrorMessage = null;
-    }
-
-    private void RaiseAuthTranslationPropertiesChanged()
-    {
-        this.RaisePropertyChanged(nameof(LoginTitle));
-        this.RaisePropertyChanged(nameof(LoginUsernameLabel));
-        this.RaisePropertyChanged(nameof(LoginPasswordLabel));
-        this.RaisePropertyChanged(nameof(LoginRememberMeLabel));
-        this.RaisePropertyChanged(nameof(LoginButtonLabel));
-        this.RaisePropertyChanged(nameof(LoginNoAccountText));
-        this.RaisePropertyChanged(nameof(LoginExistingOnDeviceText));
-        this.RaisePropertyChanged(nameof(LoginExistingOtherDeviceText));
-        this.RaisePropertyChanged(nameof(LoginNavigateToRegisterButtonLabel));
-        this.RaisePropertyChanged(nameof(LoginUsernamePlaceholder));
-        this.RaisePropertyChanged(nameof(LoginPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(UsernameRequiredMessage));
-        this.RaisePropertyChanged(nameof(PasswordRequiredMessage));
-
-        this.RaisePropertyChanged(nameof(RegisterTitle));
-        this.RaisePropertyChanged(nameof(RegisterUsernameLabel));
-        this.RaisePropertyChanged(nameof(RegisterFirstNameLabel));
-        this.RaisePropertyChanged(nameof(RegisterLastNameLabel));
-        this.RaisePropertyChanged(nameof(RegisterEmailLabel));
-        this.RaisePropertyChanged(nameof(RegisterPasswordLabel));
-        this.RaisePropertyChanged(nameof(RegisterConfirmPasswordLabel));
-        this.RaisePropertyChanged(nameof(RegisterRememberMeLabel));
-        this.RaisePropertyChanged(nameof(RegisterButtonLabel));
-        this.RaisePropertyChanged(nameof(RegisterAlreadyHaveAccountText));
-        this.RaisePropertyChanged(nameof(RegisterExistingOtherDeviceText));
-        this.RaisePropertyChanged(nameof(RegisterUsernamePlaceholder));
-        this.RaisePropertyChanged(nameof(RegisterFirstNamePlaceholder));
-        this.RaisePropertyChanged(nameof(RegisterLastNamePlaceholder));
-        this.RaisePropertyChanged(nameof(RegisterEmailPlaceholder));
-        this.RaisePropertyChanged(nameof(RegisterPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(RegisterConfirmPasswordPlaceholder));
-    }
-
-    private void EnsurePasswordIconAssetsLoaded()
-    {
-        if (_eyeShowImage != null && _eyeHideImage != null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (_eyeShowImage == null && AssetLoader.Exists(EyeShowIconUri))
-            {
-                using var stream = AssetLoader.Open(EyeShowIconUri);
-                _eyeShowImage = new Bitmap(stream);
+                _authSessionRegistry.TryAdd(token);
             }
 
-            if (_eyeHideImage == null && AssetLoader.Exists(EyeHideIconUri))
+            var currentToken = _authSessionRegistry.CurrentUserToken;
+            if (currentToken != Guid.Empty)
             {
-                using var stream = AssetLoader.Open(EyeHideIconUri);
-                _eyeHideImage = new Bitmap(stream);
+                await LoadAuthenticatedStateAsync(currentToken, GetTranslation("Shell_RememberedSessionLoaded"));
+                return;
             }
         }
         catch
         {
+            // Ignore remembered-session startup failures and show the auth flow.
+        }
+
+        NavigateToLogin();
+    }
+
+    protected override void OnLanguageChanged()
+    {
+        this.RaisePropertyChanged(nameof(AppTitle));
+        this.RaisePropertyChanged(nameof(SettingsLabel));
+        this.RaisePropertyChanged(nameof(SettingsLanguageLabel));
+        this.RaisePropertyChanged(nameof(SettingsThemeLabel));
+        this.RaisePropertyChanged(nameof(EnglishLanguageDisplayName));
+        this.RaisePropertyChanged(nameof(HungarianLanguageDisplayName));
+        this.RaisePropertyChanged(nameof(ThemeLightLabel));
+        this.RaisePropertyChanged(nameof(ThemeDarkLabel));
+        this.RaisePropertyChanged(nameof(PasswordVaultLabel));
+        this.RaisePropertyChanged(nameof(ProfileLabel));
+        this.RaisePropertyChanged(nameof(LogoutLabel));
+        this.RaisePropertyChanged(nameof(WelcomeLabel));
+        this.RaisePropertyChanged(nameof(NavigationLabel));
+        this.RaisePropertyChanged(nameof(RefreshButtonLabel));
+    }
+
+    private void NavigateToLogin()
+    {
+        CurrentPageViewModel = LoginViewModel;
+        StatusMessage = null;
+    }
+
+    private void NavigateToRegistration()
+    {
+        CurrentPageViewModel = RegistrationViewModel;
+        StatusMessage = null;
+    }
+
+    private void NavigateToPasswords()
+    {
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        CurrentPageViewModel = PasswordsViewModel;
+    }
+
+    private void NavigateToProfile()
+    {
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        CurrentPageViewModel = ProfileViewModel;
+    }
+
+    private async Task OnAuthenticationSucceededAsync(Guid token)
+    {
+        _authSessionRegistry.TryAdd(token);
+        await LoadAuthenticatedStateAsync(token, GetTranslation("Shell_SignedIn"));
+    }
+
+    private async Task LoadAuthenticatedStateAsync(Guid token, string? message = null)
+    {
+        var profile = await _endpoints.GetUserProfileInfoAsync(token);
+
+        IsAuthenticated = true;
+        CurrentUserDisplayName = BuildDisplayName(profile);
+        CurrentUserSubtitle = string.IsNullOrWhiteSpace(profile.Username)
+            ? profile.Email
+            : $"@{profile.Username}";
+
+        await PasswordsViewModel.LoadAsync(token);
+        ProfileViewModel.Load(token, profile);
+
+        CurrentPageViewModel = PasswordsViewModel;
+        StatusMessage = message;
+    }
+
+    private async Task RefreshAuthenticatedStateAsync()
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty)
+        {
+            return;
+        }
+
+        await LoadAuthenticatedStateAsync(token, GetTranslation("Shell_DataRefreshed"));
+    }
+
+    private async Task LogoutAsync()
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty)
+        {
+            NavigateToLogin();
+            return;
+        }
+
+        try
+        {
+            _endpoints.Logout(token);
+        }
+        finally
+        {
+            _authSessionRegistry.TryRemove(token);
+            await HandleLoggedOutStateAsync();
         }
     }
 
-    private void UpdatePasswordToggleIcons()
+    private async Task HandleAccountDeletedAsync()
     {
-        EnsurePasswordIconAssetsLoaded();
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token != Guid.Empty)
+        {
+            _authSessionRegistry.TryRemove(token);
+        }
 
-        PasswordToggleIcon = IsPasswordVisible ? _eyeHideImage : _eyeShowImage;
-        RegisterPasswordToggleIcon = IsRegisterPasswordVisible ? _eyeHideImage : _eyeShowImage;
-        RegisterConfirmPasswordToggleIcon = IsRegisterConfirmPasswordVisible ? _eyeHideImage : _eyeShowImage;
+        await HandleLoggedOutStateAsync();
+        StatusMessage = GetTranslation("Profile_Delete_Success");
+    }
+
+    private Task HandleLoggedOutStateAsync()
+    {
+        IsAuthenticated = false;
+        CurrentUserDisplayName = string.Empty;
+        CurrentUserSubtitle = string.Empty;
+        PasswordsViewModel.Reset();
+        ProfileViewModel.Reset();
+        LoginViewModel.Reset();
+        RegistrationViewModel.Reset();
+        CurrentPageViewModel = LoginViewModel;
+        StatusMessage = GetTranslation("Shell_LoggedOut");
+        return Task.CompletedTask;
+    }
+
+    private static string BuildDisplayName(UserProfileInfoResponse profile)
+    {
+        var fullName = string.Join(
+            " ",
+            new[] { profile.LastName?.Trim(), profile.FirstName?.Trim() }
+                .Where(part => !string.IsNullOrWhiteSpace(part)));
+
+        if (!string.IsNullOrWhiteSpace(fullName))
+        {
+            return fullName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.Username))
+        {
+            return profile.Username;
+        }
+
+        return profile.Email;
     }
 }

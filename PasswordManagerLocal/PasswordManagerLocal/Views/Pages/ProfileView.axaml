@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="PasswordManagerLocal.Views.Pages.ProfileView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
+    x:DataType="vm:ProfileViewModel">
+
+  <ScrollViewer>
+    <StackPanel Margin="16,8,16,16" Spacing="12">
+      <Border Classes="card">
+        <StackPanel Spacing="6">
+          <TextBlock Text="{Binding Title}" Classes="pageTitle" />
+          <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding StatusMessage}" Classes="subtleText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding AccountOverviewLabel}" Classes="sectionTitle" />
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
+              <TextBlock Text="{Binding Username}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="4">
+              <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
+              <TextBlock Text="{Binding Email}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
+              <TextBlock Text="{Binding FirstName}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="4">
+              <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
+              <TextBlock Text="{Binding LastName}" />
+            </StackPanel>
+          </Grid>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{Binding RegistrationDateLabel}" Classes="subtleText" />
+              <TextBlock Text="{Binding RegistrationDateText}" TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="4">
+              <TextBlock Text="{Binding LastLoginDateLabel}" Classes="subtleText" />
+              <TextBlock Text="{Binding LastLoginDateText}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding PersonalInfoTitle}" Classes="sectionTitle" />
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding FirstNameLabel}" />
+              <TextBox Text="{Binding EditFirstName}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="6">
+              <TextBlock Text="{Binding LastNameLabel}" />
+              <TextBox Text="{Binding EditLastName}" />
+            </StackPanel>
+          </Grid>
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding EmailLabel}" />
+            <TextBox Text="{Binding EditEmail}" />
+          </StackPanel>
+          <Button Classes="primary"
+                  Command="{Binding SaveProfileCommand}"
+                  Content="{Binding SaveProfileLabel}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding UsernameTitle}" Classes="sectionTitle" />
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding UsernameLabel}" />
+            <TextBox Text="{Binding EditUsername}" Watermark="{Binding EditUsernamePlaceholder}" />
+          </StackPanel>
+          <Button Classes="ghost"
+                  Command="{Binding ChangeUsernameCommand}"
+                  Content="{Binding ChangeUsernameLabel}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding SecurityTitle}" Classes="sectionTitle" />
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding CurrentPasswordLabel}" />
+            <TextBox Text="{Binding CurrentPassword}" PasswordChar="●" Watermark="{Binding CurrentPasswordPlaceholder}" />
+          </StackPanel>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding NewPasswordLabel}" />
+              <TextBox Text="{Binding NewPassword}" PasswordChar="●" Watermark="{Binding NewPasswordPlaceholder}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="6">
+              <TextBlock Text="{Binding ConfirmNewPasswordLabel}" />
+              <TextBox Text="{Binding ConfirmNewPassword}" PasswordChar="●" Watermark="{Binding ConfirmNewPasswordPlaceholder}" />
+            </StackPanel>
+          </Grid>
+          <Button Classes="ghost"
+                  Command="{Binding ChangeMasterPasswordCommand}"
+                  Content="{Binding ChangeMasterPasswordLabel}" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card dangerZone">
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding DangerZoneTitle}" Classes="sectionTitle" />
+          <TextBlock Text="{Binding DeleteAccountDescription}" Classes="subtleText" TextWrapping="Wrap" />
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding CurrentPasswordLabel}" />
+            <TextBox Text="{Binding DeleteAccountPassword}" PasswordChar="●" Watermark="{Binding DeleteAccountPasswordPlaceholder}" />
+          </StackPanel>
+          <Button Classes="danger"
+                  Command="{Binding DeleteAccountCommand}"
+                  Content="{Binding DeleteAccountLabel}" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

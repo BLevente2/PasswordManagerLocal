@@ -3,310 +3,90 @@
     x:Class="PasswordManagerLocal.Views.MainView"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:authViews="clr-namespace:PasswordManagerLocal.Views.Auth"
+    xmlns:authVm="clr-namespace:PasswordManagerLocal.ViewModels.Auth"
+    xmlns:pagesViews="clr-namespace:PasswordManagerLocal.Views.Pages"
+    xmlns:pagesVm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels"
     x:DataType="vm:MainViewModel">
 
-  <Grid RowDefinitions="Auto,*"
-        Background="{DynamicResource PageBackgroundBrush}">
+  <UserControl.DataTemplates>
+    <DataTemplate x:DataType="authVm:LoginViewModel">
+      <authViews:LoginView />
+    </DataTemplate>
+    <DataTemplate x:DataType="authVm:RegistrationViewModel">
+      <authViews:RegistrationView />
+    </DataTemplate>
+    <DataTemplate x:DataType="pagesVm:PasswordsViewModel">
+      <pagesViews:PasswordListView />
+    </DataTemplate>
+    <DataTemplate x:DataType="pagesVm:ProfileViewModel">
+      <pagesViews:ProfileView />
+    </DataTemplate>
+  </UserControl.DataTemplates>
 
-    <!-- Felső sáv: app cím + beállítások gomb -->
-    <Border Padding="12"
-            BorderThickness="0,0,0,1"
-            Background="{DynamicResource CardBackgroundBrush}"
-            BorderBrush="{DynamicResource CardBorderBrush}">
-      <Grid ColumnDefinitions="*,Auto"
-            VerticalAlignment="Center">
-        <TextBlock Text="{Binding AppTitle}"
-                   FontSize="16"
-                   FontWeight="SemiBold"
-                   VerticalAlignment="Center" />
+  <Grid RowDefinitions="Auto,Auto,*">
+    <Border Classes="card" Margin="16,16,16,8">
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="4">
+          <TextBlock Text="{Binding AppTitle}" Classes="sectionTitle" />
+          <TextBlock Text="{Binding StatusMessage}" IsVisible="{Binding HasStatusMessage}" Classes="subtleText" TextWrapping="Wrap" />
+        </StackPanel>
 
-        <Button Name="SettingsButton"
-                Grid.Column="1"
-                Width="32"
-                Height="32"
+        <Button Grid.Column="1"
+                IsVisible="{Binding IsAuthenticated}"
+                Classes="ghost"
+                Padding="14,10"
+                HorizontalAlignment="Right">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="{Binding CurrentUserDisplayName}" TextTrimming="CharacterEllipsis" MaxWidth="180" />
+            <TextBlock Text="▾" />
+          </StackPanel>
+          <Button.Flyout>
+            <MenuFlyout>
+              <MenuItem Header="{Binding PasswordVaultLabel}" Command="{Binding ShowPasswordsCommand}" />
+              <MenuItem Header="{Binding ProfileLabel}" Command="{Binding ShowProfileCommand}" />
+              <MenuItem Header="{Binding LogoutLabel}" Command="{Binding LogoutCommand}" />
+            </MenuFlyout>
+          </Button.Flyout>
+        </Button>
+
+        <Button Grid.Column="2"
+                Classes="ghost"
+                Width="44"
+                Height="44"
                 HorizontalAlignment="Right"
-                VerticalAlignment="Center"
-                Background="Transparent"
-                BorderThickness="0"
-                Padding="0">
-          <TextBlock Text="⚙"
-                     FontSize="16"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center" />
-          <Button.ContextMenu>
-            <ContextMenu>
+                ToolTip.Tip="{Binding SettingsLabel}">
+          <TextBlock Text="⚙" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          <Button.Flyout>
+            <MenuFlyout>
               <MenuItem Header="{Binding SettingsLanguageLabel}">
-                <!-- Magyar nyelv zászlóval -->
-                <MenuItem Command="{Binding SetHungarianLanguageCommand}">
-                  <MenuItem.Header>
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                      <Image Source="avares://PasswordManagerLocal/Assets/Flags/hu.png"
-                             Width="16"
-                             Height="16" />
-                      <TextBlock Text="{Binding HungarianLanguageDisplayName}" />
-                    </StackPanel>
-                  </MenuItem.Header>
-                </MenuItem>
-
-                <!-- Angol (US) nyelv zászlóval -->
-                <MenuItem Command="{Binding SetEnglishLanguageCommand}">
-                  <MenuItem.Header>
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                      <Image Source="avares://PasswordManagerLocal/Assets/Flags/en_us.png"
-                             Width="16"
-                             Height="16" />
-                      <TextBlock Text="{Binding EnglishLanguageDisplayName}" />
-                    </StackPanel>
-                  </MenuItem.Header>
-                </MenuItem>
+                <MenuItem Header="{Binding HungarianLanguageDisplayName}" Command="{Binding SetHungarianLanguageCommand}" />
+                <MenuItem Header="{Binding EnglishLanguageDisplayName}" Command="{Binding SetEnglishLanguageCommand}" />
               </MenuItem>
-
               <MenuItem Header="{Binding SettingsThemeLabel}">
-                <MenuItem Header="{Binding ThemeLightLabel}"
-                          Command="{Binding SetLightThemeCommand}" />
-                <MenuItem Header="{Binding ThemeDarkLabel}"
-                          Command="{Binding SetDarkThemeCommand}" />
+                <MenuItem Header="{Binding ThemeLightLabel}" Command="{Binding SetLightThemeCommand}" />
+                <MenuItem Header="{Binding ThemeDarkLabel}" Command="{Binding SetDarkThemeCommand}" />
               </MenuItem>
-            </ContextMenu>
-          </Button.ContextMenu>
+              <MenuItem Header="{Binding RefreshButtonLabel}" Command="{Binding RefreshCommand}" IsVisible="{Binding IsAuthenticated}" />
+            </MenuFlyout>
+          </Button.Flyout>
         </Button>
       </Grid>
     </Border>
 
-    <!-- Tartalom -->
-    <ScrollViewer Grid.Row="1"
-                  Padding="{DynamicResource PagePadding}">
-      <Grid HorizontalAlignment="Center"
-            MaxWidth="480">
-        <Border Background="{DynamicResource CardBackgroundBrush}"
-                BorderBrush="{DynamicResource CardBorderBrush}"
-                BorderThickness="1"
-                CornerRadius="12"
-                Padding="16">
-          <StackPanel Spacing="16">
+    <Border Grid.Row="1"
+            Classes="card"
+            Margin="16,0,16,8"
+            IsVisible="{Binding IsAuthenticated}">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button Classes="ghost" Command="{Binding ShowPasswordsCommand}" Content="{Binding PasswordVaultLabel}" />
+        <Button Classes="ghost" Command="{Binding ShowProfileCommand}" Content="{Binding ProfileLabel}" />
+        <TextBlock Text="{Binding WelcomeLabel}" Classes="subtleText" VerticalAlignment="Center" Margin="8,0,0,0" />
+        <TextBlock Text="{Binding CurrentUserSubtitle}" Classes="subtleText" VerticalAlignment="Center" />
+      </StackPanel>
+    </Border>
 
-            <!-- Bejelentkezés nézet -->
-            <StackPanel Spacing="8"
-                        IsVisible="{Binding IsLoginMode}">
-              <TextBlock Text="{Binding LoginTitle}"
-                         FontSize="20"
-                         FontWeight="SemiBold" />
-
-              <!-- Felhasználónév -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding LoginUsernameLabel}" />
-                <TextBox Text="{Binding Username}"
-                         Watermark="{Binding LoginUsernamePlaceholder}" />
-                <TextBlock Text="{Binding UsernameErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasUsernameError}" />
-              </StackPanel>
-
-              <!-- Jelszó -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding LoginPasswordLabel}" />
-                <Grid ColumnDefinitions="*,Auto">
-                  <TextBox Grid.Column="0"
-                           Text="{Binding Password}"
-                           PasswordChar="{Binding PasswordMaskCharacter}"
-                           Watermark="{Binding LoginPasswordPlaceholder}" />
-                  <Button Grid.Column="1"
-                          Width="32"
-                          Height="32"
-                          Margin="8,0,0,0"
-                          Background="Transparent"
-                          BorderThickness="0"
-                          Command="{Binding TogglePasswordVisibilityCommand}"
-                          CommandParameter="LoginPassword">
-                    <Image Source="{Binding PasswordToggleIcon}"
-                           Width="16"
-                           Height="16" />
-                  </Button>
-                </Grid>
-                <TextBlock Text="{Binding PasswordErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasPasswordError}" />
-              </StackPanel>
-
-              <!-- Emlékezz rám -->
-              <CheckBox Content="{Binding LoginRememberMeLabel}"
-                        IsChecked="{Binding RememberMe}" />
-
-              <!-- Bejelentkezés gomb -->
-              <Button Content="{Binding LoginButtonLabel}"
-                      Command="{Binding LoginCommand}"
-                      HorizontalAlignment="Stretch"
-                      Margin="0,8,0,0" />
-
-              <!-- Információs szövegek -->
-              <StackPanel Spacing="4"
-                          Margin="0,12,0,0">
-                <TextBlock Text="{Binding LoginExistingOnDeviceText}"
-                           TextWrapping="Wrap" />
-                <TextBlock Text="{Binding LoginExistingOtherDeviceText}"
-                           TextWrapping="Wrap" />
-                <!-- Kattintható "Még nincs fiókod? Regisztrálj." link -->
-                <Button Content="{Binding LoginNoAccountText}"
-                        Command="{Binding NavigateToRegisterCommand}"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="0"
-                        HorizontalAlignment="Left"
-                        Foreground="{DynamicResource AccentBrush}"
-                        Cursor="Hand" />
-              </StackPanel>
-
-              <!-- Átmenet a regisztrációhoz -->
-              <Button Content="{Binding LoginNavigateToRegisterButtonLabel}"
-                      Command="{Binding NavigateToRegisterCommand}"
-                      HorizontalAlignment="Right"
-                      Margin="0,8,0,0" />
-            </StackPanel>
-
-            <!-- Regisztráció nézet -->
-            <StackPanel Spacing="8"
-                        IsVisible="{Binding IsRegisterMode}">
-              <TextBlock Text="{Binding RegisterTitle}"
-                         FontSize="20"
-                         FontWeight="SemiBold" />
-
-              <!-- Felhasználónév -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding RegisterUsernameLabel}" />
-                <TextBox Text="{Binding RegisterUsername}"
-                         Watermark="{Binding RegisterUsernamePlaceholder}" />
-                <TextBlock Text="{Binding RegisterUsernameErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasRegisterUsernameError}" />
-              </StackPanel>
-
-              <!-- Vezetéknév -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding RegisterFirstNameLabel}" />
-                <TextBox Text="{Binding RegisterFirstName}"
-                         Watermark="{Binding RegisterFirstNamePlaceholder}" />
-                <TextBlock Text="{Binding RegisterFirstNameErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasRegisterFirstNameError}" />
-              </StackPanel>
-
-              <!-- Keresztnév -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding RegisterLastNameLabel}" />
-                <TextBox Text="{Binding RegisterLastName}"
-                         Watermark="{Binding RegisterLastNamePlaceholder}" />
-                <TextBlock Text="{Binding RegisterLastNameErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasRegisterLastNameError}" />
-              </StackPanel>
-
-              <!-- E-mail -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding RegisterEmailLabel}" />
-                <TextBox Text="{Binding RegisterEmail}"
-                         Watermark="{Binding RegisterEmailPlaceholder}" />
-                <TextBlock Text="{Binding RegisterEmailErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasRegisterEmailError}" />
-              </StackPanel>
-
-              <!-- Jelszó -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding RegisterPasswordLabel}" />
-                <Grid ColumnDefinitions="*,Auto">
-                  <TextBox Grid.Column="0"
-                           Text="{Binding RegisterPassword}"
-                           PasswordChar="{Binding RegisterPasswordMaskCharacter}"
-                           Watermark="{Binding RegisterPasswordPlaceholder}" />
-                  <Button Grid.Column="1"
-                          Width="32"
-                          Height="32"
-                          Margin="8,0,0,0"
-                          Background="Transparent"
-                          BorderThickness="0"
-                          Command="{Binding TogglePasswordVisibilityCommand}"
-                          CommandParameter="RegisterPassword">
-                    <Image Source="{Binding RegisterPasswordToggleIcon}"
-                           Width="16"
-                           Height="16" />
-                  </Button>
-                </Grid>
-                <TextBlock Text="{Binding RegisterPasswordErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasRegisterPasswordError}" />
-              </StackPanel>
-
-              <!-- Jelszó megerősítés -->
-              <StackPanel Spacing="4">
-                <TextBlock Text="{Binding RegisterConfirmPasswordLabel}" />
-                <Grid ColumnDefinitions="*,Auto">
-                  <TextBox Grid.Column="0"
-                           Text="{Binding RegisterConfirmPassword}"
-                           PasswordChar="{Binding RegisterConfirmPasswordMaskCharacter}"
-                           Watermark="{Binding RegisterConfirmPasswordPlaceholder}" />
-                  <Button Grid.Column="1"
-                          Width="32"
-                          Height="32"
-                          Margin="8,0,0,0"
-                          Background="Transparent"
-                          BorderThickness="0"
-                          Command="{Binding TogglePasswordVisibilityCommand}"
-                          CommandParameter="RegisterConfirmPassword">
-                    <Image Source="{Binding RegisterConfirmPasswordToggleIcon}"
-                           Width="16"
-                           Height="16" />
-                  </Button>
-                </Grid>
-                <TextBlock Text="{Binding RegisterConfirmPasswordErrorMessage}"
-                           Foreground="Red"
-                           FontSize="11"
-                           IsVisible="{Binding HasRegisterConfirmPasswordError}" />
-              </StackPanel>
-
-              <!-- Emlékezz rám -->
-              <CheckBox Content="{Binding RegisterRememberMeLabel}"
-                        IsChecked="{Binding RegisterRememberMe}" />
-
-              <!-- Regisztráció gomb -->
-              <Button Content="{Binding RegisterButtonLabel}"
-                      Command="{Binding RegisterCommand}"
-                      HorizontalAlignment="Stretch"
-                      Margin="0,8,0,0" />
-
-              <!-- Információs szövegek -->
-              <StackPanel Spacing="4"
-                          Margin="0,12,0,0">
-                <TextBlock Text="{Binding RegisterExistingOtherDeviceText}"
-                           TextWrapping="Wrap" />
-                <!-- Kattintható "Már van fiókod? Jelentkezz be." link -->
-                <Button Content="{Binding RegisterAlreadyHaveAccountText}"
-                        Command="{Binding NavigateToLoginWithExistingAccountCommand}"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="0"
-                        HorizontalAlignment="Left"
-                        Foreground="{DynamicResource AccentBrush}"
-                        Cursor="Hand" />
-              </StackPanel>
-
-              <!-- Vissza bejelentkezéshez -->
-              <Button Content="{Binding LoginButtonLabel}"
-                      Command="{Binding NavigateToLoginWithExistingAccountCommand}"
-                      HorizontalAlignment="Right"
-                      Margin="0,8,0,0" />
-            </StackPanel>
-
-          </StackPanel>
-        </Border>
-      </Grid>
-    </ScrollViewer>
+    <ContentControl Grid.Row="2" Content="{Binding CurrentPageViewModel}" />
   </Grid>
 </UserControl>

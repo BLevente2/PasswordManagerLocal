@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="PasswordManagerLocal.Views.Auth.LoginView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Auth"
+    x:DataType="vm:LoginViewModel">
+
+  <ScrollViewer>
+    <Grid Margin="16,8,16,16">
+      <Border Classes="card" HorizontalAlignment="Center" MaxWidth="460" MinWidth="280">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding UsernameLabel}" />
+            <TextBox Text="{Binding Username}" Watermark="{Binding UsernamePlaceholder}" />
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding PasswordLabel}" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBox Grid.Column="0"
+                       Text="{Binding Password}"
+                       PasswordChar="{Binding PasswordMaskCharacter}"
+                       Watermark="{Binding PasswordPlaceholder}" />
+              <Button Grid.Column="1"
+                      Classes="ghost"
+                      Command="{Binding TogglePasswordVisibilityCommand}"
+                      Content="{Binding PasswordVisibilityToggleText}" />
+            </Grid>
+          </StackPanel>
+
+          <CheckBox IsChecked="{Binding RememberMe}" Content="{Binding RememberMeLabel}" />
+
+          <TextBlock Text="{Binding ErrorMessage}" Classes="errorText" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+
+          <Button Classes="primary"
+                  Command="{Binding LoginCommand}"
+                  Content="{Binding LoginButtonLabel}" />
+
+          <Border Classes="divider" />
+
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding NoAccountText}" Classes="subtleText" TextWrapping="Wrap" />
+            <Button Classes="ghost"
+                    Command="{Binding NavigateToRegistrationCommand}"
+                    Content="{Binding NavigateToRegisterLabel}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </ScrollViewer>
+</UserControl>

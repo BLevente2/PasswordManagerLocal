@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="PasswordManagerLocal.Views.Auth.RegistrationView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Auth"
+    x:DataType="vm:RegistrationViewModel">
+
+  <ScrollViewer>
+    <Grid Margin="16,8,16,16">
+      <Border Classes="card" HorizontalAlignment="Center" MaxWidth="560" MinWidth="280">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding UsernameLabel}" />
+              <TextBox Text="{Binding Username}" Watermark="{Binding UsernamePlaceholder}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="6">
+              <TextBlock Text="{Binding EmailLabel}" />
+              <TextBox Text="{Binding Email}" Watermark="{Binding EmailPlaceholder}" />
+            </StackPanel>
+          </Grid>
+
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding FirstNameLabel}" />
+              <TextBox Text="{Binding FirstName}" Watermark="{Binding FirstNamePlaceholder}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="6">
+              <TextBlock Text="{Binding LastNameLabel}" />
+              <TextBox Text="{Binding LastName}" Watermark="{Binding LastNamePlaceholder}" />
+            </StackPanel>
+          </Grid>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding PasswordLabel}" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBox Grid.Column="0"
+                       Text="{Binding Password}"
+                       PasswordChar="{Binding PasswordMaskCharacter}"
+                       Watermark="{Binding PasswordPlaceholder}" />
+              <Button Grid.Column="1"
+                      Classes="ghost"
+                      Command="{Binding TogglePasswordVisibilityCommand}"
+                      Content="{Binding PasswordVisibilityToggleText}" />
+            </Grid>
+          </StackPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding ConfirmPasswordLabel}" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBox Grid.Column="0"
+                       Text="{Binding ConfirmPassword}"
+                       PasswordChar="{Binding ConfirmPasswordMaskCharacter}"
+                       Watermark="{Binding ConfirmPasswordPlaceholder}" />
+              <Button Grid.Column="1"
+                      Classes="ghost"
+                      Command="{Binding ToggleConfirmPasswordVisibilityCommand}"
+                      Content="{Binding ConfirmPasswordVisibilityToggleText}" />
+            </Grid>
+          </StackPanel>
+
+          <CheckBox IsChecked="{Binding RememberMe}" Content="{Binding RememberMeLabel}" />
+
+          <TextBlock Text="{Binding ErrorMessage}" Classes="errorText" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+
+          <Button Classes="primary"
+                  Command="{Binding RegisterCommand}"
+                  Content="{Binding RegisterButtonLabel}" />
+
+          <Border Classes="divider" />
+
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding AlreadyHaveAccountText}" Classes="subtleText" TextWrapping="Wrap" />
+            <Button Classes="ghost"
+                    Command="{Binding NavigateToLoginCommand}"
+                    Content="{Binding NavigateToLoginLabel}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </ScrollViewer>
+</UserControl>
