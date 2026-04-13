@@ -53,11 +53,17 @@
 
         <Button Grid.Column="2"
                 Classes="ghost"
-                Width="44"
-                Height="44"
+                Width="48"
+                Height="48"
+                Padding="12"
                 HorizontalAlignment="Right"
                 ToolTip.Tip="{Binding SettingsLabel}">
-          <TextBlock Text="⚙" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          <Image Source="avares://PasswordManagerLocal/Assets/Icons/settings_gear.png"
+                 Stretch="Uniform"
+                 Width="20"
+                 Height="20"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center" />
           <Button.Flyout>
             <MenuFlyout>
               <MenuItem Header="{Binding SettingsLanguageLabel}">

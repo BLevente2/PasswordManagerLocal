@@ -1,12 +1,11 @@
+using Avalonia.Media;
 using PasswordManagerLocal.Helpers;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Abstractions;
-using Avalonia.Media;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
 using ReactiveUI;
 using System.Collections.ObjectModel;
-using System.Linq;
 using System.Reactive;
 using System.Security.Cryptography;
 using System.Text;
@@ -16,6 +15,7 @@ namespace PasswordManagerLocal.ViewModels.Pages;
 public sealed class PasswordsViewModel : ViewModelBase
 {
     private readonly IEndpoints _endpoints;
+    private readonly List<PasswordItemViewModel> _allPasswords = [];
 
     private Guid _token;
     private PasswordItemViewModel? _selectedPassword;
@@ -28,6 +28,9 @@ public sealed class PasswordsViewModel : ViewModelBase
     private string _editorColor = "#FFFFD700";
     private string _editorPassword = string.Empty;
     private bool _isEditorPasswordVisible;
+    private string _searchQuery = string.Empty;
+    private PasswordColorOptionViewModel? _selectedEditorColorOption;
+    private PasswordSortOptionViewModel? _selectedSortOption;
 
     public PasswordsViewModel(UiPreferencesService uiPreferences, IEndpoints endpoints)
         : base(uiPreferences)
@@ -35,6 +38,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         _endpoints = endpoints;
 
         Passwords = new ObservableCollection<PasswordItemViewModel>();
+        PresetColors = new ObservableCollection<PasswordColorOptionViewModel>();
+        SortOptions = new ObservableCollection<PasswordSortOptionViewModel>();
 
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAsync);
         BeginCreatePasswordCommand = ReactiveCommand.Create(BeginCreatePassword);
@@ -45,9 +50,19 @@ public sealed class PasswordsViewModel : ViewModelBase
         SavePasswordCommand = ReactiveCommand.CreateFromTask(SavePasswordAsync);
         CancelPasswordEditorCommand = ReactiveCommand.Create(CancelPasswordEditor);
         ToggleEditorPasswordVisibilityCommand = ReactiveCommand.Create(ToggleEditorPasswordVisibility);
+        ClearSelectionCommand = ReactiveCommand.Create(ClearSelection);
+
+        RebuildPresetColors();
+        RebuildSortOptions();
+        SelectDefaultPresetColor();
+        SelectDefaultSortOption();
     }
 
     public ObservableCollection<PasswordItemViewModel> Passwords { get; }
+
+    public ObservableCollection<PasswordColorOptionViewModel> PresetColors { get; }
+
+    public ObservableCollection<PasswordSortOptionViewModel> SortOptions { get; }
 
     public PasswordItemViewModel? SelectedPassword
     {
@@ -57,11 +72,14 @@ public sealed class PasswordsViewModel : ViewModelBase
             this.RaiseAndSetIfChanged(ref _selectedPassword, value);
             this.RaisePropertyChanged(nameof(HasSelection));
             this.RaisePropertyChanged(nameof(IsSelectionEmpty));
+            this.RaisePropertyChanged(nameof(IsPasswordHidden));
             HidePassword();
         }
     }
 
     public bool HasSelection => SelectedPassword is not null;
+
+    public bool IsSelectionEmpty => !HasSelection;
 
     public string? RevealedPassword
     {
@@ -70,15 +88,13 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _revealedPassword, value);
             this.RaisePropertyChanged(nameof(HasRevealedPassword));
-            this.RaisePropertyChanged(nameof(PasswordDisplayValue));
+            this.RaisePropertyChanged(nameof(IsPasswordHidden));
         }
     }
 
     public bool HasRevealedPassword => !string.IsNullOrEmpty(RevealedPassword);
 
-    public string PasswordDisplayValue => HasRevealedPassword
-        ? RevealedPassword!
-        : GetTranslation("Passwords_HiddenValue");
+    public bool IsPasswordHidden => HasSelection && !HasRevealedPassword;
 
     public string? StatusMessage
     {
@@ -95,8 +111,6 @@ public sealed class PasswordsViewModel : ViewModelBase
     public bool HasPasswords => Passwords.Count > 0;
 
     public bool IsEmpty => Passwords.Count == 0;
-
-    public bool IsSelectionEmpty => !HasSelection;
 
     public bool IsEditorOpen
     {
@@ -131,10 +145,25 @@ public sealed class PasswordsViewModel : ViewModelBase
     public string EditorColor
     {
         get => _editorColor;
-        set
+        private set
         {
             this.RaiseAndSetIfChanged(ref _editorColor, value);
             this.RaisePropertyChanged(nameof(EditorColorBrush));
+        }
+    }
+
+    public PasswordColorOptionViewModel? SelectedEditorColorOption
+    {
+        get => _selectedEditorColorOption;
+        set
+        {
+            if (ReferenceEquals(_selectedEditorColorOption, value))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _selectedEditorColorOption, value);
+            EditorColor = value?.HexValue ?? "#FFFFD700";
         }
     }
 
@@ -159,6 +188,37 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public char EditorPasswordMaskCharacter => IsEditorPasswordVisible ? '\0' : '●';
 
+    public string SearchQuery
+    {
+        get => _searchQuery;
+        set
+        {
+            value ??= string.Empty;
+            if (string.Equals(_searchQuery, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _searchQuery, value);
+            ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
+        }
+    }
+
+    public PasswordSortOptionViewModel? SelectedSortOption
+    {
+        get => _selectedSortOption;
+        set
+        {
+            if (ReferenceEquals(_selectedSortOption, value))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _selectedSortOption, value);
+            ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
+        }
+    }
+
     public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
 
     public ReactiveCommand<Unit, Unit> BeginCreatePasswordCommand { get; }
@@ -176,6 +236,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CancelPasswordEditorCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ToggleEditorPasswordVisibilityCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ClearSelectionCommand { get; }
 
     public string Title => GetTranslation("Passwords_Title");
 
@@ -225,13 +287,21 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string EditorDescriptionPlaceholder => GetTranslation("Passwords_Editor_DescriptionPlaceholder");
 
-    public string EditorColorPlaceholder => GetTranslation("Passwords_Editor_ColorPlaceholder");
-
     public string EditorPasswordPlaceholder => GetTranslation("Passwords_Editor_PasswordPlaceholder");
 
     public string EditorPasswordHint => GetTranslation(IsCreateMode ? "Passwords_Editor_PasswordHint_Create" : "Passwords_Editor_PasswordHint_Edit");
 
     public string EditorPasswordVisibilityToggleText => GetTranslation(IsEditorPasswordVisible ? "Common_Hide" : "Common_Show");
+
+    public string SearchLabel => GetTranslation("Common_Search");
+
+    public string SearchPlaceholder => GetTranslation("Passwords_Search_Placeholder");
+
+    public string SortLabel => GetTranslation("Passwords_Sort_Label");
+
+    public string ClearSelectionLabel => GetTranslation("Common_ClearSelection");
+
+    public string PasswordRevealHint => GetTranslation("Passwords_Reveal_Hint");
 
     protected override void OnLanguageChanged()
     {
@@ -259,11 +329,26 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(CancelButtonLabel));
         this.RaisePropertyChanged(nameof(EditorNamePlaceholder));
         this.RaisePropertyChanged(nameof(EditorDescriptionPlaceholder));
-        this.RaisePropertyChanged(nameof(EditorColorPlaceholder));
         this.RaisePropertyChanged(nameof(EditorPasswordPlaceholder));
         this.RaisePropertyChanged(nameof(EditorPasswordHint));
         this.RaisePropertyChanged(nameof(EditorPasswordVisibilityToggleText));
-        this.RaisePropertyChanged(nameof(PasswordDisplayValue));
+        this.RaisePropertyChanged(nameof(SearchLabel));
+        this.RaisePropertyChanged(nameof(SearchPlaceholder));
+        this.RaisePropertyChanged(nameof(SortLabel));
+        this.RaisePropertyChanged(nameof(ClearSelectionLabel));
+        this.RaisePropertyChanged(nameof(PasswordRevealHint));
+
+        var selectedColorKey = SelectedEditorColorOption?.Key;
+        var selectedSortKey = SelectedSortOption?.Key;
+
+        RebuildPresetColors();
+        RebuildSortOptions();
+
+        SelectedEditorColorOption = PresetColors.FirstOrDefault(item => item.Key == selectedColorKey)
+            ?? PresetColors.FirstOrDefault();
+
+        SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == selectedSortKey)
+            ?? SortOptions.FirstOrDefault();
     }
 
     public async Task LoadAsync(Guid token)
@@ -275,6 +360,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     public void Reset()
     {
         _token = Guid.Empty;
+        _allPasswords.Clear();
         Passwords.Clear();
         this.RaisePropertyChanged(nameof(HasPasswords));
         this.RaisePropertyChanged(nameof(IsEmpty));
@@ -282,6 +368,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         RevealedPassword = null;
         StatusMessage = null;
         IsEditorOpen = false;
+        SearchQuery = string.Empty;
+        SelectDefaultSortOption();
         ResetEditorFields();
     }
 
@@ -297,22 +385,14 @@ public sealed class PasswordsViewModel : ViewModelBase
         try
         {
             var passwords = await _endpoints.GetSavedPasswordsAsync(_token);
-            Passwords.Clear();
-        this.RaisePropertyChanged(nameof(HasPasswords));
-        this.RaisePropertyChanged(nameof(IsEmpty));
+            _allPasswords.Clear();
 
-            foreach (var password in passwords.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
+            foreach (var password in passwords)
             {
-                Passwords.Add(PasswordItemViewModel.Create(password, BeginEditPasswordAsync, DeletePasswordAsync));
+                _allPasswords.Add(PasswordItemViewModel.Create(password, BeginEditPasswordAsync, DeletePasswordAsync));
             }
 
-            this.RaisePropertyChanged(nameof(HasPasswords));
-            this.RaisePropertyChanged(nameof(IsEmpty));
-
-            SelectedPassword = selectedId is null
-                ? Passwords.FirstOrDefault()
-                : Passwords.FirstOrDefault(item => item.Id == selectedId) ?? Passwords.FirstOrDefault();
-
+            ApplyFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
             StatusMessage = GetTranslation("Passwords_Refreshed");
         }
         catch (Exception ex)
@@ -347,9 +427,10 @@ public sealed class PasswordsViewModel : ViewModelBase
         StatusMessage = null;
         EditorName = password.Name;
         EditorDescription = password.Description;
-        EditorColor = password.Color;
         EditorPassword = string.Empty;
         IsEditorPasswordVisible = false;
+        SelectedEditorColorOption = PresetColors.FirstOrDefault(item => item.HexValue == password.Color)
+            ?? PresetColors.FirstOrDefault();
         return Task.CompletedTask;
     }
 
@@ -434,7 +515,7 @@ public sealed class PasswordsViewModel : ViewModelBase
                     {
                         Name = EditorName.Trim(),
                         Description = EditorDescription.Trim(),
-                        Color = EditorColor.Trim(),
+                        Color = EditorColor,
                         Password = rawPassword
                     });
                 }
@@ -460,7 +541,7 @@ public sealed class PasswordsViewModel : ViewModelBase
                         Id = SelectedPassword.Id,
                         Name = EditorName.Trim(),
                         Description = EditorDescription.Trim(),
-                        Color = EditorColor.Trim(),
+                        Color = EditorColor,
                         Password = rawPassword
                     });
                 }
@@ -499,6 +580,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private void ToggleEditorPasswordVisibility() => IsEditorPasswordVisible = !IsEditorPasswordVisible;
 
+    private void ClearSelection() => SelectedPassword = null;
+
     private void ResetEditorFields()
     {
         EditorName = string.Empty;
@@ -506,7 +589,78 @@ public sealed class PasswordsViewModel : ViewModelBase
         EditorColor = "#FFFFD700";
         EditorPassword = string.Empty;
         IsEditorPasswordVisible = false;
+        SelectDefaultPresetColor();
     }
+
+    private void ApplyFiltersAndSorting(Guid? preferredSelectionId, bool preserveSelection)
+    {
+        IEnumerable<PasswordItemViewModel> query = _allPasswords;
+
+        if (!string.IsNullOrWhiteSpace(SearchQuery))
+        {
+            var searchTerm = SearchQuery.Trim();
+            query = query.Where(item =>
+                item.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
+                || item.Description.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        query = SelectedSortOption?.Key switch
+        {
+            "name-desc" => query.OrderByDescending(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "created-desc" => query.OrderByDescending(item => item.CreatedAt),
+            "created-asc" => query.OrderBy(item => item.CreatedAt),
+            "updated-asc" => query.OrderBy(item => item.LastUpdatedAt),
+            "updated-desc" => query.OrderByDescending(item => item.LastUpdatedAt),
+            _ => query.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+        };
+
+        var filtered = query.ToList();
+        Passwords.Clear();
+        foreach (var password in filtered)
+        {
+            Passwords.Add(password);
+        }
+
+        this.RaisePropertyChanged(nameof(HasPasswords));
+        this.RaisePropertyChanged(nameof(IsEmpty));
+
+        if (preserveSelection && preferredSelectionId.HasValue)
+        {
+            SelectedPassword = filtered.FirstOrDefault(item => item.Id == preferredSelectionId.Value);
+        }
+        else
+        {
+            SelectedPassword = null;
+        }
+    }
+
+    private void RebuildPresetColors()
+    {
+        PresetColors.Clear();
+        PresetColors.Add(new PasswordColorOptionViewModel("gold", GetTranslation("Passwords_Color_Gold"), "#FFFFD700"));
+        PresetColors.Add(new PasswordColorOptionViewModel("blue", GetTranslation("Passwords_Color_Blue"), "#FF3B82F6"));
+        PresetColors.Add(new PasswordColorOptionViewModel("green", GetTranslation("Passwords_Color_Green"), "#FF22C55E"));
+        PresetColors.Add(new PasswordColorOptionViewModel("red", GetTranslation("Passwords_Color_Red"), "#FFEF4444"));
+        PresetColors.Add(new PasswordColorOptionViewModel("purple", GetTranslation("Passwords_Color_Purple"), "#FFA855F7"));
+        PresetColors.Add(new PasswordColorOptionViewModel("orange", GetTranslation("Passwords_Color_Orange"), "#FFF97316"));
+        PresetColors.Add(new PasswordColorOptionViewModel("teal", GetTranslation("Passwords_Color_Teal"), "#FF14B8A6"));
+        PresetColors.Add(new PasswordColorOptionViewModel("gray", GetTranslation("Passwords_Color_Gray"), "#FF94A3B8"));
+    }
+
+    private void RebuildSortOptions()
+    {
+        SortOptions.Clear();
+        SortOptions.Add(new PasswordSortOptionViewModel("name-asc", GetTranslation("Passwords_Sort_NameAsc")));
+        SortOptions.Add(new PasswordSortOptionViewModel("name-desc", GetTranslation("Passwords_Sort_NameDesc")));
+        SortOptions.Add(new PasswordSortOptionViewModel("created-desc", GetTranslation("Passwords_Sort_CreatedNewest")));
+        SortOptions.Add(new PasswordSortOptionViewModel("created-asc", GetTranslation("Passwords_Sort_CreatedOldest")));
+        SortOptions.Add(new PasswordSortOptionViewModel("updated-desc", GetTranslation("Passwords_Sort_UpdatedNewest")));
+        SortOptions.Add(new PasswordSortOptionViewModel("updated-asc", GetTranslation("Passwords_Sort_UpdatedOldest")));
+    }
+
+    private void SelectDefaultPresetColor() => SelectedEditorColorOption = PresetColors.FirstOrDefault(item => item.Key == "gold") ?? PresetColors.FirstOrDefault();
+
+    private void SelectDefaultSortOption() => SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? SortOptions.FirstOrDefault();
 
     private static IBrush ParseBrush(string color)
     {

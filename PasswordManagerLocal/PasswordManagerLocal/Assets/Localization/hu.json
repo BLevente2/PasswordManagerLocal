@@ -7,7 +7,6 @@
   "Language_Hungarian": "Magyar",
   "Theme_Light": "Világos",
   "Theme_Dark": "Sötét",
-
   "Shell_PasswordVault": "Jelszavak",
   "Shell_Profile": "Profil",
   "Shell_Logout": "Kijelentkezés",
@@ -17,7 +16,6 @@
   "Shell_SignedIn": "Sikeres hitelesítés.",
   "Shell_DataRefreshed": "Az adatok frissítve lettek.",
   "Shell_LoggedOut": "Sikeres kijelentkezés.",
-
   "Login_Title": "Bejelentkezés",
   "Login_Subtitle": "Biztonságosan érd el a helyi jelszó táradat.",
   "Login_Username_Label": "Felhasználónév",
@@ -28,7 +26,6 @@
   "Login_NoAccount_Text": "Még nincs fiókod? Innen regisztrálhatsz.",
   "Login_Username_Placeholder": "Add meg a felhasználóneved",
   "Login_Password_Placeholder": "Add meg a jelszavad",
-
   "Register_Title": "Regisztráció",
   "Register_Subtitle": "Hozd létre a profilodat, és kezdj el jelszavakat menteni.",
   "Register_Username_Label": "Felhasználónév",
@@ -47,7 +44,6 @@
   "Register_Email_Placeholder": "Add meg az e-mail címed",
   "Register_Password_Placeholder": "Válassz jelszót",
   "Register_ConfirmPassword_Placeholder": "Írd be újra a jelszót",
-
   "Validation_Username_Required": "Kérjük, add meg a felhasználóneved.",
   "Validation_Password_Required": "Kérjük, add meg a jelszavad.",
   "Validation_FirstName_Required": "Kérjük, add meg a keresztneved.",
@@ -57,7 +53,6 @@
   "Validation_RegisterPassword_Required": "Kérjük, add meg a jelszót.",
   "Validation_RegisterPassword_Mismatch": "A két jelszó nem egyezik.",
   "Validation_PasswordName_Required": "Kérjük, adj nevet a mentett jelszónak.",
-
   "Common_Show": "Mutatás",
   "Common_Hide": "Elrejtés",
   "Common_Refresh": "Frissítés",
@@ -72,7 +67,6 @@
   "Common_Cancel": "Mégse",
   "Common_Add": "Hozzáadás",
   "Common_Password": "Jelszó",
-
   "Passwords_Title": "Mentett jelszavak",
   "Passwords_Subtitle": "Hozz létre, tekints meg, fedd fel, módosíts és törölj a tárolt jelszavaid közül.",
   "Passwords_Add": "+ Jelszó hozzáadása",
@@ -80,7 +74,7 @@
   "Passwords_Empty_Description": "Hozd létre az első jelszó bejegyzést a tár használatához.",
   "Passwords_Details_Title": "Bejegyzések",
   "Passwords_Details_Empty_Title": "Nincs kiválasztott elem",
-  "Passwords_Details_Empty_Description": "Válassz ki egy jelszót a listából a részletek megtekintéséhez.",
+  "Passwords_Details_Empty_Description": "Válassz ki egy jelszót a listából a részletek megtekintéséhez, vagy hagyd a listát kijelölés nélkül.",
   "Passwords_Reveal": "Jelszó felfedése",
   "Passwords_Hide": "Jelszó elrejtése",
   "Passwords_HiddenValue": "••••••••••••••••",
@@ -96,7 +90,6 @@
   "Passwords_Delete_Success": "A jelszó törölve lett.",
   "Passwords_Save_CreateSuccess": "A jelszó mentve lett.",
   "Passwords_Save_UpdateSuccess": "A jelszó módosítva lett.",
-
   "Profile_Title": "Profilkezelés",
   "Profile_Subtitle": "Tekintsd át a fiókadataidat, és kezeld a profil- valamint biztonsági beállításokat.",
   "Profile_Overview_Title": "Fiók áttekintése",
@@ -121,5 +114,24 @@
   "Profile_Save_Success": "A profil frissítve lett.",
   "Profile_Username_Success": "A felhasználónév módosítva lett.",
   "Profile_MasterPassword_Success": "A mesterjelszó módosítva lett.",
-  "Profile_Delete_Success": "A fiók sikeresen törölve lett."
+  "Profile_Delete_Success": "A fiók sikeresen törölve lett.",
+  "Common_Search": "Keresés",
+  "Common_ClearSelection": "Kijelölés törlése",
+  "Passwords_Search_Placeholder": "Keresés név vagy leírás alapján",
+  "Passwords_Sort_Label": "Rendezés",
+  "Passwords_Sort_NameAsc": "Név (A–Z)",
+  "Passwords_Sort_NameDesc": "Név (Z–A)",
+  "Passwords_Sort_CreatedNewest": "Létrehozás szerint (legújabb elöl)",
+  "Passwords_Sort_CreatedOldest": "Létrehozás szerint (legrégebbi elöl)",
+  "Passwords_Sort_UpdatedNewest": "Módosítás szerint (legújabb elöl)",
+  "Passwords_Sort_UpdatedOldest": "Módosítás szerint (legrégebbi elöl)",
+  "Passwords_Reveal_Hint": "A tényleges jelszó addig sem betöltve, sem megjelenítve nincs, amíg a felhasználó külön nem kéri.",
+  "Passwords_Color_Gold": "Arany",
+  "Passwords_Color_Blue": "Kék",
+  "Passwords_Color_Green": "Zöld",
+  "Passwords_Color_Red": "Piros",
+  "Passwords_Color_Purple": "Lila",
+  "Passwords_Color_Orange": "Narancs",
+  "Passwords_Color_Teal": "Türkiz",
+  "Passwords_Color_Gray": "Szürke"
 }
