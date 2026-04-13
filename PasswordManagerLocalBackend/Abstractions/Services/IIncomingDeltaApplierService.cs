@@ -2,7 +2,7 @@
 
 namespace PasswordManagerLocalBackend.Abstractions.Services;
 
-public class IIncomingDeltaApplierService
+public interface IIncomingDeltaApplierService
 {
     Task<long> ApplyAsync(NetworkDelta delta, CancellationToken ct = default);
 }

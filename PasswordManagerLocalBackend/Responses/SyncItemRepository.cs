@@ -4,7 +4,7 @@ using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Persistence;
 using PasswordManagerLocalBackend.Repositories;
 
-namespace PasswordManagerLocalBackend.Responses;
+namespace PasswordManagerLocalBackend.Repositories;
 
 public sealed class SyncItemRepository : GenericRepositoryBase<SyncItem>, ISyncItemRepository
 {

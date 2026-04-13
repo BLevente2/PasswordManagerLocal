@@ -11,7 +11,11 @@ public sealed class SyncService : ISyncService
     private readonly IGroupRepository _groupRepo;
     public readonly IDeviceRepository _deviceRepo;
 
-    public SyncService(ISyncQueueService queue, IUserRepository userRepo, IGroupRepository groupRepo, IDeviceRepository deviceRepo)
+    public SyncService(
+        ISyncQueueService queue,
+        IUserRepository userRepo,
+        IGroupRepository groupRepo,
+        IDeviceRepository deviceRepo)
     {
         _queue = queue;
         _userRepo = userRepo;
@@ -19,9 +23,12 @@ public sealed class SyncService : ISyncService
         _deviceRepo = deviceRepo;
     }
 
-
-    public async Task NeedsSyncAsync(Guid modelId, SyncModelType modelType, SyncChangeType changeType, CancellationToken ct = default)
+    public Task NeedsSyncAsync(
+        Guid modelId,
+        SyncModelType modelType,
+        SyncChangeType changeType,
+        CancellationToken ct = default)
     {
-
+        return Task.CompletedTask;
     }
 }

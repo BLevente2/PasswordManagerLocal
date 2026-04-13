@@ -58,5 +58,6 @@ public sealed class SyncQueueService : ISyncQueueService
             queueItems.Add(queueItem);
         }
         await _syncQueue.EnqueueAsync(queueItems, ct);
+        return true;
     }
 }
