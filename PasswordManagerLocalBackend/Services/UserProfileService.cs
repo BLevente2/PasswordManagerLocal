@@ -41,7 +41,7 @@ public class UserProfileService : IUserProfileService
 
         _authService.Logout(token);
 
-        await _userService.DeleteUserAsync(user, ct);
+        await _userService.DeleteUserAsync(user, true, ct);
     }
 
 
@@ -70,7 +70,7 @@ public class UserProfileService : IUserProfileService
         }
 
         using var key = _userService.GetEncryptionKeyFromToken(token);
-        await _userService.UpdateUserDataAsync(userData, user, key, ct);
+        await _userService.UpdateUserDataAsync(userData, user, key, true, ct);
     }
 
 
@@ -90,6 +90,6 @@ public class UserProfileService : IUserProfileService
         if (request.NewLastName is not null)
             userData.LastName = request.NewLastName;
 
-        await _userService.UpdateUserDataAsync(userData, request.Token, ct);
+        await _userService.UpdateUserDataAsync(userData, request.Token, true, ct);
     }
 }

@@ -16,14 +16,22 @@ public sealed class UserService : IUserService
     private readonly IDataCachingService _cache;
     private readonly IKeyVaultService _keys;
     private readonly ITokenService _tokens;
+    private readonly ISyncQueueService _syncQueue;
     private readonly IUnitOfWork _uow;
 
-    public UserService(IUserRepository users, IDataCachingService cache, IKeyVaultService keys, ITokenService tokens, IUnitOfWork uow)
+    public UserService(
+        IUserRepository users,
+        IDataCachingService cache,
+        IKeyVaultService keys,
+        ITokenService tokens,
+        ISyncQueueService syncQueue,
+        IUnitOfWork uow)
     {
         _users = users;
         _cache = cache;
         _keys = keys;
         _tokens = tokens;
+        _syncQueue = syncQueue;
         _uow = uow;
     }
 
@@ -159,41 +167,71 @@ public sealed class UserService : IUserService
 
     public async Task AddNewUserAsync(User user, CancellationToken ct = default)
     {
+        user.LastModifiedAt = DateTimeOffset.UtcNow;
         user.GenerateIntegrityHash();
         await _users.AddAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
     }
 
 
-    public async Task UpdateUserAsync(User user, CancellationToken ct = default)
+    public Task UpdateUserAsync(User user, CancellationToken ct = default) =>
+        UpdateUserAsync(user, false, ct);
+
+
+    public async Task UpdateUserAsync(User user, bool enqueueSync, CancellationToken ct = default)
     {
+        user.LastModifiedAt = DateTimeOffset.UtcNow;
         user.GenerateIntegrityHash();
         _users.Update(user);
+
+        if (enqueueSync)
+        {
+            await _syncQueue.EnqueueAsync(new SyncItem
+            {
+                ModelId = user.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Updated
+            }, ct);
+            return;
+        }
+
         await _uow.SaveChangesAsync(ct);
     }
 
 
-    public async Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, CancellationToken ct = default)
+    public Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, CancellationToken ct = default) =>
+        UpdateUserDataAsync(userData, user, key, false, ct);
+
+
+    public async Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, bool enqueueSync, CancellationToken ct = default)
     {
         userData.GenerateIntegrityHash();
         var newEncryptedPayload = await SerializeCompressEncryptAsync<UserData>(userData, key);
         CryptographicOperations.ZeroMemory(user.EncryptedPayload);
         user.EncryptedPayload = newEncryptedPayload;
-        await UpdateUserAsync(user, ct);
+        await UpdateUserAsync(user, enqueueSync, ct);
     }
 
 
-    public async Task UpdateUserDataAsync(UserData userData, Guid token, EncryptionKey key, CancellationToken ct = default)
+    public Task UpdateUserDataAsync(UserData userData, Guid token, EncryptionKey key, CancellationToken ct = default) =>
+        UpdateUserDataAsync(userData, token, key, false, ct);
+
+
+    public async Task UpdateUserDataAsync(UserData userData, Guid token, EncryptionKey key, bool enqueueSync, CancellationToken ct = default)
     {
         var user = await GetAndVerifyUserAsync(token, ct);
-        await UpdateUserDataAsync(userData, user, key, ct);
+        await UpdateUserDataAsync(userData, user, key, enqueueSync, ct);
     }
 
 
-    public async Task UpdateUserDataAsync(UserData userData, Guid token, CancellationToken ct = default)
+    public Task UpdateUserDataAsync(UserData userData, Guid token, CancellationToken ct = default) =>
+        UpdateUserDataAsync(userData, token, false, ct);
+
+
+    public async Task UpdateUserDataAsync(UserData userData, Guid token, bool enqueueSync, CancellationToken ct = default)
     {
         using var key = GetEncryptionKeyFromToken(token);
-        await UpdateUserDataAsync(userData, token, key, ct);
+        await UpdateUserDataAsync(userData, token, key, enqueueSync, ct);
     }
 
     public async Task<bool> UserExistsAsync(Guid uid, CancellationToken ct = default)
@@ -203,23 +241,45 @@ public sealed class UserService : IUserService
     }
 
 
-    public async Task DeleteUserAsync(User user, CancellationToken ct = default)
+    public Task DeleteUserAsync(User user, CancellationToken ct = default) =>
+        DeleteUserAsync(user, false, ct);
+
+
+    public async Task DeleteUserAsync(User user, bool enqueueSync, CancellationToken ct = default)
     {
+        if (enqueueSync)
+        {
+            await _syncQueue.EnqueueAsync(new SyncItem
+            {
+                ModelId = user.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Deleted
+            }, ct);
+        }
+
         _users.Delete(user);
         await _uow.SaveChangesAsync(ct);
     }
 
 
-    public async Task DeleteUserAsync(Guid uid, CancellationToken ct = default)
+    public Task DeleteUserAsync(Guid uid, CancellationToken ct = default) =>
+        DeleteUserAsync(uid, false, ct);
+
+
+    public async Task DeleteUserAsync(Guid uid, bool enqueueSync, CancellationToken ct = default)
     {
         var user = await GetAndVerifyUserByUidAsync(uid, ct);
-        await DeleteUserAsync(user, ct);
+        await DeleteUserAsync(user, enqueueSync, ct);
     }
 
 
-    public async Task DeleteUserByTokenAsync(Guid token, CancellationToken ct = default)
+    public Task DeleteUserByTokenAsync(Guid token, CancellationToken ct = default) =>
+        DeleteUserByTokenAsync(token, false, ct);
+
+
+    public async Task DeleteUserByTokenAsync(Guid token, bool enqueueSync, CancellationToken ct = default)
     {
         var user = await GetAndVerifyUserAsync(token, ct);
-        await DeleteUserAsync(user, ct);
+        await DeleteUserAsync(user, enqueueSync, ct);
     }
 }

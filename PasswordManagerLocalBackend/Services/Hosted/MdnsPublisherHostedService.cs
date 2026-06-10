@@ -5,10 +5,10 @@ using static PasswordManagerLocalBackend.Constants.SyncConstants;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class MdnsPublisherHostedService : IHostedService
+public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
 {
     private readonly IDeviceIdentityService _identity;
-    private ServiceDiscovery? _sd;
+    private ServiceDiscovery? _serviceDiscovery;
     private ServiceProfile? _profile;
 
     public MdnsPublisherHostedService(IDeviceIdentityService identity)
@@ -18,34 +18,54 @@ public sealed class MdnsPublisherHostedService : IHostedService
 
 
 
+
+    public int StartOrder => 30;
+
+
+
+
     public Task StartAsync(CancellationToken ct = default)
     {
-        if (_sd is not null && _profile is not null)
+        if (!_identity.IsSyncOn)
             return Task.CompletedTask;
 
-        _sd = new ServiceDiscovery();
+        if (_serviceDiscovery is not null && _profile is not null)
+            return Task.CompletedTask;
 
-        _profile = new ServiceProfile(_identity.DeviceIdHex, MdnsServiceType, (ushort)SyncPort);
+        _serviceDiscovery = new ServiceDiscovery();
+        _profile = new ServiceProfile(BuildInstanceName(), MdnsServiceType, (ushort)SyncPort);
 
+        _profile.AddProperty("deviceid", _identity.DeviceIdHex);
+        _profile.AddProperty("deviceguid", _identity.LocalDeviceId.ToString("N"));
         _profile.AddProperty("signpub", Convert.ToHexString(_identity.SignPublicKey));
         _profile.AddProperty("tlsfp", _identity.FingerprintHex);
 
-        _sd.Advertise(_profile);
-        _sd.Announce(_profile);
+        _serviceDiscovery.Advertise(_profile);
+        _serviceDiscovery.Announce(_profile);
+
         return Task.CompletedTask;
     }
 
 
-
     public Task StopAsync(CancellationToken ct = default)
     {
-        if (_sd != null)
+        if (_serviceDiscovery is not null)
         {
-            if (_profile != null)
-                _sd.Unadvertise(_profile);
+            if (_profile is not null)
+                _serviceDiscovery.Unadvertise(_profile);
 
-            _sd.Dispose();
+            _serviceDiscovery.Dispose();
+            _serviceDiscovery = null;
+            _profile = null;
         }
+
         return Task.CompletedTask;
+    }
+
+
+    private string BuildInstanceName()
+    {
+        var id = _identity.DeviceIdHex;
+        return $"pml-{id[..Math.Min(24, id.Length)]}";
     }
 }

@@ -1,4 +1,5 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using NSec.Cryptography;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -8,30 +9,40 @@ public static class NetDeltaSigner
 {
     public static byte[] CanonicalBytes(NetworkDelta d)
     {
-        var entityBytes = Encoding.UTF8.GetBytes(d.Entity);
-        var tsBytes = new byte[8];
-        BinaryPrimitives.WriteInt64LittleEndian(tsBytes, d.Ts);
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
 
-        var result = new byte[entityBytes.Length + 1 + d.Payload.Length + 1 + tsBytes.Length + Encoding.UTF8.GetByteCount(d.DeviceId) + 1 + d.SignPub.Length];
-        var o = 0;
+        bw.Write("PasswordManagerLocalBackend.SyncDelta.Signature.v2");
+        SyncCryptoUtil.WriteString(bw, d.Entity);
+        SyncCryptoUtil.WriteBytes(bw, d.Payload);
+        bw.Write(d.Ts);
+        SyncCryptoUtil.WriteString(bw, d.DeviceId);
+        SyncCryptoUtil.WriteBytes(bw, d.SignPub);
+        SyncCryptoUtil.WriteString(bw, d.RecipientDeviceId);
+        bw.Write(d.EncryptionVersion);
+        SyncCryptoUtil.WriteBytes(bw, d.EphemeralPublicKey);
+        SyncCryptoUtil.WriteBytes(bw, d.Nonce);
+        SyncCryptoUtil.WriteBytes(bw, d.Tag);
+        SyncCryptoUtil.WriteBytes(bw, d.PayloadHash);
 
-        entityBytes.CopyTo(result, o); o += entityBytes.Length;
-        result[o++] = 0x00;
-        d.Payload.CopyTo(result, o); o += d.Payload.Length;
-        result[o++] = 0x00;
-        tsBytes.CopyTo(result, o); o += tsBytes.Length;
-        var deviceBytes = Encoding.UTF8.GetBytes(d.DeviceId);
-        deviceBytes.CopyTo(result, o); o += deviceBytes.Length;
-        result[o++] = 0x00;
-        d.SignPub.CopyTo(result, o);
-
-        return result;
+        return ms.ToArray();
     }
+
 
     public static void FillSignature(NetworkDelta d, IDeviceIdentityService identity)
     {
         var data = CanonicalBytes(d);
         var sig = identity.Sign(data);
         d.Sig = sig;
+    }
+
+
+    public static bool VerifySignature(NetworkDelta d)
+    {
+        if (d.SignPub.Length == 0 || d.Sig.Length == 0)
+            return false;
+
+        var publicKey = PublicKey.Import(SignatureAlgorithm.Ed25519, d.SignPub, KeyBlobFormat.RawPublicKey);
+        return SignatureAlgorithm.Ed25519.Verify(publicKey, CanonicalBytes(d), d.Sig);
     }
 }

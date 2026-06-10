@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using NSec.Cryptography;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
@@ -21,6 +21,9 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private Key? _ka = null;
     private Key? _sig = null;
     private X509Certificate2? _cert = null;
+    private Guid _localDeviceId = Guid.Empty;
+    private bool _isSyncOn = true;
+    private readonly SemaphoreSlim _initializationLock = new(1, 1);
 
 
     public DeviceIdentityService(IServiceScopeFactory scopeFactory)
@@ -32,6 +35,10 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
 
     public bool IsInitialized =>
         _ka is not null && _sig is not null && _cert is not null;
+
+
+    public bool IsSyncOn =>
+        _isSyncOn;
 
 
     public byte[] AgreementPublicKey
@@ -56,6 +63,17 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
         }
     }
 
+    public Guid LocalDeviceId
+    {
+        get
+        {
+            if (_localDeviceId == Guid.Empty)
+                throw new DeviceIdentityNotInitilaizedException();
+
+            return _localDeviceId;
+        }
+    }
+
 
     public string DeviceIdHex
     {
@@ -73,6 +91,128 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             throw new DeviceIdentityNotInitilaizedException();
 
         return SignatureAlgorithm.Ed25519.Sign(_sig, data.ToArray());
+    }
+
+
+    public byte[] EncryptForDevice(byte[] plaintext, byte[] recipientAgreementPublicKey, byte[] associatedData, out byte[] ephemeralPublicKey, out byte[] nonce, out byte[] tag)
+    {
+        if (plaintext is null || plaintext.Length == 0)
+            throw new InvalidDataException("Plaintext payload is empty.");
+
+        if (recipientAgreementPublicKey is null || recipientAgreementPublicKey.Length != SyncDeltaX25519PublicKeyBytes)
+            throw new InvalidDataException("Recipient agreement public key is invalid.");
+
+        using var ephemeralKey = Key.Create(KeyAgreementAlgorithm.X25519, new KeyCreationParameters());
+        var recipientPublicKey = NSec.Cryptography.PublicKey.Import(KeyAgreementAlgorithm.X25519, recipientAgreementPublicKey, KeyBlobFormat.RawPublicKey);
+        using var sharedSecret = KeyAgreementAlgorithm.X25519.Agree(
+            ephemeralKey,
+            recipientPublicKey,
+            new SharedSecretCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport })
+            ?? throw new CryptographicException("Key agreement failed.");
+
+        ephemeralPublicKey = ephemeralKey.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+        nonce = RandomNumberGenerator.GetBytes(SyncDeltaNonceBytes);
+        tag = new byte[SyncDeltaTagBytes];
+
+        var key = DeriveSyncAesKey(sharedSecret, ephemeralPublicKey, recipientAgreementPublicKey, associatedData);
+        try
+        {
+            var ciphertext = new byte[plaintext.Length];
+            using var aes = new AesGcm(key, SyncDeltaTagBytes);
+            aes.Encrypt(nonce, plaintext, ciphertext, tag, associatedData);
+            return ciphertext;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+
+    public byte[] DecryptFromDevice(byte[] ciphertext, byte[] senderEphemeralPublicKey, byte[] nonce, byte[] tag, byte[] associatedData)
+    {
+        if (_ka is null)
+            throw new DeviceIdentityNotInitilaizedException();
+
+        if (ciphertext is null || ciphertext.Length == 0)
+            throw new InvalidDataException("Ciphertext payload is empty.");
+
+        if (senderEphemeralPublicKey is null || senderEphemeralPublicKey.Length != SyncDeltaX25519PublicKeyBytes)
+            throw new InvalidDataException("Sender ephemeral public key is invalid.");
+
+        if (nonce is null || nonce.Length != SyncDeltaNonceBytes)
+            throw new InvalidDataException("Delta nonce is invalid.");
+
+        if (tag is null || tag.Length != SyncDeltaTagBytes)
+            throw new InvalidDataException("Delta authentication tag is invalid.");
+
+        var senderPublicKey = NSec.Cryptography.PublicKey.Import(KeyAgreementAlgorithm.X25519, senderEphemeralPublicKey, KeyBlobFormat.RawPublicKey);
+        using var sharedSecret = KeyAgreementAlgorithm.X25519.Agree(
+            _ka,
+            senderPublicKey,
+            new SharedSecretCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport })
+            ?? throw new CryptographicException("Key agreement failed.");
+
+        var key = DeriveSyncAesKey(sharedSecret, senderEphemeralPublicKey, AgreementPublicKey, associatedData);
+        try
+        {
+            var plaintext = new byte[ciphertext.Length];
+            using var aes = new AesGcm(key, SyncDeltaTagBytes);
+            aes.Decrypt(nonce, ciphertext, tag, plaintext, associatedData);
+            return plaintext;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+
+    private static byte[] DeriveSyncAesKey(SharedSecret sharedSecret, byte[] firstPublicKey, byte[] secondPublicKey, byte[] associatedData)
+    {
+        var rawSharedSecret = sharedSecret.Export(SharedSecretBlobFormat.RawSharedSecret);
+        try
+        {
+            var salt = BuildKdfSalt(firstPublicKey, secondPublicKey);
+            var info = BuildKdfInfo(firstPublicKey, secondPublicKey, associatedData);
+            return HKDF.DeriveKey(HashAlgorithmName.SHA512, rawSharedSecret, 32, salt, info);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(rawSharedSecret);
+        }
+    }
+
+
+    private static byte[] BuildKdfSalt(byte[] firstPublicKey, byte[] secondPublicKey)
+    {
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+
+        bw.Write("PasswordManagerLocalBackend.SyncDelta.KdfSalt.v1");
+        bw.Write(firstPublicKey.Length);
+        bw.Write(firstPublicKey);
+        bw.Write(secondPublicKey.Length);
+        bw.Write(secondPublicKey);
+
+        return Hashing.SHA256Hash(ms.ToArray());
+    }
+
+
+    private static byte[] BuildKdfInfo(byte[] firstPublicKey, byte[] secondPublicKey, byte[] associatedData)
+    {
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+
+        bw.Write("PasswordManagerLocalBackend.SyncDelta.AES256GCM.v1");
+        bw.Write(firstPublicKey.Length);
+        bw.Write(firstPublicKey);
+        bw.Write(secondPublicKey.Length);
+        bw.Write(secondPublicKey);
+        bw.Write(associatedData.Length);
+        bw.Write(associatedData);
+
+        return ms.ToArray();
     }
 
 
@@ -118,16 +258,76 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
         if (IsInitialized)
             return;
 
+        await _initializationLock.WaitAsync(ct);
+        try
+        {
+            if (IsInitialized)
+                return;
+
+            using var scope = _scopeFactory.CreateScope();
+            var repo = scope.ServiceProvider.GetRequiredService<IDeviceIdentityRepository>();
+            var keyProtector = scope.ServiceProvider.GetRequiredService<IKeyProtector>();
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var identity = await repo.Get(ct);
+            if (identity is null)
+                await CreateIdentity(repo, keyProtector, uow, ct);
+            else
+            {
+                await UpgradeLegacyIdentityIfNeeded(identity, repo, uow, ct);
+                LoadIdentity(identity, keyProtector);
+            }
+        }
+        finally
+        {
+            _initializationLock.Release();
+        }
+    }
+
+
+    public async Task SetSyncOnAsync(bool isSyncOn, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct);
+
         using var scope = _scopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IDeviceIdentityRepository>();
-        var keyProtector = scope.ServiceProvider.GetRequiredService<IKeyProtector>();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
         var identity = await repo.Get(ct);
         if (identity is null)
-            await CreateIdentity(repo, keyProtector, uow, ct);
-        else
-            LoadIdentity(identity, keyProtector);
+            throw new DeviceIdentityNotInitilaizedException();
+
+        identity.VerifyIntegrity();
+
+        if (identity.IsSyncOn == isSyncOn && _isSyncOn == isSyncOn)
+            return;
+
+        identity.IsSyncOn = isSyncOn;
+        identity.GenerateIntegrityHash();
+        repo.Update(identity);
+        await uow.SaveChangesAsync(ct);
+
+        _isSyncOn = isSyncOn;
+    }
+
+
+
+    private async Task UpgradeLegacyIdentityIfNeeded(LocalDeviceIdentity identity, IDeviceIdentityRepository repo, IUnitOfWork uow, CancellationToken ct = default)
+    {
+        if (identity.IsIntegrityValid())
+            return;
+
+        var legacyHash = identity.CalculateLegacyIntegrityHashWithoutSyncFlag();
+        if (!Hashing.Verify(identity.IntegrityHash, legacyHash))
+        {
+            identity.VerifyIntegrity();
+            return;
+        }
+
+        identity.IsSyncOn = true;
+        identity.GenerateIntegrityHash();
+        repo.Update(identity);
+        await uow.SaveChangesAsync(ct);
     }
 
 
@@ -153,8 +353,11 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             {
                 AgreementPrivateKeyBlob = protectedKa,
                 SignPrivateKeyBlob = protectedSig,
-                PFXCertificate = protectedCert
+                PFXCertificate = protectedCert,
+                IsSyncOn = true
             };
+            _localDeviceId = newIdentity.Id;
+            _isSyncOn = true;
             newIdentity.GenerateIntegrityHash();
 
             await repo.Create(newIdentity, ct);
@@ -172,6 +375,8 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private void LoadIdentity(LocalDeviceIdentity identity, IKeyProtector keyProtector)
     {
         identity.VerifyIntegrity();
+        _localDeviceId = identity.Id;
+        _isSyncOn = identity.IsSyncOn;
 
         var unprotectedKa = keyProtector.Unprotect(identity.AgreementPrivateKeyBlob);
         var unprotectedSig = keyProtector.Unprotect(identity.SignPrivateKeyBlob);

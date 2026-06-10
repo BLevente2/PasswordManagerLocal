@@ -52,6 +52,16 @@ public static class DataValidationUtil
         description.Length >= DescriptionMinLength && description.Length <= DescriptionMaxLength;
 
 
+    public static bool IsValidUserDeviceName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+
+        var n = name.Trim();
+        return n.Length >= UserDeviceNameMinLength && n.Length <= UserDeviceNameMaxLength;
+    }
+
+
     public static bool IsValidARGBColor(string color)
     {
         if (color.Length != ARGBColorLength)

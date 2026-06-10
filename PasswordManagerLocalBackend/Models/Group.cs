@@ -6,6 +6,7 @@ public sealed class Group : IntegrityCheckableBase
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public byte[] EncryptedPayload { get; set; } = [];
+    public DateTimeOffset LastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
 
 
     public ICollection<User> Users { get; set; } = [];
@@ -20,6 +21,10 @@ public sealed class Group : IntegrityCheckableBase
 
         bw.Write(Id.ToByteArray());
         bw.Write(EncryptedPayload);
+        bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
+
+        foreach (var userId in Users.Select(u => u.UId).OrderBy(id => id))
+            bw.Write(userId.ToByteArray());
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

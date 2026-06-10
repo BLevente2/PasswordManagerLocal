@@ -1,35 +1,45 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
-using System;
-using System.Collections.Generic;
 using System.Threading;
 
 namespace PasswordManagerLocalBackend.Services;
 
 public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDisposable
 {
+    private readonly IDeviceIdentityService _identity;
     private readonly ReaderWriterLockSlim _rwLock = new(LockRecursionPolicy.NoRecursion);
     private readonly Dictionary<Guid, Device> _devicesById = new();
     private readonly Dictionary<string, Guid> _deviceIdByFingerprint = new(StringComparer.OrdinalIgnoreCase);
 
+    public SyncDeviceIdentityService(IDeviceIdentityService identity)
+    {
+        _identity = identity;
+    }
+
+
+
+
     public bool TryAdd(Device device)
     {
-        if (device is null) return false;
+        if (!_identity.IsSyncOn)
+            return false;
+
+        if (device is null)
+            return false;
 
         var id = device.Id;
-        if (id == Guid.Empty) return false;
-
         var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
-        if (fingerprint.Length == 0) return false;
 
         _rwLock.EnterWriteLock();
         try
         {
-            if (_devicesById.ContainsKey(id)) return false;
-            if (_deviceIdByFingerprint.ContainsKey(fingerprint)) return false;
+            if (!CanStore(device, fingerprint))
+            {
+                RemoveUnsafe(id, fingerprint);
+                return false;
+            }
 
-            _devicesById[id] = device;
-            _deviceIdByFingerprint[fingerprint] = id;
+            AddOrUpdateUnsafe(device, fingerprint);
             return true;
         }
         finally
@@ -38,9 +48,14 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public int TryAdd(IReadOnlyList<Device> devices)
     {
-        if (devices is null || devices.Count == 0) return 0;
+        if (!_identity.IsSyncOn)
+            return 0;
+
+        if (devices is null || devices.Count == 0)
+            return 0;
 
         var added = 0;
 
@@ -50,19 +65,19 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             for (var i = 0; i < devices.Count; i++)
             {
                 var device = devices[i];
-                if (device is null) continue;
+                if (device is null)
+                    continue;
 
                 var id = device.Id;
-                if (id == Guid.Empty) continue;
-
                 var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
-                if (fingerprint.Length == 0) continue;
 
-                if (_devicesById.ContainsKey(id)) continue;
-                if (_deviceIdByFingerprint.ContainsKey(fingerprint)) continue;
+                if (!CanStore(device, fingerprint))
+                {
+                    RemoveUnsafe(id, fingerprint);
+                    continue;
+                }
 
-                _devicesById[id] = device;
-                _deviceIdByFingerprint[fingerprint] = id;
+                AddOrUpdateUnsafe(device, fingerprint);
                 added++;
             }
 
@@ -74,9 +89,11 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public bool TryRemove(Device device)
     {
-        if (device is null) return false;
+        if (device is null)
+            return false;
 
         var id = device.Id;
         var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
@@ -84,36 +101,14 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         _rwLock.EnterWriteLock();
         try
         {
-            Guid idToRemove = Guid.Empty;
-
-            if (id != Guid.Empty && _devicesById.ContainsKey(id))
-            {
-                idToRemove = id;
-            }
-            else if (fingerprint.Length != 0 && _deviceIdByFingerprint.TryGetValue(fingerprint, out var mappedId))
-            {
-                idToRemove = mappedId;
-            }
-            else
-            {
-                return false;
-            }
-
-            if (!_devicesById.TryGetValue(idToRemove, out var existing)) return false;
-
-            _devicesById.Remove(idToRemove);
-
-            var existingFingerprint = NormalizeFingerprint(existing.TlsCertFingerprint);
-            if (existingFingerprint.Length != 0)
-                _deviceIdByFingerprint.Remove(existingFingerprint);
-
-            return true;
+            return RemoveUnsafe(id, fingerprint);
         }
         finally
         {
             _rwLock.ExitWriteLock();
         }
     }
+
 
     public int Count()
     {
@@ -128,9 +123,11 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public bool Exists(Device device)
     {
-        if (device is null) return false;
+        if (device is null)
+            return false;
 
         var id = device.Id;
         var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
@@ -138,9 +135,10 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         _rwLock.EnterReadLock();
         try
         {
-            if (id != Guid.Empty && _devicesById.ContainsKey(id)) return true;
-            if (fingerprint.Length != 0 && _deviceIdByFingerprint.ContainsKey(fingerprint)) return true;
-            return false;
+            if (id != Guid.Empty && _devicesById.ContainsKey(id))
+                return true;
+
+            return fingerprint.Length != 0 && _deviceIdByFingerprint.ContainsKey(fingerprint);
         }
         finally
         {
@@ -148,10 +146,12 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public bool ContainsFingerprint(string fingerprint)
     {
         var normalized = NormalizeFingerprint(fingerprint);
-        if (normalized.Length == 0) return false;
+        if (normalized.Length == 0)
+            return false;
 
         _rwLock.EnterReadLock();
         try
@@ -164,6 +164,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public bool TryGetByFingerprint(string fingerprint, out Device? device)
     {
         var normalized = NormalizeFingerprint(fingerprint);
@@ -171,21 +172,15 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         _rwLock.EnterReadLock();
         try
         {
-            if (normalized.Length == 0)
+            if (normalized.Length == 0 || !_deviceIdByFingerprint.TryGetValue(normalized, out var id))
             {
                 device = null;
                 return false;
             }
 
-            if (!_deviceIdByFingerprint.TryGetValue(normalized, out var id))
+            if (_devicesById.TryGetValue(id, out var foundDevice))
             {
-                device = null;
-                return false;
-            }
-
-            if (_devicesById.TryGetValue(id, out var d))
-            {
-                device = d;
+                device = CloneDevice(foundDevice);
                 return true;
             }
 
@@ -198,9 +193,11 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public bool ContainsId(Guid deviceId)
     {
-        if (deviceId == Guid.Empty) return false;
+        if (deviceId == Guid.Empty)
+            return false;
 
         _rwLock.EnterReadLock();
         try
@@ -213,18 +210,27 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public bool TryGetById(Guid deviceId, out Device? device)
     {
         _rwLock.EnterReadLock();
         try
         {
-            return _devicesById.TryGetValue(deviceId, out device);
+            if (_devicesById.TryGetValue(deviceId, out var foundDevice))
+            {
+                device = CloneDevice(foundDevice);
+                return true;
+            }
+
+            device = null;
+            return false;
         }
         finally
         {
             _rwLock.ExitReadLock();
         }
     }
+
 
     public bool IsEmpty()
     {
@@ -238,6 +244,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             _rwLock.ExitReadLock();
         }
     }
+
 
     public void Clear()
     {
@@ -253,14 +260,108 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         }
     }
 
+
     public void Dispose()
     {
         _rwLock.Dispose();
     }
 
+
+    private bool CanStore(Device device, string fingerprint) =>
+        _identity.IsSyncOn &&
+        device.Id != Guid.Empty &&
+        fingerprint.Length != 0 &&
+        device.IsTrusted &&
+        !device.IsBlocked &&
+        device.PublicKey.Length != 0 &&
+        device.SignPublicKey.Length != 0 &&
+        !IsLocalDevice(device, fingerprint);
+
+
+    private bool IsLocalDevice(Device device, string fingerprint)
+    {
+        if (!_identity.IsInitialized)
+            return false;
+
+        if (device.Id == _identity.LocalDeviceId)
+            return true;
+
+        if (fingerprint.Length != 0 && string.Equals(fingerprint, NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return device.SignPublicKey.SequenceEqual(_identity.SignPublicKey);
+    }
+
+
+    private void AddOrUpdateUnsafe(Device device, string fingerprint)
+    {
+        if (_deviceIdByFingerprint.TryGetValue(fingerprint, out var existingIdWithFingerprint) && existingIdWithFingerprint != device.Id)
+            _devicesById.Remove(existingIdWithFingerprint);
+
+        if (_devicesById.TryGetValue(device.Id, out var existingDevice))
+        {
+            var oldFingerprint = NormalizeFingerprint(existingDevice.TlsCertFingerprint);
+            if (oldFingerprint.Length != 0 && !string.Equals(oldFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+                _deviceIdByFingerprint.Remove(oldFingerprint);
+        }
+
+        _devicesById[device.Id] = CloneDevice(device);
+        _deviceIdByFingerprint[fingerprint] = device.Id;
+    }
+
+
+    private bool RemoveUnsafe(Guid id, string fingerprint)
+    {
+        Guid idToRemove = Guid.Empty;
+
+        if (id != Guid.Empty && _devicesById.ContainsKey(id))
+            idToRemove = id;
+        else if (fingerprint.Length != 0 && _deviceIdByFingerprint.TryGetValue(fingerprint, out var mappedId))
+            idToRemove = mappedId;
+        else
+            return false;
+
+        if (!_devicesById.TryGetValue(idToRemove, out var existing))
+            return false;
+
+        _devicesById.Remove(idToRemove);
+
+        var existingFingerprint = NormalizeFingerprint(existing.TlsCertFingerprint);
+        if (existingFingerprint.Length != 0)
+            _deviceIdByFingerprint.Remove(existingFingerprint);
+
+        if (fingerprint.Length != 0)
+            _deviceIdByFingerprint.Remove(fingerprint);
+
+        return true;
+    }
+
+
+    private static Device CloneDevice(Device source) =>
+        new()
+        {
+            Id = source.Id,
+            PublicKey = source.PublicKey.ToArray(),
+            SignPublicKey = source.SignPublicKey.ToArray(),
+            TlsCertFingerprint = source.TlsCertFingerprint,
+            LastKnownHash = source.LastKnownHash.ToArray(),
+            LastSync = source.LastSync,
+            LastSeen = source.LastSeen,
+            IsTrusted = source.IsTrusted,
+            IsBlocked = source.IsBlocked,
+            BlockedReason = source.BlockedReason,
+            BlockedAt = source.BlockedAt,
+            InvalidSyncAttemptCount = source.InvalidSyncAttemptCount,
+            LastInvalidSyncAttemptAt = source.LastInvalidSyncAttemptAt,
+            LastModifiedAt = source.LastModifiedAt,
+            IntegrityHash = source.IntegrityHash.ToArray()
+        };
+
+
     private static string NormalizeFingerprint(string fingerprint)
     {
-        if (string.IsNullOrWhiteSpace(fingerprint)) return string.Empty;
+        if (string.IsNullOrWhiteSpace(fingerprint))
+            return string.Empty;
 
         var s = fingerprint.Trim();
         s = s.Replace(":", string.Empty);

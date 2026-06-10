@@ -119,6 +119,17 @@ public sealed class AuthService : IAuthService
     }
 
 
+    public void LogoutUser(Guid uid)
+    {
+        foreach (var token in _tokens.ListTokensByUid(uid))
+        {
+            _cache.InvalidateToken(token);
+            _keys.InvalidateToken(token);
+            _tokens.Revoke(token);
+        }
+    }
+
+
     public async Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default)
     {
         if (!request.Validate(out var errors))
@@ -139,7 +150,7 @@ public sealed class AuthService : IAuthService
         if (user.SavedKey is not null)
             _rememberMe.SetRememberMe(user, true, newKey);
 
-        await _userService.UpdateUserDataAsync(userData, user, newKey, ct);
+        await _userService.UpdateUserDataAsync(userData, user, newKey, true, ct);
     }
 
 

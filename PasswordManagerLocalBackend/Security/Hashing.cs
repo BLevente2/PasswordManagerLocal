@@ -6,14 +6,30 @@ public static class Hashing
 {
     public static byte[] SHA256Hash(ReadOnlySpan<byte> data)
     {
-        using var sha = SHA256.Create();
-        return sha.ComputeHash(data.ToArray());
+        var buffer = data.ToArray();
+        try
+        {
+            using var sha = SHA256.Create();
+            return sha.ComputeHash(buffer);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(buffer);
+        }
     }
 
     public static byte[] SHA512Hash(ReadOnlySpan<byte> data)
     {
-        using var sha = SHA512.Create();
-        return sha.ComputeHash(data.ToArray());
+        var buffer = data.ToArray();
+        try
+        {
+            using var sha = SHA512.Create();
+            return sha.ComputeHash(buffer);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(buffer);
+        }
     }
 
     public static byte[] SHA256Hash(ReadOnlySpan<byte> data, ReadOnlySpan<byte> salt)
@@ -50,14 +66,34 @@ public static class Hashing
 
     public static byte[] HMACSHA256(ReadOnlySpan<byte> key, ReadOnlySpan<byte> data)
     {
-        using var h = new HMACSHA256(key.ToArray());
-        return h.ComputeHash(data.ToArray());
+        var keyBuffer = key.ToArray();
+        var dataBuffer = data.ToArray();
+        try
+        {
+            using var h = new HMACSHA256(keyBuffer);
+            return h.ComputeHash(dataBuffer);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(keyBuffer);
+            CryptographicOperations.ZeroMemory(dataBuffer);
+        }
     }
 
     public static byte[] HMACSHA512(ReadOnlySpan<byte> key, ReadOnlySpan<byte> data)
     {
-        using var h = new HMACSHA512(key.ToArray());
-        return h.ComputeHash(data.ToArray());
+        var keyBuffer = key.ToArray();
+        var dataBuffer = data.ToArray();
+        try
+        {
+            using var h = new HMACSHA512(keyBuffer);
+            return h.ComputeHash(dataBuffer);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(keyBuffer);
+            CryptographicOperations.ZeroMemory(dataBuffer);
+        }
     }
 
     public static bool Verify(ReadOnlySpan<byte> expected, ReadOnlySpan<byte> actual)

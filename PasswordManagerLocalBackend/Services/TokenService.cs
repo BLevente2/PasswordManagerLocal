@@ -62,6 +62,20 @@ public sealed class TokenService : ITokenService
         return uid;
     }
 
+    public IReadOnlyList<Guid> ListTokensByUid(Guid uid)
+    {
+        PurgeExpired();
+
+        if (uid == Guid.Empty)
+            return [];
+
+        return _storage
+            .Where(kv => kv.Value.Uid == uid)
+            .Select(kv => kv.Key)
+            .ToList();
+    }
+
+
     public bool Revoke(Guid token)
     {
         if (token == Guid.Empty)

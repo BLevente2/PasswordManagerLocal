@@ -1,87 +1,145 @@
-﻿using Grpc.Net.Client;
+﻿using Google.Protobuf;
+using Grpc.Core;
+using Grpc.Net.Client;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Sync;
+using System.Net;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using Google.Protobuf;
 
 namespace PasswordManagerLocalBackend.Services;
 
 public class GrpcClientService : IGrpcClientService
 {
-    private readonly IDeviceIdentityService _identiy;
+    private readonly IDeviceIdentityService _identity;
 
-    public GrpcClientService(IDeviceIdentityService identiy)
+    public GrpcClientService(IDeviceIdentityService identity)
     {
-        _identiy = identiy;
+        _identity = identity;
     }
+
+
 
 
     public async Task<bool> SendAsync(string host, int port, string serverFingerprintHex, IEnumerable<NetworkDelta> deltas, CancellationToken ct = default)
     {
-        var handler = new HttpClientHandler();
-        handler.ClientCertificates.Add(_identiy.Certificate);
+        var list = deltas.ToList();
+        if (list.Count == 0)
+            return true;
 
-        handler.ServerCertificateCustomValidationCallback = (req, cert, chain, errors) =>
+        try
         {
-            if (cert == null)
+            using var handler = CreateHandler(serverFingerprintHex);
+            using var channel = GrpcChannel.ForAddress(BuildAddress(host, port), new GrpcChannelOptions
+            {
+                HttpHandler = handler
+            });
+
+            var client = new SyncGrpc.SyncGrpcClient(channel);
+
+            var hello = await client.HelloAsync(new HelloRequest
+            {
+                DeviceId = _identity.DeviceIdHex,
+                SignPub = ByteString.CopyFrom(_identity.SignPublicKey)
+            }, cancellationToken: ct);
+
+            if (!hello.Ok)
                 return false;
-            var fp = _identiy.GetFingerprintHex(new X509Certificate2(cert));
-            return string.Equals(fp, serverFingerprintHex, StringComparison.OrdinalIgnoreCase);
-        };
 
-        using var http = new HttpClient(handler);
-        var addr = $"https://{host}:{port}";
-        var channel = GrpcChannel.ForAddress(addr, new GrpcChannelOptions { HttpClient = http });
+            using var call = client.PushDelta(cancellationToken: ct);
 
-        var client = new SyncGrpc.SyncGrpcClient(channel);
+            foreach (var delta in list.OrderBy(d => d.Ts))
+                await call.RequestStream.WriteAsync(DeltaMapping.ToProto(PrepareDelta(delta)));
 
-        var hello = await client.HelloAsync(new HelloRequest
+            await call.RequestStream.CompleteAsync();
+            var ack = await call.ResponseAsync;
+
+            return ack.LastSyncedTs >= list.Max(x => x.Ts);
+        }
+        catch (RpcException)
         {
-            SignPub = ByteString.CopyFrom(_identiy.SignPublicKey)
-        }, cancellationToken: ct);
-
-        if (!hello.Ok)
             return false;
-
-        var ns = await client.NeedSyncAsync(new NeedSyncRequest
+        }
+        catch (HttpRequestException)
         {
-            SinceTs = 0
-        }, cancellationToken: ct);
-
-        var since = ns.LatestTs;
-        var list = deltas
-            .Where(d => d.Ts > since)
-            .OrderBy(d => d.Ts)
-            .ToList();
-
-        if (list.Count == 0) return true;
-
-        using var call = client.PushDelta(cancellationToken: ct);
-        await foreach (var chunk in ToChunksAsync(list, ct))
-            await call.RequestStream.WriteAsync(chunk);
-
-        await call.RequestStream.CompleteAsync();
-        var ack = await call.ResponseAsync;
-        return ack.LastSyncedTs >= list.Last().Ts;
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
     }
 
 
-    private async IAsyncEnumerable<DeltaChunk> ToChunksAsync(IEnumerable<NetworkDelta> deltas, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    private HttpClientHandler CreateHandler(string serverFingerprintHex)
     {
-        foreach (var d in deltas)
-        {
-            var dto = new NetworkDelta
-            {
-                Entity = d.Entity,
-                Payload = d.Payload ?? Array.Empty<byte>(),
-                Ts = d.Ts,
-                DeviceId = _identiy.DeviceIdHex,
-                SignPub = _identiy.SignPublicKey
-            };
+        var handler = new HttpClientHandler();
+        handler.ClientCertificates.Add(_identity.Certificate);
 
-            NetDeltaSigner.FillSignature(dto, _identiy);
-            yield return DeltaMapping.ToProto(dto);
-            await Task.Yield();
-        }
+        handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
+        {
+            if (cert is null)
+                return false;
+
+            var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
+            return string.Equals(fingerprint, NormalizeFingerprint(serverFingerprintHex), StringComparison.OrdinalIgnoreCase);
+        };
+
+        return handler;
+    }
+
+
+    private NetworkDelta PrepareDelta(NetworkDelta delta)
+    {
+        if (!string.Equals(delta.DeviceId, _identity.DeviceIdHex, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Delta source device id is invalid.");
+
+        if (!delta.SignPub.SequenceEqual(_identity.SignPublicKey))
+            throw new InvalidDataException("Delta signer is invalid.");
+
+        if (string.IsNullOrWhiteSpace(delta.RecipientDeviceId))
+            throw new InvalidDataException("Delta recipient is missing.");
+
+        if (delta.EncryptionVersion != SyncConstants.SyncDeltaEncryptionVersion ||
+            delta.Payload.Length == 0 ||
+            delta.Payload.Length > SyncConstants.MaxIncomingDeltaPayloadBytes ||
+            delta.EphemeralPublicKey.Length != SyncConstants.SyncDeltaX25519PublicKeyBytes ||
+            delta.Nonce.Length != SyncConstants.SyncDeltaNonceBytes ||
+            delta.Tag.Length != SyncConstants.SyncDeltaTagBytes ||
+            delta.PayloadHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
+            throw new InvalidDataException("Delta encryption envelope is incomplete.");
+
+        if (delta.Sig.Length == 0)
+            NetDeltaSigner.FillSignature(delta, _identity);
+        else if (!NetDeltaSigner.VerifySignature(delta))
+            throw new InvalidDataException("Delta signature is invalid.");
+
+        return delta;
+    }
+
+
+    private static string NormalizeFingerprint(string fingerprint) =>
+        fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
+
+
+    private static string BuildAddress(string host, int port)
+    {
+        if (IPAddress.TryParse(host, out var ip) && ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            return $"https://[{host}]:{port}";
+
+        return $"https://{host}:{port}";
     }
 }

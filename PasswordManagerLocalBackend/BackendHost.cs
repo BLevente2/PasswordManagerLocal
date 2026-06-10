@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -98,9 +98,11 @@ namespace PasswordManagerLocalBackend
 
                     services.AddScoped<IUserRepository, UserRepository>();
                     services.AddScoped<IDeviceRepository, DeviceRepository>();
+                    services.AddScoped<IUserDeviceRepository, UserDeviceRepository>();
                     services.AddScoped<IGroupRepository, GroupRepository>();
                     services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
                     services.AddScoped<ISyncItemRepository, SyncItemRepository>();
+                    services.AddScoped<ISyncTombstoneRepository, SyncTombstoneRepository>();
                     services.AddScoped<IDeviceIdentityRepository, DeviceIdentityRepository>();
 
                     services.AddScoped<IUserPasswordsService, UserPasswordsService>();
@@ -111,6 +113,8 @@ namespace PasswordManagerLocalBackend
                     services.AddScoped<IUserService, UserService>();
                     services.AddScoped<IRememberMeService, RememberMeService>();
                     services.AddScoped<IUserProfileService, UserProfileService>();
+                    services.AddScoped<IDeviceService, DeviceService>();
+                    services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
 
                     services.AddSingleton<IKeyVaultService, KeyVaultService>();
                     services.AddMemoryCache();
@@ -121,21 +125,33 @@ namespace PasswordManagerLocalBackend
                     services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
                     services.AddSingleton<IGrpcClientService, GrpcClientService>();
                     services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
+                    services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
+                    services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
+                    services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
+                    services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
+                    services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
                     services.AddScoped<ISyncQueueService, SyncQueueService>();
                     services.AddScoped<ISyncService, SyncService>();
 
                     services.AddHostedService<ExpiredEntriesPurgeHostedService>();
+                    services.AddHostedService<LocalDeviceCleanupHostedService>();
+                    services.AddHostedService<SyncDeviceIdentityWarmupHostedService>();
+                    services.AddHostedService<GrpcSyncServerHostedService>();
+                    services.AddHostedService<MdnsPublisherHostedService>();
+                    services.AddHostedService<MdnsBrowserHostedService>();
                 })
                 .Build();
 
             using (var scope = host.Services.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                db.Database.EnsureCreated();
+                await AppDatabaseInitializer.InitializeAsync(db);
             }
 
             var deviceKeyStore = host.Services.GetRequiredService<IDeviceIdentityService>();
             await deviceKeyStore.InitializeAsync();
+
+            await host.StartAsync();
 
             lock (_lock)
             {

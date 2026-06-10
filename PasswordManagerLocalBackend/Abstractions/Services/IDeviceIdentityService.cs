@@ -6,10 +6,15 @@ public interface IDeviceIdentityService
 {
     Task InitializeAsync(CancellationToken ct = default);
     bool IsInitialized { get; }
+    bool IsSyncOn { get; }
+    Task SetSyncOnAsync(bool isSyncOn, CancellationToken ct = default);
     byte[] AgreementPublicKey { get; }
     byte[] SignPublicKey { get; }
+    Guid LocalDeviceId { get; }
     string DeviceIdHex { get; }
     byte[] Sign(ReadOnlySpan<byte> data);
+    byte[] EncryptForDevice(byte[] plaintext, byte[] recipientAgreementPublicKey, byte[] associatedData, out byte[] ephemeralPublicKey, out byte[] nonce, out byte[] tag);
+    byte[] DecryptFromDevice(byte[] ciphertext, byte[] senderEphemeralPublicKey, byte[] nonce, byte[] tag, byte[] associatedData);
 
     X509Certificate2 Certificate { get; }
     string FingerprintHex { get; }

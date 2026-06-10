@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Security;
 
 namespace PasswordManagerLocalBackend.Models;
 
@@ -10,6 +10,8 @@ public sealed class LocalDeviceIdentity : IntegrityCheckableBase
     public byte[] SignPrivateKeyBlob { get; set; } = [];
     public byte[] PFXCertificate { get; set; } = [];
 
+    public bool IsSyncOn { get; set; } = true;
+
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public override byte[] CalculateIntegrityHash()
@@ -17,12 +19,31 @@ public sealed class LocalDeviceIdentity : IntegrityCheckableBase
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
 
+        WriteIntegrityBase(bw);
+        bw.Write(IsSyncOn);
+        bw.Write(CreatedAt.ToUnixTimeMilliseconds());
+
+        return Hashing.SHA256Hash(ms.ToArray());
+    }
+
+
+    public byte[] CalculateLegacyIntegrityHashWithoutSyncFlag()
+    {
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+
+        WriteIntegrityBase(bw);
+        bw.Write(CreatedAt.ToUnixTimeMilliseconds());
+
+        return Hashing.SHA256Hash(ms.ToArray());
+    }
+
+
+    private void WriteIntegrityBase(BinaryWriter bw)
+    {
         bw.Write(Id.ToByteArray());
         bw.Write(AgreementPrivateKeyBlob);
         bw.Write(SignPrivateKeyBlob);
         bw.Write(PFXCertificate);
-        bw.Write(CreatedAt.ToUnixTimeMilliseconds());
-
-        return Hashing.SHA256Hash(ms.ToArray());
     }
 }

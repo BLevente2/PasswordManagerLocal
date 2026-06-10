@@ -24,4 +24,7 @@ public static class DataLengthConstants
 
     public const int PasswordNameMinLength = 1;
     public const int PasswordNameMaxLength = 50;
+
+    public const int UserDeviceNameMinLength = 1;
+    public const int UserDeviceNameMaxLength = 64;
 }

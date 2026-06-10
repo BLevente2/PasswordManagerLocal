@@ -11,4 +11,14 @@ public sealed class GroupRepository : GenericRepositoryBase<Group>, IGroupReposi
 
     public override async Task<Group?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         await Set.FirstOrDefaultAsync(g => g.Id == id, ct);
+
+    public async Task<Group?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
+        await Set
+            .Include(g => g.Users)
+            .FirstOrDefaultAsync(g => g.Id == id, ct);
+
+    public async Task<Group?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default) =>
+        await Set.AsNoTracking()
+            .Include(g => g.Users)
+            .FirstOrDefaultAsync(g => g.Id == id, ct);
 }

@@ -20,4 +20,8 @@ public sealed class DeviceIdentityRepository : IDeviceIdentityRepository
 
     public async Task Create(LocalDeviceIdentity identity, CancellationToken ct = default) =>
         await _set.AddAsync(identity, ct);
+
+
+    public void Update(LocalDeviceIdentity identity) =>
+        _set.Update(identity);
 }

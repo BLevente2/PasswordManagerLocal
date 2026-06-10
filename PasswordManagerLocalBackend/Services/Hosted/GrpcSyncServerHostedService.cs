@@ -1,50 +1,65 @@
-﻿using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Constants;
+using PasswordManagerLocalBackend.Services.Grpc;
+using PasswordManagerLocalBackend.Sync;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class GrpcSyncServerHostedService : IHostedService
+public sealed class GrpcSyncServerHostedService : ISyncControlledHostedService
 {
-    private readonly IDeviceCertificateStore _certs;
+    private readonly IDeviceIdentityService _identity;
     private readonly IServiceProvider _root;
     private IHost? _webHost;
 
-    public GrpcSyncServerHostedService(IDeviceCertificateStore certs, IServiceProvider root)
+    public GrpcSyncServerHostedService(IDeviceIdentityService identity, IServiceProvider root)
     {
-        _certs = certs;
+        _identity = identity;
         _root = root;
     }
 
+
+
+
+    public int StartOrder => 20;
+
+
+
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var builder = Host.CreateDefaultBuilder()
+        if (!_identity.IsSyncOn)
+            return;
+
+        if (_webHost is not null)
+            return;
+
+        var builder = Host.CreateDefaultBuilder(Array.Empty<string>())
             .ConfigureServices(services =>
             {
-                var connStr = new SqliteConnectionStringBuilder
+                services.AddGrpc(options =>
                 {
-                    DataSource = "app.db",
-                    Password = "ErősJelszó123!"
-                }.ToString();
+                    options.MaxReceiveMessageSize = SyncConstants.MaxIncomingDeltaPayloadBytes + 1024;
+                    options.MaxSendMessageSize = 1024 * 1024;
+                });
 
-                services.AddGrpc();
-                services.AddDbContext<AppDbContext>(opts => opts.UseSqlite(connStr));
-                services.AddScoped<IDeviceService, DeviceService>();
-                services.AddScoped<IIncomingDeltaApplier, IncomingDeltaApplier>();
-                services.AddSingleton(_certs);
+                services.AddSingleton(new GrpcRootServiceProvider(_root));
             })
-            .ConfigureLogging(_ => { })
-            .ConfigureWebHost(web =>
+            .ConfigureWebHostDefaults(web =>
             {
-                web.UseKestrel(k =>
+                web.ConfigureKestrel(kestrel =>
                 {
-                    k.ListenAnyIP(NetworkConfig.SyncPort, listen =>
+                    kestrel.ListenAnyIP(SyncConstants.SyncPort, listen =>
                     {
                         listen.Protocols = HttpProtocols.Http2;
-                        listen.UseHttps(_certs.Certificate, https =>
+                        listen.UseHttps(_identity.Certificate, https =>
                         {
-                            https.ClientCertificateMode = Microsoft.AspNetCore.Server.Kestrel.Https.ClientCertificateMode.RequireCertificate;
+                            https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
                             https.AllowAnyClientCertificate();
                         });
                     });
@@ -65,12 +80,14 @@ public sealed class GrpcSyncServerHostedService : IHostedService
         await _webHost.StartAsync(cancellationToken);
     }
 
+
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_webHost != null)
-        {
-            await _webHost.StopAsync(cancellationToken);
-            _webHost.Dispose();
-        }
+        if (_webHost is null)
+            return;
+
+        await _webHost.StopAsync(cancellationToken);
+        _webHost.Dispose();
+        _webHost = null;
     }
 }

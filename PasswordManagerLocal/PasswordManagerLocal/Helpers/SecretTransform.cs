@@ -1,4 +1,3 @@
-using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -12,7 +11,7 @@ internal static class SecretTransform
 
         try
         {
-            return Hashing.SHA512Hash(passwordBytes);
+            return SHA512.HashData(passwordBytes);
         }
         finally
         {

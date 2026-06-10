@@ -10,8 +10,10 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<Group> Groups => Set<Group>();
     public DbSet<Device> Devices => Set<Device>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
     public DbSet<SyncItem> SyncItems => Set<SyncItem>();
     public DbSet<SyncQueueItem> SyncQueueItems => Set<SyncQueueItem>();
+    public DbSet<SyncTombstone> SyncTombstones => Set<SyncTombstone>();
     public DbSet<LocalDeviceIdentity> LocalDeviceIdentities => Set<LocalDeviceIdentity>();
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -33,6 +35,9 @@ public class AppDbContext : DbContext
         device.Property(d => d.TlsCertFingerprint)
             .IsRequired()
             .HasMaxLength(128);
+
+        device.Property(d => d.BlockedReason)
+            .HasMaxLength(512);
 
         device.HasIndex(d => d.TlsCertFingerprint)
             .IsUnique();
@@ -80,7 +85,50 @@ public class AppDbContext : DbContext
         model.Entity<User>()
             .HasMany(u => u.Devices)
             .WithMany(d => d.Users)
-            .UsingEntity(j => j.ToTable("UserDevices"));
+            .UsingEntity<UserDevice>(
+                r => r.HasOne(ud => ud.Device)
+                    .WithMany(d => d.UserDevices)
+                    .HasForeignKey(ud => ud.DeviceId)
+                    .OnDelete(DeleteBehavior.Cascade),
+                l => l.HasOne(ud => ud.User)
+                    .WithMany(u => u.UserDevices)
+                    .HasForeignKey(ud => ud.UserId)
+                    .OnDelete(DeleteBehavior.Cascade),
+                j =>
+                {
+                    j.ToTable("UserDevices");
+                    j.HasKey(ud => new { ud.UserId, ud.DeviceId });
+
+                    j.Property(ud => ud.Name)
+                        .IsRequired()
+                        .HasMaxLength(64);
+
+                    j.Property(ud => ud.LinkedAt)
+                        .IsRequired();
+
+                    j.Property(ud => ud.LastModifiedAt)
+                        .IsRequired();
+
+                    j.Property(ud => ud.IsSyncEnabled)
+                        .IsRequired();
+
+                    j.Property(ud => ud.IsDeleted)
+                        .IsRequired();
+
+                    j.HasIndex(ud => ud.DeviceId);
+                    j.HasIndex(ud => new { ud.UserId, ud.Name })
+                        .IsUnique()
+                        .HasFilter("\"IsDeleted\" = 0");
+                    j.HasIndex(ud => new { ud.UserId, ud.IsDeleted, ud.IsSyncEnabled });
+                    j.HasIndex(ud => new { ud.DeviceId, ud.IsDeleted });
+                });
+
+
+
+        var tombstone = model.Entity<SyncTombstone>();
+        tombstone.HasKey(t => t.Id);
+        tombstone.HasIndex(t => new { t.ModelId, t.ModelType }).IsUnique();
+        tombstone.Property(t => t.DeletedAtTs).IsRequired();
 
         var ldi = model.Entity<LocalDeviceIdentity>();
 
@@ -99,6 +147,7 @@ public class AppDbContext : DbContext
         ldi.Property(x => x.AgreementPrivateKeyBlob).IsRequired();
         ldi.Property(x => x.SignPrivateKeyBlob).IsRequired();
         ldi.Property(x => x.PFXCertificate).IsRequired();
+        ldi.Property(x => x.IsSyncOn).IsRequired().HasDefaultValue(true);
         ldi.Property(x => x.CreatedAt).IsRequired();
     }
 }

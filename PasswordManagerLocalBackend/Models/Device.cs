@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Security;
 using System.Text;
 
 namespace PasswordManagerLocalBackend.Models;
@@ -16,8 +16,14 @@ public sealed class Device : IntegrityCheckableBase
 
     public bool IsTrusted { get; set; }
     public bool IsBlocked { get; set; }
+    public string? BlockedReason { get; set; }
+    public DateTimeOffset? BlockedAt { get; set; }
+    public int InvalidSyncAttemptCount { get; set; }
+    public DateTimeOffset? LastInvalidSyncAttemptAt { get; set; }
+    public DateTimeOffset LastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<User> Users { get; set; } = [];
+    public ICollection<UserDevice> UserDevices { get; set; } = [];
     public ICollection<SyncQueueItem> ItemsNeedingSync { get; set; } = [];
 
     public override byte[] CalculateIntegrityHash()
@@ -34,7 +40,14 @@ public sealed class Device : IntegrityCheckableBase
         bw.Write(LastSeen.ToBinary());
         bw.Write(IsTrusted ? (byte)1 : (byte)0);
         bw.Write(IsBlocked ? (byte)1 : (byte)0);
-        bw.Write(Users.Count);
+        bw.Write(Encoding.UTF8.GetBytes(BlockedReason ?? string.Empty));
+        bw.Write(BlockedAt?.ToUnixTimeMilliseconds() ?? 0);
+        bw.Write(InvalidSyncAttemptCount);
+        bw.Write(LastInvalidSyncAttemptAt?.ToUnixTimeMilliseconds() ?? 0);
+        bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
+
+        foreach (var userId in UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).OrderBy(id => id))
+            bw.Write(userId.ToByteArray());
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

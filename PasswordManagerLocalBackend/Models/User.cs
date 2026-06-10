@@ -10,10 +10,12 @@ public sealed class User : IntegrityCheckableBase
     public byte[] PasswordSalt { get; set; } = [];
     public byte[] EncryptedPayload { get; set; } = [];
     public byte[]? SavedKey { get; set; } = null;
+    public DateTimeOffset LastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
 
 
     public ICollection<Group> Groups { get; set; } = [];
     public ICollection<Device> Devices { get; set; } = [];
+    public ICollection<UserDevice> UserDevices { get; set; } = [];
 
 
 
@@ -29,12 +31,13 @@ public sealed class User : IntegrityCheckableBase
         bw.Write(UsernameSalt);
         bw.Write(PasswordSalt);
         bw.Write(EncryptedPayload);
+        bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
 
-        if (SavedKey is not null)
-            bw.Write(SavedKey);
+        foreach (var groupId in Groups.Select(g => g.Id).OrderBy(id => id))
+            bw.Write(groupId.ToByteArray());
 
-        bw.Write(Groups.Count);
-        bw.Write(Devices.Count);
+        foreach (var deviceId in UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).OrderBy(id => id))
+            bw.Write(deviceId.ToByteArray());
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

@@ -29,7 +29,7 @@ public sealed class UserPasswordsService : IUserPasswordsService
     {
         UserData userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         await _passwordService.AddNewPassword(request, userData.Passwords);
-        await _userService.UpdateUserDataAsync(userData, token, ct);
+        await _userService.UpdateUserDataAsync(userData, token, true, ct);
     }
 
 
@@ -37,7 +37,7 @@ public sealed class UserPasswordsService : IUserPasswordsService
     {
         var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         _passwordService.RemovePassword(passwordId, userData.Passwords);
-        await _userService.UpdateUserDataAsync(userData, token, ct);
+        await _userService.UpdateUserDataAsync(userData, token, true, ct);
     }
 
 
@@ -52,6 +52,6 @@ public sealed class UserPasswordsService : IUserPasswordsService
     {
         var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
         await _passwordService.UpdatePasswordAsync(request, userData.Passwords);
-        await _userService.UpdateUserDataAsync(userData, token, ct);
+        await _userService.UpdateUserDataAsync(userData, token, true, ct);
     }
 }

@@ -2,7 +2,6 @@
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Persistence;
-using PasswordManagerLocalBackend.Repositories;
 
 namespace PasswordManagerLocalBackend.Repositories;
 

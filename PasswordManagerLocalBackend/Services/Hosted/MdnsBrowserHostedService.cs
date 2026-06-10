@@ -1,130 +1,191 @@
 ﻿using Makaretu.Dns;
 using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Sync;
 using System.Collections.Concurrent;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class MdnsBrowserHostedService : IHostedService
+public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
 {
     private readonly IDeviceIdentityService _identity;
-    private readonly IDeviceService _devices;
-    private readonly ISyncService _sync;
-    private ServiceDiscovery? _sd;
-    private readonly ConcurrentDictionary<string, DateTime> _last = new();
+    private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
+    private readonly IDeviceSyncTaskService _deviceSyncTasks;
+    private readonly ConcurrentDictionary<string, DateTime> _lastSeen = new(StringComparer.OrdinalIgnoreCase);
+    private ServiceDiscovery? _serviceDiscovery;
 
-    public MdnsBrowserHostedService(IDeviceIdentityService identity, IDeviceService devices, ISyncService sync)
+    public MdnsBrowserHostedService(
+        IDeviceIdentityService identity,
+        ISyncDeviceIdentityService syncDeviceIdentities,
+        IDeviceSyncTaskService deviceSyncTasks)
     {
         _identity = identity;
-        _devices = devices;
-        _sync = sync;
+        _syncDeviceIdentities = syncDeviceIdentities;
+        _deviceSyncTasks = deviceSyncTasks;
     }
+
+
+
+
+    public int StartOrder => 40;
 
 
 
 
     public Task StartAsync(CancellationToken ct = default)
     {
-        if (_sd is not null)
+        if (!_identity.IsSyncOn)
             return Task.CompletedTask;
 
-        _sd = new ServiceDiscovery();
-        _sd.ServiceInstanceDiscovered += OnServiceInstanceDiscovered;
-        _sd.QueryServiceInstances(MdnsServiceType);
+        if (_serviceDiscovery is not null)
+            return Task.CompletedTask;
+
+        _serviceDiscovery = new ServiceDiscovery();
+        _serviceDiscovery.ServiceInstanceDiscovered += OnServiceInstanceDiscovered;
+        _serviceDiscovery.QueryServiceInstances(MdnsServiceType);
+
         return Task.CompletedTask;
     }
-
-
 
 
     public Task StopAsync(CancellationToken ct = default)
     {
-        if (_sd != null)
+        if (_serviceDiscovery is not null)
         {
-            _sd.ServiceInstanceDiscovered -= OnServiceInstanceDiscovered;
-            _sd.Dispose();
+            _serviceDiscovery.ServiceInstanceDiscovered -= OnServiceInstanceDiscovered;
+            _serviceDiscovery.Dispose();
+            _serviceDiscovery = null;
         }
+
         return Task.CompletedTask;
     }
-
-
 
 
     private async void OnServiceInstanceDiscovered(object? sender, ServiceInstanceDiscoveryEventArgs e)
     {
         try
         {
-            var mdns = _sd?.Mdns;
-            if (mdns == null)
+            if (!_identity.IsSyncOn)
+                return;
+
+            var mdns = _serviceDiscovery?.Mdns;
+            if (mdns is null)
                 return;
 
             var instance = e.ServiceInstanceName;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(MdnsResolveTimeoutSeconds));
 
-            using var cts = new CancellationTokenSource(2000);
-
-            var qTxt = new Message();
-            qTxt.Questions.Add(new Question { Name = instance, Type = DnsType.TXT });
-            var txtResp = await mdns.ResolveAsync(qTxt, cts.Token);
-            var txt = txtResp.Answers.OfType<TXTRecord>().FirstOrDefault();
-            if (txt == null)
+            var txt = await ResolveTxtAsync(mdns, instance, cts.Token);
+            if (txt is null)
                 return;
 
-            var props = txt.Strings
-                .Where(s => s.Contains('='))
-                .ToDictionary(s => s[..s.IndexOf('=')], s => s[(s.IndexOf('=') + 1)..]);
-
-            if (!props.TryGetValue("signpub", out var signHex))
+            if (!txt.TryGetValue("tlsfp", out var tlsFingerprint))
                 return;
 
-            if (!props.TryGetValue("tlsfp", out var tlsfp))
+            if (string.Equals(tlsFingerprint, _identity.FingerprintHex, StringComparison.OrdinalIgnoreCase))
                 return;
 
-            var signPub = Convert.FromHexString(signHex);
-            if (_identity.SignPublicKey.SequenceEqual(signPub)) return;
-
-            var now = DateTime.UtcNow;
-            var key = $"{signHex}:{tlsfp}";
-            if (_last.TryGetValue(key, out var last) && (now - last).TotalSeconds < MdnsThrottleSeconds)
-                return;
-            _last[key] = now;
-
-            await _devices.GetOrCreateByDiscoveryAsync(signPub, tlsfp);
-
-            var qSrv = new Message();
-            qSrv.Questions.Add(new Question { Name = instance, Type = DnsType.SRV });
-            var srvResp = await mdns.ResolveAsync(qSrv, cts.Token);
-            var srv = srvResp.Answers.OfType<SRVRecord>().FirstOrDefault();
-            if (srv == null)
-                return;
-
-            var port = srv.Port;
-            var target = srv.Target;
-
-            var qA = new Message();
-            qA.Questions.Add(new Question { Name = target, Type = DnsType.A });
-            var aResp = await mdns.ResolveAsync(qA, cts.Token);
-            var a = aResp.Answers.OfType<ARecord>().FirstOrDefault();
-
-            string? host = a?.Address.ToString();
-            if (host == null)
+            if (txt.TryGetValue("signpub", out var signPublicKeyHex))
             {
-                var qAAAA = new Message();
-                qAAAA.Questions.Add(new Question { Name = target, Type = DnsType.AAAA });
-                var aaaaResp = await mdns.ResolveAsync(qAAAA, cts.Token);
-                var aaaa = aaaaResp.Answers.OfType<AAAARecord>().FirstOrDefault();
-                host = aaaa?.Address.ToString();
+                var signPublicKey = Convert.FromHexString(signPublicKeyHex);
+                if (_identity.SignPublicKey.SequenceEqual(signPublicKey))
+                    return;
             }
-            if (host == null)
+
+            if (IsThrottled(tlsFingerprint))
                 return;
 
-            var dev = await _devices.GetBySignPublicKeyAsync(signPub);
-            if (dev == null || !dev.IsTrusted || dev.IsBlocked) return;
+            if (!_syncDeviceIdentities.TryGetByFingerprint(tlsFingerprint, out var device) || device is null)
+                return;
 
-            await _sync.TriggerSyncToAsync(host, port, tlsfp);
+            if (!_identity.IsSyncOn || !device.IsTrusted || device.IsBlocked || device.Id == _identity.LocalDeviceId)
+                return;
+
+            var endpoint = await ResolveEndpointAsync(mdns, instance, tlsFingerprint, cts.Token);
+            if (endpoint is null)
+                return;
+
+            _deviceSyncTasks.TryStart(endpoint, device);
         }
         catch
         {
         }
+    }
+
+
+    private async Task<IReadOnlyDictionary<string, string>?> ResolveTxtAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
+    {
+        var query = new Message();
+        query.Questions.Add(new Question { Name = instance, Type = DnsType.TXT });
+
+        var response = await mdns.ResolveAsync(query, ct);
+        var record = response.Answers.OfType<TXTRecord>().FirstOrDefault();
+        if (record is null)
+            return null;
+
+        return record.Strings
+            .Where(s => s.Contains('='))
+            .Select(s =>
+            {
+                var separatorIndex = s.IndexOf('=');
+                return new KeyValuePair<string, string>(s[..separatorIndex], s[(separatorIndex + 1)..]);
+            })
+            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First().Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+
+    private async Task<DiscoveredDeviceEndpoint?> ResolveEndpointAsync(MulticastService mdns, DomainName instance, string tlsFingerprint, CancellationToken ct)
+    {
+        var srvQuery = new Message();
+        srvQuery.Questions.Add(new Question { Name = instance, Type = DnsType.SRV });
+
+        var srvResponse = await mdns.ResolveAsync(srvQuery, ct);
+        var srv = srvResponse.Answers.OfType<SRVRecord>().FirstOrDefault();
+        if (srv is null)
+            return null;
+
+        var host = await ResolveHostAsync(mdns, srv.Target, ct);
+        if (host is null)
+            return null;
+
+        return new DiscoveredDeviceEndpoint
+        {
+            Host = host,
+            Port = srv.Port,
+            TlsCertFingerprint = tlsFingerprint
+        };
+    }
+
+
+    private static async Task<string?> ResolveHostAsync(MulticastService mdns, DomainName target, CancellationToken ct)
+    {
+        var aQuery = new Message();
+        aQuery.Questions.Add(new Question { Name = target, Type = DnsType.A });
+
+        var aResponse = await mdns.ResolveAsync(aQuery, ct);
+        var a = aResponse.Answers.OfType<ARecord>().FirstOrDefault();
+        if (a is not null)
+            return a.Address.ToString();
+
+        var aaaaQuery = new Message();
+        aaaaQuery.Questions.Add(new Question { Name = target, Type = DnsType.AAAA });
+
+        var aaaaResponse = await mdns.ResolveAsync(aaaaQuery, ct);
+        var aaaa = aaaaResponse.Answers.OfType<AAAARecord>().FirstOrDefault();
+        return aaaa?.Address.ToString();
+    }
+
+
+    private bool IsThrottled(string tlsFingerprint)
+    {
+        var now = DateTime.UtcNow;
+
+        if (_lastSeen.TryGetValue(tlsFingerprint, out var last) && (now - last).TotalSeconds < MdnsThrottleSeconds)
+            return true;
+
+        _lastSeen[tlsFingerprint] = now;
+        return false;
     }
 }

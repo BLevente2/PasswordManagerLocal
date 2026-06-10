@@ -1,5 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Repositories;
-using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 
 namespace PasswordManagerLocalBackend.Services;
@@ -7,28 +6,28 @@ namespace PasswordManagerLocalBackend.Services;
 public sealed class SyncService : ISyncService
 {
     private readonly ISyncQueueService _queue;
-    private readonly IUserRepository _userRepo;
-    private readonly IGroupRepository _groupRepo;
-    public readonly IDeviceRepository _deviceRepo;
 
-    public SyncService(
-        ISyncQueueService queue,
-        IUserRepository userRepo,
-        IGroupRepository groupRepo,
-        IDeviceRepository deviceRepo)
+    public SyncService(ISyncQueueService queue)
     {
         _queue = queue;
-        _userRepo = userRepo;
-        _groupRepo = groupRepo;
-        _deviceRepo = deviceRepo;
     }
 
-    public Task NeedsSyncAsync(
+
+
+
+    public async Task NeedsSyncAsync(
         Guid modelId,
         SyncModelType modelType,
         SyncChangeType changeType,
         CancellationToken ct = default)
     {
-        return Task.CompletedTask;
+        var item = new SyncItem
+        {
+            ModelId = modelId,
+            ModelType = modelType,
+            ChangeType = changeType
+        };
+
+        await _queue.EnqueueAsync(item, ct);
     }
 }
