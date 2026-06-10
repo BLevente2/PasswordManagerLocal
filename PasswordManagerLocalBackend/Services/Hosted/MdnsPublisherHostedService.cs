@@ -38,6 +38,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
         _profile.AddProperty("deviceid", _identity.DeviceIdHex);
         _profile.AddProperty("deviceguid", _identity.LocalDeviceId.ToString("N"));
         _profile.AddProperty("signpub", Convert.ToHexString(_identity.SignPublicKey));
+        _profile.AddProperty("agreepub", Convert.ToHexString(_identity.AgreementPublicKey));
         _profile.AddProperty("tlsfp", _identity.FingerprintHex);
 
         _serviceDiscovery.Advertise(_profile);

@@ -12,6 +12,7 @@ public sealed class Endpoints : IEndpoints
     private readonly IRememberMeService _rememberMeService;
     private readonly IUserPasswordsService _userPasswordsService;
     private readonly IDeviceService _deviceService;
+    private readonly IDeviceEnrollmentService _deviceEnrollmentService;
 
     public Endpoints
         (
@@ -19,7 +20,8 @@ public sealed class Endpoints : IEndpoints
         IUserProfileService userProfileService,
         IRememberMeService rememberMeService,
         IUserPasswordsService userPasswordsService,
-        IDeviceService deviceService
+        IDeviceService deviceService,
+        IDeviceEnrollmentService deviceEnrollmentService
         )
     {
         _authService = authService;
@@ -27,6 +29,7 @@ public sealed class Endpoints : IEndpoints
         _rememberMeService = rememberMeService;
         _userPasswordsService = userPasswordsService;
         _deviceService = deviceService;
+        _deviceEnrollmentService = deviceEnrollmentService;
     }
 
 
@@ -107,6 +110,22 @@ public sealed class Endpoints : IEndpoints
 
     public Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default) =>
         _deviceService.DisconnectUserDeviceAsync(token, deviceId, masterPassword, ct);
+
+
+    public Task<DeviceEnrollmentCodeResponse> StartDeviceEnrollmentAsync(CancellationToken ct = default) =>
+        _deviceEnrollmentService.StartEnrollmentAsync(ct);
+
+
+    public Task<DeviceEnrollmentStatusResponse> GetDeviceEnrollmentStatusAsync(CancellationToken ct = default) =>
+        _deviceEnrollmentService.GetEnrollmentStatusAsync(ct);
+
+
+    public Task CancelDeviceEnrollmentAsync(CancellationToken ct = default) =>
+        _deviceEnrollmentService.CancelEnrollmentAsync(ct);
+
+
+    public Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default) =>
+        _deviceEnrollmentService.AddDeviceByCodeAsync(token, code, ct);
 
 
 

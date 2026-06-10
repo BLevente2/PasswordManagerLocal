@@ -109,6 +109,49 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
     }
 
 
+    public override async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollment(CompleteDeviceEnrollmentRequest request, ServerCallContext context)
+    {
+        using var scope = _root.Services.CreateScope();
+
+        try
+        {
+            var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
+            if (clientCertificate is null)
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing." };
+
+            var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
+            if (!identity.IsSyncOn)
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled." };
+
+            var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
+            var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
+            var result = await enrollment.CompleteIncomingEnrollmentAsync(
+                request.SessionId,
+                request.CodeProof.ToByteArray(),
+                request.Snapshot.ToByteArray(),
+                request.SourceDeviceId,
+                request.SourceSignPub.ToByteArray(),
+                request.SourceTlsCertFingerprint,
+                actualFingerprint,
+                context.CancellationToken);
+
+            return new CompleteDeviceEnrollmentReply
+            {
+                Ok = result.Ok,
+                Error = result.Error ?? string.Empty
+            };
+        }
+        catch (Exception ex)
+        {
+            return new CompleteDeviceEnrollmentReply
+            {
+                Ok = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+
     private static async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, ServerCallContext context, CancellationToken ct)
     {
         try

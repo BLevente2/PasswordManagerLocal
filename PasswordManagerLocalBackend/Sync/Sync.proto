@@ -7,6 +7,7 @@ service SyncGrpc {
   rpc Hello     (HelloRequest)      returns (HelloReply);
   rpc NeedSync  (NeedSyncRequest)   returns (NeedSyncReply);
   rpc PushDelta (stream DeltaChunk) returns (Ack);
+  rpc CompleteDeviceEnrollment (CompleteDeviceEnrollmentRequest) returns (CompleteDeviceEnrollmentReply);
 }
 
 message HelloRequest  { string user_id = 1; string device_id = 2; bytes dataset_hash = 3; bytes sign_pub = 4; }
@@ -31,3 +32,17 @@ message DeltaChunk {
 }
 
 message Ack        { int64 last_synced_ts = 1; }
+
+message CompleteDeviceEnrollmentRequest {
+  string session_id = 1;
+  bytes code_proof = 2;
+  bytes snapshot = 3;
+  string source_device_id = 4;
+  bytes source_sign_pub = 5;
+  string source_tls_cert_fingerprint = 6;
+}
+
+message CompleteDeviceEnrollmentReply {
+  bool ok = 1;
+  string error = 2;
+}

@@ -60,10 +60,14 @@
                 <TextBlock Text="{Binding DevicesTitle}" Classes="sectionTitle" />
                 <TextBlock Text="{Binding DevicesDescription}" Classes="subtleText" TextWrapping="Wrap" />
               </StackPanel>
-              <Button Grid.Column="1"
-                      Classes="ghost"
-                      Command="{Binding RefreshDevicesCommand}"
-                      Content="{Binding RefreshDevicesLabel}" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <Button Classes="primary"
+                        Command="{Binding BeginAddDeviceCommand}"
+                        Content="{Binding AddDeviceLabel}" />
+                <Button Classes="ghost"
+                        Command="{Binding RefreshDevicesCommand}"
+                        Content="{Binding RefreshDevicesLabel}" />
+              </StackPanel>
             </Grid>
 
             <Border Classes="card" IsVisible="{Binding IsDevicesEmpty}">
@@ -274,6 +278,30 @@
                     Classes="danger"
                     Command="{Binding ConfirmDisconnectDeviceCommand}"
                     Content="{Binding ConfirmDisconnectLabel}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+    </Border>
+
+    <Border Background="#99000000" IsVisible="{Binding IsAddDeviceDialogOpen}" Padding="24">
+      <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+        <StackPanel Spacing="14">
+          <TextBlock Text="{Binding AddDeviceDialogTitle}" Classes="sectionTitle" />
+          <TextBlock Text="{Binding AddDeviceDescription}" Classes="subtleText" TextWrapping="Wrap" />
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding AddDeviceCodeLabel}" />
+            <TextBox Text="{Binding DeviceEnrollmentCodeInput}"
+                     Watermark="{Binding AddDeviceCodePlaceholder}"
+                     FontFamily="Consolas" />
+          </StackPanel>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+            <Button Classes="ghost"
+                    Command="{Binding CancelAddDeviceCommand}"
+                    Content="{Binding CancelLabel}" />
+            <Button Grid.Column="1"
+                    Classes="primary"
+                    Command="{Binding ConfirmAddDeviceCommand}"
+                    Content="{Binding ConfirmAddDeviceLabel}" />
           </Grid>
         </StackPanel>
       </Border>

@@ -26,6 +26,10 @@ public interface IEndpoints
     Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default);
     Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default);
     Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default);
+    Task<DeviceEnrollmentCodeResponse> StartDeviceEnrollmentAsync(CancellationToken ct = default);
+    Task<DeviceEnrollmentStatusResponse> GetDeviceEnrollmentStatusAsync(CancellationToken ct = default);
+    Task CancelDeviceEnrollmentAsync(CancellationToken ct = default);
+    Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default);
 
 
     Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default);

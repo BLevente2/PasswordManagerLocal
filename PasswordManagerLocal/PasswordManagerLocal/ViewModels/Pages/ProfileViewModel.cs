@@ -37,7 +37,10 @@ public sealed class ProfileViewModel : ViewModelBase
     private DeviceItemViewModel? _pendingLocalSyncDevice;
     private bool _isDeviceDisconnectDialogOpen;
     private bool _isLocalSyncDialogOpen;
+    private bool _isAddDeviceDialogOpen;
     private bool _pendingLocalSyncEnabled;
+    private bool _isAddingDevice;
+    private string _deviceEnrollmentCodeInput = string.Empty;
 
     public ProfileViewModel(
         UiPreferencesService uiPreferences,
@@ -61,6 +64,9 @@ public sealed class ProfileViewModel : ViewModelBase
         CancelDisconnectDeviceCommand = ReactiveCommand.Create(CancelDisconnectDevice);
         ConfirmLocalSyncToggleCommand = ReactiveCommand.CreateFromTask(ConfirmLocalSyncToggleAsync);
         CancelLocalSyncToggleCommand = ReactiveCommand.Create(CancelLocalSyncToggle);
+        BeginAddDeviceCommand = ReactiveCommand.CreateFromTask(BeginAddDeviceAsync);
+        ConfirmAddDeviceCommand = ReactiveCommand.CreateFromTask(ConfirmAddDeviceAsync);
+        CancelAddDeviceCommand = ReactiveCommand.Create(CancelAddDevice);
     }
 
     public string Username
@@ -191,6 +197,24 @@ public sealed class ProfileViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _isLocalSyncDialogOpen, value);
     }
 
+    public bool IsAddDeviceDialogOpen
+    {
+        get => _isAddDeviceDialogOpen;
+        private set => this.RaiseAndSetIfChanged(ref _isAddDeviceDialogOpen, value);
+    }
+
+    public bool IsAddingDevice
+    {
+        get => _isAddingDevice;
+        private set => this.RaiseAndSetIfChanged(ref _isAddingDevice, value);
+    }
+
+    public string DeviceEnrollmentCodeInput
+    {
+        get => _deviceEnrollmentCodeInput;
+        set => this.RaiseAndSetIfChanged(ref _deviceEnrollmentCodeInput, value);
+    }
+
     public DeviceItemViewModel? DeviceToDisconnect
     {
         get => _deviceToDisconnect;
@@ -246,6 +270,12 @@ public sealed class ProfileViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ConfirmLocalSyncToggleCommand { get; }
 
     public ReactiveCommand<Unit, Unit> CancelLocalSyncToggleCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BeginAddDeviceCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ConfirmAddDeviceCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> CancelAddDeviceCommand { get; }
 
     public string Title => GetTranslation("Profile_Title");
 
@@ -308,6 +338,18 @@ public sealed class ProfileViewModel : ViewModelBase
     public string DeleteAccountPasswordPlaceholder => GetTranslation("Profile_DeletePassword_Placeholder");
 
     public string RefreshDevicesLabel => GetTranslation("Common_Refresh");
+
+    public string AddDeviceLabel => GetTranslation("Profile_Device_Add");
+
+    public string AddDeviceDialogTitle => GetTranslation("Profile_Device_Add_Title");
+
+    public string AddDeviceDescription => GetTranslation("Profile_Device_Add_Description");
+
+    public string AddDeviceCodeLabel => GetTranslation("Profile_Device_Add_Code_Label");
+
+    public string AddDeviceCodePlaceholder => GetTranslation("Profile_Device_Add_Code_Placeholder");
+
+    public string ConfirmAddDeviceLabel => GetTranslation("Profile_Device_Add_Confirm");
 
     public string CurrentDeviceLabel => GetTranslation("Profile_Device_Current");
 
@@ -394,6 +436,12 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(ConfirmNewPasswordPlaceholder));
         this.RaisePropertyChanged(nameof(DeleteAccountPasswordPlaceholder));
         this.RaisePropertyChanged(nameof(RefreshDevicesLabel));
+        this.RaisePropertyChanged(nameof(AddDeviceLabel));
+        this.RaisePropertyChanged(nameof(AddDeviceDialogTitle));
+        this.RaisePropertyChanged(nameof(AddDeviceDescription));
+        this.RaisePropertyChanged(nameof(AddDeviceCodeLabel));
+        this.RaisePropertyChanged(nameof(AddDeviceCodePlaceholder));
+        this.RaisePropertyChanged(nameof(ConfirmAddDeviceLabel));
         this.RaisePropertyChanged(nameof(CurrentDeviceLabel));
         this.RaisePropertyChanged(nameof(BlockedLabel));
         this.RaisePropertyChanged(nameof(TrustedLabel));
@@ -444,6 +492,7 @@ public sealed class ProfileViewModel : ViewModelBase
         StatusMessage = null;
         CancelDisconnectDevice();
         CancelLocalSyncToggle();
+        CancelAddDevice();
         await LoadDevicesAsync();
     }
 
@@ -470,6 +519,7 @@ public sealed class ProfileViewModel : ViewModelBase
         RaiseDeviceCollectionStateChanged();
         CancelDisconnectDevice();
         CancelLocalSyncToggle();
+        CancelAddDevice();
     }
 
     private async Task SaveProfileAsync()
@@ -796,6 +846,67 @@ public sealed class ProfileViewModel : ViewModelBase
             StatusMessage = ex.Message;
         }
     }
+
+    private async Task BeginAddDeviceAsync()
+    {
+        if (_token == Guid.Empty)
+            return;
+
+        try
+        {
+            var isLocalSyncOn = await _endpoints.GetLocalDeviceSyncEnabledAsync();
+            if (!isLocalSyncOn)
+            {
+                StatusMessage = GetTranslation("Profile_Device_AddSyncDisabled");
+                return;
+            }
+
+            DeviceEnrollmentCodeInput = string.Empty;
+            IsAddDeviceDialogOpen = true;
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = ex.Message;
+        }
+    }
+
+    private void CancelAddDevice()
+    {
+        IsAddDeviceDialogOpen = false;
+        DeviceEnrollmentCodeInput = string.Empty;
+        IsAddingDevice = false;
+    }
+
+    private async Task ConfirmAddDeviceAsync()
+    {
+        if (_token == Guid.Empty || IsAddingDevice)
+            return;
+
+        var code = DeviceEnrollmentCodeInput.Trim();
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            StatusMessage = GetTranslation("Profile_Device_Add_CodeRequired");
+            return;
+        }
+
+        try
+        {
+            IsAddingDevice = true;
+            await _endpoints.AddDeviceByCodeAsync(_token, code);
+            CancelAddDevice();
+            await LoadDevicesAsync();
+            StatusMessage = GetTranslation("Profile_Device_AddSuccess");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = ex.Message;
+        }
+        finally
+        {
+            IsAddingDevice = false;
+        }
+    }
+
 
     private void RaiseDeviceCollectionStateChanged()
     {

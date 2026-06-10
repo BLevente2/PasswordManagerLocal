@@ -127,6 +127,7 @@ namespace PasswordManagerLocalBackend
                     services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
                     services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
                     services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
+                    services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
                     services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
                     services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
                     services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
