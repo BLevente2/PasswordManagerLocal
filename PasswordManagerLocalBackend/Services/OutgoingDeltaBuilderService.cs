@@ -197,6 +197,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             PublicKey = device.PublicKey,
             SignPublicKey = device.SignPublicKey,
             TlsCertFingerprint = device.TlsCertFingerprint,
+            DeviceName = device.DeviceName,
             LastKnownHash = device.LastKnownHash,
             LastSync = device.LastSync,
             LastSeen = device.LastSeen,

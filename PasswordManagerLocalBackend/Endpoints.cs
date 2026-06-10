@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions;
+using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
@@ -70,12 +70,20 @@ public sealed class Endpoints : IEndpoints
 
 
 
+    public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
+        _deviceService.GetLocalDeviceInfoAsync(ct);
+
+
     public Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default) =>
         _deviceService.GetLocalDeviceSyncEnabledAsync(ct);
 
 
     public Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default) =>
         _deviceService.SetLocalDeviceSyncEnabledAsync(isSyncOn, ct);
+
+
+    public Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default) =>
+        _deviceService.SetLocalDeviceNameAsync(token, name, ct);
 
 
 

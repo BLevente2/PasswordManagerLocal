@@ -39,6 +39,7 @@ public sealed class DeviceSyncPayload
     public byte[] PublicKey { get; set; } = [];
     public byte[] SignPublicKey { get; set; } = [];
     public string TlsCertFingerprint { get; set; } = string.Empty;
+    public string DeviceName { get; set; } = string.Empty;
     public byte[] LastKnownHash { get; set; } = [];
     public DateTime LastSync { get; set; }
     public DateTime LastSeen { get; set; }

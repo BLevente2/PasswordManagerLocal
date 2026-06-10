@@ -104,7 +104,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             SyncModelType.User => await ApplyUserAsync(payload, delta.Ts, ct),
             SyncModelType.Group => await ApplyGroupAsync(payload, delta.Ts, ct),
             SyncModelType.Device => await ApplyDeviceAsync(payload, delta.Ts, ct),
-            SyncModelType.UserDevice => await ApplyUserDeviceAsync(payload, delta.Ts, ct),
+            SyncModelType.UserDevice => await ApplyUserDeviceAsync(payload, sourceDevice, delta.Ts, ct),
             _ => throw new InvalidOperationException("Unknown sync model type.")
         };
 
@@ -190,7 +190,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private async Task<bool> ApplyDeviceAsync(SyncDeltaPayload delta, long ts, CancellationToken ct)
     {
         if (IsLocalDevicePayload(delta))
-            return await RemovePersistedLocalDeviceIfPresentAsync(ct);
+            return false;
 
         var existing = await _devices.GetByIdWithUsersAsync(delta.ModelId, ct);
 
@@ -229,7 +229,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private async Task<bool> ApplyUserDeviceAsync(SyncDeltaPayload delta, long ts, CancellationToken ct)
+    private async Task<bool> ApplyUserDeviceAsync(SyncDeltaPayload delta, Device sourceDevice, long ts, CancellationToken ct)
     {
         if (delta.UserDevice is null)
             throw new InvalidDataException("User device sync payload is missing.");
@@ -284,6 +284,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         userDevice.LinkedAt = delta.UserDevice.LinkedAt;
         userDevice.DeletedAt = null;
         userDevice.LastModifiedAt = modifiedAt;
+
+        if (userDevice.DeviceId == sourceDevice.Id && !string.Equals(sourceDevice.DeviceName, userDevice.Name, StringComparison.Ordinal))
+        {
+            sourceDevice.DeviceName = userDevice.Name;
+            sourceDevice.LastModifiedAt = modifiedAt;
+            sourceDevice.GenerateIntegrityHash();
+            _devices.Update(sourceDevice);
+        }
 
         if (existing is null)
             await _userDevices.AddAsync(userDevice, ct);
@@ -368,27 +376,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private async Task<bool> RemovePersistedLocalDeviceIfPresentAsync(CancellationToken ct)
-    {
-        var localDevices = await _devices.ListLocalSelfDevicesAsync(
-            _identity.LocalDeviceId,
-            _identity.SignPublicKey,
-            _identity.FingerprintHex,
-            ct);
-
-        if (localDevices.Count == 0)
-            return false;
-
-        foreach (var device in localDevices)
-        {
-            _syncDeviceIdentities.TryRemove(device);
-            _devices.Delete(device);
-        }
-
-        return true;
-    }
-
-
     private async Task SyncUserGroupsAsync(User user, IEnumerable<Guid> groupIds, CancellationToken ct)
     {
         var ids = CreateIdSet(groupIds);
@@ -434,7 +421,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                     DeviceId = device.Id,
                     User = user,
                     Device = device,
-                    Name = BuildUniqueFallbackUserDeviceName(user.UId, device.Id),
+                    Name = string.IsNullOrWhiteSpace(device.DeviceName) ? BuildUniqueFallbackUserDeviceName(user.UId, device.Id) : device.DeviceName,
                     LinkedAt = modifiedAt,
                     LastModifiedAt = modifiedAt
                 });
@@ -488,7 +475,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                     DeviceId = device.Id,
                     User = user,
                     Device = device,
-                    Name = BuildUniqueFallbackUserDeviceName(user.UId, device.Id),
+                    Name = string.IsNullOrWhiteSpace(device.DeviceName) ? BuildUniqueFallbackUserDeviceName(user.UId, device.Id) : device.DeviceName,
                     LinkedAt = modifiedAt,
                     LastModifiedAt = modifiedAt
                 });
@@ -820,6 +807,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         target.PublicKey = source.PublicKey;
         target.SignPublicKey = source.SignPublicKey;
         target.TlsCertFingerprint = source.TlsCertFingerprint;
+        target.DeviceName = source.DeviceName;
         target.LastKnownHash = source.LastKnownHash;
         target.IntegrityHash = source.IntegrityHash;
 

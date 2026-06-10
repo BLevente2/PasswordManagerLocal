@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocalBackend.Models;
 
 namespace PasswordManagerLocalBackend.Persistence;
@@ -35,6 +35,10 @@ public class AppDbContext : DbContext
         device.Property(d => d.TlsCertFingerprint)
             .IsRequired()
             .HasMaxLength(128);
+
+        device.Property(d => d.DeviceName)
+            .IsRequired()
+            .HasMaxLength(64);
 
         device.Property(d => d.BlockedReason)
             .HasMaxLength(512);
@@ -147,6 +151,7 @@ public class AppDbContext : DbContext
         ldi.Property(x => x.AgreementPrivateKeyBlob).IsRequired();
         ldi.Property(x => x.SignPrivateKeyBlob).IsRequired();
         ldi.Property(x => x.PFXCertificate).IsRequired();
+        ldi.Property(x => x.DeviceName).IsRequired().HasMaxLength(64);
         ldi.Property(x => x.IsSyncOn).IsRequired().HasDefaultValue(true);
         ldi.Property(x => x.CreatedAt).IsRequired();
     }

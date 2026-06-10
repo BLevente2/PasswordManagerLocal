@@ -243,7 +243,7 @@ public sealed class MainViewModel : ViewModelBase
             : $"@{profile.Username}";
 
         await PasswordsViewModel.LoadAsync(token);
-        ProfileViewModel.Load(token, profile);
+        await ProfileViewModel.LoadAsync(token, profile);
 
         CurrentPageViewModel = PasswordsViewModel;
         StatusMessage = message;

@@ -9,6 +9,7 @@ public sealed class Device : IntegrityCheckableBase
     public byte[] PublicKey { get; set; } = [];
     public byte[] SignPublicKey { get; set; } = [];
     public string TlsCertFingerprint { get; set; } = string.Empty;
+    public string DeviceName { get; set; } = string.Empty;
     public byte[] LastKnownHash { get; set; } = [];
 
     public DateTime LastSync { get; set; } = DateTime.UtcNow;
@@ -35,6 +36,7 @@ public sealed class Device : IntegrityCheckableBase
         bw.Write(PublicKey);
         bw.Write(SignPublicKey);
         bw.Write(Encoding.UTF8.GetBytes(TlsCertFingerprint));
+        bw.Write(Encoding.UTF8.GetBytes(DeviceName ?? string.Empty));
         bw.Write(LastKnownHash);
         bw.Write(LastSync.ToBinary());
         bw.Write(LastSeen.ToBinary());

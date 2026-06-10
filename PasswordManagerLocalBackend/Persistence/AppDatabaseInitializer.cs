@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using System.Data;
 using System.Data.Common;
@@ -11,6 +11,7 @@ internal static class AppDatabaseInitializer
     {
         await db.Database.EnsureCreatedAsync(ct);
         await EnsureLocalDeviceIdentitySchemaAsync(db, ct);
+        await EnsureDeviceSchemaAsync(db, ct);
     }
 
 
@@ -32,6 +33,7 @@ internal static class AppDatabaseInitializer
                         "AgreementPrivateKeyBlob" BLOB NOT NULL,
                         "SignPrivateKeyBlob" BLOB NOT NULL,
                         "PFXCertificate" BLOB NOT NULL,
+                        "DeviceName" TEXT NOT NULL DEFAULT '',
                         "IsSyncOn" INTEGER NOT NULL DEFAULT 1,
                         "CreatedAt" TEXT NOT NULL,
                         "IntegrityHash" BLOB NOT NULL,
@@ -49,6 +51,14 @@ internal static class AppDatabaseInitializer
             }
 
             var columns = await GetColumnNamesAsync(connection, "LocalDeviceIdentity", ct);
+
+            if (!columns.Contains("DeviceName"))
+            {
+                await ExecuteNonQueryAsync(connection, """
+                    ALTER TABLE "LocalDeviceIdentity"
+                    ADD COLUMN "DeviceName" TEXT NOT NULL DEFAULT '';
+                    """, ct);
+            }
 
             if (!columns.Contains("IsSyncOn"))
             {
@@ -70,6 +80,36 @@ internal static class AppDatabaseInitializer
                 CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalDeviceIdentity_SingletonKey"
                 ON "LocalDeviceIdentity" ("SingletonKey");
                 """, ct);
+        }
+        finally
+        {
+            if (closeConnection)
+                await connection.CloseAsync();
+        }
+    }
+
+
+    private static async Task EnsureDeviceSchemaAsync(AppDbContext db, CancellationToken ct)
+    {
+        var connection = db.Database.GetDbConnection();
+        var closeConnection = connection.State != ConnectionState.Open;
+
+        if (closeConnection)
+            await connection.OpenAsync(ct);
+
+        try
+        {
+            if (!await TableExistsAsync(connection, "Devices", ct))
+                return;
+
+            var columns = await GetColumnNamesAsync(connection, "Devices", ct);
+            if (!columns.Contains("DeviceName"))
+            {
+                await ExecuteNonQueryAsync(connection, """
+                    ALTER TABLE "Devices"
+                    ADD COLUMN "DeviceName" TEXT NOT NULL DEFAULT '';
+                    """, ct);
+            }
         }
         finally
         {

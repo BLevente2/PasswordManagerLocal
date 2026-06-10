@@ -6,6 +6,7 @@ public sealed class UserDeviceInfoResponse
 {
     public Guid DeviceId { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string DeviceName { get; set; } = string.Empty;
     public string TlsCertFingerprint { get; set; } = string.Empty;
     public DateTime LastSync { get; set; }
     public DateTime LastSeen { get; set; }
@@ -22,14 +23,17 @@ public sealed class UserDeviceInfoResponse
 
 
 
-    public static UserDeviceInfoResponse FromUserDevice(UserDevice userDevice, Guid currentDeviceId)
+    public static UserDeviceInfoResponse FromUserDevice(UserDevice userDevice, Guid currentDeviceId, bool? localSyncOn = null)
     {
         var device = userDevice.Device ?? throw new InvalidOperationException("Device data is missing.");
+
+        var isCurrentDevice = device.Id == currentDeviceId;
 
         return new UserDeviceInfoResponse
         {
             DeviceId = device.Id,
-            Name = userDevice.Name,
+            Name = string.IsNullOrWhiteSpace(userDevice.Name) ? device.DeviceName : userDevice.Name,
+            DeviceName = device.DeviceName,
             TlsCertFingerprint = device.TlsCertFingerprint,
             LastSync = device.LastSync,
             LastSeen = device.LastSeen,
@@ -38,11 +42,11 @@ public sealed class UserDeviceInfoResponse
             BlockedReason = device.BlockedReason,
             BlockedAt = device.BlockedAt,
             InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
-            IsSyncEnabled = userDevice.IsSyncEnabled,
+            IsSyncEnabled = isCurrentDevice && localSyncOn.HasValue ? localSyncOn.Value : userDevice.IsSyncEnabled,
             IsDeleted = userDevice.IsDeleted,
             LinkedAt = userDevice.LinkedAt,
             DeletedAt = userDevice.DeletedAt,
-            IsCurrentDevice = device.Id == currentDeviceId
+            IsCurrentDevice = isCurrentDevice
         };
     }
 }

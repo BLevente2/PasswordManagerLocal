@@ -6,124 +6,298 @@
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
     x:DataType="vm:ProfileViewModel">
 
-  <ScrollViewer>
-    <StackPanel Margin="16,8,16,16" Spacing="12">
-      <Border Classes="card">
-        <StackPanel Spacing="6">
-          <TextBlock Text="{Binding Title}" Classes="pageTitle" />
-          <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding StatusMessage}" Classes="subtleText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
-        </StackPanel>
-      </Border>
+  <Grid>
+    <ScrollViewer>
+      <StackPanel Margin="16,8,16,16" Spacing="12">
+        <Border Classes="card">
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding Title}" Classes="pageTitle" />
+            <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding StatusMessage}" Classes="subtleText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="12">
-          <TextBlock Text="{Binding AccountOverviewLabel}" Classes="sectionTitle" />
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-            <StackPanel Spacing="4">
-              <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
-              <TextBlock Text="{Binding Username}" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="4">
-              <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
-              <TextBlock Text="{Binding Email}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Grid>
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-            <StackPanel Spacing="4">
-              <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
-              <TextBlock Text="{Binding FirstName}" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="4">
-              <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
-              <TextBlock Text="{Binding LastName}" />
-            </StackPanel>
-          </Grid>
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-            <StackPanel Spacing="4">
-              <TextBlock Text="{Binding RegistrationDateLabel}" Classes="subtleText" />
-              <TextBlock Text="{Binding RegistrationDateText}" TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="4">
-              <TextBlock Text="{Binding LastLoginDateLabel}" Classes="subtleText" />
-              <TextBlock Text="{Binding LastLoginDateText}" TextWrapping="Wrap" />
-            </StackPanel>
-          </Grid>
-        </StackPanel>
-      </Border>
+        <Border Classes="card">
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding AccountOverviewLabel}" Classes="sectionTitle" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
+                <TextBlock Text="{Binding Username}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="4">
+                <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
+                <TextBlock Text="{Binding Email}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
+                <TextBlock Text="{Binding FirstName}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="4">
+                <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
+                <TextBlock Text="{Binding LastName}" />
+              </StackPanel>
+            </Grid>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding RegistrationDateLabel}" Classes="subtleText" />
+                <TextBlock Text="{Binding RegistrationDateText}" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="4">
+                <TextBlock Text="{Binding LastLoginDateLabel}" Classes="subtleText" />
+                <TextBlock Text="{Binding LastLoginDateText}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="12">
-          <TextBlock Text="{Binding PersonalInfoTitle}" Classes="sectionTitle" />
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+        <Border Classes="card">
+          <StackPanel Spacing="12">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding DevicesTitle}" Classes="sectionTitle" />
+                <TextBlock Text="{Binding DevicesDescription}" Classes="subtleText" TextWrapping="Wrap" />
+              </StackPanel>
+              <Button Grid.Column="1"
+                      Classes="ghost"
+                      Command="{Binding RefreshDevicesCommand}"
+                      Content="{Binding RefreshDevicesLabel}" />
+            </Grid>
+
+            <Border Classes="card" IsVisible="{Binding IsDevicesEmpty}">
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding DevicesEmptyTitle}" Classes="sectionTitle" />
+                <TextBlock Text="{Binding DevicesEmptyDescription}" Classes="subtleText" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+
+            <ListBox ItemsSource="{Binding Devices}"
+                     IsVisible="{Binding HasDevices}"
+                     BorderThickness="0"
+                     Background="Transparent">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:DeviceItemViewModel">
+                  <Border Margin="0,0,0,10" Padding="14" CornerRadius="14" BorderThickness="1" BorderBrush="#33808080">
+                    <StackPanel Spacing="12">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="5">
+                          <WrapPanel>
+                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                            <TextBlock Text="  •  " Classes="subtleText" />
+                            <TextBlock Text="{Binding TrustStateText}" Classes="subtleText" />
+                          </WrapPanel>
+                          <WrapPanel>
+                            <Border Padding="8,3" CornerRadius="10" Background="#223080FF" IsVisible="{Binding IsCurrentDevice}">
+                              <TextBlock Text="{Binding CurrentDeviceLabel}" FontSize="12" FontWeight="SemiBold" />
+                            </Border>
+                            <Border Padding="8,3" CornerRadius="10" Background="#22D13438" IsVisible="{Binding IsBlocked}">
+                              <TextBlock Text="{Binding BlockedLabel}" FontSize="12" FontWeight="SemiBold" Foreground="#FFD13438" />
+                            </Border>
+                            <Border Padding="8,3" CornerRadius="10" Background="#22808080">
+                              <TextBlock Text="{Binding SyncStateText}" FontSize="12" />
+                            </Border>
+                          </WrapPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8" MinWidth="180">
+                          <Button Classes="ghost" Command="{Binding ToggleSyncCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                              <ToggleSwitch IsChecked="{Binding IsSyncEnabled, Mode=OneWay}" IsHitTestVisible="False" />
+                              <TextBlock Text="{Binding SyncStateText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                          </Button>
+                          <Button Classes="danger"
+                                  Command="{Binding BeginDisconnectCommand}"
+                                  Content="{Binding DisconnectLabel}"
+                                  IsVisible="{Binding CanDisconnect}" />
+                        </StackPanel>
+                      </Grid>
+
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <StackPanel Spacing="5">
+                          <TextBlock Text="{Binding DeviceNameLabel}" Classes="subtleText" />
+                          <TextBox Text="{Binding EditableName}" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Classes="primary"
+                                VerticalAlignment="Bottom"
+                                Command="{Binding SaveNameCommand}"
+                                Content="{Binding SaveNameLabel}" />
+                      </Grid>
+
+                      <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding DeviceFingerprintLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding TlsCertFingerprint}" TextWrapping="Wrap" FontFamily="Consolas" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                          <TextBlock Text="{Binding DeviceLinkedAtLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding LinkedAtText}" />
+                        </StackPanel>
+                      </Grid>
+
+                      <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding DeviceLastSeenLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding LastSeenText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                          <TextBlock Text="{Binding DeviceLastSyncLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding LastSyncText}" />
+                        </StackPanel>
+                      </Grid>
+
+                      <Border Classes="dangerZone" IsVisible="{Binding IsBlocked}">
+                        <StackPanel Spacing="8">
+                          <TextBlock Text="{Binding BlockedLabel}" FontWeight="SemiBold" />
+                          <StackPanel Spacing="4" IsVisible="{Binding HasBlockedReason}">
+                            <TextBlock Text="{Binding DeviceBlockedReasonLabel}" Classes="subtleText" />
+                            <TextBlock Text="{Binding BlockedReason}" TextWrapping="Wrap" />
+                          </StackPanel>
+                          <StackPanel Spacing="4" IsVisible="{Binding HasBlockedAt}">
+                            <TextBlock Text="{Binding DeviceBlockedAtLabel}" Classes="subtleText" />
+                            <TextBlock Text="{Binding BlockedAtText}" />
+                          </StackPanel>
+                          <Button Classes="ghost"
+                                  Command="{Binding UnblockCommand}"
+                                  Content="{Binding UnblockLabel}"
+                                  IsVisible="{Binding CanUnblock}" />
+                        </StackPanel>
+                      </Border>
+
+                      <StackPanel Spacing="4" IsVisible="{Binding HasInvalidSyncAttempts}">
+                        <TextBlock Text="{Binding DeviceInvalidAttemptsLabel}" Classes="subtleText" />
+                        <TextBlock Text="{Binding InvalidSyncAttemptCount}" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding PersonalInfoTitle}" Classes="sectionTitle" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding FirstNameLabel}" />
+                <TextBox Text="{Binding EditFirstName}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="6">
+                <TextBlock Text="{Binding LastNameLabel}" />
+                <TextBox Text="{Binding EditLastName}" />
+              </StackPanel>
+            </Grid>
             <StackPanel Spacing="6">
-              <TextBlock Text="{Binding FirstNameLabel}" />
-              <TextBox Text="{Binding EditFirstName}" />
+              <TextBlock Text="{Binding EmailLabel}" />
+              <TextBox Text="{Binding EditEmail}" />
             </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="6">
-              <TextBlock Text="{Binding LastNameLabel}" />
-              <TextBox Text="{Binding EditLastName}" />
+            <Button Classes="primary"
+                    Command="{Binding SaveProfileCommand}"
+                    Content="{Binding SaveProfileLabel}" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding UsernameTitle}" Classes="sectionTitle" />
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding UsernameLabel}" />
+              <TextBox Text="{Binding EditUsername}" Watermark="{Binding EditUsernamePlaceholder}" />
             </StackPanel>
-          </Grid>
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding EmailLabel}" />
-            <TextBox Text="{Binding EditEmail}" />
+            <Button Classes="ghost"
+                    Command="{Binding ChangeUsernameCommand}"
+                    Content="{Binding ChangeUsernameLabel}" />
           </StackPanel>
-          <Button Classes="primary"
-                  Command="{Binding SaveProfileCommand}"
-                  Content="{Binding SaveProfileLabel}" />
-        </StackPanel>
-      </Border>
+        </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="12">
-          <TextBlock Text="{Binding UsernameTitle}" Classes="sectionTitle" />
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding UsernameLabel}" />
-            <TextBox Text="{Binding EditUsername}" Watermark="{Binding EditUsernamePlaceholder}" />
+        <Border Classes="card">
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding SecurityTitle}" Classes="sectionTitle" />
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding CurrentPasswordLabel}" />
+              <TextBox Text="{Binding CurrentPassword}" PasswordChar="●" Watermark="{Binding CurrentPasswordPlaceholder}" />
+            </StackPanel>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding NewPasswordLabel}" />
+                <TextBox Text="{Binding NewPassword}" PasswordChar="●" Watermark="{Binding NewPasswordPlaceholder}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="6">
+                <TextBlock Text="{Binding ConfirmNewPasswordLabel}" />
+                <TextBox Text="{Binding ConfirmNewPassword}" PasswordChar="●" Watermark="{Binding ConfirmNewPasswordPlaceholder}" />
+              </StackPanel>
+            </Grid>
+            <Button Classes="ghost"
+                    Command="{Binding ChangeMasterPasswordCommand}"
+                    Content="{Binding ChangeMasterPasswordLabel}" />
           </StackPanel>
-          <Button Classes="ghost"
-                  Command="{Binding ChangeUsernameCommand}"
-                  Content="{Binding ChangeUsernameLabel}" />
-        </StackPanel>
-      </Border>
+        </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="12">
-          <TextBlock Text="{Binding SecurityTitle}" Classes="sectionTitle" />
+        <Border Classes="card dangerZone">
+          <StackPanel Spacing="12">
+            <TextBlock Text="{Binding DangerZoneTitle}" Classes="sectionTitle" />
+            <TextBlock Text="{Binding DeleteAccountDescription}" Classes="subtleText" TextWrapping="Wrap" />
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding CurrentPasswordLabel}" />
+              <TextBox Text="{Binding DeleteAccountPassword}" PasswordChar="●" Watermark="{Binding DeleteAccountPasswordPlaceholder}" />
+            </StackPanel>
+            <Button Classes="danger"
+                    Command="{Binding DeleteAccountCommand}"
+                    Content="{Binding DeleteAccountLabel}" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Background="#99000000" IsVisible="{Binding IsDeviceDisconnectDialogOpen}" Padding="24">
+      <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+        <StackPanel Spacing="14">
+          <TextBlock Text="{Binding DisconnectDialogTitle}" Classes="sectionTitle" />
+          <TextBlock Text="{Binding DisconnectDeviceName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <Border Classes="dangerZone">
+            <TextBlock Text="{Binding DisconnectDialogWarning}" TextWrapping="Wrap" />
+          </Border>
           <StackPanel Spacing="6">
             <TextBlock Text="{Binding CurrentPasswordLabel}" />
-            <TextBox Text="{Binding CurrentPassword}" PasswordChar="●" Watermark="{Binding CurrentPasswordPlaceholder}" />
+            <TextBox Text="{Binding DisconnectDevicePassword}" PasswordChar="●" Watermark="{Binding DisconnectDialogPasswordPlaceholder}" />
           </StackPanel>
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-            <StackPanel Spacing="6">
-              <TextBlock Text="{Binding NewPasswordLabel}" />
-              <TextBox Text="{Binding NewPassword}" PasswordChar="●" Watermark="{Binding NewPasswordPlaceholder}" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="6">
-              <TextBlock Text="{Binding ConfirmNewPasswordLabel}" />
-              <TextBox Text="{Binding ConfirmNewPassword}" PasswordChar="●" Watermark="{Binding ConfirmNewPasswordPlaceholder}" />
-            </StackPanel>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+            <Button Classes="ghost"
+                    Command="{Binding CancelDisconnectDeviceCommand}"
+                    Content="{Binding CancelLabel}" />
+            <Button Grid.Column="1"
+                    Classes="danger"
+                    Command="{Binding ConfirmDisconnectDeviceCommand}"
+                    Content="{Binding ConfirmDisconnectLabel}" />
           </Grid>
-          <Button Classes="ghost"
-                  Command="{Binding ChangeMasterPasswordCommand}"
-                  Content="{Binding ChangeMasterPasswordLabel}" />
         </StackPanel>
       </Border>
+    </Border>
 
-      <Border Classes="card dangerZone">
-        <StackPanel Spacing="12">
-          <TextBlock Text="{Binding DangerZoneTitle}" Classes="sectionTitle" />
-          <TextBlock Text="{Binding DeleteAccountDescription}" Classes="subtleText" TextWrapping="Wrap" />
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding CurrentPasswordLabel}" />
-            <TextBox Text="{Binding DeleteAccountPassword}" PasswordChar="●" Watermark="{Binding DeleteAccountPasswordPlaceholder}" />
-          </StackPanel>
-          <Button Classes="danger"
-                  Command="{Binding DeleteAccountCommand}"
-                  Content="{Binding DeleteAccountLabel}" />
+    <Border Background="#99000000" IsVisible="{Binding IsLocalSyncDialogOpen}" Padding="24">
+      <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
+        <StackPanel Spacing="14">
+          <TextBlock Text="{Binding LocalSyncDialogTitle}" Classes="sectionTitle" />
+          <TextBlock Text="{Binding LocalSyncDeviceName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <Border Classes="dangerZone">
+            <TextBlock Text="{Binding LocalSyncDialogWarning}" TextWrapping="Wrap" />
+          </Border>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+            <Button Classes="ghost"
+                    Command="{Binding CancelLocalSyncToggleCommand}"
+                    Content="{Binding CancelLabel}" />
+            <Button Grid.Column="1"
+                    Classes="primary"
+                    Command="{Binding ConfirmLocalSyncToggleCommand}"
+                    Content="{Binding LocalSyncConfirmLabel}" />
+          </Grid>
         </StackPanel>
       </Border>
-    </StackPanel>
-  </ScrollViewer>
+    </Border>
+  </Grid>
 </UserControl>

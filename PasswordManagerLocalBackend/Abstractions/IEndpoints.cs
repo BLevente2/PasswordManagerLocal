@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Requests;
+using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
 
 namespace PasswordManagerLocalBackend.Abstractions;
@@ -17,8 +17,10 @@ public interface IEndpoints
     Task UpdateUserProfileInfoAsync(UpdateUserProfileRequest request, CancellationToken ct = default);
 
 
+    Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default);
     Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default);
     Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default);
+    Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default);
     Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(Guid token, CancellationToken ct = default);
     Task SetUserDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct = default);
     Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default);

@@ -191,11 +191,7 @@ public sealed class SyncQueueService : ISyncQueueService
                 return;
 
             if (IsLocalDevice(device))
-            {
-                _syncDeviceIdentities.TryRemove(device);
-                _devices.Delete(device);
                 return;
-            }
 
             device.LastModifiedAt = modifiedAt;
             device.GenerateIntegrityHash();

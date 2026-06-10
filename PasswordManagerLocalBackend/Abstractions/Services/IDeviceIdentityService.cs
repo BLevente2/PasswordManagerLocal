@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.X509Certificates;
 
 namespace PasswordManagerLocalBackend.Abstractions.Services;
 
@@ -7,7 +7,10 @@ public interface IDeviceIdentityService
     Task InitializeAsync(CancellationToken ct = default);
     bool IsInitialized { get; }
     bool IsSyncOn { get; }
+    string DeviceName { get; }
+    DateTimeOffset CreatedAt { get; }
     Task SetSyncOnAsync(bool isSyncOn, CancellationToken ct = default);
+    Task SetDeviceNameAsync(string deviceName, CancellationToken ct = default);
     byte[] AgreementPublicKey { get; }
     byte[] SignPublicKey { get; }
     Guid LocalDeviceId { get; }

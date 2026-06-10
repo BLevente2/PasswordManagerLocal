@@ -5,6 +5,7 @@ using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Sync;
+using PasswordManagerLocalBackend.Utils;
 using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
 
 namespace PasswordManagerLocalBackend.Services;
@@ -50,6 +51,17 @@ public sealed class DeviceService : IDeviceService
 
 
 
+    public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
+        Task.FromResult(new LocalDeviceInfoResponse
+        {
+            DeviceId = _identity.LocalDeviceId,
+            DeviceName = _identity.DeviceName,
+            TlsCertFingerprint = _identity.FingerprintHex,
+            IsSyncOn = _identity.IsSyncOn,
+            CreatedAt = _identity.CreatedAt
+        });
+
+
     public Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default) =>
         Task.FromResult(_identity.IsSyncOn);
 
@@ -58,17 +70,55 @@ public sealed class DeviceService : IDeviceService
         _syncRuntime.SetSyncEnabledAsync(isSyncOn, ct);
 
 
+    public async Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default)
+    {
+        var normalizedName = NormalizeUserDeviceName(name);
+        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var userDevice = await EnsureLocalUserDeviceAsync(user.UId, ct);
+
+        if (await _userDevices.IsNameTakenAsync(user.UId, normalizedName, _identity.LocalDeviceId, ct))
+            throw new InvalidInputException();
+
+        if (string.Equals(_identity.DeviceName, normalizedName, StringComparison.Ordinal) &&
+            string.Equals(userDevice.Name, normalizedName, StringComparison.Ordinal))
+            return;
+
+        await _identity.SetDeviceNameAsync(normalizedName, ct);
+
+        var device = await EnsureLocalDeviceAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+
+        device.DeviceName = normalizedName;
+        device.LastSeen = now.UtcDateTime;
+        device.LastModifiedAt = now;
+        device.GenerateIntegrityHash();
+        _devices.Update(device);
+
+        userDevice.Name = normalizedName;
+        userDevice.LastModifiedAt = now;
+        _userDevices.Update(userDevice);
+
+        await _syncQueue.EnqueueAsync(new SyncItem
+        {
+            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
+            ModelType = SyncModelType.UserDevice,
+            ChangeType = SyncChangeType.Updated
+        }, ct);
+    }
+
+
 
 
     public async Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(Guid token, CancellationToken ct = default)
     {
         var user = await _users.GetAndVerifyUserAsync(token, ct);
+        await EnsureLocalUserDeviceAsync(user.UId, ct);
         var currentDeviceId = await GetCurrentDeviceIdAsync(ct);
         var userDevices = await _userDevices.ListByUserAsync(user.UId, ct);
 
         return userDevices
             .Where(ud => !ud.IsDeleted && ud.Device is not null)
-            .Select(ud => UserDeviceInfoResponse.FromUserDevice(ud, currentDeviceId))
+            .Select(ud => UserDeviceInfoResponse.FromUserDevice(ud, currentDeviceId, _identity.IsSyncOn))
             .OrderByDescending(d => d.IsCurrentDevice)
             .ThenByDescending(d => d.LastSeen)
             .ToList();
@@ -187,6 +237,179 @@ public sealed class DeviceService : IDeviceService
 
 
 
+
+
+    private async Task<UserDevice> EnsureLocalUserDeviceAsync(Guid userId, CancellationToken ct)
+    {
+        var device = await EnsureLocalDeviceAsync(ct);
+        var userDevice = await _userDevices.GetAsync(userId, device.Id, ct);
+        var now = DateTimeOffset.UtcNow;
+
+        if (userDevice is null)
+        {
+            userDevice = new UserDevice
+            {
+                UserId = userId,
+                DeviceId = device.Id,
+                Device = device,
+                Name = await BuildUniqueLocalUserDeviceNameAsync(userId, device.Id, _identity.DeviceName, ct),
+                IsSyncEnabled = true,
+                IsDeleted = false,
+                LinkedAt = now,
+                LastModifiedAt = now
+            };
+
+            await _userDevices.AddAsync(userDevice, ct);
+            await _uow.SaveChangesAsync(ct);
+
+            await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Created, ct);
+            return userDevice;
+        }
+
+        var changed = false;
+        if (userDevice.IsDeleted)
+        {
+            userDevice.IsDeleted = false;
+            userDevice.DeletedAt = null;
+            userDevice.LinkedAt = now;
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(userDevice.Name))
+        {
+            userDevice.Name = await BuildUniqueLocalUserDeviceNameAsync(userId, device.Id, _identity.DeviceName, ct);
+            changed = true;
+        }
+
+        if (changed)
+        {
+            userDevice.LastModifiedAt = now;
+            _userDevices.Update(userDevice);
+            await _uow.SaveChangesAsync(ct);
+            await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Updated, ct);
+        }
+
+        return userDevice;
+    }
+
+
+    private Task EnqueueUserDeviceChangeAsync(UserDevice userDevice, SyncChangeType changeType, CancellationToken ct) =>
+        _syncQueue.EnqueueAsync(new SyncItem
+        {
+            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
+            ModelType = SyncModelType.UserDevice,
+            ChangeType = changeType
+        }, ct);
+
+
+    private async Task<Device> EnsureLocalDeviceAsync(CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var localSelfDevices = await _devices.ListLocalSelfDevicesAsync(_identity.LocalDeviceId, _identity.SignPublicKey, _identity.FingerprintHex, ct);
+        var duplicateLocalDevices = localSelfDevices
+            .Where(d => d.Id != _identity.LocalDeviceId)
+            .ToList();
+
+        if (duplicateLocalDevices.Count != 0)
+        {
+            foreach (var duplicateDevice in duplicateLocalDevices)
+                _devices.Delete(duplicateDevice);
+
+            await _uow.SaveChangesAsync(ct);
+        }
+
+        var device = localSelfDevices.FirstOrDefault(d => d.Id == _identity.LocalDeviceId)
+            ?? await _devices.GetByIdWithUserDevicesAsync(_identity.LocalDeviceId, ct);
+
+        if (device is null)
+        {
+            device = new Device
+            {
+                Id = _identity.LocalDeviceId,
+                PublicKey = _identity.AgreementPublicKey,
+                SignPublicKey = _identity.SignPublicKey,
+                TlsCertFingerprint = _identity.FingerprintHex,
+                DeviceName = _identity.DeviceName,
+                LastSync = now.UtcDateTime,
+                LastSeen = now.UtcDateTime,
+                IsTrusted = true,
+                IsBlocked = false,
+                LastModifiedAt = now
+            };
+
+            device.GenerateIntegrityHash();
+            await _devices.AddAsync(device, ct);
+            await _uow.SaveChangesAsync(ct);
+            return device;
+        }
+
+        var changed = false;
+        if (!device.PublicKey.SequenceEqual(_identity.AgreementPublicKey))
+        {
+            device.PublicKey = _identity.AgreementPublicKey;
+            changed = true;
+        }
+
+        if (!device.SignPublicKey.SequenceEqual(_identity.SignPublicKey))
+        {
+            device.SignPublicKey = _identity.SignPublicKey;
+            changed = true;
+        }
+
+        if (!string.Equals(device.TlsCertFingerprint, _identity.FingerprintHex, StringComparison.OrdinalIgnoreCase))
+        {
+            device.TlsCertFingerprint = _identity.FingerprintHex;
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(device.DeviceName) || !string.Equals(device.DeviceName, _identity.DeviceName, StringComparison.Ordinal))
+        {
+            device.DeviceName = _identity.DeviceName;
+            changed = true;
+        }
+
+        if (!device.IsTrusted || device.IsBlocked)
+        {
+            device.IsTrusted = true;
+            device.IsBlocked = false;
+            device.BlockedReason = null;
+            device.BlockedAt = null;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            device.LastModifiedAt = now;
+            device.GenerateIntegrityHash();
+            _devices.Update(device);
+            await _uow.SaveChangesAsync(ct);
+        }
+
+        return device;
+    }
+
+
+    private async Task<string> BuildUniqueLocalUserDeviceNameAsync(Guid userId, Guid deviceId, string requestedName, CancellationToken ct)
+    {
+        var baseName = string.IsNullOrWhiteSpace(requestedName)
+            ? DeviceNameUtil.BuildDefaultDeviceName(deviceId)
+            : requestedName.Trim();
+
+        if (!await _userDevices.IsNameTakenAsync(userId, baseName, deviceId, ct))
+            return baseName;
+
+        for (var i = 2; i < 100; i++)
+        {
+            var suffix = $"-{i}";
+            var prefixLength = Math.Min(baseName.Length, 64 - suffix.Length);
+            var name = baseName[..prefixLength] + suffix;
+
+            if (!await _userDevices.IsNameTakenAsync(userId, name, deviceId, ct))
+                return name;
+        }
+
+        throw new InvalidInputException();
+    }
 
 
     private async Task RemoveCachedDeviceIfNoPendingAsync(UserDevice userDevice, CancellationToken ct)
