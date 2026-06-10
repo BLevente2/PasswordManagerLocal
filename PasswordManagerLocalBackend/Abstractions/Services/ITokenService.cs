@@ -1,4 +1,6 @@
-﻿namespace PasswordManagerLocalBackend.Abstractions.Services;
+﻿using PasswordManagerLocalBackend.Models;
+
+namespace PasswordManagerLocalBackend.Abstractions.Services;
 
 public interface ITokenService
 {
@@ -8,5 +10,7 @@ public interface ITokenService
     Guid GetUidOrThrow(Guid token);
     IReadOnlyList<Guid> ListTokensByUid(Guid uid);
     bool Revoke(Guid token);
+    bool Revoke(Guid token, AuthSessionInvalidationReason reason);
+    bool TryGetInvalidationReason(Guid token, out AuthSessionInvalidationReason reason);
     int PurgeExpired();
 }

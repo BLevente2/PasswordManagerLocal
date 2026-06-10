@@ -48,6 +48,10 @@ public sealed class Endpoints : IEndpoints
         _authService.Logout(token);
 
 
+    public Task<AuthSessionStatusResponse> GetAuthSessionStatusAsync(Guid token, CancellationToken ct = default) =>
+        Task.FromResult(_authService.GetSessionStatus(token));
+
+
     public Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default) =>
         _authService.ChangeMasterPasswordAsync(request, ct);
 

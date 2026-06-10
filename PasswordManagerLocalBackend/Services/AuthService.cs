@@ -3,6 +3,7 @@ using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
+using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
 using System.Text;
@@ -113,20 +114,80 @@ public sealed class AuthService : IAuthService
         if (!_tokens.Validate(token))
             throw new InvalidTokenException();
 
-        _cache.InvalidateToken(token);
-        _keys.InvalidateToken(token);
-        _tokens.Revoke(token);
+        InvalidateToken(token, AuthSessionInvalidationReason.LoggedOut);
     }
 
 
-    public void LogoutUser(Guid uid)
+    public void LogoutUser(Guid uid) =>
+        LogoutUser(uid, AuthSessionInvalidationReason.LoggedOut);
+
+
+    public void LogoutUser(Guid uid, AuthSessionInvalidationReason reason)
     {
         foreach (var token in _tokens.ListTokensByUid(uid))
+            InvalidateToken(token, reason);
+    }
+
+
+    public AuthSessionStatusResponse GetSessionStatus(Guid token)
+    {
+        if (_tokens.Validate(token))
         {
-            _cache.InvalidateToken(token);
-            _keys.InvalidateToken(token);
-            _tokens.Revoke(token);
+            return new AuthSessionStatusResponse
+            {
+                IsAuthenticated = true,
+                InvalidationReason = AuthSessionInvalidationReason.None
+            };
         }
+
+        var reason = _tokens.TryGetInvalidationReason(token, out var foundReason)
+            ? foundReason
+            : AuthSessionInvalidationReason.Expired;
+
+        return new AuthSessionStatusResponse
+        {
+            IsAuthenticated = false,
+            InvalidationReason = reason
+        };
+    }
+
+
+    public async Task RefreshSyncedUserSessionsAsync(User user, CancellationToken ct = default)
+    {
+        foreach (var token in _tokens.ListTokensByUid(user.UId))
+        {
+            if (!_keys.TryGetEncryptionKey(token, out var key))
+            {
+                InvalidateToken(token, AuthSessionInvalidationReason.Expired);
+                continue;
+            }
+
+            try
+            {
+                var userData = await _userService.GetAndVerifyUserDataAsync(user, key);
+                _cache.SetUserData(token, userData);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                InvalidateToken(token, AuthSessionInvalidationReason.ProfilePasswordChanged);
+            }
+            finally
+            {
+                key.Dispose();
+            }
+        }
+    }
+
+
+    private void InvalidateToken(Guid token, AuthSessionInvalidationReason reason)
+    {
+        _cache.InvalidateToken(token);
+        _keys.InvalidateToken(token);
+        _tokens.Revoke(token, reason);
     }
 
 

@@ -1,9 +1,11 @@
+using Avalonia.Threading;
 using PasswordManagerLocal.Abstractions.Services;
 using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels.Auth;
 using PasswordManagerLocal.ViewModels.Pages;
 using PasswordManagerLocalBackend.Abstractions;
+using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Responses;
 using ReactiveUI;
 using System.Linq;
@@ -21,6 +23,8 @@ public sealed class MainViewModel : ViewModelBase
     private string _currentUserDisplayName = string.Empty;
     private string _currentUserSubtitle = string.Empty;
     private string? _statusMessage;
+    private DispatcherTimer? _sessionMonitorTimer;
+    private bool _isCheckingSession;
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -247,6 +251,7 @@ public sealed class MainViewModel : ViewModelBase
 
         CurrentPageViewModel = PasswordsViewModel;
         StatusMessage = message;
+        StartSessionMonitor(token);
     }
 
     private async Task RefreshAuthenticatedStateAsync()
@@ -262,6 +267,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task LogoutAsync()
     {
+        StopSessionMonitor();
         var token = _authSessionRegistry.CurrentUserToken;
         if (token == Guid.Empty)
         {
@@ -292,8 +298,9 @@ public sealed class MainViewModel : ViewModelBase
         StatusMessage = GetTranslation("Profile_Delete_Success");
     }
 
-    private Task HandleLoggedOutStateAsync()
+    private Task HandleLoggedOutStateAsync(string? message = null)
     {
+        StopSessionMonitor();
         IsAuthenticated = false;
         CurrentUserDisplayName = string.Empty;
         CurrentUserSubtitle = string.Empty;
@@ -302,9 +309,75 @@ public sealed class MainViewModel : ViewModelBase
         LoginViewModel.Reset();
         RegistrationViewModel.Reset();
         CurrentPageViewModel = LoginViewModel;
-        StatusMessage = GetTranslation("Shell_LoggedOut");
+        StatusMessage = message ?? GetTranslation("Shell_LoggedOut");
         return Task.CompletedTask;
     }
+
+    private void StartSessionMonitor(Guid token)
+    {
+        StopSessionMonitor();
+
+        var timer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(3)
+        };
+
+        timer.Tick += async (_, _) => await CheckCurrentSessionAsync(token);
+        _sessionMonitorTimer = timer;
+        timer.Start();
+    }
+
+
+    private void StopSessionMonitor()
+    {
+        if (_sessionMonitorTimer is null)
+            return;
+
+        _sessionMonitorTimer.Stop();
+        _sessionMonitorTimer = null;
+        _isCheckingSession = false;
+    }
+
+
+    private async Task CheckCurrentSessionAsync(Guid token)
+    {
+        if (_isCheckingSession || !IsAuthenticated || token == Guid.Empty || token != _authSessionRegistry.CurrentUserToken)
+            return;
+
+        try
+        {
+            _isCheckingSession = true;
+            var status = await _endpoints.GetAuthSessionStatusAsync(token);
+
+            if (!status.IsAuthenticated)
+                await HandleInvalidatedSessionAsync(token, status.InvalidationReason);
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _isCheckingSession = false;
+        }
+    }
+
+
+    private async Task HandleInvalidatedSessionAsync(Guid token, AuthSessionInvalidationReason reason)
+    {
+        _authSessionRegistry.TryRemove(token);
+        await HandleLoggedOutStateAsync(GetSessionInvalidationMessage(reason));
+    }
+
+
+    private string GetSessionInvalidationMessage(AuthSessionInvalidationReason reason) =>
+        reason switch
+        {
+            AuthSessionInvalidationReason.ProfilePasswordChanged => GetTranslation("Shell_ProfilePasswordChangedLoggedOut"),
+            AuthSessionInvalidationReason.ProfileRemoved => GetTranslation("Shell_ProfileRemovedLoggedOut"),
+            AuthSessionInvalidationReason.Expired => GetTranslation("Shell_SessionExpired"),
+            _ => GetTranslation("Shell_LoggedOut")
+        };
+
 
     private static string BuildDisplayName(UserProfileInfoResponse profile)
     {

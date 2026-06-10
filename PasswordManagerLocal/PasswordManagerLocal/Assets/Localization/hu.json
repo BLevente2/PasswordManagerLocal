@@ -193,5 +193,8 @@
   "Profile_Device_Add_Confirm": "Eszköz hozzáadása",
   "Profile_Device_AddSyncDisabled": "Erről az eszközről nem lehet új eszközt hozzáadni, amíg a saját szinkronizációja ki van kapcsolva. Először kapcsold vissza a jelenlegi eszköz szinkronizációját.",
   "Profile_Device_AddSuccess": "Az új eszköz hozzá lett adva, és a kezdeti profiladat-átvitel befejeződött.",
-  "Profile_Device_Add_CodeRequired": "Add meg az új eszközön látható kapcsolódási kódot."
+  "Profile_Device_Add_CodeRequired": "Add meg az új eszközön látható kapcsolódási kódot.",
+  "Shell_ProfilePasswordChangedLoggedOut": "A profilod jelszava módosult egy másik eszközön, ezért automatikusan kijelentkeztettünk. Jelentkezz be újra az új bejelentkezési adataiddal.",
+  "Shell_ProfileRemovedLoggedOut": "Ez a profil már nincs hozzákapcsolva ehhez az eszközhöz, ezért automatikusan kijelentkeztettünk.",
+  "Shell_SessionExpired": "A munkameneted lejárt. Jelentkezz be újra."
 }

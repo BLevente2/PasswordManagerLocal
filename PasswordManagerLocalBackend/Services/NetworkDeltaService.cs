@@ -1,4 +1,4 @@
-using PasswordManagerLocalBackend.Abstractions.Persistence;
+﻿using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
@@ -113,10 +113,32 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         await _uow.SaveChangesAsync(ct);
 
+        if (applied)
+            await RefreshAffectedSessionCachesAsync(payload, ct);
+
         if (applied && ShouldPropagate(payload))
             await PropagateIncomingDeltaAsync(payload, sourceDevice.Id, delta.Ts, ct);
 
         return delta.Ts;
+    }
+
+
+    private async Task RefreshAffectedSessionCachesAsync(SyncDeltaPayload payload, CancellationToken ct)
+    {
+        if (payload.ModelType != SyncModelType.User)
+            return;
+
+        if (payload.ChangeType == SyncChangeType.Deleted)
+        {
+            _auth.LogoutUser(payload.ModelId, AuthSessionInvalidationReason.ProfileRemoved);
+            return;
+        }
+
+        var user = await _users.GetByIdWithRelationsAsync(payload.ModelId, ct);
+        if (user is null)
+            return;
+
+        await _auth.RefreshSyncedUserSessionsAsync(user, ct);
     }
 
 
@@ -356,7 +378,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             .Distinct()
             .ToList();
 
-        _auth.LogoutUser(user.UId);
+        _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
         _users.Delete(user);
 
         foreach (var deviceId in relatedDeviceIds)
