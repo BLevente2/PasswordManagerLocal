@@ -1,4 +1,4 @@
-using Avalonia.Threading;
+﻿using Avalonia.Threading;
 using PasswordManagerLocal.Helpers;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Abstractions;
@@ -483,7 +483,9 @@ public sealed class LoginViewModel : ViewModelBase
         {
             _deviceTransferPolling?.Cancel();
             IsDeviceTransferSuccess = false;
-            DeviceTransferMessage = GetTranslation("Login_DeviceTransfer_ErrorMessage");
+            DeviceTransferMessage = status.ErrorCode == PasswordManagerLocalBackend.Exceptions.DeviceEnrollmentErrorCode.Unknown
+                ? GetTranslation("Login_DeviceTransfer_ErrorMessage")
+                : GetDeviceEnrollmentErrorMessage(status.ErrorCode);
             IsDeviceTransferCodeVisible = false;
             IsDeviceTransferFinished = true;
             this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));

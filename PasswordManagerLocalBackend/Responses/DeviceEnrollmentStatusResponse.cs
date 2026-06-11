@@ -1,3 +1,5 @@
+using PasswordManagerLocalBackend.Exceptions;
+
 namespace PasswordManagerLocalBackend.Responses;
 
 public enum DeviceEnrollmentState
@@ -12,6 +14,7 @@ public enum DeviceEnrollmentState
 public sealed class DeviceEnrollmentStatusResponse
 {
     public DeviceEnrollmentState State { get; set; }
+    public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
     public string? ErrorMessage { get; set; }
     public DateTimeOffset? ExpiresAt { get; set; }
 

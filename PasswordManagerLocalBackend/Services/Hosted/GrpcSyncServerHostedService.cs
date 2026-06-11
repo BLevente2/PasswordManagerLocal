@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
@@ -44,7 +44,7 @@ public sealed class GrpcSyncServerHostedService : ISyncControlledHostedService
             {
                 services.AddGrpc(options =>
                 {
-                    options.MaxReceiveMessageSize = SyncConstants.MaxIncomingDeltaPayloadBytes + 1024;
+                    options.MaxReceiveMessageSize = SyncConstants.MaxDeviceEnrollmentSnapshotBytes + 1024;
                     options.MaxSendMessageSize = 1024 * 1024;
                 });
 
@@ -59,7 +59,7 @@ public sealed class GrpcSyncServerHostedService : ISyncControlledHostedService
                         listen.Protocols = HttpProtocols.Http2;
                         listen.UseHttps(_identity.Certificate, https =>
                         {
-                            https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+                            https.ClientCertificateMode = ClientCertificateMode.AllowCertificate;
                             https.AllowAnyClientCertificate();
                         });
                     });

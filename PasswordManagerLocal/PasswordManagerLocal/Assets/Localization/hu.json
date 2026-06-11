@@ -258,5 +258,21 @@
   "Profile_ChangeUsername_Description": "A profilodhoz tartozó bejelentkezési név módosítása.",
   "Profile_ChangeMasterPassword_Description": "A fiók mesterjelszavának módosítása.",
   "Profile_DeleteAccount_Warning_Title": "Biztos, hogy törölni szeretnéd a profilodat?",
-  "Profile_DeleteAccount_FinalWarning": "Ez a művelet nem vonható vissza. A profilhoz tartozó helyi felhasználói rekord és a tárolt adatok véglegesen törlődnek erről az eszközről. Csak akkor folytasd, ha teljesen biztos vagy benne."
+  "Profile_DeleteAccount_FinalWarning": "Ez a művelet nem vonható vissza. A profilhoz tartozó helyi felhasználói rekord és a tárolt adatok véglegesen törlődnek erről az eszközről. Csak akkor folytasd, ha teljesen biztos vagy benne.",
+  "Error_DeviceEnrollment_Generic": "Hiba: Az eszköz hozzáadását nem sikerült befejezni. Kérjük, próbáld újra.",
+  "Error_DeviceEnrollment_SyncDisabled": "Hiba: Ezen az eszközön ki van kapcsolva a szinkronizáció. Kapcsold be, mielőtt új eszközt adsz hozzá.",
+  "Error_DeviceEnrollment_InvalidCode": "Hiba: Az eszköz hozzáadási kód hibás vagy hiányos.",
+  "Error_DeviceEnrollment_NewDeviceNotFound": "Hiba: Az új eszköz nem található a helyi hálózaton. Hagyd nyitva a kódot mutató képernyőt, és ellenőrizd, hogy mindkét eszköz ugyanazon a Wi-Fi-n/hálózaton van-e. Windows-on a tűzfalnak engednie kell az alkalmazás helyi alhálózatról érkező bejövő forgalmát.",
+  "Error_DeviceEnrollment_NewDeviceConnectionFailed": "Hiba: Az új eszköz adatai megvannak, de nem sikerült kapcsolódni hozzá vagy átvinni a profiladatokat. Windows-on ezt leggyakrabban a tűzfal, a hálózati profil vagy egy nagyobb gRPC üzenet blokkolása okozza. Hagyd nyitva a kódot mutató képernyőt, és engedélyezd az alkalmazás bejövő helyi hálózati forgalmát.",
+  "Error_DeviceEnrollment_NewDeviceRejected": "Hiba: Az új eszköz elutasította a profil átvitelét. Generálj új kódot, és próbáld újra.",
+  "Error_DeviceEnrollment_CodeExpired": "Hiba: Az eszköz hozzáadási kód lejárt. Generálj új kódot, és próbáld újra.",
+  "Error_DeviceEnrollment_CodeProofInvalid": "Hiba: Az eszköz hozzáadási kódot nem sikerült ellenőrizni. Generálj új kódot, és próbáld újra.",
+  "Error_DeviceEnrollment_ProfileDataInvalid": "Hiba: A kapott profiladatokat nem sikerült importálni.",
+  "Error_DeviceEnrollment_ProfileDataTooLarge": "Hiba: A profiladat túl nagy ahhoz, hogy egy eszközhozzáadási kérésben át lehessen küldeni.",
+  "Error_DeviceEnrollment_DeviceIdentityConflict": "Hiba: Egy másik eszköz már ezt az eszközazonosságot használja.",
+  "Firewall_Title": "Tűzfalengedély szükséges",
+  "Firewall_Message": "A helyi eszközszinkronizáláshoz a PasswordManagerLocal-nak bejövő helyi hálózati kapcsolatot kell fogadnia ezen az eszközön. A program csak a helyi alhálózatról engedélyezné a 26688-as TCP portot és az mDNS 5353-as UDP portot. Ez Windows-on a privát és a nyilvános hálózati profil esetén is szükséges lehet. Engedélyezed a Windows tűzfalon? A következő ablak egy Windows rendszergazdai engedélykérés lesz.",
+  "Firewall_Allow": "Engedélyezés",
+  "Firewall_Failed": "Nem sikerült automatikusan beállítani a Windows tűzfalat. Próbáld újra az engedélyezést, vagy add hozzá kézzel a Windows Defender tűzfal bejövő szabályait: TCP 26688 és UDP 5353, profil: bármelyik, távoli cím: helyi alhálózat. Ha a tűzfalbeállító segédfájl az alkalmazás exe fájlja mellé lett másolva, akkor abból a mappából rendszergazdaként futtatható a ConfigureWindowsFirewall.bat is.",
+  "Error_TechnicalDetails": "Technikai részletek"
 }

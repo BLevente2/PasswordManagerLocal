@@ -1,13 +1,15 @@
-using Google.Protobuf;
+﻿using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Core.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Constants;
+using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
+using PasswordManagerLocalBackend.Utils;
 using System.Security.Cryptography.X509Certificates;
 
 namespace PasswordManagerLocalBackend.Services.Grpc;
@@ -109,19 +111,174 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
     }
 
 
+    public override async Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfo(GetDeviceEnrollmentInfoRequest request, ServerCallContext context)
+    {
+        using var scope = _root.Services.CreateScope();
+
+        try
+        {
+            DeviceEnrollmentTrace.Info($"Incoming GetDeviceEnrollmentInfo request. Session={request.SessionId}.");
+            var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
+            if (!identity.IsSyncOn)
+            {
+                return new GetDeviceEnrollmentInfoReply
+                {
+                    Ok = false,
+                    Error = "Local synchronization is disabled.",
+                    ErrorCode = DeviceEnrollmentErrorCode.SyncDisabled.ToString()
+                };
+            }
+
+            var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
+            var result = await enrollment.GetIncomingEnrollmentInfoAsync(
+                request.SessionId,
+                request.CodeProof.ToByteArray(),
+                context.CancellationToken);
+
+            return new GetDeviceEnrollmentInfoReply
+            {
+                Ok = result.Ok,
+                Error = result.Error ?? string.Empty,
+                ErrorCode = result.ErrorCode.ToString(),
+                DeviceId = result.DeviceId == Guid.Empty ? string.Empty : result.DeviceId.ToString("N"),
+                TlsCertFingerprint = result.TlsCertFingerprint,
+                SignPub = ByteString.CopyFrom(result.SignPublicKey),
+                AgreementPub = ByteString.CopyFrom(result.AgreementPublicKey)
+            };
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Incoming GetDeviceEnrollmentInfo request failed. Session={request.SessionId}: {ex.Message}", ex);
+            return new GetDeviceEnrollmentInfoReply
+            {
+                Ok = false,
+                Error = ex.Message,
+                ErrorCode = DeviceEnrollmentErrorCode.Unknown.ToString()
+            };
+        }
+    }
+
+
+    public override async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStream(IAsyncStreamReader<CompleteDeviceEnrollmentChunk> requestStream, ServerCallContext context)
+    {
+        using var scope = _root.Services.CreateScope();
+
+        try
+        {
+            DeviceEnrollmentTrace.Info("Incoming streaming CompleteDeviceEnrollment request started.");
+            var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
+            if (clientCertificate is null)
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing.", ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected.ToString() };
+
+            var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
+            if (!identity.IsSyncOn)
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled.", ErrorCode = DeviceEnrollmentErrorCode.SyncDisabled.ToString() };
+
+            string? sessionId = null;
+            byte[]? codeProof = null;
+            string? sourceDeviceId = null;
+            byte[]? sourceSignPublicKey = null;
+            string? sourceTlsCertFingerprint = null;
+            var totalBytes = 0L;
+
+            await using var snapshotStream = new MemoryStream();
+
+            await foreach (var chunk in requestStream.ReadAllAsync(context.CancellationToken))
+            {
+                if (!string.IsNullOrWhiteSpace(chunk.SessionId))
+                    sessionId = chunk.SessionId;
+
+                if (chunk.CodeProof.Length > 0)
+                    codeProof = chunk.CodeProof.ToByteArray();
+
+                if (!string.IsNullOrWhiteSpace(chunk.SourceDeviceId))
+                    sourceDeviceId = chunk.SourceDeviceId;
+
+                if (chunk.SourceSignPub.Length > 0)
+                    sourceSignPublicKey = chunk.SourceSignPub.ToByteArray();
+
+                if (!string.IsNullOrWhiteSpace(chunk.SourceTlsCertFingerprint))
+                    sourceTlsCertFingerprint = chunk.SourceTlsCertFingerprint;
+
+                var bytes = chunk.SnapshotChunk.ToByteArray();
+                totalBytes += bytes.Length;
+
+                if (totalBytes > SyncConstants.MaxDeviceEnrollmentSnapshotBytes)
+                {
+                    return new CompleteDeviceEnrollmentReply
+                    {
+                        Ok = false,
+                        Error = "The profile data is too large to transfer in one enrollment request.",
+                        ErrorCode = DeviceEnrollmentErrorCode.ProfileDataTooLarge.ToString()
+                    };
+                }
+
+                if (bytes.Length > 0)
+                    await snapshotStream.WriteAsync(bytes, context.CancellationToken);
+            }
+
+            if (string.IsNullOrWhiteSpace(sessionId) ||
+                codeProof is null ||
+                string.IsNullOrWhiteSpace(sourceDeviceId) ||
+                sourceSignPublicKey is null ||
+                string.IsNullOrWhiteSpace(sourceTlsCertFingerprint))
+            {
+                return new CompleteDeviceEnrollmentReply
+                {
+                    Ok = false,
+                    Error = "The enrollment transfer metadata is incomplete.",
+                    ErrorCode = DeviceEnrollmentErrorCode.ProfileDataInvalid.ToString()
+                };
+            }
+
+            var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
+            var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
+            var result = await enrollment.CompleteIncomingEnrollmentAsync(
+                sessionId,
+                codeProof,
+                snapshotStream.ToArray(),
+                sourceDeviceId,
+                sourceSignPublicKey,
+                sourceTlsCertFingerprint,
+                actualFingerprint,
+                context.CancellationToken);
+
+            DeviceEnrollmentTrace.Info($"Incoming streaming CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
+
+            return new CompleteDeviceEnrollmentReply
+            {
+                Ok = result.Ok,
+                Error = result.Error ?? string.Empty,
+                ErrorCode = result.ErrorCode.ToString()
+            };
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request failed: {ex.Message}", ex);
+            return new CompleteDeviceEnrollmentReply
+            {
+                Ok = false,
+                Error = ex.Message,
+                ErrorCode = DeviceEnrollmentErrorCode.Unknown.ToString()
+            };
+        }
+    }
+
+
     public override async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollment(CompleteDeviceEnrollmentRequest request, ServerCallContext context)
     {
         using var scope = _root.Services.CreateScope();
 
         try
         {
+            DeviceEnrollmentTrace.Info($"Incoming unary CompleteDeviceEnrollment request started. Session={request.SessionId}, SnapshotBytes={request.Snapshot.Length}.");
             var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
             if (clientCertificate is null)
-                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing." };
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing.", ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected.ToString() };
 
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
             if (!identity.IsSyncOn)
-                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled." };
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled.", ErrorCode = DeviceEnrollmentErrorCode.SyncDisabled.ToString() };
 
             var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
             var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
@@ -135,18 +292,23 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 actualFingerprint,
                 context.CancellationToken);
 
+            DeviceEnrollmentTrace.Info($"Incoming unary CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
+
             return new CompleteDeviceEnrollmentReply
             {
                 Ok = result.Ok,
-                Error = result.Error ?? string.Empty
+                Error = result.Error ?? string.Empty,
+                ErrorCode = result.ErrorCode.ToString()
             };
         }
         catch (Exception ex)
         {
+            DeviceEnrollmentTrace.Error($"Incoming unary CompleteDeviceEnrollment request failed. Session={request.SessionId}: {ex.Message}", ex);
             return new CompleteDeviceEnrollmentReply
             {
                 Ok = false,
-                Error = ex.Message
+                Error = ex.Message,
+                ErrorCode = DeviceEnrollmentErrorCode.Unknown.ToString()
             };
         }
     }

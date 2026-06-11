@@ -13,6 +13,7 @@ internal sealed class Program
     public static async Task Main(string[] args)
     {
         ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
+        FirewallPermissionService.SetPlatformFirewallPermissionManager(new WindowsFirewallPermissionManager());
         await BackendHost.InitializeAsync(new DpapiKeyProtector());
 
         BuildAvaloniaApp()

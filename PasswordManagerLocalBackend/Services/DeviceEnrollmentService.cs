@@ -16,6 +16,10 @@ using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Utils;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
@@ -33,6 +37,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         public DateTimeOffset ExpiresAt { get; set; }
         public DeviceEnrollmentState State { get; set; } = DeviceEnrollmentState.Waiting;
         public string? ErrorMessage { get; set; }
+        public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
         public ServiceDiscovery? Discovery { get; set; }
         public ServiceProfile? Profile { get; set; }
     }
@@ -45,6 +50,26 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         public string TlsCertFingerprint { get; set; } = string.Empty;
         public byte[] SignPublicKey { get; set; } = [];
         public byte[] AgreementPublicKey { get; set; } = [];
+    }
+
+
+    private sealed class LocalEnrollmentHostCandidate
+    {
+        public IPAddress Address { get; set; } = IPAddress.None;
+        public int Priority { get; set; }
+        public string InterfaceName { get; set; } = string.Empty;
+        public string InterfaceDescription { get; set; } = string.Empty;
+        public bool IsVirtualAdapter { get; set; }
+        public bool HasGateway { get; set; }
+    }
+
+
+    private sealed class LocalIpv4Network
+    {
+        public IPAddress Address { get; set; } = IPAddress.None;
+        public IPAddress Mask { get; set; } = IPAddress.None;
+        public string InterfaceName { get; set; } = string.Empty;
+        public bool IsVirtualAdapter { get; set; }
     }
 
     private readonly IServiceScopeFactory _scopeFactory;
@@ -64,13 +89,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     public Task<DeviceEnrollmentCodeResponse> StartEnrollmentAsync(CancellationToken ct = default)
     {
         if (!_identity.IsSyncOn)
-            throw new InvalidOperationException("Device synchronization is disabled on this device.");
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.SyncDisabled, "Device synchronization is disabled on this device.");
 
         lock (_lock)
         {
             StopAdvertisingLocked();
 
-            var generated = DeviceEnrollmentCode.Create();
+            var directEndpointInfo = BuildDirectEndpointInfo();
+            var generated = DeviceEnrollmentCode.Create(directEndpointInfo);
             var session = new EnrollmentSession
             {
                 SessionId = generated.SessionId,
@@ -80,7 +106,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 State = DeviceEnrollmentState.Waiting
             };
 
-            StartAdvertisingLocked(session);
+            StartAdvertisingLocked(session, directEndpointInfo.Hosts);
             _currentSession = session;
 
             return Task.FromResult(new DeviceEnrollmentCodeResponse
@@ -105,6 +131,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             {
                 State = _currentSession.State,
                 ErrorMessage = _currentSession.ErrorMessage,
+                ErrorCode = _currentSession.ErrorCode,
                 ExpiresAt = _currentSession.ExpiresAt
             });
         }
@@ -126,33 +153,260 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     public async Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default)
     {
         if (!_identity.IsSyncOn)
-            throw new InvalidOperationException("Synchronization is disabled on this device. Turn synchronization on before adding a new device.");
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.SyncDisabled, "Synchronization is disabled on this device. Turn synchronization on before adding a new device.");
 
-        var parsed = DeviceEnrollmentCode.Parse(code);
-        using var scope = _scopeFactory.CreateScope();
-        var users = scope.ServiceProvider.GetRequiredService<IUserService>();
-        var user = await users.GetAndVerifyUserAsync(token, ct);
+        DeviceEnrollmentParsedCode parsed;
+        try
+        {
+            parsed = DeviceEnrollmentCode.Parse(code);
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.InvalidCode, ex.Message, ex);
+        }
 
-        var endpoint = await FindEnrollmentEndpointAsync(parsed, ct);
-        await RegisterRemoteDeviceAsync(scope.ServiceProvider, user.UId, endpoint, ct);
-        var snapshot = await BuildSnapshotAsync(scope.ServiceProvider, user.UId, ct);
+        var directEndpointCandidates = parsed.DirectEndpoints
+            .Select(ToEnrollmentEndpoint)
+            .Where(endpoint => !IsLocalEndpoint(endpoint))
+            .GroupBy(endpoint => $"{endpoint.Host}:{endpoint.Port}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Select(endpoint => new { Endpoint = endpoint, Priority = GetDirectEndpointPriorityForThisDevice(endpoint) })
+            .ToList();
 
-        var proof = DeviceEnrollmentCode.BuildCompletionProof(
-            parsed.SessionId,
-            parsed.Secret,
-            _identity.LocalDeviceId.ToString("N"),
-            _identity.SignPublicKey,
-            _identity.FingerprintHex);
+        var directEndpoints = directEndpointCandidates
+            .Where(candidate => candidate.Priority > int.MinValue)
+            .OrderByDescending(candidate => candidate.Priority)
+            .ThenBy(candidate => candidate.Endpoint.Host, StringComparer.OrdinalIgnoreCase)
+            .Select(candidate => candidate.Endpoint)
+            .ToList();
 
-        var ok = await SendEnrollmentSnapshotAsync(endpoint, parsed.SessionId, proof, snapshot, ct);
-        if (!ok)
-            throw new InvalidOperationException("The new device rejected the enrollment request.");
+        var hasAuthoritativeSameSubnetDirectEndpoint = directEndpointCandidates.Any(candidate => candidate.Priority >= 2000);
+        var directFailures = new List<string>();
+        var mdnsFailures = new List<string>();
 
-        await QueueInitialSyncAsync(scope.ServiceProvider, user.UId, endpoint.DeviceId, ct);
+        DeviceEnrollmentTrace.Info($"AddDeviceByCode started. Session={parsed.SessionId}, directEndpointCount={directEndpoints.Count}, authoritativeDirect={hasAuthoritativeSameSubnetDirectEndpoint}, directEndpointCandidates={string.Join(", ", directEndpointCandidates.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
+
+        foreach (var endpoint in directEndpoints)
+        {
+            try
+            {
+                DeviceEnrollmentTrace.Info($"Trying direct enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
+                await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
+                DeviceEnrollmentTrace.Info($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
+                return;
+            }
+            catch (DeviceEnrollmentException ex) when (ex.ErrorCode == DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
+            {
+                directFailures.Add($"{endpoint.Host}:{endpoint.Port} -> {ex.Message}");
+                DeviceEnrollmentTrace.Error($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
+            }
+        }
+
+        if (directEndpoints.Count > 0 && hasAuthoritativeSameSubnetDirectEndpoint)
+        {
+            throw new DeviceEnrollmentException(
+                DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+                BuildEndpointFailureMessage(
+                    "The enrollment code contains a same-subnet address for the new device, but the app could not connect to it. mDNS fallback was skipped because it often resolves to Windows virtual adapters on this machine.",
+                    directFailures));
+        }
+
+        IReadOnlyList<EnrollmentEndpoint> mdnsEndpoints;
+        try
+        {
+            DeviceEnrollmentTrace.Info("Trying mDNS enrollment discovery fallback.");
+            mdnsEndpoints = await FindEnrollmentEndpointsAsync(parsed, ct);
+        }
+        catch (DeviceEnrollmentException ex) when (directFailures.Count > 0)
+        {
+            throw new DeviceEnrollmentException(
+                DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+                BuildEndpointFailureMessage(
+                    "The new device was included in the enrollment code, but it could not be reached directly and mDNS discovery also failed.",
+                    directFailures),
+                ex);
+        }
+
+        foreach (var endpoint in mdnsEndpoints)
+        {
+            try
+            {
+                DeviceEnrollmentTrace.Info($"Trying mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
+                await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
+                DeviceEnrollmentTrace.Info($"mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
+                return;
+            }
+            catch (DeviceEnrollmentException ex) when (ex.ErrorCode == DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
+            {
+                mdnsFailures.Add($"{endpoint.Host}:{endpoint.Port} -> {ex.Message}");
+                DeviceEnrollmentTrace.Error($"mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
+            }
+        }
+
+        throw new DeviceEnrollmentException(
+            DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+            BuildEndpointFailureMessage(
+                "The new device was discovered, but none of the reachable network addresses accepted the enrollment transfer.",
+                directFailures.Concat(mdnsFailures)));
     }
 
 
-    public async Task<(bool Ok, string? Error)> CompleteIncomingEnrollmentAsync(
+    private static string BuildEndpointFailureMessage(string message, IEnumerable<string> endpointFailures)
+    {
+        var failures = endpointFailures
+            .Where(failure => !string.IsNullOrWhiteSpace(failure))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (failures.Count == 0)
+            return message;
+
+        return $"{message} Attempted endpoints: {string.Join("; ", failures)}";
+    }
+
+
+    private async Task CompleteEnrollmentWithEndpointAsync(Guid token, DeviceEnrollmentParsedCode parsed, EnrollmentEndpoint endpoint, CancellationToken ct)
+    {
+        DeviceEnrollmentTrace.Info($"Enrollment endpoint check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
+        await EnsureEndpointTcpReachableAsync(endpoint, ct);
+        DeviceEnrollmentTrace.Info($"TCP connection check succeeded for {endpoint.Host}:{endpoint.Port}.");
+        endpoint = await ResolveEndpointIdentityAsync(endpoint, parsed, ct);
+        DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, TlsFingerprintPrefix={NormalizeFingerprint(endpoint.TlsCertFingerprint)[..Math.Min(16, NormalizeFingerprint(endpoint.TlsCertFingerprint).Length)]}.");
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<IUserService>();
+        var syncIdentities = scope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
+        var user = await users.GetAndVerifyUserAsync(token, ct);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+
+        try
+        {
+            await RegisterRemoteDeviceAsync(scope.ServiceProvider, user.UId, endpoint, ct);
+            var snapshot = await BuildSnapshotAsync(scope.ServiceProvider, user.UId, ct);
+
+            var proof = DeviceEnrollmentCode.BuildCompletionProof(
+                parsed.SessionId,
+                parsed.Secret,
+                _identity.LocalDeviceId.ToString("N"),
+                _identity.SignPublicKey,
+                _identity.FingerprintHex);
+
+            var result = await SendEnrollmentSnapshotAsync(endpoint, parsed.SessionId, proof, snapshot, ct);
+            if (!result.Ok)
+                throw new DeviceEnrollmentException(result.ErrorCode, result.Error ?? "The new device rejected the enrollment request.");
+
+            await QueueInitialSyncAsync(scope.ServiceProvider, user.UId, endpoint.DeviceId, ct);
+            await transaction.CommitAsync(ct);
+
+            var remoteDevice = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == endpoint.DeviceId, ct);
+            if (remoteDevice is not null)
+                syncIdentities.TryAdd(remoteDevice);
+        }
+        catch (DeviceEnrollmentException)
+        {
+            syncIdentities.TryRemove(new Device
+            {
+                Id = endpoint.DeviceId,
+                TlsCertFingerprint = endpoint.TlsCertFingerprint
+            });
+            throw;
+        }
+        catch (Exception ex)
+        {
+            syncIdentities.TryRemove(new Device
+            {
+                Id = endpoint.DeviceId,
+                TlsCertFingerprint = endpoint.TlsCertFingerprint
+            });
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.Unknown, ex.Message, ex);
+        }
+    }
+
+
+    private static async Task EnsureEndpointTcpReachableAsync(EnrollmentEndpoint endpoint, CancellationToken ct)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(DeviceEnrollmentConnectTimeoutSeconds));
+            using var client = new TcpClient();
+            await client.ConnectAsync(endpoint.Host, endpoint.Port, timeout.Token);
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or ArgumentException)
+        {
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, $"The new device could not be reached at {endpoint.Host}:{endpoint.Port}.", ex);
+        }
+    }
+
+
+    public Task<DeviceEnrollmentInfoResponse> GetIncomingEnrollmentInfoAsync(string sessionId, byte[] codeProof, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            ExpireSessionIfNeededLocked();
+            var session = _currentSession;
+
+            if (session is null || session.State != DeviceEnrollmentState.Waiting)
+            {
+                return Task.FromResult(new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    Error = "No active enrollment session was found."
+                });
+            }
+
+            if (!string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
+            {
+                return Task.FromResult(new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    Error = "The enrollment session does not match."
+                });
+            }
+
+            if (DateTimeOffset.UtcNow > session.ExpiresAt)
+            {
+                session.State = DeviceEnrollmentState.Expired;
+                session.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
+                session.ErrorMessage = "The enrollment code expired.";
+                StopAdvertisingLocked();
+
+                return Task.FromResult(new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = session.ErrorCode,
+                    Error = session.ErrorMessage
+                });
+            }
+
+            var expectedProof = DeviceEnrollmentCode.BuildEnrollmentInfoProof(sessionId, session.Secret);
+            if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
+            {
+                return Task.FromResult(new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = DeviceEnrollmentErrorCode.CodeProofInvalid,
+                    Error = "The enrollment code proof is invalid."
+                });
+            }
+
+            return Task.FromResult(new DeviceEnrollmentInfoResponse
+            {
+                Ok = true,
+                DeviceId = _identity.LocalDeviceId,
+                TlsCertFingerprint = _identity.FingerprintHex,
+                SignPublicKey = _identity.SignPublicKey,
+                AgreementPublicKey = _identity.AgreementPublicKey
+            });
+        }
+    }
+
+
+    public async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> CompleteIncomingEnrollmentAsync(
         string sessionId,
         byte[] codeProof,
         byte[] snapshotBytes,
@@ -170,22 +424,26 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             session = _currentSession;
 
             if (session is null || session.State != DeviceEnrollmentState.Waiting)
-                return (false, "No active enrollment session was found.");
+                return (false, DeviceEnrollmentErrorCode.NewDeviceRejected, "No active enrollment session was found.");
 
             if (!string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
-                return (false, "The enrollment session does not match.");
+                return (false, DeviceEnrollmentErrorCode.NewDeviceRejected, "The enrollment session does not match.");
 
             if (DateTimeOffset.UtcNow > session.ExpiresAt)
             {
                 session.State = DeviceEnrollmentState.Expired;
+                session.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
                 session.ErrorMessage = "The enrollment code expired.";
                 StopAdvertisingLocked();
-                return (false, session.ErrorMessage);
+                return (false, session.ErrorCode, session.ErrorMessage);
             }
         }
 
         if (!string.Equals(NormalizeFingerprint(sourceTlsCertFingerprint), NormalizeFingerprint(actualClientTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
-            return await FailIncomingAsync("The source device TLS certificate does not match the enrollment request.");
+        {
+            DeviceEnrollmentTrace.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={NormalizeFingerprint(sourceTlsCertFingerprint)}, Actual={NormalizeFingerprint(actualClientTlsCertFingerprint)}.");
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.NewDeviceRejected, "The source device TLS certificate does not match the enrollment request.");
+        }
 
         var expectedProof = DeviceEnrollmentCode.BuildCompletionProof(
             sessionId,
@@ -195,7 +453,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             sourceTlsCertFingerprint);
 
         if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
-            return await FailIncomingAsync("The enrollment code proof is invalid.");
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.CodeProofInvalid, "The enrollment code proof is invalid.");
 
         DeviceEnrollmentSnapshot? snapshot;
         try
@@ -204,20 +462,23 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
         catch (JsonException ex)
         {
-            return await FailIncomingAsync($"The received profile data is invalid: {ex.Message}");
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The received profile data is invalid: {ex.Message}");
         }
 
         if (snapshot is null || snapshot.PrimaryUserId == Guid.Empty)
-            return await FailIncomingAsync("The received profile data is empty.");
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The received profile data is empty.");
 
         try
         {
             using var scope = _scopeFactory.CreateScope();
+            DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
             await ImportSnapshotAsync(scope.ServiceProvider, snapshot, ct);
+            DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");
         }
         catch (Exception ex)
         {
-            return await FailIncomingAsync(ex.Message);
+            DeviceEnrollmentTrace.Error($"Incoming enrollment snapshot import failed: {ex.Message}", ex);
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
 
         lock (_lock)
@@ -225,31 +486,419 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (_currentSession is not null)
             {
                 _currentSession.State = DeviceEnrollmentState.Completed;
+                _currentSession.ErrorCode = DeviceEnrollmentErrorCode.Unknown;
                 _currentSession.ErrorMessage = null;
                 StopAdvertisingLocked();
             }
         }
 
-        return (true, null);
+        return (true, DeviceEnrollmentErrorCode.Unknown, null);
 
-        Task<(bool Ok, string? Error)> FailIncomingAsync(string message)
+        Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> FailIncomingAsync(DeviceEnrollmentErrorCode errorCode, string message)
         {
             lock (_lock)
             {
                 if (_currentSession is not null)
                 {
                     _currentSession.State = DeviceEnrollmentState.Failed;
+                    _currentSession.ErrorCode = errorCode;
                     _currentSession.ErrorMessage = message;
                     StopAdvertisingLocked();
                 }
             }
 
-            return Task.FromResult<(bool Ok, string? Error)>((false, message));
+            return Task.FromResult<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)>((false, errorCode, message));
         }
     }
 
 
-    private void StartAdvertisingLocked(EnrollmentSession session)
+    private DeviceEnrollmentDirectEndpointInfo BuildDirectEndpointInfo() =>
+        new()
+        {
+            DeviceId = _identity.LocalDeviceId,
+            TlsCertFingerprint = _identity.FingerprintHex,
+            SignPublicKey = _identity.SignPublicKey,
+            AgreementPublicKey = _identity.AgreementPublicKey,
+            Port = SyncPort,
+            Hosts = GetLocalEnrollmentHosts()
+        };
+
+
+    private static IReadOnlyList<string> GetLocalEnrollmentHosts()
+    {
+        var candidates = new List<LocalEnrollmentHostCandidate>();
+
+        try
+        {
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                    continue;
+
+                var properties = networkInterface.GetIPProperties();
+                var hasGateway = properties.GatewayAddresses.Any(gateway => IsUsableUnicastAddress(gateway.Address));
+                var isVirtualAdapter = IsVirtualOrNonLanAdapter(networkInterface);
+                var typePriority = GetNetworkInterfaceTypePriority(networkInterface.NetworkInterfaceType);
+
+                foreach (var addressInfo in properties.UnicastAddresses)
+                {
+                    var address = addressInfo.Address;
+                    if (!IsUsableUnicastAddress(address))
+                        continue;
+
+                    if (IsWindowsHostOnlyGatewayAddress(address, isVirtualAdapter))
+                        continue;
+
+                    var priority = 0;
+
+                    if (!isVirtualAdapter)
+                        priority += 10000;
+                    else
+                        priority -= 10000;
+
+                    if (hasGateway)
+                        priority += 4000;
+
+                    priority += typePriority;
+
+                    if (address.AddressFamily == AddressFamily.InterNetwork)
+                        priority += 2000;
+                    else
+                        priority -= 500;
+
+                    priority += GetPrivateAddressPriority(address);
+
+                    if (addressInfo.PrefixOrigin is PrefixOrigin.Dhcp or PrefixOrigin.Manual)
+                        priority += 250;
+
+                    candidates.Add(new LocalEnrollmentHostCandidate
+                    {
+                        Address = address,
+                        Priority = priority,
+                        InterfaceName = networkInterface.Name,
+                        InterfaceDescription = networkInterface.Description,
+                        IsVirtualAdapter = isVirtualAdapter,
+                        HasGateway = hasGateway
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Could not enumerate local enrollment network interfaces: {ex.Message}", ex);
+        }
+
+        var hasPhysicalIpv4Candidate = candidates.Any(candidate =>
+            !candidate.IsVirtualAdapter &&
+            candidate.Address.AddressFamily == AddressFamily.InterNetwork &&
+            IsPrivateIpv4(candidate.Address));
+
+        if (hasPhysicalIpv4Candidate)
+        {
+            candidates = candidates
+                .Where(candidate => !candidate.IsVirtualAdapter && candidate.Address.AddressFamily == AddressFamily.InterNetwork)
+                .ToList();
+        }
+        else if (candidates.Any(candidate => !candidate.IsVirtualAdapter))
+        {
+            candidates = candidates
+                .Where(candidate => !candidate.IsVirtualAdapter)
+                .ToList();
+        }
+        else
+        {
+            DeviceEnrollmentTrace.Info("Only virtual/VPN/non-LAN enrollment address candidates were found. Keeping them as a last-resort fallback.");
+        }
+
+        if (candidates.Count == 0)
+        {
+            try
+            {
+                foreach (var address in Dns.GetHostAddresses(Dns.GetHostName()))
+                {
+                    if (!IsUsableUnicastAddress(address) || IsWindowsHostOnlyGatewayAddress(address, true))
+                        continue;
+
+                    candidates.Add(new LocalEnrollmentHostCandidate
+                    {
+                        Address = address,
+                        Priority = address.AddressFamily == AddressFamily.InterNetwork ? 100 : 50,
+                        InterfaceName = "DNS fallback",
+                        InterfaceDescription = "DNS fallback",
+                        IsVirtualAdapter = false,
+                        HasGateway = false
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                DeviceEnrollmentTrace.Error($"Could not enumerate DNS fallback enrollment addresses: {ex.Message}", ex);
+            }
+        }
+
+        var hosts = candidates
+            .GroupBy(candidate => candidate.Address.ToString(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(candidate => candidate.Priority).First())
+            .OrderByDescending(candidate => candidate.Priority)
+            .ThenBy(candidate => candidate.Address.ToString(), StringComparer.Ordinal)
+            .ToList();
+
+        DeviceEnrollmentTrace.Info($"Local enrollment hosts selected: {string.Join(", ", hosts.Select(candidate => $"{candidate.Address} on {candidate.InterfaceName} priority={candidate.Priority} virtual={candidate.IsVirtualAdapter} gateway={candidate.HasGateway}"))}");
+
+        return hosts
+            .Select(candidate => candidate.Address.ToString())
+            .ToList();
+    }
+
+
+    private static bool IsUsableUnicastAddress(IPAddress address)
+    {
+        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) || address.Equals(IPAddress.IPv6Any))
+            return false;
+
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+            return !IsApipaIpv4(address);
+
+        if (address.AddressFamily != AddressFamily.InterNetworkV6)
+            return false;
+
+        return !address.IsIPv6LinkLocal && !address.IsIPv6Multicast && !address.IsIPv6SiteLocal;
+    }
+
+
+    private static bool IsApipaIpv4(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+
+        var bytes = address.GetAddressBytes();
+        return bytes.Length == 4 && bytes[0] == 169 && bytes[1] == 254;
+    }
+
+
+    private static int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
+        interfaceType switch
+        {
+            NetworkInterfaceType.Wireless80211 => 3000,
+            NetworkInterfaceType.Ethernet => 2500,
+            NetworkInterfaceType.GigabitEthernet => 2500,
+            NetworkInterfaceType.FastEthernetFx => 2500,
+            NetworkInterfaceType.FastEthernetT => 2500,
+            NetworkInterfaceType.Ppp => -1000,
+            _ => 0
+        };
+
+
+    private static bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
+    {
+        var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
+
+        return text.Contains("virtual") ||
+               text.Contains("vethernet") ||
+               text.Contains("hyper-v") ||
+               text.Contains("default switch") ||
+               text.Contains("wsl") ||
+               text.Contains("docker") ||
+               text.Contains("vmware") ||
+               text.Contains("virtualbox") ||
+               text.Contains("vmnet") ||
+               text.Contains("host-only") ||
+               text.Contains("loopback") ||
+               text.Contains("npcap") ||
+               text.Contains("bluetooth") ||
+               text.Contains("vpn") ||
+               text.Contains("tap") ||
+               text.Contains("tun") ||
+               text.Contains("tailscale") ||
+               text.Contains("zerotier") ||
+               text.Contains("wireguard") ||
+               text.Contains("pseudo");
+    }
+
+
+    private static bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
+    {
+        if (!isVirtualAdapter || address.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length != 4)
+            return false;
+
+        if (bytes[3] != 1)
+            return false;
+
+        return true;
+    }
+
+
+    private static int GetPrivateAddressPriority(IPAddress address)
+    {
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            if (bytes.Length != 4)
+                return 0;
+
+            if (bytes[0] == 192 && bytes[1] == 168)
+                return 500;
+
+            if (bytes[0] == 10)
+                return 400;
+
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+                return 250;
+
+            return -500;
+        }
+
+        return IsPrivateIpv6(address) ? 100 : -500;
+    }
+
+
+    private static bool IsPrivateIpv4(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+
+        var bytes = address.GetAddressBytes();
+        return bytes.Length == 4 &&
+               (bytes[0] == 10 ||
+                (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                (bytes[0] == 192 && bytes[1] == 168));
+    }
+
+
+    private static bool IsPrivateIpv6(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetworkV6)
+            return false;
+
+        var bytes = address.GetAddressBytes();
+        return bytes.Length == 16 && (bytes[0] & 0xFE) == 0xFC;
+    }
+
+
+    private static int GetDirectEndpointPriorityForThisDevice(EnrollmentEndpoint endpoint)
+    {
+        if (!IPAddress.TryParse(endpoint.Host, out var remoteAddress))
+            return 0;
+
+        if (!IsUsableUnicastAddress(remoteAddress))
+            return int.MinValue;
+
+        var localNetworks = GetLocalIpv4Networks();
+        if (remoteAddress.AddressFamily == AddressFamily.InterNetwork)
+        {
+            if (localNetworks.Any(network => network.Address.Equals(remoteAddress)))
+            {
+                DeviceEnrollmentTrace.Info($"Skipping direct enrollment endpoint {endpoint.Host}:{endpoint.Port} because the address belongs to this device.");
+                return int.MinValue;
+            }
+
+            var samePhysicalSubnet = localNetworks.Any(network => !network.IsVirtualAdapter && IsInSameIpv4Subnet(remoteAddress, network.Address, network.Mask));
+            if (samePhysicalSubnet)
+                return 5000 + GetPrivateAddressPriority(remoteAddress);
+
+            var sameVirtualSubnet = localNetworks.Any(network => network.IsVirtualAdapter && IsInSameIpv4Subnet(remoteAddress, network.Address, network.Mask));
+            if (sameVirtualSubnet)
+                return 2500 + GetPrivateAddressPriority(remoteAddress);
+
+            if (IsPrivateIpv4(remoteAddress))
+                return 100 + GetPrivateAddressPriority(remoteAddress);
+        }
+
+        return remoteAddress.AddressFamily == AddressFamily.InterNetwork ? 0 : -100;
+    }
+
+
+    private static List<LocalIpv4Network> GetLocalIpv4Networks()
+    {
+        var networks = new List<LocalIpv4Network>();
+
+        try
+        {
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                    continue;
+
+                var isVirtualAdapter = IsVirtualOrNonLanAdapter(networkInterface);
+                foreach (var addressInfo in networkInterface.GetIPProperties().UnicastAddresses)
+                {
+                    if (addressInfo.Address.AddressFamily != AddressFamily.InterNetwork ||
+                        addressInfo.IPv4Mask is null ||
+                        !IsUsableUnicastAddress(addressInfo.Address))
+                        continue;
+
+                    networks.Add(new LocalIpv4Network
+                    {
+                        Address = addressInfo.Address,
+                        Mask = addressInfo.IPv4Mask,
+                        InterfaceName = networkInterface.Name,
+                        IsVirtualAdapter = isVirtualAdapter
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Could not enumerate local IPv4 networks: {ex.Message}", ex);
+        }
+
+        return networks;
+    }
+
+
+    private static bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
+    {
+        if (remoteAddress.AddressFamily != AddressFamily.InterNetwork ||
+            localAddress.AddressFamily != AddressFamily.InterNetwork ||
+            mask.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+
+        var remoteBytes = remoteAddress.GetAddressBytes();
+        var localBytes = localAddress.GetAddressBytes();
+        var maskBytes = mask.GetAddressBytes();
+
+        if (remoteBytes.Length != 4 || localBytes.Length != 4 || maskBytes.Length != 4)
+            return false;
+
+        for (var i = 0; i < 4; i++)
+        {
+            if ((remoteBytes[i] & maskBytes[i]) != (localBytes[i] & maskBytes[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+
+    private EnrollmentEndpoint ToEnrollmentEndpoint(DeviceEnrollmentParsedDirectEndpoint endpoint) =>
+        new()
+        {
+            Host = endpoint.Host,
+            Port = endpoint.Port,
+            DeviceId = endpoint.DeviceId,
+            TlsCertFingerprint = endpoint.TlsCertFingerprint,
+            SignPublicKey = endpoint.SignPublicKey,
+            AgreementPublicKey = endpoint.AgreementPublicKey
+        };
+
+
+    private bool IsLocalEndpoint(EnrollmentEndpoint endpoint) =>
+        endpoint.DeviceId == _identity.LocalDeviceId || _identity.SignPublicKey.SequenceEqual(endpoint.SignPublicKey);
+
+
+    private void StartAdvertisingLocked(EnrollmentSession session, IReadOnlyList<string> directHosts)
     {
         var advertiseHash = DeviceEnrollmentCode.BuildEnrollmentAdvertisementHash(
             session.SessionId,
@@ -266,6 +915,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         session.Profile.AddProperty("tlsfp", _identity.FingerprintHex);
         session.Profile.AddProperty("enrollid", session.SessionId);
         session.Profile.AddProperty("enrollhash", advertiseHash);
+        session.Profile.AddProperty("hosts", string.Join(",", directHosts.Where(host => IPAddress.TryParse(host, out _)).Distinct(StringComparer.OrdinalIgnoreCase)));
 
         session.Discovery.Advertise(session.Profile);
         session.Discovery.Announce(session.Profile);
@@ -295,20 +945,22 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             return;
 
         _currentSession.State = DeviceEnrollmentState.Expired;
+        _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
         _currentSession.ErrorMessage = "The enrollment code expired.";
         StopAdvertisingLocked();
     }
 
 
-    private async Task<EnrollmentEndpoint> FindEnrollmentEndpointAsync(DeviceEnrollmentParsedCode parsed, CancellationToken ct)
+    private async Task<IReadOnlyList<EnrollmentEndpoint>> FindEnrollmentEndpointsAsync(DeviceEnrollmentParsedCode parsed, CancellationToken ct)
     {
-        var tcs = new TaskCompletionSource<EnrollmentEndpoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<IReadOnlyList<EnrollmentEndpoint>>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var discovery = new ServiceDiscovery();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        using var queryLoop = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(DeviceEnrollmentDiscoveryTimeoutSeconds));
 
         discovery.ServiceInstanceDiscovered += OnDiscovered;
-        discovery.QueryServiceInstances(MdnsServiceType);
+        var queryTask = RepeatQueriesAsync(queryLoop.Token);
 
         using (timeout.Token.Register(() => tcs.TrySetCanceled(timeout.Token)))
         {
@@ -316,15 +968,41 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             {
                 return await tcs.Task;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                throw new InvalidOperationException("The new device could not be found on the local network.");
+                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceNotFound, "The new device could not be found on the local network. Keep the code screen open on the new device and make sure both devices are on the same local network.", ex);
             }
             finally
             {
+                queryLoop.Cancel();
                 discovery.ServiceInstanceDiscovered -= OnDiscovered;
+
+                try
+                {
+                    await queryTask;
+                }
+                catch
+                {
+                }
             }
         }
+
+        async Task RepeatQueriesAsync(CancellationToken queryCt)
+        {
+            while (!queryCt.IsCancellationRequested && !tcs.Task.IsCompleted)
+            {
+                try
+                {
+                    discovery.QueryServiceInstances(MdnsServiceType);
+                }
+                catch
+                {
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(2), queryCt);
+            }
+        }
+
 
         async void OnDiscovered(object? sender, ServiceInstanceDiscoveryEventArgs e)
         {
@@ -355,22 +1033,45 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 if (srv is null)
                     return;
 
-                var host = await ResolveHostAsync(mdns, srv.Target, timeout.Token);
-                if (host is null)
+                var hosts = new List<string>();
+                if (txt.TryGetValue("hosts", out var advertisedHosts))
+                    hosts.AddRange(ParseAdvertisedHosts(advertisedHosts));
+
+                hosts.AddRange(await ResolveHostsAsync(mdns, srv.Target, timeout.Token));
+
+                var endpoints = hosts
+                    .Where(host => !string.IsNullOrWhiteSpace(host))
+                    .Select(host => host.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(host => new EnrollmentEndpoint
+                    {
+                        Host = host,
+                        Port = srv.Port,
+                        DeviceId = deviceId,
+                        TlsCertFingerprint = tlsFp,
+                        SignPublicKey = signPub,
+                        AgreementPublicKey = agreePub
+                    })
+                    .Where(endpoint => !IsLocalEndpoint(endpoint))
+                    .Select(endpoint => new { Endpoint = endpoint, Priority = GetDirectEndpointPriorityForThisDevice(endpoint) })
+                    .Where(candidate => candidate.Priority > int.MinValue)
+                    .OrderByDescending(candidate => candidate.Priority)
+                    .ThenBy(candidate => candidate.Endpoint.Host, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (endpoints.Count == 0)
                     return;
 
-                tcs.TrySetResult(new EnrollmentEndpoint
-                {
-                    Host = host,
-                    Port = srv.Port,
-                    DeviceId = deviceId,
-                    TlsCertFingerprint = tlsFp,
-                    SignPublicKey = signPub,
-                    AgreementPublicKey = agreePub
-                });
+                var bestPriority = endpoints[0].Priority;
+                if (bestPriority > 0)
+                    endpoints = endpoints.Where(candidate => candidate.Priority > 0).ToList();
+
+                DeviceEnrollmentTrace.Info($"mDNS enrollment endpoints resolved: {string.Join(", ", endpoints.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
+                tcs.TrySetResult(endpoints.Select(candidate => candidate.Endpoint).ToList());
             }
-            catch
+            catch (Exception ex)
             {
+                DeviceEnrollmentTrace.Error($"mDNS enrollment endpoint processing failed: {ex.Message}", ex);
             }
         }
     }
@@ -382,7 +1083,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         query.Questions.Add(new Question { Name = instance, Type = DnsType.TXT });
 
         var response = await mdns.ResolveAsync(query, ct);
-        var record = response.Answers.OfType<TXTRecord>().FirstOrDefault();
+        var record = response.Answers.Concat(response.AdditionalRecords).OfType<TXTRecord>().FirstOrDefault();
         if (record is null)
             return null;
 
@@ -404,26 +1105,38 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         query.Questions.Add(new Question { Name = instance, Type = DnsType.SRV });
 
         var response = await mdns.ResolveAsync(query, ct);
-        return response.Answers.OfType<SRVRecord>().FirstOrDefault();
+        return response.Answers.Concat(response.AdditionalRecords).OfType<SRVRecord>().FirstOrDefault();
     }
 
 
-    private static async Task<string?> ResolveHostAsync(MulticastService mdns, DomainName target, CancellationToken ct)
+    private static IReadOnlyList<string> ParseAdvertisedHosts(string advertisedHosts) =>
+        advertisedHosts
+            .Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(host => IPAddress.TryParse(host, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+
+    private static async Task<IReadOnlyList<string>> ResolveHostsAsync(MulticastService mdns, DomainName target, CancellationToken ct)
     {
+        var hosts = new List<string>();
+
         var aQuery = new Message();
         aQuery.Questions.Add(new Question { Name = target, Type = DnsType.A });
 
         var aResponse = await mdns.ResolveAsync(aQuery, ct);
-        var a = aResponse.Answers.OfType<ARecord>().FirstOrDefault();
-        if (a is not null)
-            return a.Address.ToString();
+        hosts.AddRange(aResponse.Answers.Concat(aResponse.AdditionalRecords).OfType<ARecord>().Select(record => record.Address.ToString()));
 
         var aaaaQuery = new Message();
         aaaaQuery.Questions.Add(new Question { Name = target, Type = DnsType.AAAA });
 
         var aaaaResponse = await mdns.ResolveAsync(aaaaQuery, ct);
-        var aaaa = aaaaResponse.Answers.OfType<AAAARecord>().FirstOrDefault();
-        return aaaa?.Address.ToString();
+        hosts.AddRange(aaaaResponse.Answers.Concat(aaaaResponse.AdditionalRecords).OfType<AAAARecord>().Select(record => record.Address.ToString()));
+
+        return hosts
+            .Where(host => IPAddress.TryParse(host, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
 
@@ -464,8 +1177,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private async Task RegisterRemoteDeviceAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint endpoint, CancellationToken ct)
     {
         var db = services.GetRequiredService<AppDbContext>();
-        var syncQueue = services.GetRequiredService<ISyncQueueService>();
-        var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
         var now = DateTimeOffset.UtcNow;
 
         var device = await db.Devices
@@ -495,7 +1206,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (!device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
                 !device.PublicKey.SequenceEqual(endpoint.AgreementPublicKey) ||
                 !string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("A different device already uses this device identity.");
+                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different device already uses this device identity.");
 
             device.IsTrusted = true;
             device.IsBlocked = false;
@@ -531,21 +1242,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         await EnsureLocalDeviceAndLinkAsync(db, userId, ct);
         await db.SaveChangesAsync(ct);
-        syncIdentities.TryAdd(device);
-
-        await syncQueue.EnqueueAsync(new SyncItem
-        {
-            ModelId = device.Id,
-            ModelType = SyncModelType.Device,
-            ChangeType = SyncChangeType.Created
-        }, ct);
-
-        await syncQueue.EnqueueAsync(new SyncItem
-        {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(link.UserId, link.DeviceId),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Created
-        }, ct);
     }
 
 
@@ -649,15 +1345,257 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private async Task<bool> SendEnrollmentSnapshotAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, DeviceEnrollmentSnapshot snapshot, CancellationToken ct)
+    private async Task<EnrollmentEndpoint> ResolveEndpointIdentityAsync(EnrollmentEndpoint endpoint, DeviceEnrollmentParsedCode parsed, CancellationToken ct)
+    {
+        if (endpoint.DeviceId != Guid.Empty &&
+            !string.IsNullOrWhiteSpace(endpoint.TlsCertFingerprint) &&
+            endpoint.SignPublicKey.Length == SyncConstants.SyncDeltaEd25519PublicKeyBytes &&
+            endpoint.AgreementPublicKey.Length == SyncConstants.SyncDeltaX25519PublicKeyBytes)
+        {
+            return endpoint;
+        }
+
+        DeviceEnrollmentTrace.Info($"Fetching enrollment identity from {endpoint.Host}:{endpoint.Port}.");
+        var info = await FetchEnrollmentInfoAsync(endpoint, parsed, ct);
+        if (!info.Ok)
+        {
+            DeviceEnrollmentTrace.Error($"Fetching enrollment identity from {endpoint.Host}:{endpoint.Port} failed with {info.ErrorCode}: {info.Error}");
+            throw new DeviceEnrollmentException(info.ErrorCode, info.Error ?? "The new device did not return its enrollment identity.");
+        }
+
+        DeviceEnrollmentTrace.Info($"Fetched enrollment identity from {endpoint.Host}:{endpoint.Port}. DeviceId={info.DeviceId}.");
+
+        if (info.DeviceId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(info.TlsCertFingerprint) ||
+            info.SignPublicKey.Length != SyncConstants.SyncDeltaEd25519PublicKeyBytes ||
+            info.AgreementPublicKey.Length != SyncConstants.SyncDeltaX25519PublicKeyBytes)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The new device returned incomplete enrollment identity data.");
+
+        var resolved = new EnrollmentEndpoint
+        {
+            Host = endpoint.Host,
+            Port = endpoint.Port,
+            DeviceId = info.DeviceId,
+            TlsCertFingerprint = info.TlsCertFingerprint,
+            SignPublicKey = info.SignPublicKey,
+            AgreementPublicKey = info.AgreementPublicKey
+        };
+
+        if (IsLocalEndpoint(resolved))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The enrollment code belongs to this local device.");
+
+        return resolved;
+    }
+
+
+    private async Task<DeviceEnrollmentInfoResponse> FetchEnrollmentInfoAsync(EnrollmentEndpoint endpoint, DeviceEnrollmentParsedCode parsed, CancellationToken ct)
     {
         try
         {
             using var handler = CreatePinnedHandler(endpoint.TlsCertFingerprint);
-            using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions { HttpHandler = handler });
-            var client = new SyncGrpc.SyncGrpcClient(channel);
-            var snapshotBytes = JsonSerializer.SerializeToUtf8Bytes(snapshot);
+            using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions
+            {
+                HttpHandler = handler,
+                MaxSendMessageSize = 1024 * 1024,
+                MaxReceiveMessageSize = 1024 * 1024
+            });
 
+            var client = new SyncGrpc.SyncGrpcClient(channel);
+            var reply = await client.GetDeviceEnrollmentInfoAsync(new GetDeviceEnrollmentInfoRequest
+            {
+                SessionId = parsed.SessionId,
+                CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(parsed.SessionId, parsed.Secret))
+            }, cancellationToken: ct);
+
+            var errorCode = Enum.TryParse<DeviceEnrollmentErrorCode>(reply.ErrorCode, out var parsedErrorCode)
+                ? parsedErrorCode
+                : DeviceEnrollmentErrorCode.NewDeviceRejected;
+
+            if (!reply.Ok)
+            {
+                return new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = errorCode,
+                    Error = string.IsNullOrWhiteSpace(reply.Error) ? "The new device rejected the enrollment identity request." : reply.Error
+                };
+            }
+
+            if (!Guid.TryParseExact(reply.DeviceId, "N", out var deviceId) && !Guid.TryParse(reply.DeviceId, out deviceId))
+            {
+                return new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    Error = "The new device returned an invalid device id."
+                };
+            }
+
+            return new DeviceEnrollmentInfoResponse
+            {
+                Ok = true,
+                DeviceId = deviceId,
+                TlsCertFingerprint = reply.TlsCertFingerprint,
+                SignPublicKey = reply.SignPub.ToByteArray(),
+                AgreementPublicKey = reply.AgreementPub.ToByteArray()
+            };
+        }
+        catch (RpcException ex)
+        {
+            return new DeviceEnrollmentInfoResponse
+            {
+                Ok = false,
+                ErrorCode = DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+                Error = string.IsNullOrWhiteSpace(ex.Status.Detail) ? ex.Message : ex.Status.Detail
+            };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException)
+        {
+            return new DeviceEnrollmentInfoResponse
+            {
+                Ok = false,
+                ErrorCode = DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+                Error = ex.Message
+            };
+        }
+    }
+
+
+    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, DeviceEnrollmentSnapshot snapshot, CancellationToken ct)
+    {
+        byte[] snapshotBytes;
+        try
+        {
+            snapshotBytes = JsonSerializer.SerializeToUtf8Bytes(snapshot);
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            DeviceEnrollmentTrace.Error($"Could not serialize enrollment snapshot for {endpoint.Host}:{endpoint.Port}: {ex.Message}", ex);
+            return (false, DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
+        }
+
+        DeviceEnrollmentTrace.Info($"Enrollment snapshot prepared for {endpoint.Host}:{endpoint.Port}. Size={snapshotBytes.Length} bytes.");
+
+        if (snapshotBytes.Length > SyncConstants.MaxDeviceEnrollmentSnapshotBytes)
+            return (false, DeviceEnrollmentErrorCode.ProfileDataTooLarge, "The profile data is too large to transfer in one enrollment request.");
+
+        using var transferTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        transferTimeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.DeviceEnrollmentTransferTimeoutSeconds));
+
+        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? unaryResult = null;
+        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? streamResult = null;
+
+        try
+        {
+            DeviceEnrollmentTrace.Info($"Trying unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
+            unaryResult = await SendEnrollmentSnapshotUnaryAsync(endpoint, sessionId, proof, snapshotBytes, transferTimeout.Token);
+
+            if (unaryResult.Value.Ok)
+            {
+                DeviceEnrollmentTrace.Info($"Unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
+                return unaryResult.Value;
+            }
+
+            DeviceEnrollmentTrace.Error($"Unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {unaryResult.Value.ErrorCode}: {unaryResult.Value.Error}");
+
+            if (unaryResult.Value.ErrorCode != DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
+                return unaryResult.Value;
+        }
+        catch (Exception ex) when (ex is RpcException or HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException)
+        {
+            var message = ex is RpcException rpcException ? BuildGrpcConnectionError(rpcException) : ex.Message;
+            unaryResult = (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, message);
+            DeviceEnrollmentTrace.Error($"Unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {message}", ex);
+        }
+
+        try
+        {
+            DeviceEnrollmentTrace.Info($"Trying streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
+            streamResult = await SendEnrollmentSnapshotStreamAsync(endpoint, sessionId, proof, snapshotBytes, transferTimeout.Token);
+
+            if (streamResult.Value.Ok)
+            {
+                DeviceEnrollmentTrace.Info($"Streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
+                return streamResult.Value;
+            }
+
+            DeviceEnrollmentTrace.Error($"Streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {streamResult.Value.ErrorCode}: {streamResult.Value.Error}");
+
+            if (streamResult.Value.ErrorCode != DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
+                return streamResult.Value;
+        }
+        catch (Exception ex) when (ex is RpcException or HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException)
+        {
+            var message = ex is RpcException rpcException ? BuildGrpcConnectionError(rpcException) : ex.Message;
+            streamResult = (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, message);
+            DeviceEnrollmentTrace.Error($"Streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {message}", ex);
+        }
+
+        var details = BuildTransferFailureDetails(unaryResult, streamResult);
+        DeviceEnrollmentTrace.Error($"All enrollment snapshot transfer modes failed for {endpoint.Host}:{endpoint.Port}. {details}");
+        return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, details);
+    }
+
+
+    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotStreamAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, CancellationToken ct)
+    {
+        using var handler = CreatePinnedHandler(endpoint.TlsCertFingerprint);
+        using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions
+        {
+            HttpHandler = handler,
+            MaxSendMessageSize = SyncConstants.DeviceEnrollmentSnapshotChunkBytes + 4096,
+            MaxReceiveMessageSize = 1024 * 1024
+        });
+
+        var client = new SyncGrpc.SyncGrpcClient(channel);
+        using var call = client.CompleteDeviceEnrollmentStream(cancellationToken: ct);
+        var sourceDeviceId = _identity.LocalDeviceId.ToString("N");
+
+        for (var offset = 0; offset < snapshotBytes.Length; offset += SyncConstants.DeviceEnrollmentSnapshotChunkBytes)
+        {
+            var count = Math.Min(SyncConstants.DeviceEnrollmentSnapshotChunkBytes, snapshotBytes.Length - offset);
+            await call.RequestStream.WriteAsync(new CompleteDeviceEnrollmentChunk
+            {
+                SessionId = offset == 0 ? sessionId : string.Empty,
+                CodeProof = offset == 0 ? ByteString.CopyFrom(proof) : ByteString.Empty,
+                SourceDeviceId = offset == 0 ? sourceDeviceId : string.Empty,
+                SourceSignPub = offset == 0 ? ByteString.CopyFrom(_identity.SignPublicKey) : ByteString.Empty,
+                SourceTlsCertFingerprint = offset == 0 ? _identity.FingerprintHex : string.Empty,
+                SnapshotChunk = ByteString.CopyFrom(snapshotBytes, offset, count)
+            });
+        }
+
+        if (snapshotBytes.Length == 0)
+        {
+            await call.RequestStream.WriteAsync(new CompleteDeviceEnrollmentChunk
+            {
+                SessionId = sessionId,
+                CodeProof = ByteString.CopyFrom(proof),
+                SourceDeviceId = sourceDeviceId,
+                SourceSignPub = ByteString.CopyFrom(_identity.SignPublicKey),
+                SourceTlsCertFingerprint = _identity.FingerprintHex,
+                SnapshotChunk = ByteString.Empty
+            });
+        }
+
+        await call.RequestStream.CompleteAsync();
+        return ParseEnrollmentReply(await call.ResponseAsync);
+    }
+
+
+    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotUnaryAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, CancellationToken ct)
+    {
+        try
+        {
+            using var handler = CreatePinnedHandler(endpoint.TlsCertFingerprint);
+            using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions
+            {
+                HttpHandler = handler,
+                MaxSendMessageSize = SyncConstants.MaxDeviceEnrollmentSnapshotBytes + 1024,
+                MaxReceiveMessageSize = 1024 * 1024
+            });
+
+            var client = new SyncGrpc.SyncGrpcClient(channel);
             var reply = await client.CompleteDeviceEnrollmentAsync(new CompleteDeviceEnrollmentRequest
             {
                 SessionId = sessionId,
@@ -668,46 +1606,88 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SourceTlsCertFingerprint = _identity.FingerprintHex
             }, cancellationToken: ct);
 
-            return reply.Ok;
+            return ParseEnrollmentReply(reply);
         }
-        catch (RpcException)
+        catch (RpcException ex)
         {
-            return false;
+            return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, BuildGrpcConnectionError(ex));
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException)
         {
-            return false;
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-        catch (CryptographicException)
-        {
-            return false;
+            return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, ex.Message);
         }
     }
 
 
-    private HttpClientHandler CreatePinnedHandler(string serverFingerprintHex)
+    private static (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error) ParseEnrollmentReply(CompleteDeviceEnrollmentReply reply)
     {
-        var handler = new HttpClientHandler();
-        handler.ClientCertificates.Add(_identity.Certificate);
+        if (reply.Ok)
+            return (true, DeviceEnrollmentErrorCode.Unknown, null);
 
-        handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
+        var errorCode = Enum.TryParse<DeviceEnrollmentErrorCode>(reply.ErrorCode, out var parsedErrorCode)
+            ? parsedErrorCode
+            : DeviceEnrollmentErrorCode.NewDeviceRejected;
+
+        return (false, errorCode, string.IsNullOrWhiteSpace(reply.Error) ? "The new device rejected the enrollment request." : reply.Error);
+    }
+
+
+    private static string BuildGrpcConnectionError(RpcException ex)
+    {
+        var detail = string.IsNullOrWhiteSpace(ex.Status.Detail) ? ex.Message : ex.Status.Detail;
+        return string.IsNullOrWhiteSpace(detail)
+            ? $"gRPC connection failed with status {ex.StatusCode}."
+            : $"gRPC status {ex.StatusCode}: {detail}";
+    }
+
+
+    private static string BuildTransferFailureDetails(
+        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? unaryResult,
+        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? streamResult)
+    {
+        var unaryText = unaryResult is null
+            ? "unary transfer was not attempted"
+            : $"unary transfer failed with {unaryResult.Value.ErrorCode}: {unaryResult.Value.Error}";
+
+        var streamText = streamResult is null
+            ? "streaming transfer was not attempted"
+            : $"streaming transfer failed with {streamResult.Value.ErrorCode}: {streamResult.Value.Error}";
+
+        return $"{unaryText}; {streamText}";
+    }
+
+
+    private HttpMessageHandler CreatePinnedHandler(string serverFingerprintHex)
+    {
+        var handler = new SocketsHttpHandler
         {
-            if (cert is null)
-                return false;
-
-            var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
-            return string.Equals(fingerprint, NormalizeFingerprint(serverFingerprintHex), StringComparison.OrdinalIgnoreCase);
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                ClientCertificates = new X509CertificateCollection { _identity.Certificate },
+                LocalCertificateSelectionCallback = (_, _, _, _, _) => _identity.Certificate,
+                RemoteCertificateValidationCallback = (_, cert, _, _) => ValidatePinnedServerCertificate(cert, serverFingerprintHex)
+            }
         };
 
         return handler;
+    }
+
+
+    private bool ValidatePinnedServerCertificate(X509Certificate? cert, string serverFingerprintHex)
+    {
+        if (cert is null)
+            return false;
+
+        var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
+        var expected = NormalizeFingerprint(serverFingerprintHex);
+        if (expected.Length == 0)
+            return false;
+
+        return expected.Length < 64
+            ? fingerprint.StartsWith(expected, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(fingerprint, expected, StringComparison.OrdinalIgnoreCase);
     }
 
 
@@ -716,6 +1696,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var db = services.GetRequiredService<AppDbContext>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
         var now = DateTimeOffset.UtcNow;
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         await EnsureLocalDeviceOnlyAsync(db, ct);
 
@@ -725,7 +1706,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 deviceSnapshot.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
                 string.Equals(NormalizeFingerprint(deviceSnapshot.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
 
-            var device = await db.Devices.Include(d => d.UserDevices).FirstOrDefaultAsync(d => d.Id == deviceSnapshot.Id, ct);
+            var device = await db.Devices.FirstOrDefaultAsync(d => d.Id == deviceSnapshot.Id, ct);
             if (device is null)
             {
                 device = new Device { Id = deviceSnapshot.Id };
@@ -821,18 +1802,15 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             }
         }
 
-        foreach (var linkSnapshot in snapshot.UserDevices)
+        var linkSnapshots = snapshot.UserDevices
+            .Where(ud => ud.UserId != Guid.Empty && ud.DeviceId != Guid.Empty)
+            .GroupBy(ud => new { ud.UserId, ud.DeviceId })
+            .Select(g => g.OrderByDescending(ud => ud.LastModifiedAt).First())
+            .ToList();
+
+        foreach (var linkSnapshot in linkSnapshots)
         {
-            var link = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == linkSnapshot.UserId && ud.DeviceId == linkSnapshot.DeviceId, ct);
-            if (link is null)
-            {
-                link = new UserDevice
-                {
-                    UserId = linkSnapshot.UserId,
-                    DeviceId = linkSnapshot.DeviceId
-                };
-                await db.UserDevices.AddAsync(link, ct);
-            }
+            var link = await GetOrCreateTrackedUserDeviceAsync(db, linkSnapshot.UserId, linkSnapshot.DeviceId, ct);
 
             link.Name = string.IsNullOrWhiteSpace(linkSnapshot.Name) ? DeviceNameUtil.BuildDefaultDeviceName(linkSnapshot.DeviceId) : linkSnapshot.Name.Trim();
             link.IsSyncEnabled = linkSnapshot.IsSyncEnabled;
@@ -842,37 +1820,50 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             link.LastModifiedAt = linkSnapshot.LastModifiedAt == default ? now : linkSnapshot.LastModifiedAt;
         }
 
-        var localLink = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == snapshot.PrimaryUserId && ud.DeviceId == _identity.LocalDeviceId, ct);
-        if (localLink is null)
-        {
-            localLink = new UserDevice
-            {
-                UserId = snapshot.PrimaryUserId,
-                DeviceId = _identity.LocalDeviceId,
-                Name = await BuildUniqueDeviceNameAsync(db, snapshot.PrimaryUserId, _identity.LocalDeviceId, _identity.DeviceName, ct),
-                IsSyncEnabled = true,
-                IsDeleted = false,
-                LinkedAt = now,
-                LastModifiedAt = now
-            };
-            await db.UserDevices.AddAsync(localLink, ct);
-        }
-        else
-        {
-            localLink.IsSyncEnabled = true;
-            localLink.IsDeleted = false;
-            localLink.DeletedAt = null;
-            localLink.LastModifiedAt = now;
-        }
+        var localLink = await GetOrCreateTrackedUserDeviceAsync(db, snapshot.PrimaryUserId, _identity.LocalDeviceId, ct);
+        if (string.IsNullOrWhiteSpace(localLink.Name))
+            localLink.Name = await BuildUniqueDeviceNameAsync(db, snapshot.PrimaryUserId, _identity.LocalDeviceId, _identity.DeviceName, ct);
+
+        localLink.IsSyncEnabled = true;
+        localLink.IsDeleted = false;
+        localLink.DeletedAt = null;
+        localLink.LinkedAt = localLink.LinkedAt == default ? now : localLink.LinkedAt;
+        localLink.LastModifiedAt = now;
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
 
-        var trustedDevices = await db.Devices
+        var trustedDevices = await db.Devices.AsNoTracking()
             .Where(d => d.Id != _identity.LocalDeviceId && d.IsTrusted && !d.IsBlocked)
             .ToListAsync(ct);
 
         foreach (var device in trustedDevices)
             syncIdentities.TryAdd(device);
+    }
+
+
+    private static async Task<UserDevice> GetOrCreateTrackedUserDeviceAsync(AppDbContext db, Guid userId, Guid deviceId, CancellationToken ct)
+    {
+        var tracked = db.ChangeTracker.Entries<UserDevice>()
+            .Where(e => e.State != EntityState.Deleted && e.State != EntityState.Detached)
+            .Select(e => e.Entity)
+            .FirstOrDefault(ud => ud.UserId == userId && ud.DeviceId == deviceId);
+
+        if (tracked is not null)
+            return tracked;
+
+        var existing = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct);
+        if (existing is not null)
+            return existing;
+
+        var created = new UserDevice
+        {
+            UserId = userId,
+            DeviceId = deviceId
+        };
+
+        await db.UserDevices.AddAsync(created, ct);
+        return created;
     }
 
 
@@ -988,6 +1979,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             await syncQueue.EnqueueAsync(new SyncItem { ModelId = groupId, ModelType = SyncModelType.Group, ChangeType = SyncChangeType.Updated }, ct);
 
         await syncQueue.EnqueueAsync(new SyncItem { ModelId = newDeviceId, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Created }, ct);
+        await syncQueue.EnqueueAsync(new SyncItem { ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userId, newDeviceId), ModelType = SyncModelType.UserDevice, ChangeType = SyncChangeType.Created }, ct);
     }
 
 

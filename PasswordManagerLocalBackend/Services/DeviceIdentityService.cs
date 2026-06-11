@@ -454,7 +454,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
         {
             _ka = Key.Import(KeyAgreementAlgorithm.X25519, unprotectedKa, KeyBlobFormat.RawPrivateKey);
             _sig = Key.Import(SignatureAlgorithm.Ed25519, unprotectedSig, KeyBlobFormat.RawPrivateKey);
-            _cert = X509CertificateLoader.LoadPkcs12(unprotectedCert, PFXPassword, X509KeyStorageFlags.EphemeralKeySet, Pkcs12LoaderLimits.Defaults);
+            _cert = X509CertificateLoader.LoadPkcs12(unprotectedCert, PFXPassword, GetCertificateKeyStorageFlags(), Pkcs12LoaderLimits.Defaults);
         }
         finally
         {
@@ -473,6 +473,13 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
 
         return name.Trim();
     }
+
+
+
+    private static X509KeyStorageFlags GetCertificateKeyStorageFlags() =>
+        OperatingSystem.IsWindows()
+            ? X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.Exportable
+            : X509KeyStorageFlags.EphemeralKeySet;
 
 
 
@@ -510,7 +517,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
         var cert = X509CertificateLoader.LoadPkcs12(
             pfx,
             PFXPassword,
-            X509KeyStorageFlags.EphemeralKeySet,
+            GetCertificateKeyStorageFlags(),
             Pkcs12LoaderLimits.Defaults);
 
         return (cert, pfx);

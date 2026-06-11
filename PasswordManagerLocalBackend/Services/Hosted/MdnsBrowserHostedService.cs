@@ -120,7 +120,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
         query.Questions.Add(new Question { Name = instance, Type = DnsType.TXT });
 
         var response = await mdns.ResolveAsync(query, ct);
-        var record = response.Answers.OfType<TXTRecord>().FirstOrDefault();
+        var record = response.Answers.Concat(response.AdditionalRecords).OfType<TXTRecord>().FirstOrDefault();
         if (record is null)
             return null;
 
@@ -142,7 +142,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
         srvQuery.Questions.Add(new Question { Name = instance, Type = DnsType.SRV });
 
         var srvResponse = await mdns.ResolveAsync(srvQuery, ct);
-        var srv = srvResponse.Answers.OfType<SRVRecord>().FirstOrDefault();
+        var srv = srvResponse.Answers.Concat(srvResponse.AdditionalRecords).OfType<SRVRecord>().FirstOrDefault();
         if (srv is null)
             return null;
 
@@ -165,7 +165,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
         aQuery.Questions.Add(new Question { Name = target, Type = DnsType.A });
 
         var aResponse = await mdns.ResolveAsync(aQuery, ct);
-        var a = aResponse.Answers.OfType<ARecord>().FirstOrDefault();
+        var a = aResponse.Answers.Concat(aResponse.AdditionalRecords).OfType<ARecord>().FirstOrDefault();
         if (a is not null)
             return a.Address.ToString();
 
@@ -173,7 +173,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
         aaaaQuery.Questions.Add(new Question { Name = target, Type = DnsType.AAAA });
 
         var aaaaResponse = await mdns.ResolveAsync(aaaaQuery, ct);
-        var aaaa = aaaaResponse.Answers.OfType<AAAARecord>().FirstOrDefault();
+        var aaaa = aaaaResponse.Answers.Concat(aaaaResponse.AdditionalRecords).OfType<AAAARecord>().FirstOrDefault();
         return aaaa?.Address.ToString();
     }
 

@@ -7,7 +7,9 @@ service SyncGrpc {
   rpc Hello     (HelloRequest)      returns (HelloReply);
   rpc NeedSync  (NeedSyncRequest)   returns (NeedSyncReply);
   rpc PushDelta (stream DeltaChunk) returns (Ack);
+  rpc GetDeviceEnrollmentInfo (GetDeviceEnrollmentInfoRequest) returns (GetDeviceEnrollmentInfoReply);
   rpc CompleteDeviceEnrollment (CompleteDeviceEnrollmentRequest) returns (CompleteDeviceEnrollmentReply);
+  rpc CompleteDeviceEnrollmentStream (stream CompleteDeviceEnrollmentChunk) returns (CompleteDeviceEnrollmentReply);
 }
 
 message HelloRequest  { string user_id = 1; string device_id = 2; bytes dataset_hash = 3; bytes sign_pub = 4; }
@@ -33,6 +35,21 @@ message DeltaChunk {
 
 message Ack        { int64 last_synced_ts = 1; }
 
+message GetDeviceEnrollmentInfoRequest {
+  string session_id = 1;
+  bytes code_proof = 2;
+}
+
+message GetDeviceEnrollmentInfoReply {
+  bool ok = 1;
+  string error = 2;
+  string error_code = 3;
+  string device_id = 4;
+  string tls_cert_fingerprint = 5;
+  bytes sign_pub = 6;
+  bytes agreement_pub = 7;
+}
+
 message CompleteDeviceEnrollmentRequest {
   string session_id = 1;
   bytes code_proof = 2;
@@ -42,7 +59,17 @@ message CompleteDeviceEnrollmentRequest {
   string source_tls_cert_fingerprint = 6;
 }
 
+message CompleteDeviceEnrollmentChunk {
+  string session_id = 1;
+  bytes code_proof = 2;
+  string source_device_id = 3;
+  bytes source_sign_pub = 4;
+  string source_tls_cert_fingerprint = 5;
+  bytes snapshot_chunk = 6;
+}
+
 message CompleteDeviceEnrollmentReply {
   bool ok = 1;
   string error = 2;
+  string error_code = 3;
 }

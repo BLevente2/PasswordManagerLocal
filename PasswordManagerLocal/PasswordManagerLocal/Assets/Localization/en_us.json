@@ -258,5 +258,21 @@
   "Profile_ChangeUsername_Description": "Change the sign-in name used for your profile.",
   "Profile_ChangeMasterPassword_Description": "Change the master password for this account.",
   "Profile_DeleteAccount_Warning_Title": "Are you sure you want to delete your profile?",
-  "Profile_DeleteAccount_FinalWarning": "This action cannot be undone. The local user record and stored data for this profile will be permanently removed from this device. Continue only if you are completely sure."
+  "Profile_DeleteAccount_FinalWarning": "This action cannot be undone. The local user record and stored data for this profile will be permanently removed from this device. Continue only if you are completely sure.",
+  "Error_DeviceEnrollment_Generic": "Error: Device enrollment could not be completed. Please try again.",
+  "Error_DeviceEnrollment_SyncDisabled": "Error: Synchronization is disabled on this device. Turn synchronization on before adding a new device.",
+  "Error_DeviceEnrollment_InvalidCode": "Error: The device enrollment code is invalid or incomplete.",
+  "Error_DeviceEnrollment_NewDeviceNotFound": "Error: The new device could not be found on the local network. Keep the code screen open and make sure both devices are on the same Wi-Fi/network. On Windows, the firewall must allow inbound local-subnet traffic for this app.",
+  "Error_DeviceEnrollment_NewDeviceConnectionFailed": "Error: The new device details were found, but this device could not connect to it or transfer the profile data. On Windows this is most often caused by the firewall, the current network profile, or a larger gRPC message being blocked. Keep the code screen open and allow inbound local network traffic for this app.",
+  "Error_DeviceEnrollment_NewDeviceRejected": "Error: The new device rejected the profile transfer. Generate a new code and try again.",
+  "Error_DeviceEnrollment_CodeExpired": "Error: The device enrollment code expired. Generate a new code and try again.",
+  "Error_DeviceEnrollment_CodeProofInvalid": "Error: The device enrollment code could not be verified. Generate a new code and try again.",
+  "Error_DeviceEnrollment_ProfileDataInvalid": "Error: The received profile data could not be imported.",
+  "Error_DeviceEnrollment_ProfileDataTooLarge": "Error: The profile data is too large to transfer in one enrollment request.",
+  "Error_DeviceEnrollment_DeviceIdentityConflict": "Error: A different device already uses this device identity.",
+  "Firewall_Title": "Firewall permission required",
+  "Firewall_Message": "PasswordManagerLocal needs to accept inbound local network connections on this device for local device synchronization. The app will allow TCP port 26688 and mDNS UDP port 5353 from the local subnet only. On Windows this may be needed on both private and public network profiles. Do you want to allow this in Windows Firewall? The next window will be a Windows administrator permission prompt.",
+  "Firewall_Allow": "Allow",
+  "Firewall_Failed": "Windows Firewall could not be configured automatically. Try allowing it again, or add the Windows Defender Firewall inbound rules manually: TCP 26688 and UDP 5353, profile Any, remote address LocalSubnet. If the firewall helper file was copied next to the app executable, you can also run ConfigureWindowsFirewall.bat as administrator from that folder.",
+  "Error_TechnicalDetails": "Technical details"
 }

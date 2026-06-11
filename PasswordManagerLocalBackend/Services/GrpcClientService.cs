@@ -1,10 +1,12 @@
-﻿using Google.Protobuf;
+using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Sync;
 using System.Net;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
@@ -84,21 +86,31 @@ public class GrpcClientService : IGrpcClientService
     }
 
 
-    private HttpClientHandler CreateHandler(string serverFingerprintHex)
+    private HttpMessageHandler CreateHandler(string serverFingerprintHex)
     {
-        var handler = new HttpClientHandler();
-        handler.ClientCertificates.Add(_identity.Certificate);
-
-        handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
+        var handler = new SocketsHttpHandler
         {
-            if (cert is null)
-                return false;
-
-            var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
-            return string.Equals(fingerprint, NormalizeFingerprint(serverFingerprintHex), StringComparison.OrdinalIgnoreCase);
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                ClientCertificates = new X509CertificateCollection { _identity.Certificate },
+                LocalCertificateSelectionCallback = (_, _, _, _, _) => _identity.Certificate,
+                RemoteCertificateValidationCallback = (_, cert, _, _) => ValidatePinnedServerCertificate(cert, serverFingerprintHex)
+            }
         };
 
         return handler;
+    }
+
+
+    private bool ValidatePinnedServerCertificate(X509Certificate? cert, string serverFingerprintHex)
+    {
+        if (cert is null)
+            return false;
+
+        var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
+        return string.Equals(fingerprint, NormalizeFingerprint(serverFingerprintHex), StringComparison.OrdinalIgnoreCase);
     }
 
 

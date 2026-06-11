@@ -1,4 +1,4 @@
-using PasswordManagerLocalBackend.Abstractions.Services;
+﻿using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using System.Threading;
 
@@ -344,6 +344,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             PublicKey = source.PublicKey.ToArray(),
             SignPublicKey = source.SignPublicKey.ToArray(),
             TlsCertFingerprint = source.TlsCertFingerprint,
+            DeviceName = source.DeviceName,
             LastKnownHash = source.LastKnownHash.ToArray(),
             LastSync = source.LastSync,
             LastSeen = source.LastSeen,
