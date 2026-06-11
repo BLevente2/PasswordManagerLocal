@@ -1,6 +1,7 @@
-using Android.App;
+﻿using Android.App;
 using Android.Content;
 using PasswordManagerLocal.Services;
+using AndroidClipboardManager = Android.Content.ClipboardManager;
 using System;
 using System.Threading.Tasks;
 
@@ -25,7 +26,7 @@ internal sealed class AndroidClipboardWriter : IClipboardWriter
         {
             try
             {
-                var clipboardManager = _activity.GetSystemService(Context.ClipboardService) as ClipboardManager;
+                var clipboardManager = _activity.GetSystemService(Context.ClipboardService) as AndroidClipboardManager;
 
                 if (clipboardManager is null)
                 {
@@ -34,7 +35,7 @@ internal sealed class AndroidClipboardWriter : IClipboardWriter
                 }
 
                 var clipData = ClipData.NewPlainText("PasswordManagerLocal", text);
-                clipboardManager.SetPrimaryClip(clipData);
+                clipboardManager.PrimaryClip = clipData;
                 completionSource.TrySetResult(true);
             }
             catch (Exception exception)

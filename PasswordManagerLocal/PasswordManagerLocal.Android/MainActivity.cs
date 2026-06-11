@@ -23,7 +23,7 @@ public class MainActivity : AvaloniaMainActivity<App>
 
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
-        ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
+        global::PasswordManagerLocal.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
         AcquireMulticastLock();
         BackendHost.InitializeAsync(new AndroidKeyProtector()).GetAwaiter().GetResult();
 
