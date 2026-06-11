@@ -1,5 +1,9 @@
-﻿using Android.App;
-using Android.Content;
+﻿using Android.OS;
+using Android.Runtime;
+using Android.Security.Keystore;
+using Java.Security;
+using Javax.Crypto;
+using Javax.Crypto.Spec;
 using PasswordManagerLocalBackend.Abstractions.Security;
 using System;
 using System.Security.Cryptography;
@@ -8,102 +12,162 @@ namespace PasswordManagerLocal.Android;
 
 public sealed class AndroidKeyProtector : IKeyProtector
 {
-    private const string PreferencesName = "PasswordManagerLocal.Secure";
-    private const string KeyName = "DbMasterKey";
+    private const string AndroidKeyStoreProvider = "AndroidKeyStore";
+    private const string KeyAlias = "PasswordManagerLocal.DbMasterKey.AesGcm";
+    private const string Transformation = "AES/GCM/NoPadding";
+    private const int AuthenticationTagBits = 128;
+    private static readonly byte[] CurrentBlobHeader = { 80, 77, 76, 65, 75, 80, 49 };
 
-    private readonly byte[] _masterKey;
+    private readonly ISecretKey _key;
 
     public AndroidKeyProtector()
     {
-        var context = Application.Context ?? throw new InvalidOperationException("Android Application.Context is null.");
+        if (Build.VERSION.SdkInt < BuildVersionCodes.M)
+            throw new PlatformNotSupportedException("Android Keystore AES-GCM protection requires Android 6.0 (API 23) or newer.");
 
-        var prefs = context.GetSharedPreferences(PreferencesName, FileCreationMode.Private)
-                    ?? throw new InvalidOperationException("Failed to open SharedPreferences.");
-
-        var existing = prefs.GetString(KeyName, null);
-
-        if (string.IsNullOrEmpty(existing))
-        {
-            var key = new byte[32];
-            RandomNumberGenerator.Fill(key);
-
-            var b64 = Convert.ToBase64String(key);
-
-            var editor = prefs.Edit() ?? throw new InvalidOperationException("Failed to edit SharedPreferences.");
-            editor.PutString(KeyName, b64);
-            editor.Commit();
-
-            _masterKey = key;
-        }
-        else
-        {
-            _masterKey = Convert.FromBase64String(existing);
-        }
+        _key = GetOrCreateSecretKey();
     }
+
 
     public byte[] Protect(ReadOnlySpan<byte> plaintext)
     {
-        var iv = new byte[12];
-        RandomNumberGenerator.Fill(iv);
+        try
+        {
+            var cipher = Cipher.GetInstance(Transformation)
+                         ?? throw new CryptographicException("Failed to create Android Keystore cipher.");
 
-        var ciphertext = new byte[plaintext.Length];
-        var tag = new byte[16];
+            cipher.Init(Javax.Crypto.CipherMode.EncryptMode, _key);
 
-        using var aes = new AesGcm(_masterKey, tag.Length);
-        aes.Encrypt(iv, plaintext, ciphertext, tag);
+            var iv = cipher.GetIV() ?? throw new CryptographicException("Android Keystore cipher did not generate an IV.");
+            var ciphertext = cipher.DoFinal(plaintext.ToArray())
+                             ?? throw new CryptographicException("Android Keystore encryption failed.");
 
-        var result = new byte[1 + iv.Length + 1 + tag.Length + ciphertext.Length];
+            return PackCurrentBlob(iv, ciphertext);
+        }
+        catch (GeneralSecurityException exception)
+        {
+            throw new CryptographicException("Android Keystore encryption failed.", exception);
+        }
+    }
+
+
+    public byte[] Unprotect(ReadOnlySpan<byte> protectedBlob)
+    {
+        var data = protectedBlob.ToArray();
+
+        if (!IsCurrentBlob(data))
+            throw new CryptographicException("Unsupported Android protected payload format.");
+
+        return UnprotectCurrent(data);
+    }
+
+
+    private static ISecretKey GetOrCreateSecretKey()
+    {
+        var keyStore = KeyStore.GetInstance(AndroidKeyStoreProvider)
+                       ?? throw new CryptographicException("Failed to open Android Keystore.");
+
+        keyStore.Load(null);
+
+        if (keyStore.ContainsAlias(KeyAlias))
+        {
+            var existingKey = keyStore.GetKey(KeyAlias, null)?.JavaCast<ISecretKey>();
+            return existingKey ?? throw new CryptographicException("Android Keystore entry is not an AES secret key.");
+        }
+
+        var keyGenerator = KeyGenerator.GetInstance(KeyProperties.KeyAlgorithmAes, AndroidKeyStoreProvider)
+                           ?? throw new CryptographicException("Failed to create Android Keystore AES key generator.");
+
+        var builder = new KeyGenParameterSpec.Builder(KeyAlias, KeyStorePurpose.Encrypt | KeyStorePurpose.Decrypt)
+            .SetKeySize(256)
+            .SetBlockModes(KeyProperties.BlockModeGcm)
+            .SetEncryptionPaddings(KeyProperties.EncryptionPaddingNone)
+            .SetRandomizedEncryptionRequired(true);
+
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.P)
+            builder.SetUnlockedDeviceRequired(true);
+
+        keyGenerator.Init(builder.Build());
+
+        var generatedKey = keyGenerator.GenerateKey();
+        return generatedKey ?? throw new CryptographicException("Failed to generate Android Keystore AES key.");
+    }
+
+
+    private static byte[] PackCurrentBlob(byte[] iv, byte[] ciphertext)
+    {
+        if (iv.Length > byte.MaxValue)
+            throw new CryptographicException("Android Keystore IV is too large.");
+
+        var result = new byte[CurrentBlobHeader.Length + 1 + iv.Length + ciphertext.Length];
         var offset = 0;
 
+        Buffer.BlockCopy(CurrentBlobHeader, 0, result, offset, CurrentBlobHeader.Length);
+        offset += CurrentBlobHeader.Length;
+
         result[offset++] = (byte)iv.Length;
+
         Buffer.BlockCopy(iv, 0, result, offset, iv.Length);
         offset += iv.Length;
-
-        result[offset++] = (byte)tag.Length;
-        Buffer.BlockCopy(tag, 0, result, offset, tag.Length);
-        offset += tag.Length;
 
         Buffer.BlockCopy(ciphertext, 0, result, offset, ciphertext.Length);
 
         return result;
     }
 
-    public byte[] Unprotect(ReadOnlySpan<byte> protectedBlob)
+
+    private byte[] UnprotectCurrent(byte[] data)
     {
-        var data = protectedBlob.ToArray();
-        var offset = 0;
+        var offset = CurrentBlobHeader.Length;
 
-        if (data.Length < 2)
-            throw new CryptographicException("Invalid protected payload.");
+        if (data.Length < offset + 2)
+            throw new CryptographicException("Invalid Android protected payload.");
 
-        var ivLen = data[offset++];
-        if (ivLen < AesGcm.NonceByteSizes.MinSize || ivLen > AesGcm.NonceByteSizes.MaxSize || data.Length < 1 + ivLen + 1)
-            throw new CryptographicException("Invalid IV length.");
+        var ivLength = data[offset++];
 
-        var iv = new byte[ivLen];
-        Buffer.BlockCopy(data, offset, iv, 0, ivLen);
-        offset += ivLen;
+        if (ivLength <= 0 || data.Length <= offset + ivLength)
+            throw new CryptographicException("Invalid Android protected payload IV.");
 
-        var tagLen = data[offset++];
-        if (tagLen < AesGcm.TagByteSizes.MinSize || tagLen > AesGcm.TagByteSizes.MaxSize || data.Length < 1 + ivLen + 1 + tagLen)
-            throw new CryptographicException("Invalid tag length.");
+        var iv = new byte[ivLength];
+        Buffer.BlockCopy(data, offset, iv, 0, ivLength);
+        offset += ivLength;
 
-        var tag = new byte[tagLen];
-        Buffer.BlockCopy(data, offset, tag, 0, tagLen);
-        offset += tagLen;
+        var ciphertextLength = data.Length - offset;
 
-        var ciphertextLen = data.Length - offset;
-        if (ciphertextLen <= 0)
-            throw new CryptographicException("Invalid ciphertext length.");
+        if (ciphertextLength < AuthenticationTagBits / 8)
+            throw new CryptographicException("Invalid Android protected payload ciphertext.");
 
-        var ciphertext = new byte[ciphertextLen];
-        Buffer.BlockCopy(data, offset, ciphertext, 0, ciphertextLen);
+        var ciphertext = new byte[ciphertextLength];
+        Buffer.BlockCopy(data, offset, ciphertext, 0, ciphertextLength);
 
-        var plaintext = new byte[ciphertextLen];
+        try
+        {
+            var cipher = Cipher.GetInstance(Transformation)
+                         ?? throw new CryptographicException("Failed to create Android Keystore cipher.");
 
-        using var aes = new AesGcm(_masterKey, tagLen);
-        aes.Decrypt(iv, ciphertext, tag, plaintext);
+            cipher.Init(Javax.Crypto.CipherMode.DecryptMode, _key, new GCMParameterSpec(AuthenticationTagBits, iv));
 
-        return plaintext;
+            return cipher.DoFinal(ciphertext)
+                   ?? throw new CryptographicException("Android Keystore decryption failed.");
+        }
+        catch (GeneralSecurityException exception)
+        {
+            throw new CryptographicException("Android Keystore decryption failed.", exception);
+        }
+    }
+
+
+    private static bool IsCurrentBlob(byte[] data)
+    {
+        if (data.Length < CurrentBlobHeader.Length)
+            return false;
+
+        for (var i = 0; i < CurrentBlobHeader.Length; i++)
+        {
+            if (data[i] != CurrentBlobHeader[i])
+                return false;
+        }
+
+        return true;
     }
 }
