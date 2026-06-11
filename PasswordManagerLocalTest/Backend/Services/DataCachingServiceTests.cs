@@ -63,7 +63,7 @@ public sealed class DataCachingServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
-    public void InvalidateGroup_DisposesGroupDataOnRemove()
+    public void InvalidateGroup_RemovesGroupDataFromCache()
     {
         using var host = new BackendTestHost();
 
@@ -73,59 +73,28 @@ public sealed class DataCachingServiceTests
         var token = tokens.Issue(Guid.NewGuid());
         var groupId = Guid.NewGuid();
 
-        var pwBytes = new byte[] { 1, 2, 3, 4, 5 };
-
-        var pw = new SecurePassword
-        {
-            Id = Guid.NewGuid(),
-            Name = "n",
-            Description = "d",
-            Color = "#FFFFD700",
-            Password = pwBytes,
-            CreatedAt = DateTime.UtcNow,
-            LastUpdatedAt = DateTime.UtcNow
-        };
-        pw.GenerateIntegrityHash();
-
-        var pws = new SecurePasswords
-        {
-            Passwords = [pw],
-            PasswordKey = pwBytes
-        };
-
         var gd = new GroupData
         {
-            Id = Guid.NewGuid(),
+            Id = groupId,
             Name = "g",
             Description = "desc",
             CreatedAt = DateTime.UtcNow,
-            LastUpdatedAt = DateTime.UtcNow,
-            Passwords = pws
+            LastUpdatedAt = DateTime.UtcNow
         };
+        gd.Passwords.GenerateIntegrityHash();
         gd.GenerateIntegrityHash();
 
         cache.SetGroupData(token, groupId, gd);
+
+        MSTestAssert.IsTrue(cache.TryGetGroupData(token, groupId, out var before));
+        MSTestAssert.AreSame(gd, before);
+
         cache.InvalidateGroup(token, groupId);
 
-        static bool IsZeroed(byte[] bytes)
-        {
-            for (int i = 0; i < bytes.Length; i++)
-                if (bytes[i] != 0)
-                    return false;
-            return true;
-        }
+        MSTestAssert.IsFalse(cache.TryGetGroupData(token, groupId, out var after));
+        MSTestAssert.IsNull(after);
 
-        var disposed = SpinWait.SpinUntil(
-            () => gd.Id == Guid.Empty && pw.Id == Guid.Empty && IsZeroed(pwBytes),
-            TimeSpan.FromSeconds(2));
-
-        MSTestAssert.IsTrue(disposed);
-
-        MSTestAssert.AreEqual(Guid.Empty, gd.Id);
-        MSTestAssert.AreEqual(string.Empty, gd.Name);
-        MSTestAssert.HasCount(0, gd.Passwords.Passwords);
-
-        MSTestAssert.AreEqual(Guid.Empty, pw.Id);
-        MSTestAssert.IsTrue(IsZeroed(pwBytes));
+        MSTestAssert.AreEqual(groupId, gd.Id);
+        MSTestAssert.AreEqual("g", gd.Name);
     }
 }

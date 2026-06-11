@@ -37,6 +37,9 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IKeyProtector, TestKeyProtector>();
 
         sc.AddSingleton<IUserRepository, InMemoryUserRepository>();
+        sc.AddSingleton<IUserDeviceRepository, FakeUserDeviceRepository>();
+        sc.AddSingleton<IDeviceIdentityService, FakeDeviceIdentityService>();
+        sc.AddSingleton<ISyncQueueService, FakeSyncQueueService>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
         sc.AddSingleton<IUserService, UserService>();

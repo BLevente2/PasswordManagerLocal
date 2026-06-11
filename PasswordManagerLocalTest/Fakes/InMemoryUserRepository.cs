@@ -43,6 +43,12 @@ public sealed class InMemoryUserRepository : IUserRepository
     public Task<User?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default)
         => GetByIdAsync(id, ct);
 
+    public Task<User?> GetByIdWithRelationsAsync(Guid id, CancellationToken ct = default)
+        => GetByIdAsync(id, ct);
+
+    public Task<User?> GetByIdAsNoTrackingWithRelationsAsync(Guid id, CancellationToken ct = default)
+        => GetByIdAsync(id, ct);
+
     public Task<IReadOnlyList<User>> ListAllAsync(CancellationToken ct = default)
     {
         var list = _store.Values.Select(Clone).ToList();
@@ -72,9 +78,11 @@ public sealed class InMemoryUserRepository : IUserRepository
             PasswordSalt = u.PasswordSalt.ToArray(),
             EncryptedPayload = u.EncryptedPayload.ToArray(),
             SavedKey = u.SavedKey is null ? null : u.SavedKey.ToArray(),
+            LastModifiedAt = u.LastModifiedAt,
             IntegrityHash = u.IntegrityHash.ToArray(),
-            Groups = u.Groups,
-            Devices = u.Devices
+            Groups = u.Groups.ToList(),
+            Devices = u.Devices.ToList(),
+            UserDevices = u.UserDevices.ToList()
         };
     }
 }
