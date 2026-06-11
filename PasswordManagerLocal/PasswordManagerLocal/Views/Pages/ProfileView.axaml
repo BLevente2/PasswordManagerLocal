@@ -9,357 +9,615 @@
   <Grid>
     <ScrollViewer>
       <StackPanel Margin="16,8,16,16" Spacing="12">
-        <Border Classes="card">
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding Title}" Classes="pageTitle" />
-            <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding StatusMessage}" Classes="subtleText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
-          </StackPanel>
+        <Border Classes="card" IsVisible="{Binding HasStatusMessage}">
+          <TextBlock Text="{Binding StatusMessage}" Classes="subtleText" TextWrapping="Wrap" />
         </Border>
 
-        <TabControl>
-          <TabItem Header="{Binding OverviewTabLabel}">
-            <StackPanel Spacing="12" Margin="0,12,0,0">
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="{Binding AccountOverviewLabel}" Classes="sectionTitle" />
-                  <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
-                      <TextBlock Text="{Binding Username}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="4">
-                      <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
-                      <TextBlock Text="{Binding Email}" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Grid>
-                  <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
-                      <TextBlock Text="{Binding FirstName}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="4">
-                      <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
-                      <TextBlock Text="{Binding LastName}" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Grid>
-                  <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding RegistrationDateLabel}" Classes="subtleText" />
-                      <TextBlock Text="{Binding RegistrationDateText}" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="4">
-                      <TextBlock Text="{Binding LastLoginDateLabel}" Classes="subtleText" />
-                      <TextBlock Text="{Binding LastLoginDateText}" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Grid>
+        <StackPanel IsVisible="{Binding IsProfileMainPage}" Spacing="12" HorizontalAlignment="Stretch">
+          <TabControl IsVisible="{Binding IsProfileTabsPaneVisible}" HorizontalAlignment="Stretch">
+            <TabControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" />
+              </ItemsPanelTemplate>
+            </TabControl.ItemsPanel>
+
+            <TabItem Header="{Binding OverviewTabLabel}">
+              <StackPanel Spacing="12" Margin="0,12,0,0" HorizontalAlignment="Stretch">
+                <Border Classes="card">
+                  <StackPanel Spacing="14">
+                    <TextBlock Text="{Binding AccountOverviewLabel}" Classes="sectionTitle" />
+                    <WrapPanel Orientation="Horizontal">
+                      <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding Username}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding Email}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding FirstName}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding LastName}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding RegistrationDateLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding RegistrationDateText}" TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding LastLoginDateLabel}" Classes="subtleText" />
+                          <TextBlock Text="{Binding LastLoginDateText}" TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Border>
+                    </WrapPanel>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </TabItem>
+
+            <TabItem Header="{Binding AccountTabLabel}">
+              <StackPanel Spacing="12" Margin="0,12,0,0" HorizontalAlignment="Stretch">
+                <Border Classes="card">
+                  <StackPanel Spacing="0">
+                    <Button Classes="ghost"
+                            Command="{Binding BeginEditPersonalInfoCommand}"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            Background="Transparent"
+                            BorderThickness="0">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,0,0,12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding EditPersonalInfoLabel}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding EditPersonalInfoDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="›" FontSize="28" VerticalAlignment="Center" Classes="subtleText" />
+                      </Grid>
+                    </Button>
+
+                    <Border Classes="divider" Margin="0,0,0,12" />
+
+                    <Button Classes="ghost"
+                            Command="{Binding BeginChangeUsernameCommand}"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            Background="Transparent"
+                            BorderThickness="0">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding ChangeUsernameLabel}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding ChangeUsernameDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="›" FontSize="28" VerticalAlignment="Center" Classes="subtleText" />
+                      </Grid>
+                    </Button>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </TabItem>
+
+            <TabItem Header="{Binding SecurityTabLabel}">
+              <StackPanel Spacing="12" Margin="0,12,0,0" HorizontalAlignment="Stretch">
+                <Border Classes="card">
+                  <StackPanel Spacing="0">
+                    <Button Classes="ghost"
+                            Command="{Binding BeginChangeMasterPasswordCommand}"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            Background="Transparent"
+                            BorderThickness="0">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,0,0,12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding ChangeMasterPasswordLabel}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding ChangeMasterPasswordDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="›" FontSize="28" VerticalAlignment="Center" Classes="subtleText" />
+                      </Grid>
+                    </Button>
+
+                    <Border Classes="divider" Margin="0,0,0,12" />
+
+                    <Button Classes="ghost"
+                            Command="{Binding BeginDeleteAccountCommand}"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            Background="Transparent"
+                            BorderThickness="0">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="4">
+                          <TextBlock Text="{Binding DeleteAccountLabel}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" Foreground="#FFD13438" />
+                          <TextBlock Text="{Binding DeleteAccountDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="›" FontSize="28" VerticalAlignment="Center" Foreground="#FFD13438" />
+                      </Grid>
+                    </Button>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </TabItem>
+          </TabControl>
+
+          <StackPanel Spacing="12" IsVisible="{Binding IsProfilePersonalInfoPaneVisible}">
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Button Classes="ghost iconButton"
+                          Command="{Binding BackToProfileCommand}"
+                          Content="←"
+                          ToolTip.Tip="{Binding BackToProfileLabel}" />
+                  <TextBlock Text="{Binding EditPersonalInfoLabel}"
+                             Classes="sectionTitle"
+                             VerticalAlignment="Center"
+                             TextWrapping="Wrap" />
                 </StackPanel>
-              </Border>
-            </StackPanel>
-          </TabItem>
 
-          <TabItem Header="{Binding DevicesTabLabel}">
-            <StackPanel Spacing="12" Margin="0,12,0,0">
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding DevicesTitle}" Classes="sectionTitle" />
-                      <TextBlock Text="{Binding DevicesDescription}" Classes="subtleText" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                      <Button Classes="primary"
-                              Command="{Binding BeginAddDeviceCommand}"
-                              Content="{Binding AddDeviceLabel}" />
-                      <Button Classes="ghost"
-                              Command="{Binding RefreshDevicesCommand}"
-                              Content="{Binding RefreshDevicesLabel}" />
-                    </StackPanel>
-                  </Grid>
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding EditFirstName}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
 
-                  <Border Classes="card" IsVisible="{Binding IsDevicesEmpty}">
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{Binding DevicesEmptyTitle}" Classes="sectionTitle" />
-                      <TextBlock Text="{Binding DevicesEmptyDescription}" Classes="subtleText" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Border>
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding EditLastName}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
 
-                  <ListBox ItemsSource="{Binding Devices}"
-                           IsVisible="{Binding HasDevices}"
-                           BorderThickness="0"
-                           Background="Transparent">
-                    <ListBox.ItemTemplate>
-                      <DataTemplate x:DataType="vm:DeviceItemViewModel">
-                        <Border Margin="0,0,0,10" Padding="14" CornerRadius="14" BorderThickness="1" BorderBrush="#33808080">
-                          <StackPanel Spacing="12">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                              <StackPanel Spacing="5">
-                                <WrapPanel>
-                                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
-                                  <TextBlock Text="  •  " Classes="subtleText" />
-                                  <TextBlock Text="{Binding TrustStateText}" Classes="subtleText" />
-                                </WrapPanel>
-                                <WrapPanel>
-                                  <Border Padding="8,3" CornerRadius="10" Background="#223080FF" IsVisible="{Binding IsCurrentDevice}">
-                                    <TextBlock Text="{Binding CurrentDeviceLabel}" FontSize="12" FontWeight="SemiBold" />
-                                  </Border>
-                                  <Border Padding="8,3" CornerRadius="10" Background="#22D13438" IsVisible="{Binding IsBlocked}">
-                                    <TextBlock Text="{Binding BlockedLabel}" FontSize="12" FontWeight="SemiBold" Foreground="#FFD13438" />
-                                  </Border>
-                                  <Border Padding="8,3" CornerRadius="10" Background="#22808080">
-                                    <TextBlock Text="{Binding SyncStateText}" FontSize="12" />
-                                  </Border>
-                                </WrapPanel>
-                              </StackPanel>
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding EditEmail}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
 
-                              <StackPanel Grid.Column="1" Spacing="8" MinWidth="180">
-                                <Button Classes="ghost" Command="{Binding ToggleSyncCommand}">
-                                  <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <ToggleSwitch IsChecked="{Binding IsSyncEnabled, Mode=OneWay}" IsHitTestVisible="False" />
-                                    <TextBlock Text="{Binding SyncStateText}" VerticalAlignment="Center" />
-                                  </StackPanel>
-                                </Button>
-                                <Button Classes="danger"
-                                        Command="{Binding BeginDisconnectCommand}"
-                                        Content="{Binding DisconnectLabel}"
-                                        IsVisible="{Binding CanDisconnect}" />
-                              </StackPanel>
-                            </Grid>
+                <WrapPanel Orientation="Horizontal">
+                  <Button Classes="primary"
+                          Command="{Binding SaveProfileCommand}"
+                          Content="{Binding SaveProfileLabel}"
+                          Margin="0,0,8,8" />
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
 
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                              <StackPanel Spacing="5">
-                                <TextBlock Text="{Binding DeviceNameLabel}" Classes="subtleText" />
-                                <TextBox Text="{Binding EditableName}">
+          <StackPanel Spacing="12" IsVisible="{Binding IsProfileUsernamePaneVisible}">
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Button Classes="ghost iconButton"
+                          Command="{Binding BackToProfileCommand}"
+                          Content="←"
+                          ToolTip.Tip="{Binding BackToProfileLabel}" />
+                  <TextBlock Text="{Binding ChangeUsernameLabel}"
+                             Classes="sectionTitle"
+                             VerticalAlignment="Center"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding EditUsername}" Watermark="{Binding EditUsernamePlaceholder}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding ChangeUsernameCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
+
+                <WrapPanel Orientation="Horizontal">
+                  <Button Classes="primary"
+                          Command="{Binding ChangeUsernameCommand}"
+                          Content="{Binding ChangeUsernameLabel}"
+                          Margin="0,0,8,8" />
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel Spacing="12" IsVisible="{Binding IsProfilePasswordPaneVisible}">
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Button Classes="ghost iconButton"
+                          Command="{Binding BackToProfileCommand}"
+                          Content="←"
+                          ToolTip.Tip="{Binding BackToProfileLabel}" />
+                  <TextBlock Text="{Binding ChangeMasterPasswordLabel}"
+                             Classes="sectionTitle"
+                             VerticalAlignment="Center"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding CurrentPasswordLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding CurrentPassword}" PasswordChar="●" Watermark="{Binding CurrentPasswordPlaceholder}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding ChangeMasterPasswordCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding NewPasswordLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding NewPassword}" PasswordChar="●" Watermark="{Binding NewPasswordPlaceholder}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding ChangeMasterPasswordCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding ConfirmNewPasswordLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding ConfirmNewPassword}" PasswordChar="●" Watermark="{Binding ConfirmNewPasswordPlaceholder}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding ChangeMasterPasswordCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
+
+                <WrapPanel Orientation="Horizontal">
+                  <Button Classes="primary"
+                          Command="{Binding ChangeMasterPasswordCommand}"
+                          Content="{Binding ChangeMasterPasswordLabel}"
+                          Margin="0,0,8,8" />
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <StackPanel Spacing="12" IsVisible="{Binding IsProfileDeleteAccountPaneVisible}">
+            <Border Classes="card dangerZone">
+              <StackPanel Spacing="14">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Button Classes="ghost iconButton"
+                          Command="{Binding BackToProfileCommand}"
+                          Content="←"
+                          ToolTip.Tip="{Binding BackToProfileLabel}" />
+                  <TextBlock Text="{Binding DeleteAccountLabel}"
+                             Classes="sectionTitle"
+                             VerticalAlignment="Center"
+                             TextWrapping="Wrap"
+                             Foreground="#FFD13438" />
+                </StackPanel>
+
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding DeleteAccountWarningTitle}" FontWeight="SemiBold" Foreground="#FFD13438" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding DeleteAccountFinalWarning}" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding CurrentPasswordLabel}" Classes="subtleText" />
+                  <TextBox Text="{Binding DeleteAccountPassword}" PasswordChar="●" Watermark="{Binding DeleteAccountPasswordPlaceholder}">
+                    <TextBox.KeyBindings>
+                      <KeyBinding Gesture="Enter" Command="{Binding DeleteAccountCommand}" />
+                    </TextBox.KeyBindings>
+                  </TextBox>
+                </StackPanel>
+
+                <WrapPanel Orientation="Horizontal">
+                  <Button Classes="danger"
+                          Command="{Binding DeleteAccountCommand}"
+                          Content="{Binding DeleteAccountLabel}"
+                          Margin="0,0,8,8" />
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding IsDevicesMainPage}" Spacing="12">
+                      <StackPanel Spacing="12" Margin="0,12,0,0">
+                        <Border Classes="card" IsVisible="{Binding IsDeviceToolbarVisible}">
+                          <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Border Classes="toolbarGroup" Margin="0,0,8,8">
+                              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" MinWidth="240" MaxWidth="420">
+                                <TextBlock Text="🔍"
+                                           VerticalAlignment="Center"
+                                           FontSize="16"
+                                           ToolTip.Tip="{Binding DeviceSearchLabel}" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding DeviceSearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Watermark="{Binding DeviceSearchPlaceholder}"
+                                         MinWidth="180">
                                   <TextBox.KeyBindings>
-                                    <KeyBinding Gesture="Enter" Command="{Binding SaveNameCommand}" />
+                                    <KeyBinding Gesture="Enter" Command="{Binding SearchDevicesCommand}" />
+                                  </TextBox.KeyBindings>
+                                </TextBox>
+                              </Grid>
+                            </Border>
+
+                            <Border Classes="toolbarGroup" Margin="0,0,8,8">
+                              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" MinWidth="210">
+                                <TextBlock Text="⇅"
+                                           VerticalAlignment="Center"
+                                           FontSize="18"
+                                           ToolTip.Tip="{Binding DeviceSortLabel}" />
+                                <ComboBox Grid.Column="1"
+                                          ItemsSource="{Binding DeviceSortOptions}"
+                                          SelectedItem="{Binding SelectedDeviceSortOption}"
+                                          MinWidth="170">
+                                  <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:PasswordSortOptionViewModel">
+                                      <TextBlock Text="{Binding DisplayName}" />
+                                    </DataTemplate>
+                                  </ComboBox.ItemTemplate>
+                                </ComboBox>
+                              </Grid>
+                            </Border>
+
+                            <Button Classes="primary iconButton"
+                                    Margin="0,0,0,8"
+                                    Command="{Binding BeginAddDeviceCommand}"
+                                    Content="{Binding AddDeviceIconLabel}"
+                                    ToolTip.Tip="{Binding AddDeviceLabel}" />
+                          </WrapPanel>
+                        </Border>
+
+                        <StackPanel Spacing="12" IsVisible="{Binding IsDeviceListPaneVisible}">
+                          <Border Classes="card" IsVisible="{Binding IsDeviceListEmpty}">
+                            <StackPanel Spacing="14" HorizontalAlignment="Center" MaxWidth="520">
+                              <TextBlock Text="＋" FontSize="48" HorizontalAlignment="Center" />
+                              <TextBlock Text="{Binding DevicesEmptyTitle}" Classes="sectionTitle" TextAlignment="Center" TextWrapping="Wrap" />
+                              <TextBlock Text="{Binding DevicesEmptyDescription}" Classes="subtleText" TextAlignment="Center" TextWrapping="Wrap" />
+                              <Button Classes="primary"
+                                      HorizontalAlignment="Center"
+                                      Command="{Binding BeginAddDeviceCommand}"
+                                      Content="{Binding AddDeviceLabel}" />
+                            </StackPanel>
+                          </Border>
+
+                          <Border Classes="card" IsVisible="{Binding IsDeviceSearchResultEmpty}">
+                            <StackPanel Spacing="8">
+                              <TextBlock Text="{Binding DeviceSearchEmptyTitle}" Classes="sectionTitle" />
+                              <TextBlock Text="{Binding DeviceSearchEmptyDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                            </StackPanel>
+                          </Border>
+
+                          <ItemsControl ItemsSource="{Binding Devices}"
+                                        HorizontalAlignment="Stretch"
+                                        IsVisible="{Binding HasDevices}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:DeviceItemViewModel">
+                                <Border Margin="0,0,0,8" Padding="14" CornerRadius="16" BorderThickness="1" BorderBrush="#33808080" Background="#08808080" HorizontalAlignment="Stretch">
+                                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                    <Button Grid.Column="0"
+                                            Classes="ghost"
+                                            Command="{Binding ViewCommand}"
+                                            Padding="0"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Stretch"
+                                            Background="Transparent"
+                                            BorderThickness="0">
+                                      <StackPanel Spacing="5" VerticalAlignment="Center">
+                                        <WrapPanel>
+                                          <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
+                                          <TextBlock Text="  •  " Classes="subtleText" />
+                                          <TextBlock Text="{Binding TrustStateText}" Classes="subtleText" />
+                                        </WrapPanel>
+                                        <WrapPanel>
+                                          <Border Padding="8,3" CornerRadius="10" Background="#223080FF" IsVisible="{Binding IsCurrentDevice}" Margin="0,0,6,6">
+                                            <TextBlock Text="{Binding CurrentDeviceLabel}" FontSize="12" FontWeight="SemiBold" />
+                                          </Border>
+                                          <Border Padding="8,3" CornerRadius="10" Background="#22D13438" IsVisible="{Binding IsBlocked}" Margin="0,0,6,6">
+                                            <TextBlock Text="{Binding BlockedLabel}" FontSize="12" FontWeight="SemiBold" Foreground="#FFD13438" />
+                                          </Border>
+                                          <Border Padding="8,3" CornerRadius="10" Background="#22808080" Margin="0,0,6,6">
+                                            <TextBlock Text="{Binding SyncStateText}" FontSize="12" />
+                                          </Border>
+                                        </WrapPanel>
+                                      </StackPanel>
+                                    </Button>
+
+                                    <ToggleSwitch Grid.Column="1"
+                                                  IsChecked="{Binding IsSyncEnabled, Mode=OneWay}"
+                                                  Command="{Binding ToggleSyncCommand}"
+                                                  VerticalAlignment="Center" />
+                                  </Grid>
+                                </Border>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
+
+                        <StackPanel Spacing="12" IsVisible="{Binding IsDeviceAddPaneVisible}">
+                          <Border Classes="card">
+                            <StackPanel Spacing="14">
+                              <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Button Classes="ghost iconButton"
+                                        Command="{Binding CancelAddDeviceCommand}"
+                                        Content="←"
+                                        ToolTip.Tip="{Binding BackToDevicesLabel}" />
+                                <TextBlock Text="{Binding AddDeviceDialogTitle}"
+                                           Classes="sectionTitle"
+                                           VerticalAlignment="Center"
+                                           TextWrapping="Wrap" />
+                              </StackPanel>
+                              <TextBlock Text="{Binding AddDeviceDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                              <StackPanel Spacing="6">
+                                <TextBlock Text="{Binding AddDeviceCodeLabel}" Classes="subtleText" />
+                                <TextBox Text="{Binding DeviceEnrollmentCodeInput}"
+                                         Watermark="{Binding AddDeviceCodePlaceholder}"
+                                         FontFamily="Consolas">
+                                  <TextBox.KeyBindings>
+                                    <KeyBinding Gesture="Enter" Command="{Binding ConfirmAddDeviceCommand}" />
                                   </TextBox.KeyBindings>
                                 </TextBox>
                               </StackPanel>
-                              <Button Grid.Column="1"
-                                      Classes="primary"
-                                      VerticalAlignment="Bottom"
-                                      Command="{Binding SaveNameCommand}"
-                                      Content="{Binding SaveNameLabel}" />
-                            </Grid>
-
-                            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                              <StackPanel Spacing="4">
-                                <TextBlock Text="{Binding DeviceFingerprintLabel}" Classes="subtleText" />
-                                <TextBlock Text="{Binding TlsCertFingerprint}" TextWrapping="Wrap" FontFamily="Consolas" />
-                              </StackPanel>
-                              <StackPanel Grid.Column="1" Spacing="4">
-                                <TextBlock Text="{Binding DeviceLinkedAtLabel}" Classes="subtleText" />
-                                <TextBlock Text="{Binding LinkedAtText}" TextWrapping="Wrap" />
-                              </StackPanel>
-                            </Grid>
-
-                            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                              <StackPanel Spacing="4">
-                                <TextBlock Text="{Binding DeviceLastSeenLabel}" Classes="subtleText" />
-                                <TextBlock Text="{Binding LastSeenText}" TextWrapping="Wrap" />
-                              </StackPanel>
-                              <StackPanel Grid.Column="1" Spacing="4">
-                                <TextBlock Text="{Binding DeviceLastSyncLabel}" Classes="subtleText" />
-                                <TextBlock Text="{Binding LastSyncText}" TextWrapping="Wrap" />
-                              </StackPanel>
-                            </Grid>
-
-                            <Border Classes="dangerZone" IsVisible="{Binding IsBlocked}">
-                              <StackPanel Spacing="8">
-                                <TextBlock Text="{Binding BlockedLabel}" FontWeight="SemiBold" />
-                                <StackPanel Spacing="4" IsVisible="{Binding HasBlockedReason}">
-                                  <TextBlock Text="{Binding DeviceBlockedReasonLabel}" Classes="subtleText" />
-                                  <TextBlock Text="{Binding BlockedReason}" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" IsVisible="{Binding HasBlockedAt}">
-                                  <TextBlock Text="{Binding DeviceBlockedAtLabel}" Classes="subtleText" />
-                                  <TextBlock Text="{Binding BlockedAtText}" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <Button Classes="ghost"
-                                        Command="{Binding UnblockCommand}"
-                                        Content="{Binding UnblockLabel}"
-                                        IsVisible="{Binding CanUnblock}" />
-                              </StackPanel>
-                            </Border>
-
-                            <StackPanel Spacing="4" IsVisible="{Binding HasInvalidSyncAttempts}">
-                              <TextBlock Text="{Binding DeviceInvalidAttemptsLabel}" Classes="subtleText" />
-                              <TextBlock Text="{Binding InvalidSyncAttemptCount}" />
+                              <WrapPanel Orientation="Horizontal">
+                                <Button Classes="primary"
+                                        Command="{Binding ConfirmAddDeviceCommand}"
+                                        Content="{Binding ConfirmAddDeviceLabel}"
+                                        Margin="0,0,8,8" />
+                              </WrapPanel>
                             </StackPanel>
-                          </StackPanel>
-                        </Border>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </TabItem>
+                          </Border>
+                        </StackPanel>
 
-          <TabItem Header="{Binding AccountTabLabel}">
-            <StackPanel Spacing="12" Margin="0,12,0,0">
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="{Binding PersonalInfoTitle}" Classes="sectionTitle" />
-                  <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{Binding FirstNameLabel}" />
-                      <TextBox Text="{Binding EditFirstName}">
-                        <TextBox.KeyBindings>
-                          <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
-                        </TextBox.KeyBindings>
-                      </TextBox>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="6">
-                      <TextBlock Text="{Binding LastNameLabel}" />
-                      <TextBox Text="{Binding EditLastName}">
-                        <TextBox.KeyBindings>
-                          <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
-                        </TextBox.KeyBindings>
-                      </TextBox>
-                    </StackPanel>
-                  </Grid>
-                  <StackPanel Spacing="6">
-                    <TextBlock Text="{Binding EmailLabel}" />
-                    <TextBox Text="{Binding EditEmail}">
-                      <TextBox.KeyBindings>
-                        <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
-                      </TextBox.KeyBindings>
-                    </TextBox>
-                  </StackPanel>
-                  <Button Classes="primary"
-                          Command="{Binding SaveProfileCommand}"
-                          Content="{Binding SaveProfileLabel}" />
-                </StackPanel>
-              </Border>
+                        <StackPanel Spacing="12" IsVisible="{Binding IsDeviceDetailsPaneVisible}">
+                          <Border Classes="card" IsVisible="{Binding HasSelectedDevice}">
+                            <StackPanel Spacing="14">
+                              <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Button Classes="ghost iconButton"
+                                        Command="{Binding BackToDevicesCommand}"
+                                        Content="←"
+                                        ToolTip.Tip="{Binding BackToDevicesLabel}" />
+                                <TextBlock Text="{Binding SelectedDevice.Name}"
+                                           Classes="sectionTitle"
+                                           VerticalAlignment="Center"
+                                           TextWrapping="Wrap" />
+                              </StackPanel>
 
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="{Binding UsernameTitle}" Classes="sectionTitle" />
-                  <StackPanel Spacing="6">
-                    <TextBlock Text="{Binding UsernameLabel}" />
-                    <TextBox Text="{Binding EditUsername}" Watermark="{Binding EditUsernamePlaceholder}">
-                      <TextBox.KeyBindings>
-                        <KeyBinding Gesture="Enter" Command="{Binding ChangeUsernameCommand}" />
-                      </TextBox.KeyBindings>
-                    </TextBox>
-                  </StackPanel>
-                  <Button Classes="ghost"
-                          Command="{Binding ChangeUsernameCommand}"
-                          Content="{Binding ChangeUsernameLabel}" />
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </TabItem>
+                              <WrapPanel>
+                                <Border Padding="8,3" CornerRadius="10" Background="#223080FF" IsVisible="{Binding SelectedDevice.IsCurrentDevice}" Margin="0,0,6,6">
+                                  <TextBlock Text="{Binding CurrentDeviceLabel}" FontSize="12" FontWeight="SemiBold" />
+                                </Border>
+                                <Border Padding="8,3" CornerRadius="10" Background="#22D13438" IsVisible="{Binding SelectedDevice.IsBlocked}" Margin="0,0,6,6">
+                                  <TextBlock Text="{Binding BlockedLabel}" FontSize="12" FontWeight="SemiBold" Foreground="#FFD13438" />
+                                </Border>
+                                <Border Padding="8,3" CornerRadius="10" Background="#22808080" Margin="0,0,6,6">
+                                  <TextBlock Text="{Binding SelectedDevice.SyncStateText}" FontSize="12" />
+                                </Border>
+                                <Border Padding="8,3" CornerRadius="10" Background="#22808080" Margin="0,0,6,6">
+                                  <TextBlock Text="{Binding SelectedDevice.TrustStateText}" FontSize="12" />
+                                </Border>
+                              </WrapPanel>
 
-          <TabItem Header="{Binding SecurityTabLabel}">
-            <StackPanel Spacing="12" Margin="0,12,0,0">
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="{Binding SecurityTitle}" Classes="sectionTitle" />
-                  <StackPanel Spacing="6">
-                    <TextBlock Text="{Binding CurrentPasswordLabel}" />
-                    <TextBox Text="{Binding CurrentPassword}" PasswordChar="●" Watermark="{Binding CurrentPasswordPlaceholder}">
-                      <TextBox.KeyBindings>
-                        <KeyBinding Gesture="Enter" Command="{Binding ChangeMasterPasswordCommand}" />
-                      </TextBox.KeyBindings>
-                    </TextBox>
-                  </StackPanel>
-                  <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{Binding NewPasswordLabel}" />
-                      <TextBox Text="{Binding NewPassword}" PasswordChar="●" Watermark="{Binding NewPasswordPlaceholder}">
-                        <TextBox.KeyBindings>
-                          <KeyBinding Gesture="Enter" Command="{Binding ChangeMasterPasswordCommand}" />
-                        </TextBox.KeyBindings>
-                      </TextBox>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="6">
-                      <TextBlock Text="{Binding ConfirmNewPasswordLabel}" />
-                      <TextBox Text="{Binding ConfirmNewPassword}" PasswordChar="●" Watermark="{Binding ConfirmNewPasswordPlaceholder}">
-                        <TextBox.KeyBindings>
-                          <KeyBinding Gesture="Enter" Command="{Binding ChangeMasterPasswordCommand}" />
-                        </TextBox.KeyBindings>
-                      </TextBox>
-                    </StackPanel>
-                  </Grid>
-                  <Button Classes="ghost"
-                          Command="{Binding ChangeMasterPasswordCommand}"
-                          Content="{Binding ChangeMasterPasswordLabel}" />
-                </StackPanel>
-              </Border>
+                              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <StackPanel Spacing="5">
+                                  <TextBlock Text="{Binding DeviceNameLabel}" Classes="subtleText" />
+                                  <TextBox Text="{Binding SelectedDevice.EditableName}">
+                                    <TextBox.KeyBindings>
+                                      <KeyBinding Gesture="Enter" Command="{Binding SelectedDevice.SaveNameCommand}" />
+                                    </TextBox.KeyBindings>
+                                  </TextBox>
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Classes="primary"
+                                        VerticalAlignment="Bottom"
+                                        Command="{Binding SelectedDevice.SaveNameCommand}"
+                                        Content="{Binding SaveDeviceNameLabel}" />
+                              </Grid>
 
-              <Border Classes="card dangerZone">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="{Binding DangerZoneTitle}" Classes="sectionTitle" />
-                  <TextBlock Text="{Binding DeleteAccountDescription}" Classes="subtleText" TextWrapping="Wrap" />
-                  <StackPanel Spacing="6">
-                    <TextBlock Text="{Binding CurrentPasswordLabel}" />
-                    <TextBox Text="{Binding DeleteAccountPassword}" PasswordChar="●" Watermark="{Binding DeleteAccountPasswordPlaceholder}" />
-                  </StackPanel>
-                  <Button Classes="danger"
-                          Command="{Binding DeleteAccountCommand}"
-                          Content="{Binding DeleteAccountLabel}" />
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </TabItem>
-        </TabControl>
+                              <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                <StackPanel Spacing="4">
+                                  <TextBlock Text="{Binding DeviceLinkedAtLabel}" Classes="subtleText" />
+                                  <TextBlock Text="{Binding SelectedDevice.LinkedAtText}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="4">
+                                  <TextBlock Text="{Binding DeviceLastSeenLabel}" Classes="subtleText" />
+                                  <TextBlock Text="{Binding SelectedDevice.LastSeenText}" TextWrapping="Wrap" />
+                                </StackPanel>
+                              </Grid>
+
+                              <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                <StackPanel Spacing="4">
+                                  <TextBlock Text="{Binding DeviceLastSyncLabel}" Classes="subtleText" />
+                                  <TextBlock Text="{Binding SelectedDevice.LastSyncText}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="4">
+                                  <TextBlock Text="{Binding SyncEnabledLabel}" Classes="subtleText" />
+                                  <ToggleSwitch IsChecked="{Binding SelectedDevice.IsSyncEnabled, Mode=OneWay}"
+                                                Command="{Binding SelectedDevice.ToggleSyncCommand}" />
+                                </StackPanel>
+                              </Grid>
+
+                              <Border Classes="dangerZone" IsVisible="{Binding SelectedDevice.IsBlocked}">
+                                <StackPanel Spacing="8">
+                                  <TextBlock Text="{Binding BlockedLabel}" FontWeight="SemiBold" />
+                                  <StackPanel Spacing="4" IsVisible="{Binding SelectedDevice.HasBlockedReason}">
+                                    <TextBlock Text="{Binding DeviceBlockedReasonLabel}" Classes="subtleText" />
+                                    <TextBlock Text="{Binding SelectedDevice.BlockedReason}" TextWrapping="Wrap" />
+                                  </StackPanel>
+                                  <StackPanel Spacing="4" IsVisible="{Binding SelectedDevice.HasBlockedAt}">
+                                    <TextBlock Text="{Binding DeviceBlockedAtLabel}" Classes="subtleText" />
+                                    <TextBlock Text="{Binding SelectedDevice.BlockedAtText}" TextWrapping="Wrap" />
+                                  </StackPanel>
+                                  <Button Classes="ghost"
+                                          Command="{Binding SelectedDevice.UnblockCommand}"
+                                          Content="{Binding UnblockDeviceLabel}"
+                                          IsVisible="{Binding SelectedDevice.CanUnblock}" />
+                                </StackPanel>
+                              </Border>
+
+                              <StackPanel Spacing="4" IsVisible="{Binding SelectedDevice.HasInvalidSyncAttempts}">
+                                <TextBlock Text="{Binding DeviceInvalidAttemptsLabel}" Classes="subtleText" />
+                                <TextBlock Text="{Binding SelectedDevice.InvalidSyncAttemptCount}" />
+                              </StackPanel>
+
+                              <WrapPanel Orientation="Horizontal">
+                                <Button Classes="danger"
+                                        Command="{Binding SelectedDevice.BeginDisconnectCommand}"
+                                        Content="{Binding DisconnectDeviceLabel}"
+                                        IsVisible="{Binding SelectedDevice.CanDisconnect}"
+                                        Margin="0,0,8,8" />
+                              </WrapPanel>
+                            </StackPanel>
+                          </Border>
+                        </StackPanel>
+
+                        <StackPanel Spacing="12" IsVisible="{Binding IsDeviceDisconnectPaneVisible}">
+                          <Border Classes="card">
+                            <StackPanel Spacing="14">
+                              <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Button Classes="ghost iconButton"
+                                        Command="{Binding CancelDisconnectDeviceCommand}"
+                                        Content="←"
+                                        ToolTip.Tip="{Binding BackToDevicesLabel}" />
+                                <TextBlock Text="{Binding DisconnectDialogTitle}"
+                                           Classes="sectionTitle"
+                                           VerticalAlignment="Center"
+                                           TextWrapping="Wrap" />
+                              </StackPanel>
+                              <TextBlock Text="{Binding DisconnectDeviceName}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                              <Border Classes="dangerZone">
+                                <TextBlock Text="{Binding DisconnectDialogWarning}" TextWrapping="Wrap" />
+                              </Border>
+                              <StackPanel Spacing="6">
+                                <TextBlock Text="{Binding CurrentPasswordLabel}" Classes="subtleText" />
+                                <TextBox Text="{Binding DisconnectDevicePassword}" PasswordChar="●" Watermark="{Binding DisconnectDialogPasswordPlaceholder}">
+                                  <TextBox.KeyBindings>
+                                    <KeyBinding Gesture="Enter" Command="{Binding ConfirmDisconnectDeviceCommand}" />
+                                  </TextBox.KeyBindings>
+                                </TextBox>
+                              </StackPanel>
+                              <WrapPanel Orientation="Horizontal">
+                                <Button Classes="danger"
+                                        Command="{Binding ConfirmDisconnectDeviceCommand}"
+                                        Content="{Binding ConfirmDisconnectLabel}"
+                                        Margin="0,0,8,8" />
+                              </WrapPanel>
+                            </StackPanel>
+                          </Border>
+                        </StackPanel>
+                      </StackPanel>
+          
+        </StackPanel>
       </StackPanel>
     </ScrollViewer>
-
-    <Border Background="#99000000" IsVisible="{Binding IsDeviceDisconnectDialogOpen}" Padding="24">
-      <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
-        <StackPanel Spacing="14">
-          <TextBlock Text="{Binding DisconnectDialogTitle}" Classes="sectionTitle" />
-          <TextBlock Text="{Binding DisconnectDeviceName}" FontWeight="SemiBold" TextWrapping="Wrap" />
-          <Border Classes="dangerZone">
-            <TextBlock Text="{Binding DisconnectDialogWarning}" TextWrapping="Wrap" />
-          </Border>
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding CurrentPasswordLabel}" />
-            <TextBox Text="{Binding DisconnectDevicePassword}" PasswordChar="●" Watermark="{Binding DisconnectDialogPasswordPlaceholder}" />
-          </StackPanel>
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-            <Button Classes="ghost"
-                    Command="{Binding CancelDisconnectDeviceCommand}"
-                    Content="{Binding CancelLabel}" />
-            <Button Grid.Column="1"
-                    Classes="danger"
-                    Command="{Binding ConfirmDisconnectDeviceCommand}"
-                    Content="{Binding ConfirmDisconnectLabel}" />
-          </Grid>
-        </StackPanel>
-      </Border>
-    </Border>
-
-    <Border Background="#99000000" IsVisible="{Binding IsAddDeviceDialogOpen}" Padding="24">
-      <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">
-        <StackPanel Spacing="14">
-          <TextBlock Text="{Binding AddDeviceDialogTitle}" Classes="sectionTitle" />
-          <TextBlock Text="{Binding AddDeviceDescription}" Classes="subtleText" TextWrapping="Wrap" />
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding AddDeviceCodeLabel}" />
-            <TextBox Text="{Binding DeviceEnrollmentCodeInput}"
-                     Watermark="{Binding AddDeviceCodePlaceholder}"
-                     FontFamily="Consolas">
-              <TextBox.KeyBindings>
-                <KeyBinding Gesture="Enter" Command="{Binding ConfirmAddDeviceCommand}" />
-              </TextBox.KeyBindings>
-            </TextBox>
-          </StackPanel>
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
-            <Button Classes="ghost"
-                    Command="{Binding CancelAddDeviceCommand}"
-                    Content="{Binding CancelLabel}" />
-            <Button Grid.Column="1"
-                    Classes="primary"
-                    Command="{Binding ConfirmAddDeviceCommand}"
-                    Content="{Binding ConfirmAddDeviceLabel}" />
-          </Grid>
-        </StackPanel>
-      </Border>
-    </Border>
 
     <Border Background="#99000000" IsVisible="{Binding IsLocalSyncDialogOpen}" Padding="24">
       <Border Classes="card" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="560">

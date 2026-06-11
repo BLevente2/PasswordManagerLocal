@@ -6,6 +6,7 @@ namespace PasswordManagerLocal.ViewModels.Pages;
 
 public sealed class DeviceItemViewModel : ReactiveObject
 {
+    private readonly Func<DeviceItemViewModel, Task> _viewAsync;
     private readonly Func<DeviceItemViewModel, Task> _saveNameAsync;
     private readonly Func<DeviceItemViewModel, Task> _toggleSyncAsync;
     private readonly Func<DeviceItemViewModel, Task> _unblockAsync;
@@ -25,13 +26,13 @@ public sealed class DeviceItemViewModel : ReactiveObject
         string unblockLabel,
         string disconnectLabel,
         string deviceNameLabel,
-        string deviceFingerprintLabel,
         string deviceLastSeenLabel,
         string deviceLastSyncLabel,
         string deviceLinkedAtLabel,
         string deviceBlockedReasonLabel,
         string deviceBlockedAtLabel,
         string deviceInvalidAttemptsLabel,
+        Func<DeviceItemViewModel, Task> viewAsync,
         Func<DeviceItemViewModel, Task> saveNameAsync,
         Func<DeviceItemViewModel, Task> toggleSyncAsync,
         Func<DeviceItemViewModel, Task> unblockAsync,
@@ -41,7 +42,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
         Name = device.Name;
         DeviceName = device.DeviceName;
         EditableName = device.Name;
-        TlsCertFingerprint = device.TlsCertFingerprint;
         LastSync = device.LastSync;
         LastSeen = device.LastSeen;
         IsTrusted = device.IsTrusted;
@@ -62,18 +62,19 @@ public sealed class DeviceItemViewModel : ReactiveObject
         UnblockLabel = unblockLabel;
         DisconnectLabel = disconnectLabel;
         DeviceNameLabel = deviceNameLabel;
-        DeviceFingerprintLabel = deviceFingerprintLabel;
         DeviceLastSeenLabel = deviceLastSeenLabel;
         DeviceLastSyncLabel = deviceLastSyncLabel;
         DeviceLinkedAtLabel = deviceLinkedAtLabel;
         DeviceBlockedReasonLabel = deviceBlockedReasonLabel;
         DeviceBlockedAtLabel = deviceBlockedAtLabel;
         DeviceInvalidAttemptsLabel = deviceInvalidAttemptsLabel;
+        _viewAsync = viewAsync;
         _saveNameAsync = saveNameAsync;
         _toggleSyncAsync = toggleSyncAsync;
         _unblockAsync = unblockAsync;
         _beginDisconnect = beginDisconnect;
 
+        ViewCommand = ReactiveCommand.CreateFromTask(() => _viewAsync(this));
         SaveNameCommand = ReactiveCommand.CreateFromTask(() => _saveNameAsync(this));
         ToggleSyncCommand = ReactiveCommand.CreateFromTask(() => _toggleSyncAsync(this));
         UnblockCommand = ReactiveCommand.CreateFromTask(() => _unblockAsync(this));
@@ -91,8 +92,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
         get => _editableName;
         set => this.RaiseAndSetIfChanged(ref _editableName, value);
     }
-
-    public string TlsCertFingerprint { get; }
 
     public DateTime LastSync { get; }
 
@@ -152,8 +151,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string DeviceNameLabel { get; }
 
-    public string DeviceFingerprintLabel { get; }
-
     public string DeviceLastSeenLabel { get; }
 
     public string DeviceLastSyncLabel { get; }
@@ -177,6 +174,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
     public string LinkedAtText => LinkedAt.ToLocalTime().ToString("g");
 
     public string BlockedAtText => BlockedAt?.ToLocalTime().ToString("g") ?? string.Empty;
+
+    public ReactiveCommand<Unit, Unit> ViewCommand { get; }
 
     public ReactiveCommand<Unit, Unit> SaveNameCommand { get; }
 
@@ -208,13 +207,13 @@ public sealed class DeviceItemViewModel : ReactiveObject
         string unblockLabel,
         string disconnectLabel,
         string deviceNameLabel,
-        string deviceFingerprintLabel,
         string deviceLastSeenLabel,
         string deviceLastSyncLabel,
         string deviceLinkedAtLabel,
         string deviceBlockedReasonLabel,
         string deviceBlockedAtLabel,
         string deviceInvalidAttemptsLabel,
+        Func<DeviceItemViewModel, Task> viewAsync,
         Func<DeviceItemViewModel, Task> saveNameAsync,
         Func<DeviceItemViewModel, Task> toggleSyncAsync,
         Func<DeviceItemViewModel, Task> unblockAsync,
@@ -231,13 +230,13 @@ public sealed class DeviceItemViewModel : ReactiveObject
             unblockLabel,
             disconnectLabel,
             deviceNameLabel,
-            deviceFingerprintLabel,
             deviceLastSeenLabel,
             deviceLastSyncLabel,
             deviceLinkedAtLabel,
             deviceBlockedReasonLabel,
             deviceBlockedAtLabel,
             deviceInvalidAttemptsLabel,
+            viewAsync,
             saveNameAsync,
             toggleSyncAsync,
             unblockAsync,

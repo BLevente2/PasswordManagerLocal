@@ -12,9 +12,22 @@ namespace PasswordManagerLocal.ViewModels.Pages;
 
 public sealed class ProfileViewModel : ViewModelBase
 {
+    private const string MainProfilePage = "profile";
+    private const string MainDevicesPage = "devices";
+    private const string ProfileTabsPane = "tabs";
+    private const string ProfilePersonalInfoPane = "personal-info";
+    private const string ProfileUsernamePane = "username";
+    private const string ProfilePasswordPane = "password";
+    private const string ProfileDeleteAccountPane = "delete-account";
+    private const string DeviceListPane = "list";
+    private const string DeviceDetailsPane = "details";
+    private const string DeviceAddPane = "add";
+    private const string DeviceDisconnectPane = "disconnect";
+
     private readonly IEndpoints _endpoints;
     private readonly Func<Task> _refreshAuthenticatedStateAsync;
     private readonly Func<Task> _handleAccountDeletedAsync;
+    private readonly List<DeviceItemViewModel> _allDevices = [];
 
     private Guid _token;
     private string _username = string.Empty;
@@ -33,6 +46,7 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _deleteAccountPassword = string.Empty;
     private string _disconnectDevicePassword = string.Empty;
     private string? _statusMessage;
+    private DeviceItemViewModel? _selectedDevice;
     private DeviceItemViewModel? _deviceToDisconnect;
     private DeviceItemViewModel? _pendingLocalSyncDevice;
     private bool _isDeviceDisconnectDialogOpen;
@@ -41,6 +55,11 @@ public sealed class ProfileViewModel : ViewModelBase
     private bool _pendingLocalSyncEnabled;
     private bool _isAddingDevice;
     private string _deviceEnrollmentCodeInput = string.Empty;
+    private string _deviceSearchQuery = string.Empty;
+    private string _currentMainPage = MainProfilePage;
+    private string _currentProfilePane = ProfileTabsPane;
+    private string _currentDevicePane = DeviceListPane;
+    private PasswordSortOptionViewModel? _selectedDeviceSortOption;
 
     public ProfileViewModel(
         UiPreferencesService uiPreferences,
@@ -54,12 +73,15 @@ public sealed class ProfileViewModel : ViewModelBase
         _handleAccountDeletedAsync = handleAccountDeletedAsync;
 
         Devices = [];
+        DeviceSortOptions = [];
 
         SaveProfileCommand = ReactiveCommand.CreateFromTask(SaveProfileAsync);
         ChangeUsernameCommand = ReactiveCommand.CreateFromTask(ChangeUsernameAsync);
         ChangeMasterPasswordCommand = ReactiveCommand.CreateFromTask(ChangeMasterPasswordAsync);
         DeleteAccountCommand = ReactiveCommand.CreateFromTask(DeleteAccountAsync);
         RefreshDevicesCommand = ReactiveCommand.CreateFromTask(RefreshDevicesAsync);
+        SearchDevicesCommand = ReactiveCommand.Create(ApplyCurrentDeviceSearch);
+        BackToDevicesCommand = ReactiveCommand.Create(BackToDevices);
         ConfirmDisconnectDeviceCommand = ReactiveCommand.CreateFromTask(ConfirmDisconnectDeviceAsync);
         CancelDisconnectDeviceCommand = ReactiveCommand.Create(CancelDisconnectDevice);
         ConfirmLocalSyncToggleCommand = ReactiveCommand.CreateFromTask(ConfirmLocalSyncToggleAsync);
@@ -67,6 +89,13 @@ public sealed class ProfileViewModel : ViewModelBase
         BeginAddDeviceCommand = ReactiveCommand.CreateFromTask(BeginAddDeviceAsync);
         ConfirmAddDeviceCommand = ReactiveCommand.CreateFromTask(ConfirmAddDeviceAsync);
         CancelAddDeviceCommand = ReactiveCommand.Create(CancelAddDevice);
+        BackToProfileCommand = ReactiveCommand.Create(BackToProfile);
+        BeginEditPersonalInfoCommand = ReactiveCommand.Create(BeginEditPersonalInfo);
+        BeginChangeUsernameCommand = ReactiveCommand.Create(BeginChangeUsername);
+        BeginChangeMasterPasswordCommand = ReactiveCommand.Create(BeginChangeMasterPassword);
+        BeginDeleteAccountCommand = ReactiveCommand.Create(BeginDeleteAccount);
+        RebuildDeviceSortOptions();
+        SelectDefaultDeviceSortOption();
     }
 
     public string Username
@@ -181,9 +210,29 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public ObservableCollection<DeviceItemViewModel> Devices { get; }
 
+    public ObservableCollection<PasswordSortOptionViewModel> DeviceSortOptions { get; }
+
+    public DeviceItemViewModel? SelectedDevice
+    {
+        get => _selectedDevice;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedDevice, value);
+            this.RaisePropertyChanged(nameof(HasSelectedDevice));
+        }
+    }
+
+    public bool HasSelectedDevice => SelectedDevice is not null;
+
     public bool HasDevices => Devices.Count > 0;
 
     public bool IsDevicesEmpty => Devices.Count == 0;
+
+    public bool HasKnownDevices => _allDevices.Count > 0;
+
+    public bool IsDeviceListEmpty => _allDevices.Count == 0;
+
+    public bool IsDeviceSearchResultEmpty => HasKnownDevices && Devices.Count == 0;
 
     public bool IsDeviceDisconnectDialogOpen
     {
@@ -214,6 +263,116 @@ public sealed class ProfileViewModel : ViewModelBase
         get => _deviceEnrollmentCodeInput;
         set => this.RaiseAndSetIfChanged(ref _deviceEnrollmentCodeInput, value);
     }
+
+    public string DeviceSearchQuery
+    {
+        get => _deviceSearchQuery;
+        set
+        {
+            value ??= string.Empty;
+            if (string.Equals(_deviceSearchQuery, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _deviceSearchQuery, value);
+            ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
+        }
+    }
+
+    public PasswordSortOptionViewModel? SelectedDeviceSortOption
+    {
+        get => _selectedDeviceSortOption;
+        set
+        {
+            if (ReferenceEquals(_selectedDeviceSortOption, value))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _selectedDeviceSortOption, value);
+            ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
+        }
+    }
+
+    
+    public string CurrentMainPage
+    {
+        get => _currentMainPage;
+        private set
+        {
+            if (string.Equals(_currentMainPage, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _currentMainPage, value);
+            this.RaisePropertyChanged(nameof(IsProfileMainPage));
+            this.RaisePropertyChanged(nameof(IsDevicesMainPage));
+        }
+    }
+
+    public bool IsProfileMainPage => CurrentMainPage == MainProfilePage;
+
+    public bool IsDevicesMainPage => CurrentMainPage == MainDevicesPage;
+
+    public string CurrentProfilePane
+    {
+        get => _currentProfilePane;
+        private set
+        {
+            if (string.Equals(_currentProfilePane, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _currentProfilePane, value);
+            this.RaisePropertyChanged(nameof(IsProfileTabsPaneVisible));
+            this.RaisePropertyChanged(nameof(IsProfilePersonalInfoPaneVisible));
+            this.RaisePropertyChanged(nameof(IsProfileUsernamePaneVisible));
+            this.RaisePropertyChanged(nameof(IsProfilePasswordPaneVisible));
+            this.RaisePropertyChanged(nameof(IsProfileDeleteAccountPaneVisible));
+        }
+    }
+
+    public bool IsProfileTabsPaneVisible => CurrentProfilePane == ProfileTabsPane;
+
+    public bool IsProfilePersonalInfoPaneVisible => CurrentProfilePane == ProfilePersonalInfoPane;
+
+    public bool IsProfileUsernamePaneVisible => CurrentProfilePane == ProfileUsernamePane;
+
+    public bool IsProfilePasswordPaneVisible => CurrentProfilePane == ProfilePasswordPane;
+
+    public bool IsProfileDeleteAccountPaneVisible => CurrentProfilePane == ProfileDeleteAccountPane;
+
+    public string CurrentDevicePane
+    {
+        get => _currentDevicePane;
+        private set
+        {
+            if (string.Equals(_currentDevicePane, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _currentDevicePane, value);
+            this.RaisePropertyChanged(nameof(IsDeviceListPaneVisible));
+            this.RaisePropertyChanged(nameof(IsDeviceDetailsPaneVisible));
+            this.RaisePropertyChanged(nameof(IsDeviceAddPaneVisible));
+            this.RaisePropertyChanged(nameof(IsDeviceDisconnectPaneVisible));
+            this.RaisePropertyChanged(nameof(IsDeviceToolbarVisible));
+        }
+    }
+
+    public bool IsDeviceListPaneVisible => CurrentDevicePane == DeviceListPane;
+
+    public bool IsDeviceDetailsPaneVisible => CurrentDevicePane == DeviceDetailsPane;
+
+    public bool IsDeviceAddPaneVisible => CurrentDevicePane == DeviceAddPane;
+
+    public bool IsDeviceDisconnectPaneVisible => CurrentDevicePane == DeviceDisconnectPane;
+
+    public bool IsDeviceToolbarVisible => IsDeviceListPaneVisible;
 
     public DeviceItemViewModel? DeviceToDisconnect
     {
@@ -263,6 +422,10 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> RefreshDevicesCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> SearchDevicesCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BackToDevicesCommand { get; }
+
     public ReactiveCommand<Unit, Unit> ConfirmDisconnectDeviceCommand { get; }
 
     public ReactiveCommand<Unit, Unit> CancelDisconnectDeviceCommand { get; }
@@ -277,11 +440,37 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> CancelAddDeviceCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> BackToProfileCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BeginEditPersonalInfoCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BeginChangeUsernameCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BeginChangeMasterPasswordCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BeginDeleteAccountCommand { get; }
+
     public string Title => GetTranslation("Profile_Title");
 
     public string Subtitle => GetTranslation("Profile_Subtitle");
 
     public string AccountOverviewLabel => GetTranslation("Profile_Overview_Title");
+
+    public string BackToProfileLabel => GetTranslation("Profile_BackToProfile");
+
+    public string OpenProfileSectionLabel => GetTranslation("Profile_OpenSection");
+
+    public string EditPersonalInfoLabel => GetTranslation("Profile_EditPersonalInfo");
+
+    public string EditPersonalInfoDescription => GetTranslation("Profile_EditPersonalInfo_Description");
+
+    public string ChangeUsernameDescription => GetTranslation("Profile_ChangeUsername_Description");
+
+    public string ChangeMasterPasswordDescription => GetTranslation("Profile_ChangeMasterPassword_Description");
+
+    public string DeleteAccountWarningTitle => GetTranslation("Profile_DeleteAccount_Warning_Title");
+
+    public string DeleteAccountFinalWarning => GetTranslation("Profile_DeleteAccount_FinalWarning");
 
     public string OverviewTabLabel => GetTranslation("Profile_Tab_Overview");
 
@@ -349,6 +538,22 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string AddDeviceLabel => GetTranslation("Profile_Device_Add");
 
+    public string AddDeviceIconLabel => GetTranslation("Common_Add_Icon");
+
+    public string DeviceSearchLabel => GetTranslation("Common_Search");
+
+    public string DeviceSearchPlaceholder => GetTranslation("Profile_Device_Search_Placeholder");
+
+    public string DeviceSortLabel => GetTranslation("Passwords_Sort_Label");
+
+    public string DeviceSearchEmptyTitle => GetTranslation("Profile_Device_SearchEmpty_Title");
+
+    public string DeviceSearchEmptyDescription => GetTranslation("Profile_Device_SearchEmpty_Description");
+
+    public string BackToDevicesLabel => GetTranslation("Profile_Device_BackToDevices");
+
+    public string DeviceDetailsTitle => GetTranslation("Profile_Device_Details_Title");
+
     public string AddDeviceDialogTitle => GetTranslation("Profile_Device_Add_Title");
 
     public string AddDeviceDescription => GetTranslation("Profile_Device_Add_Description");
@@ -378,8 +583,6 @@ public sealed class ProfileViewModel : ViewModelBase
     public string DisconnectDeviceLabel => GetTranslation("Profile_Device_Disconnect");
 
     public string DeviceNameLabel => GetTranslation("Profile_Device_Name");
-
-    public string DeviceFingerprintLabel => GetTranslation("Profile_Device_Fingerprint");
 
     public string DeviceLastSeenLabel => GetTranslation("Profile_Device_LastSeen");
 
@@ -416,6 +619,14 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(Title));
         this.RaisePropertyChanged(nameof(Subtitle));
         this.RaisePropertyChanged(nameof(AccountOverviewLabel));
+        this.RaisePropertyChanged(nameof(BackToProfileLabel));
+        this.RaisePropertyChanged(nameof(OpenProfileSectionLabel));
+        this.RaisePropertyChanged(nameof(EditPersonalInfoLabel));
+        this.RaisePropertyChanged(nameof(EditPersonalInfoDescription));
+        this.RaisePropertyChanged(nameof(ChangeUsernameDescription));
+        this.RaisePropertyChanged(nameof(ChangeMasterPasswordDescription));
+        this.RaisePropertyChanged(nameof(DeleteAccountWarningTitle));
+        this.RaisePropertyChanged(nameof(DeleteAccountFinalWarning));
         this.RaisePropertyChanged(nameof(OverviewTabLabel));
         this.RaisePropertyChanged(nameof(DevicesTabLabel));
         this.RaisePropertyChanged(nameof(AccountTabLabel));
@@ -449,6 +660,14 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeleteAccountPasswordPlaceholder));
         this.RaisePropertyChanged(nameof(RefreshDevicesLabel));
         this.RaisePropertyChanged(nameof(AddDeviceLabel));
+        this.RaisePropertyChanged(nameof(AddDeviceIconLabel));
+        this.RaisePropertyChanged(nameof(DeviceSearchLabel));
+        this.RaisePropertyChanged(nameof(DeviceSearchPlaceholder));
+        this.RaisePropertyChanged(nameof(DeviceSortLabel));
+        this.RaisePropertyChanged(nameof(DeviceSearchEmptyTitle));
+        this.RaisePropertyChanged(nameof(DeviceSearchEmptyDescription));
+        this.RaisePropertyChanged(nameof(BackToDevicesLabel));
+        this.RaisePropertyChanged(nameof(DeviceDetailsTitle));
         this.RaisePropertyChanged(nameof(AddDeviceDialogTitle));
         this.RaisePropertyChanged(nameof(AddDeviceDescription));
         this.RaisePropertyChanged(nameof(AddDeviceCodeLabel));
@@ -464,7 +683,6 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(UnblockDeviceLabel));
         this.RaisePropertyChanged(nameof(DisconnectDeviceLabel));
         this.RaisePropertyChanged(nameof(DeviceNameLabel));
-        this.RaisePropertyChanged(nameof(DeviceFingerprintLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
         this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
@@ -481,6 +699,32 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(LocalSyncConfirmLabel));
         this.RaisePropertyChanged(nameof(RegistrationDateText));
         this.RaisePropertyChanged(nameof(LastLoginDateText));
+
+        var selectedDeviceSortKey = SelectedDeviceSortOption?.Key;
+        RebuildDeviceSortOptions();
+        SelectedDeviceSortOption = DeviceSortOptions.FirstOrDefault(item => item.Key == selectedDeviceSortKey)
+            ?? DeviceSortOptions.FirstOrDefault();
+    }
+
+    
+    public void ShowProfileMainPage()
+    {
+        CurrentMainPage = MainProfilePage;
+        CurrentProfilePane = ProfileTabsPane;
+    }
+
+    public void ShowDevicesMainPage()
+    {
+        CurrentMainPage = MainDevicesPage;
+    }
+
+    public async Task RefreshDevicesOnlyAsync()
+    {
+        if (_token == Guid.Empty)
+            return;
+
+        await LoadDevicesAsync();
+        StatusMessage = GetTranslation("Shell_DataRefreshed");
     }
 
     public async Task RefreshCurrentDataAsync()
@@ -522,6 +766,8 @@ public sealed class ProfileViewModel : ViewModelBase
         CancelDisconnectDevice();
         CancelLocalSyncToggle();
         CancelAddDevice();
+        CurrentProfilePane = ProfileTabsPane;
+        CurrentDevicePane = DeviceListPane;
         await LoadDevicesAsync();
     }
 
@@ -544,7 +790,14 @@ public sealed class ProfileViewModel : ViewModelBase
         DeleteAccountPassword = string.Empty;
         DisconnectDevicePassword = string.Empty;
         StatusMessage = null;
+        _allDevices.Clear();
         Devices.Clear();
+        SelectedDevice = null;
+        DeviceSearchQuery = string.Empty;
+        CurrentMainPage = MainProfilePage;
+        CurrentProfilePane = ProfileTabsPane;
+        CurrentDevicePane = DeviceListPane;
+        SelectDefaultDeviceSortOption();
         RaiseDeviceCollectionStateChanged();
         CancelDisconnectDevice();
         CancelLocalSyncToggle();
@@ -570,6 +823,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
             await _refreshAuthenticatedStateAsync();
             StatusMessage = GetTranslation("Profile_Save_Success");
+            CurrentProfilePane = ProfileTabsPane;
         }
         catch (Exception ex)
         {
@@ -589,6 +843,7 @@ public sealed class ProfileViewModel : ViewModelBase
             await _endpoints.ChangeUsernameAsync(_token, EditUsername.Trim());
             await _refreshAuthenticatedStateAsync();
             StatusMessage = GetTranslation("Profile_Username_Success");
+            CurrentProfilePane = ProfileTabsPane;
         }
         catch (Exception ex)
         {
@@ -631,6 +886,7 @@ public sealed class ProfileViewModel : ViewModelBase
             NewPassword = string.Empty;
             ConfirmNewPassword = string.Empty;
             StatusMessage = GetTranslation("Profile_MasterPassword_Success");
+            CurrentProfilePane = ProfileTabsPane;
         }
         catch (Exception ex)
         {
@@ -674,6 +930,52 @@ public sealed class ProfileViewModel : ViewModelBase
         }
     }
 
+    private void BackToProfile()
+    {
+        CurrentPassword = string.Empty;
+        NewPassword = string.Empty;
+        ConfirmNewPassword = string.Empty;
+        DeleteAccountPassword = string.Empty;
+        EditFirstName = FirstName;
+        EditLastName = LastName;
+        EditEmail = Email;
+        EditUsername = Username;
+        StatusMessage = null;
+        CurrentProfilePane = ProfileTabsPane;
+    }
+
+    private void BeginEditPersonalInfo()
+    {
+        EditFirstName = FirstName;
+        EditLastName = LastName;
+        EditEmail = Email;
+        StatusMessage = null;
+        CurrentProfilePane = ProfilePersonalInfoPane;
+    }
+
+    private void BeginChangeUsername()
+    {
+        EditUsername = Username;
+        StatusMessage = null;
+        CurrentProfilePane = ProfileUsernamePane;
+    }
+
+    private void BeginChangeMasterPassword()
+    {
+        CurrentPassword = string.Empty;
+        NewPassword = string.Empty;
+        ConfirmNewPassword = string.Empty;
+        StatusMessage = null;
+        CurrentProfilePane = ProfilePasswordPane;
+    }
+
+    private void BeginDeleteAccount()
+    {
+        DeleteAccountPassword = string.Empty;
+        StatusMessage = null;
+        CurrentProfilePane = ProfileDeleteAccountPane;
+    }
+
     private async Task RefreshDevicesAsync() =>
         await LoadDevicesAsync();
 
@@ -682,15 +984,17 @@ public sealed class ProfileViewModel : ViewModelBase
         if (_token == Guid.Empty)
             return;
 
+        var selectedId = SelectedDevice?.DeviceId;
+
         try
         {
             var devices = await _endpoints.GetUserDevicesAsync(_token);
-            Devices.Clear();
+            _allDevices.Clear();
 
             foreach (var device in devices)
-                Devices.Add(CreateDeviceItem(device));
+                _allDevices.Add(CreateDeviceItem(device));
 
-            RaiseDeviceCollectionStateChanged();
+            ApplyDeviceFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
         }
         catch (Exception ex)
         {
@@ -711,17 +1015,41 @@ public sealed class ProfileViewModel : ViewModelBase
             UnblockDeviceLabel,
             DisconnectDeviceLabel,
             DeviceNameLabel,
-            DeviceFingerprintLabel,
             DeviceLastSeenLabel,
             DeviceLastSyncLabel,
             DeviceLinkedAtLabel,
             DeviceBlockedReasonLabel,
             DeviceBlockedAtLabel,
             DeviceInvalidAttemptsLabel,
+            BeginViewDeviceAsync,
             SaveDeviceNameAsync,
             ToggleDeviceSyncAsync,
             UnblockDeviceAsync,
             BeginDisconnectDevice);
+
+
+
+    private Task BeginViewDeviceAsync(DeviceItemViewModel device)
+    {
+        SelectedDevice = device;
+        StatusMessage = null;
+        CurrentDevicePane = DeviceDetailsPane;
+        return Task.CompletedTask;
+    }
+
+    private void BackToDevices()
+    {
+        SelectedDevice = null;
+        DeviceToDisconnect = null;
+        DisconnectDevicePassword = string.Empty;
+        DeviceEnrollmentCodeInput = string.Empty;
+        IsAddingDevice = false;
+        StatusMessage = null;
+        CurrentDevicePane = DeviceListPane;
+    }
+
+    private void ApplyCurrentDeviceSearch() =>
+        ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
 
     private async Task SaveDeviceNameAsync(DeviceItemViewModel device)
     {
@@ -804,9 +1132,12 @@ public sealed class ProfileViewModel : ViewModelBase
         if (!device.CanDisconnect)
             return;
 
+        SelectedDevice = device;
         DeviceToDisconnect = device;
         DisconnectDevicePassword = string.Empty;
-        IsDeviceDisconnectDialogOpen = true;
+        IsDeviceDisconnectDialogOpen = false;
+        StatusMessage = null;
+        CurrentDevicePane = DeviceDisconnectPane;
     }
 
     private void CancelDisconnectDevice()
@@ -814,6 +1145,9 @@ public sealed class ProfileViewModel : ViewModelBase
         IsDeviceDisconnectDialogOpen = false;
         DeviceToDisconnect = null;
         DisconnectDevicePassword = string.Empty;
+
+        if (IsDeviceDisconnectPaneVisible)
+            CurrentDevicePane = SelectedDevice is null ? DeviceListPane : DeviceDetailsPane;
     }
 
     private async Task ConfirmDisconnectDeviceAsync()
@@ -833,6 +1167,8 @@ public sealed class ProfileViewModel : ViewModelBase
         {
             await _endpoints.DisconnectUserDeviceAsync(_token, DeviceToDisconnect.DeviceId, passwordHash);
             CancelDisconnectDevice();
+            SelectedDevice = null;
+            CurrentDevicePane = DeviceListPane;
             await LoadDevicesAsync();
             StatusMessage = GetTranslation("Profile_Device_Disconnected");
         }
@@ -890,8 +1226,11 @@ public sealed class ProfileViewModel : ViewModelBase
                 return;
             }
 
+            SelectedDevice = null;
             DeviceEnrollmentCodeInput = string.Empty;
-            IsAddDeviceDialogOpen = true;
+            IsAddDeviceDialogOpen = false;
+            StatusMessage = null;
+            CurrentDevicePane = DeviceAddPane;
         }
         catch (Exception ex)
         {
@@ -904,6 +1243,9 @@ public sealed class ProfileViewModel : ViewModelBase
         IsAddDeviceDialogOpen = false;
         DeviceEnrollmentCodeInput = string.Empty;
         IsAddingDevice = false;
+
+        if (IsDeviceAddPaneVisible)
+            CurrentDevicePane = DeviceListPane;
     }
 
     private async Task ConfirmAddDeviceAsync()
@@ -923,6 +1265,7 @@ public sealed class ProfileViewModel : ViewModelBase
             IsAddingDevice = true;
             await _endpoints.AddDeviceByCodeAsync(_token, code);
             CancelAddDevice();
+            CurrentDevicePane = DeviceListPane;
             await LoadDevicesAsync();
             StatusMessage = GetTranslation("Profile_Device_AddSuccess");
         }
@@ -937,9 +1280,54 @@ public sealed class ProfileViewModel : ViewModelBase
     }
 
 
+    private void ApplyDeviceFiltersAndSorting(Guid? preferredSelectionId, bool preserveSelection)
+    {
+        IEnumerable<DeviceItemViewModel> query = _allDevices;
+
+        if (!string.IsNullOrWhiteSpace(DeviceSearchQuery))
+        {
+            var searchTerm = DeviceSearchQuery.Trim();
+            query = query.Where(item =>
+                item.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
+                || item.DeviceName.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
+                || item.TrustStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
+                || item.SyncStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        query = SelectedDeviceSortOption?.Key switch
+        {
+            "name-desc" => query.OrderByDescending(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            _ => query.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+        };
+
+        var filtered = query.ToList();
+        Devices.Clear();
+
+        foreach (var device in filtered)
+            Devices.Add(device);
+
+        RaiseDeviceCollectionStateChanged();
+
+        if (preserveSelection && preferredSelectionId.HasValue)
+            SelectedDevice = _allDevices.FirstOrDefault(item => item.DeviceId == preferredSelectionId.Value);
+    }
+
+    private void RebuildDeviceSortOptions()
+    {
+        DeviceSortOptions.Clear();
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("name-asc", GetTranslation("Passwords_Sort_NameAsc")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("name-desc", GetTranslation("Passwords_Sort_NameDesc")));
+    }
+
+    private void SelectDefaultDeviceSortOption() =>
+        SelectedDeviceSortOption = DeviceSortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? DeviceSortOptions.FirstOrDefault();
+
     private void RaiseDeviceCollectionStateChanged()
     {
         this.RaisePropertyChanged(nameof(HasDevices));
         this.RaisePropertyChanged(nameof(IsDevicesEmpty));
+        this.RaisePropertyChanged(nameof(HasKnownDevices));
+        this.RaisePropertyChanged(nameof(IsDeviceListEmpty));
+        this.RaisePropertyChanged(nameof(IsDeviceSearchResultEmpty));
     }
 }

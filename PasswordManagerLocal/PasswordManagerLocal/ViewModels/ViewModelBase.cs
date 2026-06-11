@@ -1,3 +1,5 @@
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
 using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Exceptions;
@@ -36,6 +38,25 @@ public abstract class ViewModelBase : ReactiveObject
             OperationCanceledException => GetTranslation("Error_OperationCanceled"),
             _ => GetTranslation("Error_Generic")
         };
+
+
+
+    protected static async Task<bool> TryCopyTextToClipboardAsync(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            && desktop.MainWindow?.Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(text);
+            return true;
+        }
+
+        return false;
+    }
 
     protected virtual void OnLanguageChanged()
     {

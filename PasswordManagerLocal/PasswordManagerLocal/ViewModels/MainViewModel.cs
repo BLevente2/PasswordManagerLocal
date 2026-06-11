@@ -50,6 +50,7 @@ public sealed class MainViewModel : ViewModelBase
         SetDarkThemeCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentThemeMode = AppThemeMode.Dark; });
         ShowPasswordsCommand = ReactiveCommand.Create(NavigateToPasswords);
         ShowProfileCommand = ReactiveCommand.Create(NavigateToProfile);
+        ShowDevicesCommand = ReactiveCommand.Create(NavigateToDevices);
         ShowLoginCommand = ReactiveCommand.Create(NavigateToLogin);
         ShowRegistrationCommand = ReactiveCommand.Create(NavigateToRegistration);
         LogoutCommand = ReactiveCommand.CreateFromTask(LogoutAsync);
@@ -78,6 +79,8 @@ public sealed class MainViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _isAuthenticated, value);
             this.RaisePropertyChanged(nameof(IsAnonymous));
+            this.RaisePropertyChanged(nameof(HeaderSubtitle));
+            this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
         }
     }
 
@@ -92,7 +95,12 @@ public sealed class MainViewModel : ViewModelBase
     public string CurrentUserSubtitle
     {
         get => _currentUserSubtitle;
-        private set => this.RaiseAndSetIfChanged(ref _currentUserSubtitle, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _currentUserSubtitle, value);
+            this.RaisePropertyChanged(nameof(HeaderSubtitle));
+            this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
+        }
     }
 
     public string? StatusMessage
@@ -102,6 +110,8 @@ public sealed class MainViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _statusMessage, value);
             this.RaisePropertyChanged(nameof(HasStatusMessage));
+            this.RaisePropertyChanged(nameof(HeaderSubtitle));
+            this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
         }
     }
 
@@ -118,6 +128,8 @@ public sealed class MainViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ShowPasswordsCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ShowProfileCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ShowDevicesCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ShowLoginCommand { get; }
 
@@ -149,6 +161,8 @@ public sealed class MainViewModel : ViewModelBase
 
     public string ProfileLabel => GetTranslation("Shell_Profile");
 
+    public string DevicesLabel => GetTranslation("Shell_Devices");
+
     public string LogoutLabel => GetTranslation("Shell_Logout");
 
     public string WelcomeLabel => GetTranslation("Shell_Welcome");
@@ -158,6 +172,10 @@ public sealed class MainViewModel : ViewModelBase
     public string RefreshButtonLabel => GetTranslation("Common_Refresh");
 
     public string RefreshVisiblePageLabel => $"↻ {GetTranslation("Shell_RefreshVisiblePage")}";
+
+    public string HeaderSubtitle => IsAuthenticated ? CurrentUserSubtitle : StatusMessage ?? string.Empty;
+
+    public bool HasHeaderSubtitle => !string.IsNullOrWhiteSpace(HeaderSubtitle);
 
     public async Task InitializeAsync()
     {
@@ -197,11 +215,14 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(ThemeDarkLabel));
         this.RaisePropertyChanged(nameof(PasswordVaultLabel));
         this.RaisePropertyChanged(nameof(ProfileLabel));
+        this.RaisePropertyChanged(nameof(DevicesLabel));
         this.RaisePropertyChanged(nameof(LogoutLabel));
         this.RaisePropertyChanged(nameof(WelcomeLabel));
         this.RaisePropertyChanged(nameof(NavigationLabel));
         this.RaisePropertyChanged(nameof(RefreshButtonLabel));
         this.RaisePropertyChanged(nameof(RefreshVisiblePageLabel));
+        this.RaisePropertyChanged(nameof(HeaderSubtitle));
+        this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
     }
 
     private void NavigateToLogin()
@@ -233,6 +254,18 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        ProfileViewModel.ShowProfileMainPage();
+        CurrentPageViewModel = ProfileViewModel;
+    }
+
+    private void NavigateToDevices()
+    {
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        ProfileViewModel.ShowDevicesMainPage();
         CurrentPageViewModel = ProfileViewModel;
     }
 
@@ -277,7 +310,15 @@ public sealed class MainViewModel : ViewModelBase
 
         if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
         {
-            await RefreshProfileDataAsync();
+            if (ProfileViewModel.IsDevicesMainPage)
+            {
+                await ProfileViewModel.RefreshDevicesOnlyAsync();
+            }
+            else
+            {
+                await RefreshProfileDataAsync();
+            }
+
             StatusMessage = GetTranslation("Shell_DataRefreshed");
             return;
         }

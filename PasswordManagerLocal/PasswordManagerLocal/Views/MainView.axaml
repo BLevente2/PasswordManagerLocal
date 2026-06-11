@@ -30,7 +30,7 @@
       <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
         <StackPanel Spacing="4">
           <TextBlock Text="{Binding AppTitle}" Classes="sectionTitle" />
-          <TextBlock Text="{Binding StatusMessage}" IsVisible="{Binding HasStatusMessage}" Classes="subtleText" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding HeaderSubtitle}" IsVisible="{Binding HasHeaderSubtitle}" Classes="subtleText" TextWrapping="Wrap" />
         </StackPanel>
 
         <Button Grid.Column="1"
@@ -53,6 +53,7 @@
           <Button.Flyout>
             <MenuFlyout>
               <MenuItem Header="{Binding PasswordVaultLabel}" Command="{Binding ShowPasswordsCommand}" />
+              <MenuItem Header="{Binding DevicesLabel}" Command="{Binding ShowDevicesCommand}" />
               <MenuItem Header="{Binding ProfileLabel}" Command="{Binding ShowProfileCommand}" />
               <MenuItem Header="{Binding LogoutLabel}" Command="{Binding LogoutCommand}" />
             </MenuFlyout>
@@ -93,11 +94,10 @@
             Classes="card"
             Margin="16,0,16,8"
             IsVisible="{Binding IsAuthenticated}">
-      <WrapPanel Orientation="Horizontal">
-        <Button Classes="ghost" Command="{Binding ShowPasswordsCommand}" Content="{Binding PasswordVaultLabel}" Margin="0,0,8,8" />
-        <Button Classes="ghost" Command="{Binding ShowProfileCommand}" Content="{Binding ProfileLabel}" Margin="0,0,8,8" />
-        <TextBlock Text="{Binding WelcomeLabel}" Classes="subtleText" VerticalAlignment="Center" Margin="8,0,4,8" />
-        <TextBlock Text="{Binding CurrentUserSubtitle}" Classes="subtleText" VerticalAlignment="Center" Margin="0,0,0,8" />
+      <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
+        <Button Classes="ghost" Command="{Binding ShowPasswordsCommand}" Content="{Binding PasswordVaultLabel}" Margin="4" />
+        <Button Classes="ghost" Command="{Binding ShowDevicesCommand}" Content="{Binding DevicesLabel}" Margin="4" />
+        <Button Classes="ghost" Command="{Binding ShowProfileCommand}" Content="{Binding ProfileLabel}" Margin="4" />
       </WrapPanel>
     </Border>
 

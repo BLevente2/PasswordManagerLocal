@@ -78,7 +78,21 @@
           <StackPanel Spacing="14" IsVisible="{Binding IsDeviceTransferCodeVisible}">
             <TextBlock Text="{Binding DeviceTransferCodeTitle}" Classes="sectionTitle" TextWrapping="Wrap" />
             <TextBlock Text="{Binding DeviceTransferCodeDescription}" Classes="subtleText" TextWrapping="Wrap" />
-            <TextBox Text="{Binding DeviceTransferCode}" IsReadOnly="True" FontFamily="Consolas" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <Border Padding="12,10"
+                      CornerRadius="12"
+                      BorderThickness="1"
+                      BorderBrush="#33808080">
+                <TextBlock Text="{Binding DeviceTransferCode}"
+                           FontFamily="Consolas"
+                           FontSize="18"
+                           TextWrapping="Wrap" />
+              </Border>
+              <Button Grid.Column="1"
+                      Classes="ghost"
+                      Command="{Binding CopyDeviceTransferCodeCommand}"
+                      Content="{Binding DeviceTransferCopyCodeLabel}" />
+            </Grid>
             <TextBlock Text="{Binding DeviceTransferMessage}" Classes="subtleText" IsVisible="{Binding HasDeviceTransferMessage}" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
               <Button Classes="ghost"

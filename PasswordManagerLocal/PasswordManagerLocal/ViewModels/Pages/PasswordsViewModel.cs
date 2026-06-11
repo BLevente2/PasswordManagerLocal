@@ -68,6 +68,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         CancelDeletePasswordCommand = ReactiveCommand.Create(CancelDeletePassword);
         RevealPasswordCommand = ReactiveCommand.CreateFromTask(RevealPasswordAsync);
         HidePasswordCommand = ReactiveCommand.Create(HidePassword);
+        CopyRevealedPasswordCommand = ReactiveCommand.CreateFromTask(CopyRevealedPasswordAsync);
         RevealEditorPasswordCommand = ReactiveCommand.CreateFromTask(RevealEditorPasswordAsync);
         SavePasswordCommand = ReactiveCommand.CreateFromTask(SavePasswordAsync);
         CancelPasswordEditorCommand = ReactiveCommand.Create(CancelPasswordEditor);
@@ -444,6 +445,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> HidePasswordCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> CopyRevealedPasswordCommand { get; }
+
     public ReactiveCommand<Unit, Unit> RevealEditorPasswordCommand { get; }
 
     public ReactiveCommand<Unit, Unit> SavePasswordCommand { get; }
@@ -527,6 +530,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public string RevealPasswordLabel => GetTranslation("Passwords_Reveal");
 
     public string HidePasswordLabel => GetTranslation("Passwords_Hide");
+
+    public string CopyPasswordLabel => GetTranslation("Passwords_Copy");
 
     public string RevealEditorPasswordLabel => GetTranslation("Passwords_Editor_RevealStoredPassword");
 
@@ -617,6 +622,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(UpdatedAtLabel));
         this.RaisePropertyChanged(nameof(RevealPasswordLabel));
         this.RaisePropertyChanged(nameof(HidePasswordLabel));
+        this.RaisePropertyChanged(nameof(CopyPasswordLabel));
         this.RaisePropertyChanged(nameof(RevealEditorPasswordLabel));
         this.RaisePropertyChanged(nameof(EditPasswordLabel));
         this.RaisePropertyChanged(nameof(DeletePasswordLabel));
@@ -874,6 +880,26 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         RevealedPassword = null;
     }
+
+    private async Task CopyRevealedPasswordAsync()
+    {
+        if (!HasRevealedPassword)
+        {
+            return;
+        }
+
+        try
+        {
+            StatusMessage = await TryCopyTextToClipboardAsync(RevealedPassword)
+                ? GetTranslation("Passwords_Copy_Success")
+                : GetTranslation("Error_ClipboardUnavailable");
+        }
+        catch
+        {
+            StatusMessage = GetTranslation("Error_ClipboardUnavailable");
+        }
+    }
+
 
     private async Task RevealEditorPasswordAsync()
     {

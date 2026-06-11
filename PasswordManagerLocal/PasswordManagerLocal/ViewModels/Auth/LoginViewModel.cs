@@ -49,6 +49,7 @@ public sealed class LoginViewModel : ViewModelBase
         CancelDeviceTransferCommand = ReactiveCommand.CreateFromTask(CancelDeviceTransferAsync);
         CheckDeviceTransferStatusCommand = ReactiveCommand.CreateFromTask(CheckDeviceTransferStatusAsync);
         FinishDeviceTransferCommand = ReactiveCommand.Create(FinishDeviceTransfer);
+        CopyDeviceTransferCodeCommand = ReactiveCommand.CreateFromTask(CopyDeviceTransferCodeAsync);
     }
 
     public string Username
@@ -170,6 +171,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> FinishDeviceTransferCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> CopyDeviceTransferCodeCommand { get; }
+
     public string Title => GetTranslation("Login_Title");
 
     public string Subtitle => GetTranslation("Login_Subtitle");
@@ -208,6 +211,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public string DeviceTransferCheckStatusLabel => GetTranslation("Login_DeviceTransfer_CheckStatus");
 
+    public string DeviceTransferCopyCodeLabel => GetTranslation("Common_Copy");
+
     public string DeviceTransferFinishTitle => IsDeviceTransferSuccess
         ? GetTranslation("Login_DeviceTransfer_SuccessTitle")
         : GetTranslation("Login_DeviceTransfer_ErrorTitle");
@@ -237,6 +242,7 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeviceTransferCodeDescription));
         this.RaisePropertyChanged(nameof(DeviceTransferWaitingText));
         this.RaisePropertyChanged(nameof(DeviceTransferCheckStatusLabel));
+        this.RaisePropertyChanged(nameof(DeviceTransferCopyCodeLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferFinishLabel));
         this.RaisePropertyChanged(nameof(CancelLabel));
@@ -369,6 +375,23 @@ public sealed class LoginViewModel : ViewModelBase
         finally
         {
             IsBusy = false;
+        }
+    }
+
+
+
+    private async Task CopyDeviceTransferCodeAsync()
+    {
+        try
+        {
+            if (await TryCopyTextToClipboardAsync(DeviceTransferCode))
+                DeviceTransferMessage = GetTranslation("Common_Copied");
+            else
+                DeviceTransferMessage = GetTranslation("Error_ClipboardUnavailable");
+        }
+        catch
+        {
+            DeviceTransferMessage = GetTranslation("Error_ClipboardUnavailable");
         }
     }
 
