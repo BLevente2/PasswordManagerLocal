@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +14,7 @@ using PasswordManagerLocalBackend.Repositories;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalBackend.Services.Hosted;
+using PasswordManagerLocalBackend.Services.Tcp;
 using SQLitePCL;
 
 namespace PasswordManagerLocalBackend
@@ -124,7 +125,7 @@ namespace PasswordManagerLocalBackend
                     services.AddSingleton<ITokenService, TokenService>();
 
                     services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
-                    services.AddSingleton<IGrpcClientService, GrpcClientService>();
+                    services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
                     services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
                     services.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
                     services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
@@ -142,7 +143,8 @@ namespace PasswordManagerLocalBackend
                     services.AddHostedService<ExpiredEntriesPurgeHostedService>();
                     services.AddHostedService<LocalDeviceCleanupHostedService>();
                     services.AddHostedService<SyncDeviceIdentityWarmupHostedService>();
-                    services.AddHostedService<GrpcSyncServerHostedService>();
+                    services.AddSingleton<SyncPeerProtocolHandler>();
+                    services.AddHostedService<TcpSyncServerHostedService>();
                     services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MdnsPublisherHostedService>());
                     services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MdnsBrowserHostedService>());
                     services.AddHostedService<SyncNetworkRefreshHostedService>();

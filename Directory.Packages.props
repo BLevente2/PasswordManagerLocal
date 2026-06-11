@@ -34,8 +34,6 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlcipher" Version="2.1.11" />
-    <PackageVersion Include="Grpc.Net.Client" Version="2.76.0" />
-    <PackageVersion Include="Grpc.AspNetCore" Version="2.76.0" />
     <PackageVersion Include="Grpc.Tools" Version="2.76.0" />
     <PackageVersion Include="Makaretu.Dns.Multicast" Version="0.27.0" />
     <PackageVersion Include="NSec.Cryptography" Version="25.4.0" />

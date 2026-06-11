@@ -1,6 +1,4 @@
 using Google.Protobuf;
-using Grpc.Core;
-using Grpc.Net.Client;
 using Makaretu.Dns;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,11 +15,8 @@ using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Utils;
 using System.Net;
 using System.Net.NetworkInformation;
-using System.Net.Security;
 using System.Net.Sockets;
-using System.Security.Authentication;
 using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
 
@@ -75,14 +70,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly ISyncTransportClientService _syncTransport;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
 
-    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache)
+    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache, ISyncTransportClientService syncTransport)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
         _endpointCache = endpointCache;
+        _syncTransport = syncTransport;
     }
 
 
@@ -1466,20 +1463,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         try
         {
-            using var handler = CreatePinnedHandler(endpoint.TlsCertFingerprint);
-            using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions
-            {
-                HttpHandler = handler,
-                MaxSendMessageSize = 1024 * 1024,
-                MaxReceiveMessageSize = 1024 * 1024
-            });
-
-            var client = new SyncGrpc.SyncGrpcClient(channel);
-            var reply = await client.GetDeviceEnrollmentInfoAsync(new GetDeviceEnrollmentInfoRequest
+            var reply = await _syncTransport.GetDeviceEnrollmentInfoAsync(endpoint.Host, endpoint.Port, endpoint.TlsCertFingerprint, new GetDeviceEnrollmentInfoRequest
             {
                 SessionId = parsed.SessionId,
                 CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(parsed.SessionId, parsed.Secret))
-            }, cancellationToken: ct);
+            }, ct);
 
             var errorCode = Enum.TryParse<DeviceEnrollmentErrorCode>(reply.ErrorCode, out var parsedErrorCode)
                 ? parsedErrorCode
@@ -1514,16 +1502,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 AgreementPublicKey = reply.AgreementPub.ToByteArray()
             };
         }
-        catch (RpcException ex)
-        {
-            return new DeviceEnrollmentInfoResponse
-            {
-                Ok = false,
-                ErrorCode = DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
-                Error = string.IsNullOrWhiteSpace(ex.Status.Detail) ? ex.Message : ex.Status.Detail
-            };
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
         {
             return new DeviceEnrollmentInfoResponse
             {
@@ -1556,79 +1535,47 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         using var transferTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         transferTimeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.DeviceEnrollmentTransferTimeoutSeconds));
 
-        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? unaryResult = null;
-        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? streamResult = null;
-
         try
         {
-            DeviceEnrollmentTrace.Info($"Trying unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
-            unaryResult = await SendEnrollmentSnapshotUnaryAsync(endpoint, sessionId, proof, snapshotBytes, transferTimeout.Token);
+            DeviceEnrollmentTrace.Info($"Trying TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
+            var result = await SendEnrollmentSnapshotStreamAsync(endpoint, sessionId, proof, snapshotBytes, transferTimeout.Token);
 
-            if (unaryResult.Value.Ok)
-            {
-                DeviceEnrollmentTrace.Info($"Unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
-                return unaryResult.Value;
-            }
+            if (result.Ok)
+                DeviceEnrollmentTrace.Info($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
+            else
+                DeviceEnrollmentTrace.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {result.ErrorCode}: {result.Error}");
 
-            DeviceEnrollmentTrace.Error($"Unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {unaryResult.Value.ErrorCode}: {unaryResult.Value.Error}");
-
-            if (unaryResult.Value.ErrorCode != DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
-                return unaryResult.Value;
+            return result;
         }
-        catch (Exception ex) when (ex is RpcException or HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
         {
-            var message = ex is RpcException rpcException ? BuildGrpcConnectionError(rpcException) : ex.Message;
-            unaryResult = (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, message);
-            DeviceEnrollmentTrace.Error($"Unary enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {message}", ex);
+            DeviceEnrollmentTrace.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {ex.Message}", ex);
+            return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, ex.Message);
         }
-
-        try
-        {
-            DeviceEnrollmentTrace.Info($"Trying streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
-            streamResult = await SendEnrollmentSnapshotStreamAsync(endpoint, sessionId, proof, snapshotBytes, transferTimeout.Token);
-
-            if (streamResult.Value.Ok)
-            {
-                DeviceEnrollmentTrace.Info($"Streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
-                return streamResult.Value;
-            }
-
-            DeviceEnrollmentTrace.Error($"Streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {streamResult.Value.ErrorCode}: {streamResult.Value.Error}");
-
-            if (streamResult.Value.ErrorCode != DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
-                return streamResult.Value;
-        }
-        catch (Exception ex) when (ex is RpcException or HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException)
-        {
-            var message = ex is RpcException rpcException ? BuildGrpcConnectionError(rpcException) : ex.Message;
-            streamResult = (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, message);
-            DeviceEnrollmentTrace.Error($"Streaming enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {message}", ex);
-        }
-
-        var details = BuildTransferFailureDetails(unaryResult, streamResult);
-        DeviceEnrollmentTrace.Error($"All enrollment snapshot transfer modes failed for {endpoint.Host}:{endpoint.Port}. {details}");
-        return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, details);
     }
 
 
     private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotStreamAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, CancellationToken ct)
     {
-        using var handler = CreatePinnedHandler(endpoint.TlsCertFingerprint);
-        using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions
-        {
-            HttpHandler = handler,
-            MaxSendMessageSize = SyncConstants.DeviceEnrollmentSnapshotChunkBytes + 4096,
-            MaxReceiveMessageSize = 1024 * 1024
-        });
+        var reply = await _syncTransport.CompleteDeviceEnrollmentStreamAsync(
+            endpoint.Host,
+            endpoint.Port,
+            endpoint.TlsCertFingerprint,
+            BuildEnrollmentSnapshotChunks(sessionId, proof, snapshotBytes),
+            ct);
 
-        var client = new SyncGrpc.SyncGrpcClient(channel);
-        using var call = client.CompleteDeviceEnrollmentStream(cancellationToken: ct);
+        return ParseEnrollmentReply(reply);
+    }
+
+
+    private async IAsyncEnumerable<CompleteDeviceEnrollmentChunk> BuildEnrollmentSnapshotChunks(string sessionId, byte[] proof, byte[] snapshotBytes)
+    {
         var sourceDeviceId = _identity.LocalDeviceId.ToString("N");
 
         for (var offset = 0; offset < snapshotBytes.Length; offset += SyncConstants.DeviceEnrollmentSnapshotChunkBytes)
         {
             var count = Math.Min(SyncConstants.DeviceEnrollmentSnapshotChunkBytes, snapshotBytes.Length - offset);
-            await call.RequestStream.WriteAsync(new CompleteDeviceEnrollmentChunk
+            yield return new CompleteDeviceEnrollmentChunk
             {
                 SessionId = offset == 0 ? sessionId : string.Empty,
                 CodeProof = offset == 0 ? ByteString.CopyFrom(proof) : ByteString.Empty,
@@ -1636,12 +1583,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SourceSignPub = offset == 0 ? ByteString.CopyFrom(_identity.SignPublicKey) : ByteString.Empty,
                 SourceTlsCertFingerprint = offset == 0 ? _identity.FingerprintHex : string.Empty,
                 SnapshotChunk = ByteString.CopyFrom(snapshotBytes, offset, count)
-            });
+            };
+
+            await Task.Yield();
         }
 
         if (snapshotBytes.Length == 0)
         {
-            await call.RequestStream.WriteAsync(new CompleteDeviceEnrollmentChunk
+            yield return new CompleteDeviceEnrollmentChunk
             {
                 SessionId = sessionId,
                 CodeProof = ByteString.CopyFrom(proof),
@@ -1649,46 +1598,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SourceSignPub = ByteString.CopyFrom(_identity.SignPublicKey),
                 SourceTlsCertFingerprint = _identity.FingerprintHex,
                 SnapshotChunk = ByteString.Empty
-            });
-        }
-
-        await call.RequestStream.CompleteAsync();
-        return ParseEnrollmentReply(await call.ResponseAsync);
-    }
-
-
-    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotUnaryAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, CancellationToken ct)
-    {
-        try
-        {
-            using var handler = CreatePinnedHandler(endpoint.TlsCertFingerprint);
-            using var channel = GrpcChannel.ForAddress(BuildAddress(endpoint.Host, endpoint.Port), new GrpcChannelOptions
-            {
-                HttpHandler = handler,
-                MaxSendMessageSize = SyncConstants.MaxDeviceEnrollmentSnapshotBytes + 1024,
-                MaxReceiveMessageSize = 1024 * 1024
-            });
-
-            var client = new SyncGrpc.SyncGrpcClient(channel);
-            var reply = await client.CompleteDeviceEnrollmentAsync(new CompleteDeviceEnrollmentRequest
-            {
-                SessionId = sessionId,
-                CodeProof = ByteString.CopyFrom(proof),
-                Snapshot = ByteString.CopyFrom(snapshotBytes),
-                SourceDeviceId = _identity.LocalDeviceId.ToString("N"),
-                SourceSignPub = ByteString.CopyFrom(_identity.SignPublicKey),
-                SourceTlsCertFingerprint = _identity.FingerprintHex
-            }, cancellationToken: ct);
-
-            return ParseEnrollmentReply(reply);
-        }
-        catch (RpcException ex)
-        {
-            return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, BuildGrpcConnectionError(ex));
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException)
-        {
-            return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, ex.Message);
+            };
         }
     }
 
@@ -1703,65 +1613,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             : DeviceEnrollmentErrorCode.NewDeviceRejected;
 
         return (false, errorCode, string.IsNullOrWhiteSpace(reply.Error) ? "The new device rejected the enrollment request." : reply.Error);
-    }
-
-
-    private static string BuildGrpcConnectionError(RpcException ex)
-    {
-        var detail = string.IsNullOrWhiteSpace(ex.Status.Detail) ? ex.Message : ex.Status.Detail;
-        return string.IsNullOrWhiteSpace(detail)
-            ? $"gRPC connection failed with status {ex.StatusCode}."
-            : $"gRPC status {ex.StatusCode}: {detail}";
-    }
-
-
-    private static string BuildTransferFailureDetails(
-        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? unaryResult,
-        (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)? streamResult)
-    {
-        var unaryText = unaryResult is null
-            ? "unary transfer was not attempted"
-            : $"unary transfer failed with {unaryResult.Value.ErrorCode}: {unaryResult.Value.Error}";
-
-        var streamText = streamResult is null
-            ? "streaming transfer was not attempted"
-            : $"streaming transfer failed with {streamResult.Value.ErrorCode}: {streamResult.Value.Error}";
-
-        return $"{unaryText}; {streamText}";
-    }
-
-
-    private HttpMessageHandler CreatePinnedHandler(string serverFingerprintHex)
-    {
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-            SslOptions = new SslClientAuthenticationOptions
-            {
-                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                ClientCertificates = new X509CertificateCollection { _identity.Certificate },
-                LocalCertificateSelectionCallback = (_, _, _, _, _) => _identity.Certificate,
-                RemoteCertificateValidationCallback = (_, cert, _, _) => ValidatePinnedServerCertificate(cert, serverFingerprintHex)
-            }
-        };
-
-        return handler;
-    }
-
-
-    private bool ValidatePinnedServerCertificate(X509Certificate? cert, string serverFingerprintHex)
-    {
-        if (cert is null)
-            return false;
-
-        var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
-        var expected = NormalizeFingerprint(serverFingerprintHex);
-        if (expected.Length == 0)
-            return false;
-
-        return expected.Length < 64
-            ? fingerprint.StartsWith(expected, StringComparison.OrdinalIgnoreCase)
-            : string.Equals(fingerprint, expected, StringComparison.OrdinalIgnoreCase);
     }
 
 
@@ -2147,15 +1998,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private static string NormalizeFingerprint(string fingerprint) =>
         fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
-
-
-    private static string BuildAddress(string host, int port)
-    {
-        if (IPAddress.TryParse(host, out var ip) && ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-            return $"https://[{host}]:{port}";
-
-        return $"https://{host}:{port}";
-    }
 
 
     public void Dispose()

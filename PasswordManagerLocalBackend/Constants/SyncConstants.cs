@@ -25,6 +25,7 @@ public static class SyncConstants
     public const int SyncDeltaEd25519PublicKeyBytes = 32;
     public const int SyncDeltaEd25519SignatureBytes = 64;
     public const int MaxIncomingDeltaCountPerCall = 256;
+    public const int MaxSyncTcpFrameBytes = MaxDeviceEnrollmentSnapshotBytes + 4096;
     public const int MaxIncomingDeltaFutureSeconds = 300;
     public const int MaxInvalidIncomingSyncAttempts = 5;
 }

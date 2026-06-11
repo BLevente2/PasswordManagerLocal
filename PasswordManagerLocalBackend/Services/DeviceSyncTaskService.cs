@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
@@ -11,7 +11,7 @@ namespace PasswordManagerLocalBackend.Services;
 public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IGrpcClientService _grpcClient;
+    private readonly ISyncTransportClientService _syncTransport;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceIdentityService _identity;
@@ -22,13 +22,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
     public DeviceSyncTaskService(
         IServiceScopeFactory scopeFactory,
-        IGrpcClientService grpcClient,
+        ISyncTransportClientService syncTransport,
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceIdentityService identity)
     {
         _scopeFactory = scopeFactory;
-        _grpcClient = grpcClient;
+        _syncTransport = syncTransport;
         _syncDeviceIdentities = syncDeviceIdentities;
         _endpointCache = endpointCache;
         _identity = identity;
@@ -200,7 +200,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (!_identity.IsSyncOn)
             return false;
 
-        var sent = await _grpcClient.SendAsync(endpoint.Host, endpoint.Port, targetDevice.TlsCertFingerprint, [delta], ct);
+        var sent = await _syncTransport.SendDeltasAsync(endpoint.Host, endpoint.Port, targetDevice.TlsCertFingerprint, [delta], ct);
 
         if (!sent)
         {

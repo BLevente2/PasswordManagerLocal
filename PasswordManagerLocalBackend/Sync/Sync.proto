@@ -3,15 +3,6 @@ syntax = "proto3";
 package sync;
 option csharp_namespace = "PasswordManagerLocalBackend.Sync";
 
-service SyncGrpc {
-  rpc Hello     (HelloRequest)      returns (HelloReply);
-  rpc NeedSync  (NeedSyncRequest)   returns (NeedSyncReply);
-  rpc PushDelta (stream DeltaChunk) returns (Ack);
-  rpc GetDeviceEnrollmentInfo (GetDeviceEnrollmentInfoRequest) returns (GetDeviceEnrollmentInfoReply);
-  rpc CompleteDeviceEnrollment (CompleteDeviceEnrollmentRequest) returns (CompleteDeviceEnrollmentReply);
-  rpc CompleteDeviceEnrollmentStream (stream CompleteDeviceEnrollmentChunk) returns (CompleteDeviceEnrollmentReply);
-}
-
 message HelloRequest  { string user_id = 1; string device_id = 2; bytes dataset_hash = 3; bytes sign_pub = 4; }
 message HelloReply    { bool ok = 1; }
 
@@ -72,4 +63,10 @@ message CompleteDeviceEnrollmentReply {
   bool ok = 1;
   string error = 2;
   string error_code = 3;
+}
+
+
+message SyncError {
+  string code = 1;
+  string message = 2;
 }

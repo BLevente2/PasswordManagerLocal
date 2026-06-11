@@ -263,7 +263,7 @@
   "Error_DeviceEnrollment_SyncDisabled": "Error: Synchronization is disabled on this device. Turn synchronization on before adding a new device.",
   "Error_DeviceEnrollment_InvalidCode": "Error: The device enrollment code is invalid or incomplete.",
   "Error_DeviceEnrollment_NewDeviceNotFound": "Error: The new device could not be found on the local network. Keep the code screen open and make sure both devices are on the same Wi-Fi/network. On Windows, the firewall must allow inbound local-subnet traffic for this app.",
-  "Error_DeviceEnrollment_NewDeviceConnectionFailed": "Error: The new device details were found, but this device could not connect to it or transfer the profile data. On Windows this is most often caused by the firewall, the current network profile, or a larger gRPC message being blocked. Keep the code screen open and allow inbound local network traffic for this app.",
+  "Error_DeviceEnrollment_NewDeviceConnectionFailed": "Error: The new device details were found, but this device could not connect to it or transfer the profile data. On Windows this is most often caused by the firewall, the current network profile, or the local TCP sync connection being blocked. Keep the code screen open and allow inbound local network traffic for this app.",
   "Error_DeviceEnrollment_NewDeviceRejected": "Error: The new device rejected the profile transfer. Generate a new code and try again.",
   "Error_DeviceEnrollment_CodeExpired": "Error: The device enrollment code expired. Generate a new code and try again.",
   "Error_DeviceEnrollment_CodeProofInvalid": "Error: The device enrollment code could not be verified. Generate a new code and try again.",

@@ -1,6 +1,4 @@
 using Google.Protobuf;
-using Grpc.Core;
-using Grpc.Core.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
@@ -9,16 +7,16 @@ using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
+using PasswordManagerLocalBackend.Sync.Tcp;
 using PasswordManagerLocalBackend.Utils;
-using System.Security.Cryptography.X509Certificates;
 
-namespace PasswordManagerLocalBackend.Services.Grpc;
+namespace PasswordManagerLocalBackend.Services.Tcp;
 
-public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
+public sealed class SyncPeerProtocolHandler
 {
-    private readonly GrpcRootServiceProvider _root;
+    private readonly IServiceProvider _root;
 
-    public SyncGrpcServiceImpl(GrpcRootServiceProvider root)
+    public SyncPeerProtocolHandler(IServiceProvider root)
     {
         _root = root;
     }
@@ -26,94 +24,92 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
 
 
 
-    public override async Task<HelloReply> Hello(HelloRequest request, ServerCallContext context)
+    public async Task<HelloReply> HelloAsync(HelloRequest request, PeerConnectionContext context, CancellationToken ct)
     {
-        using var scope = _root.Services.CreateScope();
+        using var scope = _root.CreateScope();
         Device? remoteDevice = null;
 
         try
         {
-            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, request.DeviceId, request.SignPub.ToByteArray(), context.CancellationToken);
+            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, request.DeviceId, request.SignPub.ToByteArray(), ct);
             return new HelloReply { Ok = true };
         }
         catch (Exception ex)
         {
-            remoteDevice ??= await TryFindRemoteDeviceForInvalidAttemptAsync(scope.ServiceProvider, context, context.CancellationToken);
+            remoteDevice ??= await TryFindRemoteDeviceForInvalidAttemptAsync(scope.ServiceProvider, context, ct);
 
             if (remoteDevice is not null && !remoteDevice.IsBlocked)
-                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, context.CancellationToken);
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
             return new HelloReply { Ok = false };
         }
     }
 
 
-    public override async Task<Ack> PushDelta(IAsyncStreamReader<DeltaChunk> requestStream, ServerCallContext context)
+    public async Task<Ack> PushDeltaAsync(IReadOnlyList<DeltaChunk> chunks, PeerConnectionContext context, CancellationToken ct)
     {
-        using var scope = _root.Services.CreateScope();
+        using var scope = _root.CreateScope();
         Device? remoteDevice = null;
 
         try
         {
-            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, context.CancellationToken);
+            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
             var applier = scope.ServiceProvider.GetRequiredService<IIncomingDeltaApplierService>();
             var deviceSecurity = scope.ServiceProvider.GetRequiredService<IDeviceSecurityService>();
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
 
+            if (chunks.Count > SyncConstants.MaxIncomingDeltaCountPerCall)
+                throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Too many deltas in one sync call.");
+
             var lastSyncedTs = 0L;
-            var count = 0;
 
-            await foreach (var chunk in requestStream.ReadAllAsync(context.CancellationToken))
+            foreach (var chunk in chunks)
             {
-                count++;
-                if (count > SyncConstants.MaxIncomingDeltaCountPerCall)
-                    throw new RpcException(new Status(StatusCode.ResourceExhausted, "Too many deltas in one sync call."));
-
                 var delta = DeltaMapping.FromProto(chunk);
                 ValidateDeltaTransport(delta, remoteDevice, identity.LocalDeviceId);
 
-                var appliedTs = await applier.ApplyAsync(delta, context.CancellationToken);
+                var appliedTs = await applier.ApplyAsync(delta, ct);
                 if (appliedTs > lastSyncedTs)
                     lastSyncedTs = appliedTs;
             }
 
-            await deviceSecurity.ResetInvalidIncomingSyncAsync(remoteDevice, context.CancellationToken);
+            await deviceSecurity.ResetInvalidIncomingSyncAsync(remoteDevice, ct);
 
             return new Ack
             {
                 LastSyncedTs = lastSyncedTs
             };
         }
-        catch (RpcException ex)
+        catch (SyncProtocolException ex)
         {
             if (remoteDevice is null)
-                remoteDevice = await TryFindRemoteDeviceForInvalidAttemptAsync(scope.ServiceProvider, context, context.CancellationToken);
+                remoteDevice = await TryFindRemoteDeviceForInvalidAttemptAsync(scope.ServiceProvider, context, ct);
 
             if (remoteDevice is not null && !remoteDevice.IsBlocked && IsInvalidIncomingDataStatus(ex.StatusCode))
-                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Status.Detail, context.CancellationToken);
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
             throw;
         }
         catch (InvalidDataException ex)
         {
             if (remoteDevice is not null && !remoteDevice.IsBlocked)
-                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, context.CancellationToken);
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
-            throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
             if (remoteDevice is not null && !remoteDevice.IsBlocked)
-                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, context.CancellationToken);
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Delta is not authorized."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Delta is not authorized.");
         }
     }
 
 
-    public override async Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfo(GetDeviceEnrollmentInfoRequest request, ServerCallContext context)
+    public async Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(GetDeviceEnrollmentInfoRequest request, CancellationToken ct)
     {
-        using var scope = _root.Services.CreateScope();
+        using var scope = _root.CreateScope();
 
         try
         {
@@ -133,7 +129,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
             var result = await enrollment.GetIncomingEnrollmentInfoAsync(
                 request.SessionId,
                 request.CodeProof.ToByteArray(),
-                context.CancellationToken);
+                ct);
 
             return new GetDeviceEnrollmentInfoReply
             {
@@ -159,15 +155,14 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
     }
 
 
-    public override async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStream(IAsyncStreamReader<CompleteDeviceEnrollmentChunk> requestStream, ServerCallContext context)
+    public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IReadOnlyList<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, CancellationToken ct)
     {
-        using var scope = _root.Services.CreateScope();
+        using var scope = _root.CreateScope();
 
         try
         {
             DeviceEnrollmentTrace.Info("Incoming streaming CompleteDeviceEnrollment request started.");
-            var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
-            if (clientCertificate is null)
+            if (string.IsNullOrWhiteSpace(context.ClientCertificateFingerprint))
                 return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing.", ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected.ToString() };
 
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
@@ -183,7 +178,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
 
             await using var snapshotStream = new MemoryStream();
 
-            await foreach (var chunk in requestStream.ReadAllAsync(context.CancellationToken))
+            foreach (var chunk in chunks)
             {
                 if (!string.IsNullOrWhiteSpace(chunk.SessionId))
                     sessionId = chunk.SessionId;
@@ -214,7 +209,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 }
 
                 if (bytes.Length > 0)
-                    await snapshotStream.WriteAsync(bytes, context.CancellationToken);
+                    await snapshotStream.WriteAsync(bytes, ct);
             }
 
             if (string.IsNullOrWhiteSpace(sessionId) ||
@@ -231,8 +226,6 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 };
             }
 
-            var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
-            var sourceHost = context.GetHttpContext().Connection.RemoteIpAddress?.ToString();
             var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
             var result = await enrollment.CompleteIncomingEnrollmentAsync(
                 sessionId,
@@ -241,9 +234,9 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 sourceDeviceId,
                 sourceSignPublicKey,
                 sourceTlsCertFingerprint,
-                actualFingerprint,
-                sourceHost,
-                context.CancellationToken);
+                context.ClientCertificateFingerprint,
+                context.RemoteIpAddress,
+                ct);
 
             DeviceEnrollmentTrace.Info($"Incoming streaming CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
 
@@ -267,68 +260,16 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
     }
 
 
-    public override async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollment(CompleteDeviceEnrollmentRequest request, ServerCallContext context)
-    {
-        using var scope = _root.Services.CreateScope();
-
-        try
-        {
-            DeviceEnrollmentTrace.Info($"Incoming unary CompleteDeviceEnrollment request started. Session={request.SessionId}, SnapshotBytes={request.Snapshot.Length}.");
-            var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
-            if (clientCertificate is null)
-                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing.", ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected.ToString() };
-
-            var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
-            if (!identity.IsSyncOn)
-                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled.", ErrorCode = DeviceEnrollmentErrorCode.SyncDisabled.ToString() };
-
-            var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
-            var sourceHost = context.GetHttpContext().Connection.RemoteIpAddress?.ToString();
-            var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
-            var result = await enrollment.CompleteIncomingEnrollmentAsync(
-                request.SessionId,
-                request.CodeProof.ToByteArray(),
-                request.Snapshot.ToByteArray(),
-                request.SourceDeviceId,
-                request.SourceSignPub.ToByteArray(),
-                request.SourceTlsCertFingerprint,
-                actualFingerprint,
-                sourceHost,
-                context.CancellationToken);
-
-            DeviceEnrollmentTrace.Info($"Incoming unary CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
-
-            return new CompleteDeviceEnrollmentReply
-            {
-                Ok = result.Ok,
-                Error = result.Error ?? string.Empty,
-                ErrorCode = result.ErrorCode.ToString()
-            };
-        }
-        catch (Exception ex)
-        {
-            DeviceEnrollmentTrace.Error($"Incoming unary CompleteDeviceEnrollment request failed. Session={request.SessionId}: {ex.Message}", ex);
-            return new CompleteDeviceEnrollmentReply
-            {
-                Ok = false,
-                Error = ex.Message,
-                ErrorCode = DeviceEnrollmentErrorCode.Unknown.ToString()
-            };
-        }
-    }
-
-
-    private static async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, ServerCallContext context, CancellationToken ct)
+    private static async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, PeerConnectionContext context, CancellationToken ct)
     {
         try
         {
-            var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
-            if (clientCertificate is null)
+            if (string.IsNullOrWhiteSpace(context.ClientCertificateFingerprint))
                 return null;
 
             var identity = services.GetRequiredService<IDeviceIdentityService>();
             var devices = services.GetRequiredService<IDeviceRepository>();
-            var fingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
+            var fingerprint = context.ClientCertificateFingerprint;
 
             if (string.Equals(NormalizeFingerprint(fingerprint), NormalizeFingerprint(identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
                 return null;
@@ -344,61 +285,60 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
 
     private static async Task<Device> ValidateRemoteDeviceAsync(
         IServiceProvider services,
-        ServerCallContext context,
+        PeerConnectionContext context,
         string? claimedDeviceId,
         byte[]? claimedSignPublicKey,
         CancellationToken ct)
     {
-        var clientCertificate = context.GetHttpContext().Connection.ClientCertificate;
-        if (clientCertificate is null)
-            throw new RpcException(new Status(StatusCode.Unauthenticated, "Client certificate is missing."));
+        if (string.IsNullOrWhiteSpace(context.ClientCertificateFingerprint))
+            throw new SyncProtocolException(SyncProtocolStatusCode.Unauthenticated, "Client certificate is missing.");
 
         var identity = services.GetRequiredService<IDeviceIdentityService>();
         if (!identity.IsSyncOn)
-            throw new RpcException(new Status(StatusCode.Unavailable, "Local synchronization is disabled."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.Unavailable, "Local synchronization is disabled.");
 
         var devices = services.GetRequiredService<IDeviceRepository>();
 
-        var fingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
+        var fingerprint = context.ClientCertificateFingerprint;
         if (string.Equals(NormalizeFingerprint(fingerprint), NormalizeFingerprint(identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Local device cannot sync with itself."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Local device cannot sync with itself.");
 
         var remoteDevice = await devices.GetByTlsCertFingerprintWithUserDevicesAsync(fingerprint, ct);
         if (remoteDevice is null)
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not trusted."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not trusted.");
 
         if (!remoteDevice.IsTrusted)
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not allowed to sync."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not allowed to sync.");
 
         if (remoteDevice.IsBlocked)
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not allowed to sync."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not allowed to sync.");
 
         if (!remoteDevice.UserDevices.Any(ud => !ud.IsDeleted && ud.IsSyncEnabled))
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not linked to any active user."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not linked to any active user.");
 
         if (remoteDevice.SignPublicKey.Length == 0)
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device signing key is missing."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device signing key is missing.");
 
         if (claimedSignPublicKey is not null)
         {
             if (claimedSignPublicKey.Length == 0)
-                throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device signing key is missing."));
+                throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device signing key is missing.");
 
             if (!remoteDevice.SignPublicKey.SequenceEqual(claimedSignPublicKey))
-                throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device signing key does not match."));
+                throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device signing key does not match.");
         }
 
         if (claimedDeviceId is not null)
         {
             if (string.IsNullOrWhiteSpace(claimedDeviceId))
-                throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device id is missing."));
+                throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device id is missing.");
 
             if (!string.Equals(claimedDeviceId, BuildDeviceId(remoteDevice.SignPublicKey), StringComparison.OrdinalIgnoreCase))
-                throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device id does not match."));
+                throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device id does not match.");
         }
 
         if (remoteDevice.Id == identity.LocalDeviceId || identity.SignPublicKey.SequenceEqual(remoteDevice.SignPublicKey))
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Local device cannot sync with itself."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Local device cannot sync with itself.");
 
         return remoteDevice;
     }
@@ -407,49 +347,49 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
     private static void ValidateDeltaTransport(NetworkDelta delta, Device remoteDevice, Guid localDeviceId)
     {
         if (string.IsNullOrWhiteSpace(delta.Entity) || delta.Entity.Length > 256)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta entity is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta entity is invalid.");
 
         if (delta.Payload.Length == 0 || delta.Payload.Length > SyncConstants.MaxIncomingDeltaPayloadBytes)
-            throw new RpcException(new Status(StatusCode.ResourceExhausted, "Delta payload size is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Delta payload size is invalid.");
 
         if (delta.Ts <= 0)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta timestamp is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta timestamp is invalid.");
 
         var maxFutureTs = DateTimeOffset.UtcNow.AddSeconds(SyncConstants.MaxIncomingDeltaFutureSeconds).ToUnixTimeMilliseconds();
         if (delta.Ts > maxFutureTs)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta timestamp is too far in the future."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta timestamp is too far in the future.");
 
         if (delta.SignPub.Length != SyncConstants.SyncDeltaEd25519PublicKeyBytes ||
             delta.Sig.Length != SyncConstants.SyncDeltaEd25519SignatureBytes)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta signature is incomplete."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta signature is incomplete.");
 
         if (!remoteDevice.SignPublicKey.SequenceEqual(delta.SignPub))
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Delta signer is not the connected device."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Delta signer is not the connected device.");
 
         if (!string.Equals(delta.DeviceId, BuildDeviceId(delta.SignPub), StringComparison.OrdinalIgnoreCase))
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Delta device id is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Delta device id is invalid.");
 
         if (delta.EncryptionVersion != SyncConstants.SyncDeltaEncryptionVersion)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta encryption version is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta encryption version is invalid.");
 
         if (!Guid.TryParseExact(delta.RecipientDeviceId, "N", out var recipientDeviceId) &&
             !Guid.TryParse(delta.RecipientDeviceId, out recipientDeviceId))
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta recipient is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta recipient is invalid.");
 
         if (recipientDeviceId != localDeviceId)
-            throw new RpcException(new Status(StatusCode.PermissionDenied, "Delta recipient is not this device."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Delta recipient is not this device.");
 
         if (delta.EphemeralPublicKey.Length != SyncConstants.SyncDeltaX25519PublicKeyBytes)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta ephemeral key is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta ephemeral key is invalid.");
 
         if (delta.Nonce.Length != SyncConstants.SyncDeltaNonceBytes)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta nonce is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta nonce is invalid.");
 
         if (delta.Tag.Length != SyncConstants.SyncDeltaTagBytes)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta authentication tag is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta authentication tag is invalid.");
 
         if (delta.PayloadHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "Delta payload hash is invalid."));
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta payload hash is invalid.");
     }
 
 
@@ -466,11 +406,11 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
     }
 
 
-    private static bool IsInvalidIncomingDataStatus(StatusCode statusCode) =>
-        statusCode == StatusCode.InvalidArgument ||
-        statusCode == StatusCode.PermissionDenied ||
-        statusCode == StatusCode.ResourceExhausted ||
-        statusCode == StatusCode.FailedPrecondition;
+    private static bool IsInvalidIncomingDataStatus(SyncProtocolStatusCode statusCode) =>
+        statusCode == SyncProtocolStatusCode.InvalidArgument ||
+        statusCode == SyncProtocolStatusCode.PermissionDenied ||
+        statusCode == SyncProtocolStatusCode.ResourceExhausted ||
+        statusCode == SyncProtocolStatusCode.FailedPrecondition;
 
 
     private static string BuildDeviceId(byte[] signPublicKey) =>

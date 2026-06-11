@@ -263,7 +263,7 @@
   "Error_DeviceEnrollment_SyncDisabled": "Hiba: Ezen az eszközön ki van kapcsolva a szinkronizáció. Kapcsold be, mielőtt új eszközt adsz hozzá.",
   "Error_DeviceEnrollment_InvalidCode": "Hiba: Az eszköz hozzáadási kód hibás vagy hiányos.",
   "Error_DeviceEnrollment_NewDeviceNotFound": "Hiba: Az új eszköz nem található a helyi hálózaton. Hagyd nyitva a kódot mutató képernyőt, és ellenőrizd, hogy mindkét eszköz ugyanazon a Wi-Fi-n/hálózaton van-e. Windows-on a tűzfalnak engednie kell az alkalmazás helyi alhálózatról érkező bejövő forgalmát.",
-  "Error_DeviceEnrollment_NewDeviceConnectionFailed": "Hiba: Az új eszköz adatai megvannak, de nem sikerült kapcsolódni hozzá vagy átvinni a profiladatokat. Windows-on ezt leggyakrabban a tűzfal, a hálózati profil vagy egy nagyobb gRPC üzenet blokkolása okozza. Hagyd nyitva a kódot mutató képernyőt, és engedélyezd az alkalmazás bejövő helyi hálózati forgalmát.",
+  "Error_DeviceEnrollment_NewDeviceConnectionFailed": "Hiba: Az új eszköz adatai megvannak, de nem sikerült kapcsolódni hozzá vagy átvinni a profiladatokat. Windows-on ezt leggyakrabban a tűzfal, a hálózati profil vagy a helyi TCP szinkronizációs kapcsolat blokkolása okozza. Hagyd nyitva a kódot mutató képernyőt, és engedélyezd az alkalmazás bejövő helyi hálózati forgalmát.",
   "Error_DeviceEnrollment_NewDeviceRejected": "Hiba: Az új eszköz elutasította a profil átvitelét. Generálj új kódot, és próbáld újra.",
   "Error_DeviceEnrollment_CodeExpired": "Hiba: Az eszköz hozzáadási kód lejárt. Generálj új kódot, és próbáld újra.",
   "Error_DeviceEnrollment_CodeProofInvalid": "Hiba: Az eszköz hozzáadási kódot nem sikerült ellenőrizni. Generálj új kódot, és próbáld újra.",
