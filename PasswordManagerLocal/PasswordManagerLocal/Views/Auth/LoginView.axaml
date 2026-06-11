@@ -19,6 +19,11 @@
             <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
           </StackPanel>
 
+          <StackPanel Spacing="6" IsVisible="{Binding IsBusy}">
+            <ProgressBar IsIndeterminate="True" />
+            <TextBlock Text="{Binding BusyText}" Classes="subtleText" TextWrapping="Wrap" />
+          </StackPanel>
+
           <StackPanel Spacing="16" IsVisible="{Binding IsLoginFormVisible}">
             <StackPanel Spacing="6">
               <TextBlock Text="{Binding UsernameLabel}" />

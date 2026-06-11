@@ -179,6 +179,11 @@ public sealed class MainViewModel : ViewModelBase
 
     public async Task InitializeAsync()
     {
+        if (IsAuthenticated)
+            return;
+
+        StatusMessage = GetTranslation("Shell_BackendStarting");
+
         try
         {
             var rememberedTokens = await _endpoints.InicializeAllRememberMeAsync();
@@ -194,13 +199,15 @@ public sealed class MainViewModel : ViewModelBase
                 await LoadAuthenticatedStateAsync(currentToken, GetTranslation("Shell_RememberedSessionLoaded"));
                 return;
             }
+
+            if (!IsAuthenticated)
+                StatusMessage = null;
         }
         catch
         {
-            // Ignore remembered-session startup failures and show the auth flow.
+            if (!IsAuthenticated)
+                StatusMessage = GetTranslation("Shell_BackendStartupFailed");
         }
-
-        NavigateToLogin();
     }
 
     protected override void OnLanguageChanged()

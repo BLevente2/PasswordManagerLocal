@@ -1,4 +1,4 @@
-﻿using Android.App;
+using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.Net.Wifi;
@@ -25,7 +25,7 @@ public class MainActivity : AvaloniaMainActivity<App>
     {
         global::PasswordManagerLocal.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
         AcquireMulticastLock();
-        BackendHost.InitializeAsync(new AndroidKeyProtector()).GetAwaiter().GetResult();
+        _ = BackendHost.StartInitializationAsync(new AndroidKeyProtector());
 
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()

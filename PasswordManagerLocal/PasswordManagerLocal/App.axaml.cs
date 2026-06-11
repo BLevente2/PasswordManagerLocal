@@ -9,7 +9,6 @@ using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels;
 using PasswordManagerLocal.Views;
 using PasswordManagerLocalBackend;
-using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Services;
 
 namespace PasswordManagerLocal;
@@ -23,13 +22,10 @@ public partial class App : Application
         AvaloniaXamlLoader.Load(this);
     }
 
-    public override async void OnFrameworkInitializationCompleted()
+    public override void OnFrameworkInitializationCompleted()
     {
-        await BackendHost.InitializeAsync();
-
-        var endpoints = BackendHost.Services.GetRequiredService<IEndpoints>();
+        var endpoints = new DeferredEndpoints();
         var mainViewModel = new MainViewModel(endpoints);
-        await mainViewModel.InitializeAsync();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -43,7 +39,11 @@ public partial class App : Application
 
             desktop.MainWindow = mainWindow;
 
-            Dispatcher.UIThread.Post(async () => await TryShowFirewallPermissionPromptAsync(mainWindow, mainViewModel));
+            Dispatcher.UIThread.Post(async () =>
+            {
+                await mainViewModel.InitializeAsync();
+                await TryShowFirewallPermissionPromptAsync(mainWindow, mainViewModel);
+            });
         }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
         {
@@ -51,6 +51,8 @@ public partial class App : Application
             {
                 DataContext = mainViewModel
             };
+
+            Dispatcher.UIThread.Post(async () => await mainViewModel.InitializeAsync());
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -65,6 +67,8 @@ public partial class App : Application
 
         try
         {
+            await BackendHost.WaitUntilInitializedAsync();
+
             var identity = BackendHost.Services.GetRequiredService<IDeviceIdentityService>();
             if (!identity.IsSyncOn)
                 return;

@@ -274,5 +274,8 @@
   "Firewall_Message": "PasswordManagerLocal needs to accept inbound local network connections on this device for local device synchronization. The app will allow TCP port 26688 and mDNS UDP port 5353 from the local subnet only. On Windows this may be needed on both private and public network profiles. Do you want to allow this in Windows Firewall? The next window will be a Windows administrator permission prompt.",
   "Firewall_Allow": "Allow",
   "Firewall_Failed": "Windows Firewall could not be configured automatically. Try allowing it again, or add the Windows Defender Firewall inbound rules manually: TCP 26688 and UDP 5353, profile Any, remote address LocalSubnet. If the firewall helper file was copied next to the app executable, you can also run ConfigureWindowsFirewall.bat as administrator from that folder.",
-  "Error_TechnicalDetails": "Technical details"
+  "Error_TechnicalDetails": "Technical details",
+  "Shell_BackendStarting": "The background service is starting. The interface is already usable; actions will wait for startup when needed.",
+  "Shell_BackendStartupFailed": "The background service could not start. Please restart the application.",
+  "Common_Loading": "Loading, please wait..."
 }

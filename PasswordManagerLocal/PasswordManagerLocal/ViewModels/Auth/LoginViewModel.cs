@@ -1,4 +1,4 @@
-﻿using Avalonia.Threading;
+using Avalonia.Threading;
 using PasswordManagerLocal.Helpers;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Abstractions;
@@ -221,6 +221,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public string CancelLabel => GetTranslation("Common_Cancel");
 
+    public string BusyText => GetTranslation("Common_Loading");
+
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(Title));
@@ -246,6 +248,7 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferFinishLabel));
         this.RaisePropertyChanged(nameof(CancelLabel));
+        this.RaisePropertyChanged(nameof(BusyText));
     }
 
     public void Reset()

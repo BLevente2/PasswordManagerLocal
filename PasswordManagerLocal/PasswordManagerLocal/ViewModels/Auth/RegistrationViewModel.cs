@@ -172,6 +172,8 @@ public sealed class RegistrationViewModel : ViewModelBase
 
     public string ConfirmPasswordVisibilityToggleText => GetTranslation(IsConfirmPasswordVisible ? "Common_Hide" : "Common_Show");
 
+    public string BusyText => GetTranslation("Common_Loading");
+
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(Title));
@@ -194,6 +196,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(ConfirmPasswordPlaceholder));
         this.RaisePropertyChanged(nameof(PasswordVisibilityToggleText));
         this.RaisePropertyChanged(nameof(ConfirmPasswordVisibilityToggleText));
+        this.RaisePropertyChanged(nameof(BusyText));
     }
 
     public void Reset()

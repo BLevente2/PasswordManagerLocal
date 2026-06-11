@@ -17,7 +17,7 @@
           <TabControl IsVisible="{Binding IsProfileTabsPaneVisible}" HorizontalAlignment="Stretch">
             <TabControl.ItemsPanel>
               <ItemsPanelTemplate>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" />
+                <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center" />
               </ItemsPanelTemplate>
             </TabControl.ItemsPanel>
 

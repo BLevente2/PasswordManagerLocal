@@ -28,28 +28,42 @@ namespace PasswordManagerLocalBackend
         public static IServiceProvider Services
             => _host?.Services ?? throw new InvalidOperationException("BackendHost is not initialized.");
 
-        public static async Task InitializeAsync(IKeyProtector? platformKeyProtector = null)
+        public static bool IsInitialized
         {
-            Task initTask;
-
-            lock (_lock)
+            get
             {
-                if (_host != null)
-                    return;
-
-                if (_initTask != null)
+                lock (_lock)
                 {
-                    initTask = _initTask;
-                }
-                else
-                {
-                    Batteries_V2.Init();
-                    _initTask = InitializeInternal(platformKeyProtector);
-                    initTask = _initTask;
+                    return _host is not null;
                 }
             }
+        }
 
-            await initTask;
+        public static Task StartInitializationAsync(IKeyProtector? platformKeyProtector = null)
+        {
+            lock (_lock)
+            {
+                if (_host is not null)
+                    return Task.CompletedTask;
+
+                if (_initTask is not null)
+                    return _initTask;
+
+                Batteries_V2.Init();
+                _initTask = InitializeInternal(platformKeyProtector);
+                return _initTask;
+            }
+        }
+
+        public static async Task InitializeAsync(IKeyProtector? platformKeyProtector = null)
+        {
+            await StartInitializationAsync(platformKeyProtector);
+        }
+
+        public static async Task WaitUntilInitializedAsync(CancellationToken ct = default)
+        {
+            var initTask = StartInitializationAsync();
+            await initTask.WaitAsync(ct);
         }
 
         private static async Task InitializeInternal(IKeyProtector? platformKeyProtector)

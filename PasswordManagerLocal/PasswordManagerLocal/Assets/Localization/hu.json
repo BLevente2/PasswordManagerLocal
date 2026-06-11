@@ -274,5 +274,8 @@
   "Firewall_Message": "A helyi eszközszinkronizáláshoz a PasswordManagerLocal-nak bejövő helyi hálózati kapcsolatot kell fogadnia ezen az eszközön. A program csak a helyi alhálózatról engedélyezné a 26688-as TCP portot és az mDNS 5353-as UDP portot. Ez Windows-on a privát és a nyilvános hálózati profil esetén is szükséges lehet. Engedélyezed a Windows tűzfalon? A következő ablak egy Windows rendszergazdai engedélykérés lesz.",
   "Firewall_Allow": "Engedélyezés",
   "Firewall_Failed": "Nem sikerült automatikusan beállítani a Windows tűzfalat. Próbáld újra az engedélyezést, vagy add hozzá kézzel a Windows Defender tűzfal bejövő szabályait: TCP 26688 és UDP 5353, profil: bármelyik, távoli cím: helyi alhálózat. Ha a tűzfalbeállító segédfájl az alkalmazás exe fájlja mellé lett másolva, akkor abból a mappából rendszergazdaként futtatható a ConfigureWindowsFirewall.bat is.",
-  "Error_TechnicalDetails": "Technikai részletek"
+  "Error_TechnicalDetails": "Technikai részletek",
+  "Shell_BackendStarting": "A háttérszolgáltatás indul. A felület már használható, a műveletek szükség esetén megvárják a betöltést.",
+  "Shell_BackendStartupFailed": "A háttérszolgáltatás indítása nem sikerült. Próbáld újraindítani az alkalmazást.",
+  "Common_Loading": "Betöltés, kérlek várj..."
 }
