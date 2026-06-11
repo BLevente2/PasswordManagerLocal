@@ -165,7 +165,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
-            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted && !IsLocalDeviceId(ud.DeviceId)).Select(ud => ud.DeviceId).Distinct().ToList()
+            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Distinct().ToList()
         };
 
         payload.IntegrityHash = SyncCryptoUtil.CalculateUserHash(payload, timestamp);
@@ -231,10 +231,6 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         device.Id == _identity.LocalDeviceId ||
         device.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
         string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
-
-
-    private bool IsLocalDeviceId(Guid deviceId) =>
-        deviceId == _identity.LocalDeviceId;
 
 
     private static string NormalizeFingerprint(string fingerprint)

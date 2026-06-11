@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 
 namespace PasswordManagerLocalBackend.Services;
@@ -7,6 +7,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
 {
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
+    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly IEnumerable<IHostedService> _hostedServices;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -14,11 +15,13 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     public SyncRuntimeService(
         IDeviceIdentityService identity,
         ISyncDeviceIdentityService syncDeviceIdentities,
+        IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceSyncTaskService deviceSyncTasks,
         IEnumerable<IHostedService> hostedServices)
     {
         _identity = identity;
         _syncDeviceIdentities = syncDeviceIdentities;
+        _endpointCache = endpointCache;
         _deviceSyncTasks = deviceSyncTasks;
         _hostedServices = hostedServices;
     }
@@ -101,6 +104,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
             await hostedService.StopAsync(ct);
 
         _syncDeviceIdentities.Clear();
+        _endpointCache.Clear();
     }
 
 

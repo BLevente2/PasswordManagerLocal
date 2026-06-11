@@ -14,6 +14,7 @@ public interface IUserDeviceRepository
     Task<bool> HasActiveLinkAsync(Guid userId, Guid deviceId, CancellationToken ct = default);
     Task<bool> HasAnyActiveLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default);
     Task<bool> HasAnyActiveSyncEnabledLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default);
+    Task<bool> HasAnyDeletedLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default);
     Task<bool> HasAnyActiveLinkForDeviceExceptUserAsync(Guid deviceId, Guid userId, CancellationToken ct = default);
     Task<bool> SharesActiveUserAsync(Guid sourceDeviceId, Guid targetDeviceId, CancellationToken ct = default);
     Task<bool> IsNameTakenAsync(Guid userId, string name, Guid? exceptDeviceId = null, CancellationToken ct = default);

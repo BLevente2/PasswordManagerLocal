@@ -8,6 +8,8 @@ public static class SyncConstants
     public const string MdnsServiceType = "_pmlsync._tcp";
     public const int MdnsThrottleSeconds = 20;
     public const int MdnsResolveTimeoutSeconds = 2;
+    public const int MdnsRefreshIntervalSeconds = 30;
+    public const int NetworkRefreshDebounceSeconds = 3;
     public const int DeviceEnrollmentDiscoveryTimeoutSeconds = 30;
     public const int DeviceEnrollmentConnectTimeoutSeconds = 4;
     public const int DeviceEnrollmentTransferTimeoutSeconds = 120;

@@ -1,10 +1,11 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Persistence;
+using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Sync;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 
@@ -17,6 +18,8 @@ public sealed class UserService : IUserService
     private readonly IKeyVaultService _keys;
     private readonly ITokenService _tokens;
     private readonly ISyncQueueService _syncQueue;
+    private readonly IUserDeviceRepository _userDevices;
+    private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
 
     public UserService(
@@ -25,6 +28,8 @@ public sealed class UserService : IUserService
         IKeyVaultService keys,
         ITokenService tokens,
         ISyncQueueService syncQueue,
+        IUserDeviceRepository userDevices,
+        IDeviceIdentityService identity,
         IUnitOfWork uow)
     {
         _users = users;
@@ -32,6 +37,8 @@ public sealed class UserService : IUserService
         _keys = keys;
         _tokens = tokens;
         _syncQueue = syncQueue;
+        _userDevices = userDevices;
+        _identity = identity;
         _uow = uow;
     }
 
@@ -190,6 +197,8 @@ public sealed class UserService : IUserService
 
         if (enqueueSync)
         {
+            await EnqueueLocalUserDeviceStateAsync(user.UId, ct);
+
             await _syncQueue.EnqueueAsync(new SyncItem
             {
                 ModelId = user.UId,
@@ -238,6 +247,25 @@ public sealed class UserService : IUserService
         using var key = GetEncryptionKeyFromToken(token);
         await UpdateUserDataAsync(userData, token, key, enqueueSync, ct);
     }
+
+
+    private async Task EnqueueLocalUserDeviceStateAsync(Guid userId, CancellationToken ct)
+    {
+        if (!_identity.IsInitialized || _identity.LocalDeviceId == Guid.Empty)
+            return;
+
+        var userDevice = await _userDevices.GetAsync(userId, _identity.LocalDeviceId, ct);
+        if (userDevice is null || userDevice.IsDeleted)
+            return;
+
+        await _syncQueue.EnqueueAsync(new SyncItem
+        {
+            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
+            ModelType = SyncModelType.UserDevice,
+            ChangeType = SyncChangeType.Updated
+        }, ct);
+    }
+
 
     private static void EnsureUserDataCanBePersisted(UserData userData, User user)
     {

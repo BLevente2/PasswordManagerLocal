@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Persistence;
+using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
@@ -262,7 +262,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             return await ApplyLocalUserProfileDisconnectAsync(delta, ts, ct);
 
         if (IsLocalUserDevicePayload(delta))
-            return false;
+            return await ApplyLocalUserDeviceAsync(delta, ts, ct);
 
         var existing = await _userDevices.GetAsync(delta.UserDevice.UserId, delta.UserDevice.DeviceId, ct);
 
@@ -325,6 +325,52 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
+    private async Task<bool> ApplyLocalUserDeviceAsync(SyncDeltaPayload delta, long ts, CancellationToken ct)
+    {
+        if (delta.UserDevice is null)
+            throw new InvalidDataException("User device sync payload is missing.");
+
+        var existing = await _userDevices.GetAsync(delta.UserDevice.UserId, delta.UserDevice.DeviceId, ct);
+        if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
+            return false;
+
+        var modifiedAt = FromTimestamp(ts);
+
+        if (!await ResolveUserDeviceNameConflictAsync(delta.UserDevice, modifiedAt, ct))
+            return false;
+
+        var userDevice = existing ?? new UserDevice
+        {
+            UserId = delta.UserDevice.UserId,
+            DeviceId = delta.UserDevice.DeviceId
+        };
+
+        userDevice.Name = delta.UserDevice.Name.Trim();
+        userDevice.IsDeleted = false;
+        userDevice.IsSyncEnabled = delta.UserDevice.IsSyncEnabled;
+        userDevice.LinkedAt = delta.UserDevice.LinkedAt == default ? modifiedAt : delta.UserDevice.LinkedAt;
+        userDevice.DeletedAt = null;
+        userDevice.LastModifiedAt = modifiedAt;
+
+        var localDevice = await _devices.GetByIdWithUserDevicesAsync(_identity.LocalDeviceId, ct);
+        if (localDevice is not null)
+        {
+            localDevice.DeviceName = userDevice.Name;
+            localDevice.LastModifiedAt = modifiedAt;
+            localDevice.GenerateIntegrityHash();
+            _devices.Update(localDevice);
+        }
+
+        await _identity.SetDeviceNameAsync(userDevice.Name, ct);
+
+        if (existing is null)
+            await _userDevices.AddAsync(userDevice, ct);
+        else
+            _userDevices.Update(userDevice);
+
+        await RemoveTombstoneAsync(delta, ct);
+        return true;
+    }
 
 
     private async Task<bool> ResolveUserDeviceNameConflictAsync(UserDeviceSyncPayload payload, DateTimeOffset modifiedAt, CancellationToken ct)
@@ -421,18 +467,21 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     {
         var ids = CreateIdSet(deviceIds);
 
-        foreach (var userDevice in user.UserDevices.Where(ud => !ids.Contains(ud.DeviceId)).ToList())
-        {
-            userDevice.IsDeleted = true;
-            userDevice.IsSyncEnabled = false;
-            userDevice.DeletedAt = modifiedAt;
-            userDevice.LastModifiedAt = modifiedAt;
-        }
-
         foreach (var id in ids)
         {
-            if (user.UserDevices.Any(ud => ud.DeviceId == id && !ud.IsDeleted))
+            var existingLink = user.UserDevices.FirstOrDefault(ud => ud.DeviceId == id);
+            if (existingLink is not null)
+            {
+                if (existingLink.IsDeleted)
+                {
+                    existingLink.IsDeleted = false;
+                    existingLink.DeletedAt = null;
+                    existingLink.IsSyncEnabled = true;
+                    existingLink.LastModifiedAt = modifiedAt;
+                }
+
                 continue;
+            }
 
             var device = await _devices.GetByIdAsync(id, ct);
             if (device is not null)
@@ -444,6 +493,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                     User = user,
                     Device = device,
                     Name = string.IsNullOrWhiteSpace(device.DeviceName) ? BuildUniqueFallbackUserDeviceName(user.UId, device.Id) : device.DeviceName,
+                    IsSyncEnabled = true,
+                    IsDeleted = false,
                     LinkedAt = modifiedAt,
                     LastModifiedAt = modifiedAt
                 });
@@ -475,18 +526,21 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     {
         var ids = CreateIdSet(userIds);
 
-        foreach (var userDevice in device.UserDevices.Where(ud => !ids.Contains(ud.UserId)).ToList())
-        {
-            userDevice.IsDeleted = true;
-            userDevice.IsSyncEnabled = false;
-            userDevice.DeletedAt = modifiedAt;
-            userDevice.LastModifiedAt = modifiedAt;
-        }
-
         foreach (var id in ids)
         {
-            if (device.UserDevices.Any(ud => ud.UserId == id && !ud.IsDeleted))
+            var existingLink = device.UserDevices.FirstOrDefault(ud => ud.UserId == id);
+            if (existingLink is not null)
+            {
+                if (existingLink.IsDeleted)
+                {
+                    existingLink.IsDeleted = false;
+                    existingLink.DeletedAt = null;
+                    existingLink.IsSyncEnabled = true;
+                    existingLink.LastModifiedAt = modifiedAt;
+                }
+
                 continue;
+            }
 
             var user = await _users.GetByIdAsync(id, ct);
             if (user is not null)
@@ -498,6 +552,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                     User = user,
                     Device = device,
                     Name = string.IsNullOrWhiteSpace(device.DeviceName) ? BuildUniqueFallbackUserDeviceName(user.UId, device.Id) : device.DeviceName,
+                    IsSyncEnabled = true,
+                    IsDeleted = false,
                     LinkedAt = modifiedAt,
                     LastModifiedAt = modifiedAt
                 });
@@ -515,7 +571,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (sourceDevice.IsBlocked || !sourceDevice.IsTrusted)
             throw new UnauthorizedAccessException("Sync source device is not allowed.");
 
-        if (!await _userDevices.HasAnyActiveSyncEnabledLinkForDeviceAsync(sourceDevice.Id, ct))
+        if (!await _userDevices.HasAnyActiveSyncEnabledLinkForDeviceAsync(sourceDevice.Id, ct) &&
+            !await _userDevices.HasAnyDeletedLinkForDeviceAsync(sourceDevice.Id, ct))
             throw new UnauthorizedAccessException("Sync source device is not linked to any active sync-enabled user.");
 
         if (!string.Equals(delta.DeviceId, BuildDeviceId(delta.SignPub), StringComparison.OrdinalIgnoreCase))
@@ -570,10 +627,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     {
         if (payload.ModelType == SyncModelType.User)
         {
-            if (!await _userDevices.HasActiveLinkAsync(payload.ModelId, sourceDevice.Id, ct))
-                throw new UnauthorizedAccessException("Source device cannot modify this user.");
+            if (await _userDevices.HasActiveLinkAsync(payload.ModelId, sourceDevice.Id, ct))
+                return;
 
-            return;
+            throw new UnauthorizedAccessException("Source device cannot modify this user.");
         }
 
         if (payload.ModelType == SyncModelType.Group)
@@ -625,8 +682,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
             ValidateUserDevicePayload(payload);
 
-            if (!await _userDevices.HasActiveLinkAsync(payload.UserDevice.UserId, sourceDevice.Id, ct))
-                throw new UnauthorizedAccessException("Source device cannot modify this user-device link.");
+            if (await _userDevices.HasActiveLinkAsync(payload.UserDevice.UserId, sourceDevice.Id, ct))
+                return;
+
+            throw new UnauthorizedAccessException("Source device cannot modify this user-device link.");
         }
     }
 
@@ -677,7 +736,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
-            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted && !IsLocalDeviceId(ud.DeviceId)).Select(ud => ud.DeviceId).Distinct().ToList()
+            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Distinct().ToList()
         };
 
 
@@ -940,7 +999,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (plaintextPayload.Length == 0)
             throw new InvalidDataException("Network delta payload is empty.");
 
-        RejectSavedKeyPayload(plaintextPayload);
+        RejectSensitiveLocalOnlyPayload(plaintextPayload);
 
         var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintextPayload);
         if (payload is null)
@@ -1040,19 +1099,35 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void RejectSavedKeyPayload(byte[] payload)
+    private static void RejectSensitiveLocalOnlyPayload(byte[] payload)
     {
         try
         {
             using var doc = JsonDocument.Parse(payload);
-            if (ContainsProperty(doc.RootElement, "SavedKey"))
-                throw new InvalidDataException("Network delta contains a local saved key.");
+            foreach (var propertyName in SensitiveLocalOnlyPropertyNames)
+            {
+                if (ContainsProperty(doc.RootElement, propertyName))
+                    throw new InvalidDataException("Network delta contains local-only device or key material.");
+            }
         }
         catch (JsonException ex)
         {
             throw new InvalidDataException("Network delta payload is invalid.", ex);
         }
     }
+
+
+    private static readonly string[] SensitiveLocalOnlyPropertyNames =
+    [
+        "SavedKey",
+        "LocalDeviceIdentity",
+        "DeviceIdentity",
+        "AgreementPrivateKeyBlob",
+        "SignPrivateKeyBlob",
+        "PFXCertificate",
+        "PrivateKey",
+        "PrivateKeyBlob"
+    ];
 
 
     private static bool ContainsProperty(JsonElement element, string propertyName)

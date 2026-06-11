@@ -97,6 +97,10 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
         await _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && !ud.IsDeleted && ud.IsSyncEnabled, ct);
 
 
+    public async Task<bool> HasAnyDeletedLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
+        await _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && ud.IsDeleted, ct);
+
+
     public async Task<bool> HasAnyActiveLinkForDeviceExceptUserAsync(Guid deviceId, Guid userId, CancellationToken ct = default) =>
         await _set.AsNoTracking().AnyAsync(ud =>
             ud.DeviceId == deviceId &&

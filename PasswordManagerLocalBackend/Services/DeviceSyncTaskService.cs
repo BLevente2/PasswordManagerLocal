@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
@@ -13,6 +13,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IGrpcClientService _grpcClient;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
+    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceIdentityService _identity;
     private readonly ConcurrentDictionary<Guid, byte> _runningDeviceIds = new();
     private readonly ConcurrentDictionary<Guid, Task> _runningTasks = new();
@@ -23,11 +24,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         IServiceScopeFactory scopeFactory,
         IGrpcClientService grpcClient,
         ISyncDeviceIdentityService syncDeviceIdentities,
+        IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceIdentityService identity)
     {
         _scopeFactory = scopeFactory;
         _grpcClient = grpcClient;
         _syncDeviceIdentities = syncDeviceIdentities;
+        _endpointCache = endpointCache;
         _identity = identity;
     }
 
@@ -200,7 +203,10 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         var sent = await _grpcClient.SendAsync(endpoint.Host, endpoint.Port, targetDevice.TlsCertFingerprint, [delta], ct);
 
         if (!sent)
+        {
+            _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
             return false;
+        }
 
         queue.Delete(queueItem);
         await uow.SaveChangesAsync(ct);
@@ -233,7 +239,8 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         }
 
         if (!await userDevices.HasAnyActiveSyncEnabledLinkForDeviceAsync(freshDevice.Id, ct) &&
-            !await IsFinalDisconnectDeltaForTargetAsync(userDevices, syncItem, freshDevice.Id, ct))
+            !await IsFinalDisconnectDeltaForTargetAsync(userDevices, syncItem, freshDevice.Id, ct) &&
+            !await IsFinalSyncDisableDeltaForTargetAsync(userDevices, syncItem, freshDevice.Id, ct))
         {
             _syncDeviceIdentities.TryRemove(freshDevice);
             return false;
@@ -269,6 +276,19 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         return userDevice is not null &&
                userDevice.DeviceId == targetDeviceId &&
                userDevice.IsDeleted;
+    }
+
+
+    private static async Task<bool> IsFinalSyncDisableDeltaForTargetAsync(IUserDeviceRepository userDevices, SyncItem syncItem, Guid targetDeviceId, CancellationToken ct)
+    {
+        if (syncItem.ModelType != SyncModelType.UserDevice || syncItem.ChangeType == SyncChangeType.Deleted)
+            return false;
+
+        var userDevice = await userDevices.GetByModelIdAsync(syncItem.ModelId, ct);
+        return userDevice is not null &&
+               userDevice.DeviceId == targetDeviceId &&
+               !userDevice.IsDeleted &&
+               !userDevice.IsSyncEnabled;
     }
 
 

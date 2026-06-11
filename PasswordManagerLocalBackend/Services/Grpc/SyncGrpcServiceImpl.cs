@@ -1,4 +1,4 @@
-﻿using Google.Protobuf;
+using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Core.Utils;
 using Microsoft.Extensions.DependencyInjection;
@@ -232,6 +232,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
             }
 
             var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
+            var sourceHost = context.GetHttpContext().Connection.RemoteIpAddress?.ToString();
             var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
             var result = await enrollment.CompleteIncomingEnrollmentAsync(
                 sessionId,
@@ -241,6 +242,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 sourceSignPublicKey,
                 sourceTlsCertFingerprint,
                 actualFingerprint,
+                sourceHost,
                 context.CancellationToken);
 
             DeviceEnrollmentTrace.Info($"Incoming streaming CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
@@ -281,6 +283,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled.", ErrorCode = DeviceEnrollmentErrorCode.SyncDisabled.ToString() };
 
             var actualFingerprint = identity.GetFingerprintHex(new X509Certificate2(clientCertificate));
+            var sourceHost = context.GetHttpContext().Connection.RemoteIpAddress?.ToString();
             var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
             var result = await enrollment.CompleteIncomingEnrollmentAsync(
                 request.SessionId,
@@ -290,6 +293,7 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
                 request.SourceSignPub.ToByteArray(),
                 request.SourceTlsCertFingerprint,
                 actualFingerprint,
+                sourceHost,
                 context.CancellationToken);
 
             DeviceEnrollmentTrace.Info($"Incoming unary CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
@@ -363,7 +367,10 @@ public sealed class SyncGrpcServiceImpl : SyncGrpc.SyncGrpcBase
         if (remoteDevice is null)
             throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not trusted."));
 
-        if (remoteDevice.IsBlocked || !remoteDevice.IsTrusted)
+        if (!remoteDevice.IsTrusted)
+            throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not allowed to sync."));
+
+        if (remoteDevice.IsBlocked)
             throw new RpcException(new Status(StatusCode.PermissionDenied, "Remote device is not allowed to sync."));
 
         if (!remoteDevice.UserDevices.Any(ud => !ud.IsDeleted && ud.IsSyncEnabled))

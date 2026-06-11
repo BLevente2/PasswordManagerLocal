@@ -74,13 +74,15 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
+    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
 
-    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity)
+    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
+        _endpointCache = endpointCache;
     }
 
 
@@ -277,6 +279,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var users = scope.ServiceProvider.GetRequiredService<IUserService>();
         var syncIdentities = scope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
+        var syncTasks = scope.ServiceProvider.GetRequiredService<IDeviceSyncTaskService>();
         var user = await users.GetAndVerifyUserAsync(token, ct);
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -302,7 +305,17 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             var remoteDevice = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == endpoint.DeviceId, ct);
             if (remoteDevice is not null)
+            {
                 syncIdentities.TryAdd(remoteDevice);
+                var discoveredEndpoint = new DiscoveredDeviceEndpoint
+                {
+                    Host = endpoint.Host,
+                    Port = endpoint.Port,
+                    TlsCertFingerprint = endpoint.TlsCertFingerprint
+                };
+                _endpointCache.AddOrUpdate(discoveredEndpoint);
+                syncTasks.TryStart(discoveredEndpoint, remoteDevice);
+            }
         }
         catch (DeviceEnrollmentException)
         {
@@ -311,6 +324,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 Id = endpoint.DeviceId,
                 TlsCertFingerprint = endpoint.TlsCertFingerprint
             });
+            _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
             throw;
         }
         catch (Exception ex)
@@ -320,6 +334,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 Id = endpoint.DeviceId,
                 TlsCertFingerprint = endpoint.TlsCertFingerprint
             });
+            _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.Unknown, ex.Message, ex);
         }
     }
@@ -414,6 +429,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         byte[] sourceSignPublicKey,
         string sourceTlsCertFingerprint,
         string actualClientTlsCertFingerprint,
+        string? sourceHost,
         CancellationToken ct = default)
     {
         EnrollmentSession? session;
@@ -458,11 +474,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         DeviceEnrollmentSnapshot? snapshot;
         try
         {
+            RejectSensitiveLocalOnlySnapshotPayload(snapshotBytes);
             snapshot = JsonSerializer.Deserialize<DeviceEnrollmentSnapshot>(snapshotBytes);
         }
         catch (JsonException ex)
         {
             return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The received profile data is invalid: {ex.Message}");
+        }
+        catch (InvalidDataException ex)
+        {
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
 
         if (snapshot is null || snapshot.PrimaryUserId == Guid.Empty)
@@ -473,6 +494,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             using var scope = _scopeFactory.CreateScope();
             DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
             await ImportSnapshotAsync(scope.ServiceProvider, snapshot, ct);
+            await CacheIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
             DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");
         }
         catch (Exception ex)
@@ -1245,6 +1267,58 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
+
+
+    private async Task CacheIncomingEnrollmentSourceEndpointAsync(
+        IServiceProvider services,
+        string sourceDeviceId,
+        string sourceTlsCertFingerprint,
+        string? sourceHost,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sourceHost))
+            return;
+
+        if (!Guid.TryParseExact(sourceDeviceId, "N", out var parsedDeviceId) &&
+            !Guid.TryParse(sourceDeviceId, out parsedDeviceId))
+            return;
+
+        if (parsedDeviceId == Guid.Empty || parsedDeviceId == _identity.LocalDeviceId)
+            return;
+
+        if (string.IsNullOrWhiteSpace(sourceTlsCertFingerprint))
+            return;
+
+        if (IPAddress.TryParse(sourceHost, out var sourceAddress))
+        {
+            if (!IsUsableUnicastAddress(sourceAddress))
+                return;
+        }
+
+        var db = services.GetRequiredService<AppDbContext>();
+        var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
+        var syncTasks = services.GetRequiredService<IDeviceSyncTaskService>();
+
+        var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == parsedDeviceId, ct);
+        if (device is null || !device.IsTrusted || device.IsBlocked)
+            return;
+
+        if (!string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(sourceTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var endpoint = new DiscoveredDeviceEndpoint
+        {
+            Host = sourceHost.Trim(),
+            Port = SyncPort,
+            TlsCertFingerprint = sourceTlsCertFingerprint
+        };
+
+        _endpointCache.AddOrUpdate(endpoint);
+        syncIdentities.TryAdd(device);
+        syncTasks.TryStart(endpoint, device);
+    }
+
+
     private async Task<DeviceEnrollmentSnapshot> BuildSnapshotAsync(IServiceProvider services, Guid userId, CancellationToken ct)
     {
         var db = services.GetRequiredService<AppDbContext>();
@@ -1688,6 +1762,63 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         return expected.Length < 64
             ? fingerprint.StartsWith(expected, StringComparison.OrdinalIgnoreCase)
             : string.Equals(fingerprint, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    private static void RejectSensitiveLocalOnlySnapshotPayload(byte[] payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            foreach (var propertyName in SensitiveLocalOnlySnapshotPropertyNames)
+            {
+                if (ContainsProperty(doc.RootElement, propertyName))
+                    throw new InvalidDataException("Enrollment snapshot contains local-only device or key material.");
+            }
+        }
+        catch (JsonException)
+        {
+            throw;
+        }
+    }
+
+
+    private static readonly string[] SensitiveLocalOnlySnapshotPropertyNames =
+    [
+        "SavedKey",
+        "LocalDeviceIdentity",
+        "DeviceIdentity",
+        "AgreementPrivateKeyBlob",
+        "SignPrivateKeyBlob",
+        "PFXCertificate",
+        "PrivateKey",
+        "PrivateKeyBlob"
+    ];
+
+
+    private static bool ContainsProperty(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                if (ContainsProperty(property.Value, propertyName))
+                    return true;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (ContainsProperty(item, propertyName))
+                    return true;
+            }
+        }
+
+        return false;
     }
 
 

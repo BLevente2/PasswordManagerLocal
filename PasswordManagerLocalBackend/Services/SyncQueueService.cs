@@ -15,6 +15,8 @@ public sealed class SyncQueueService : ISyncQueueService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncTombstoneRepository _tombstones;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
+    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
 
@@ -27,6 +29,8 @@ public sealed class SyncQueueService : ISyncQueueService
         IUserDeviceRepository userDevices,
         ISyncTombstoneRepository tombstones,
         ISyncDeviceIdentityService syncDeviceIdentities,
+        IDiscoveredDeviceEndpointCache endpointCache,
+        IDeviceSyncTaskService deviceSyncTasks,
         IDeviceIdentityService identity,
         IUnitOfWork uow)
     {
@@ -38,6 +42,8 @@ public sealed class SyncQueueService : ISyncQueueService
         _userDevices = userDevices;
         _tombstones = tombstones;
         _syncDeviceIdentities = syncDeviceIdentities;
+        _endpointCache = endpointCache;
+        _deviceSyncTasks = deviceSyncTasks;
         _identity = identity;
         _uow = uow;
     }
@@ -252,7 +258,10 @@ public sealed class SyncQueueService : ISyncQueueService
         if (!_identity.IsSyncOn)
         {
             foreach (var device in targetDevices)
+            {
                 _syncDeviceIdentities.TryRemove(device);
+                _endpointCache.TryRemove(device.TlsCertFingerprint);
+            }
 
             return;
         }
@@ -260,10 +269,28 @@ public sealed class SyncQueueService : ISyncQueueService
         foreach (var device in targetDevices)
         {
             if (CanBeAddedToDiscoveryCache(device))
+            {
                 _syncDeviceIdentities.TryAdd(device);
+                TryStartCachedEndpointSync(device);
+            }
             else
+            {
                 _syncDeviceIdentities.TryRemove(device);
+                _endpointCache.TryRemove(device.TlsCertFingerprint);
+            }
         }
+    }
+
+
+    private void TryStartCachedEndpointSync(Device device)
+    {
+        if (!_identity.IsSyncOn)
+            return;
+
+        if (!_endpointCache.TryGetByFingerprint(device.TlsCertFingerprint, out var endpoint) || endpoint is null)
+            return;
+
+        _deviceSyncTasks.TryStart(endpoint, device);
     }
 
 

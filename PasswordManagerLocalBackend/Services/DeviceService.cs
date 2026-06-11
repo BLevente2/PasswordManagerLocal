@@ -100,13 +100,6 @@ public sealed class DeviceService : IDeviceService
 
         await _syncQueue.EnqueueAsync(new SyncItem
         {
-            ModelId = device.Id,
-            ModelType = SyncModelType.Device,
-            ChangeType = SyncChangeType.Updated
-        }, ct);
-
-        await _syncQueue.EnqueueAsync(new SyncItem
-        {
             ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
             ModelType = SyncModelType.UserDevice,
             ChangeType = SyncChangeType.Updated
@@ -137,6 +130,13 @@ public sealed class DeviceService : IDeviceService
     public async Task SetUserDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct = default)
     {
         var normalizedName = NormalizeUserDeviceName(name);
+
+        if (deviceId == _identity.LocalDeviceId)
+        {
+            await SetLocalDeviceNameAsync(token, normalizedName, ct);
+            return;
+        }
+
         var user = await _users.GetAndVerifyUserAsync(token, ct);
         var userDevice = await GetActiveUserDeviceAsync(user.UId, deviceId, ct);
 

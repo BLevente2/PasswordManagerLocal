@@ -10,5 +10,14 @@ public interface IDeviceEnrollmentService
     Task CancelEnrollmentAsync(CancellationToken ct = default);
     Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default);
     Task<DeviceEnrollmentInfoResponse> GetIncomingEnrollmentInfoAsync(string sessionId, byte[] codeProof, CancellationToken ct = default);
-    Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> CompleteIncomingEnrollmentAsync(string sessionId, byte[] codeProof, byte[] snapshot, string sourceDeviceId, byte[] sourceSignPublicKey, string sourceTlsCertFingerprint, string actualClientTlsCertFingerprint, CancellationToken ct = default);
+    Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> CompleteIncomingEnrollmentAsync(
+        string sessionId,
+        byte[] codeProof,
+        byte[] snapshot,
+        string sourceDeviceId,
+        byte[] sourceSignPublicKey,
+        string sourceTlsCertFingerprint,
+        string actualClientTlsCertFingerprint,
+        string? sourceHost,
+        CancellationToken ct = default);
 }
