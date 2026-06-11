@@ -41,6 +41,7 @@ public sealed class LoginViewModel : ViewModelBase
         _onAuthenticationSucceededAsync = onAuthenticationSucceededAsync;
 
         LoginCommand = ReactiveCommand.CreateFromTask(LoginAsync);
+        ExecutePrimaryActionCommand = ReactiveCommand.CreateFromTask(ExecutePrimaryActionAsync);
         NavigateToRegistrationCommand = ReactiveCommand.Create(_navigateToRegistration);
         TogglePasswordVisibilityCommand = ReactiveCommand.Create(TogglePasswordVisibility);
         ShowDeviceTransferIntroCommand = ReactiveCommand.Create(ShowDeviceTransferIntro);
@@ -153,6 +154,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> LoginCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> ExecutePrimaryActionCommand { get; }
+
     public ReactiveCommand<Unit, Unit> NavigateToRegistrationCommand { get; }
 
     public ReactiveCommand<Unit, Unit> TogglePasswordVisibilityCommand { get; }
@@ -250,8 +253,42 @@ public sealed class LoginViewModel : ViewModelBase
         ResetDeviceTransferState(false);
     }
 
+
+    private async Task ExecutePrimaryActionAsync()
+    {
+        if (IsBusy)
+            return;
+
+        if (IsLoginFormVisible)
+        {
+            await LoginAsync();
+            return;
+        }
+
+        if (IsDeviceTransferIntroVisible)
+        {
+            await StartDeviceTransferAsync();
+            return;
+        }
+
+        if (IsDeviceTransferCodeVisible)
+        {
+            await CheckDeviceTransferStatusAsync();
+            return;
+        }
+
+        if (IsDeviceTransferFinished)
+        {
+            FinishDeviceTransfer();
+        }
+    }
+
+
     private async Task LoginAsync()
     {
+        if (IsBusy || !IsLoginFormVisible)
+            return;
+
         ErrorMessage = null;
         this.RaisePropertyChanged(nameof(HasError));
 
@@ -287,7 +324,7 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            ErrorMessage = GetSafeErrorMessage(ex);
             this.RaisePropertyChanged(nameof(HasError));
         }
         finally
@@ -322,7 +359,7 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            DeviceTransferMessage = ex.Message;
+            DeviceTransferMessage = GetSafeErrorMessage(ex);
             IsDeviceTransferSuccess = false;
             IsDeviceTransferIntroVisible = false;
             IsDeviceTransferCodeVisible = false;
@@ -360,7 +397,7 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            DeviceTransferMessage = ex.Message;
+            DeviceTransferMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -395,7 +432,7 @@ public sealed class LoginViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                await Dispatcher.UIThread.InvokeAsync(() => DeviceTransferMessage = ex.Message);
+                await Dispatcher.UIThread.InvokeAsync(() => DeviceTransferMessage = GetSafeErrorMessage(ex));
             }
         }, ct);
     }
@@ -423,7 +460,7 @@ public sealed class LoginViewModel : ViewModelBase
         {
             _deviceTransferPolling?.Cancel();
             IsDeviceTransferSuccess = false;
-            DeviceTransferMessage = status.ErrorMessage ?? GetTranslation("Login_DeviceTransfer_ErrorMessage");
+            DeviceTransferMessage = GetTranslation("Login_DeviceTransfer_ErrorMessage");
             IsDeviceTransferCodeVisible = false;
             IsDeviceTransferFinished = true;
             this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));

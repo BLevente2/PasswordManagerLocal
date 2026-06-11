@@ -209,6 +209,7 @@ public static class SyncCryptoUtil
         bw.Write(payload.PublicKey);
         bw.Write(payload.SignPublicKey);
         bw.Write(Encoding.UTF8.GetBytes(payload.TlsCertFingerprint ?? string.Empty));
+        bw.Write(Encoding.UTF8.GetBytes(payload.DeviceName ?? string.Empty));
         bw.Write(payload.LastKnownHash);
         bw.Write(payload.LastSync.ToBinary());
         bw.Write(payload.LastSeen.ToBinary());

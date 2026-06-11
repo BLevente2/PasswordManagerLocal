@@ -9,6 +9,7 @@ public sealed class PasswordItemViewModel : ReactiveObject
 {
     private PasswordItemViewModel(
         PasswordInfoResponse password,
+        Func<PasswordItemViewModel, Task> viewAsync,
         Func<PasswordItemViewModel, Task> editAsync,
         Func<PasswordItemViewModel, Task> deleteAsync)
     {
@@ -20,6 +21,7 @@ public sealed class PasswordItemViewModel : ReactiveObject
         LastUpdatedAt = password.LastUpdatedAt;
         ColorBrush = ParseBrush(password.Color);
 
+        ViewCommand = ReactiveCommand.CreateFromTask(() => viewAsync(this));
         EditCommand = ReactiveCommand.CreateFromTask(() => editAsync(this));
         DeleteCommand = ReactiveCommand.CreateFromTask(() => deleteAsync(this));
     }
@@ -38,6 +40,8 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public IBrush ColorBrush { get; }
 
+    public ReactiveCommand<Unit, Unit> ViewCommand { get; }
+
     public ReactiveCommand<Unit, Unit> EditCommand { get; }
 
     public ReactiveCommand<Unit, Unit> DeleteCommand { get; }
@@ -50,9 +54,10 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public static PasswordItemViewModel Create(
         PasswordInfoResponse password,
+        Func<PasswordItemViewModel, Task> viewAsync,
         Func<PasswordItemViewModel, Task> editAsync,
         Func<PasswordItemViewModel, Task> deleteAsync) =>
-        new(password, editAsync, deleteAsync);
+        new(password, viewAsync, editAsync, deleteAsync);
 
     private static IBrush ParseBrush(string color)
     {

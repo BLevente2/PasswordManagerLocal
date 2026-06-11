@@ -103,7 +103,7 @@ public sealed class AuthService : IAuthService
         var userData = await _userService.GetAndVerifyUserDataAsync(user, key);
         userData.LastLoginDate = DateTime.UtcNow;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        await _userService.UpdateUserDataAsync(userData, user, key, ct);
+        await _userService.UpdateUserDataAsync(userData, user, key, true, ct);
         _cache.SetUserData(token, userData);
         return token;
     }

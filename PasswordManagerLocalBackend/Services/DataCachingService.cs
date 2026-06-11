@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Primitives;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models.Encrypted;
@@ -17,6 +17,7 @@ public sealed class DataCachingService : IDataCachingService
 
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _tokenCts = new();
     private readonly ConcurrentDictionary<string, object> _currentByKey = new();
+    private readonly ConcurrentDictionary<string, byte> _removeWithoutDisposeKeys = new();
 
     public DataCachingService(SafeMemoryCache cache, ITokenService tokens)
         : this(cache, tokens, UserDataCacheExpirationTime, GroupDataCacheExpirationTime)
@@ -44,7 +45,13 @@ public sealed class DataCachingService : IDataCachingService
 
     private void DisposeCurrentAndRemove(string key)
     {
-        DisposeCurrentIfAny(key);
+        RemoveCurrentWithoutDispose(key);
+    }
+
+    private void RemoveCurrentWithoutDispose(string key)
+    {
+        _currentByKey.TryRemove(key, out _);
+        _removeWithoutDisposeKeys[key] = 0;
         _cache.Remove(key);
     }
 
@@ -73,22 +80,20 @@ public sealed class DataCachingService : IDataCachingService
 
             var self = (DataCachingService)state!;
 
+            if (self._removeWithoutDisposeKeys.TryRemove(skey, out _))
+            {
+                if (self._currentByKey.TryGetValue(skey, out var skippedCurrent) && ReferenceEquals(skippedCurrent, value))
+                    self._currentByKey.TryRemove(skey, out _);
+
+                return;
+            }
+
             if (reason == EvictionReason.Replaced)
             {
                 if (self._currentByKey.TryGetValue(skey, out var current) && ReferenceEquals(current, value))
                     return;
 
-                if (value is IDisposable rd)
-                {
-                    try { rd.Dispose(); } catch { }
-                }
-
                 return;
-            }
-
-            if (value is IDisposable d)
-            {
-                try { d.Dispose(); } catch { }
             }
 
             if (self._currentByKey.TryGetValue(skey, out var cur) && ReferenceEquals(cur, value))
@@ -215,7 +220,7 @@ public sealed class DataCachingService : IDataCachingService
         {
             if (key.StartsWith(prefix, StringComparison.Ordinal))
             {
-                DisposeCurrentAndRemove(key);
+                RemoveCurrentWithoutDispose(key);
             }
         }
 

@@ -213,6 +213,9 @@ public sealed class RegistrationViewModel : ViewModelBase
 
     private async Task RegisterAsync()
     {
+        if (IsBusy)
+            return;
+
         ErrorMessage = null;
         this.RaisePropertyChanged(nameof(HasError));
 
@@ -280,7 +283,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ErrorMessage = ex.Message;
+            ErrorMessage = GetSafeErrorMessage(ex);
             this.RaisePropertyChanged(nameof(HasError));
         }
         finally

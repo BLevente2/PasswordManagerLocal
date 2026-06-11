@@ -48,9 +48,6 @@ public sealed class Device : IntegrityCheckableBase
         bw.Write(LastInvalidSyncAttemptAt?.ToUnixTimeMilliseconds() ?? 0);
         bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
 
-        foreach (var userId in UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).OrderBy(id => id))
-            bw.Write(userId.ToByteArray());
-
         return Hashing.SHA512Hash(ms.ToArray());
     }
 }

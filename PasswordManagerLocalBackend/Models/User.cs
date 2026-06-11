@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Security;
 
 namespace PasswordManagerLocalBackend.Models;
 
@@ -32,12 +32,6 @@ public sealed class User : IntegrityCheckableBase
         bw.Write(PasswordSalt);
         bw.Write(EncryptedPayload);
         bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
-
-        foreach (var groupId in Groups.Select(g => g.Id).OrderBy(id => id))
-            bw.Write(groupId.ToByteArray());
-
-        foreach (var deviceId in UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).OrderBy(id => id))
-            bw.Write(deviceId.ToByteArray());
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

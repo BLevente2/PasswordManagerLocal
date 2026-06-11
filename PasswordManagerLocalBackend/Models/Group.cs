@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Security;
 
 namespace PasswordManagerLocalBackend.Models;
 
@@ -14,6 +14,7 @@ public sealed class Group : IntegrityCheckableBase
 
 
 
+
     public override byte[] CalculateIntegrityHash()
     {
         using var ms = new MemoryStream();
@@ -22,9 +23,6 @@ public sealed class Group : IntegrityCheckableBase
         bw.Write(Id.ToByteArray());
         bw.Write(EncryptedPayload);
         bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
-
-        foreach (var userId in Users.Select(u => u.UId).OrderBy(id => id))
-            bw.Write(userId.ToByteArray());
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

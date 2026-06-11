@@ -92,7 +92,8 @@ namespace PasswordManagerLocalBackend
                         opts.UseSqlite(connStr);
                     });
 
-                    services.AddScoped<IEndpoints, Endpoints>();
+                    services.AddScoped<Endpoints>();
+                    services.AddSingleton<IEndpoints, ScopedEndpoints>();
 
                     services.AddScoped<IUnitOfWork, AppUnitOfWork>();
 

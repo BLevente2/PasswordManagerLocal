@@ -6,6 +6,10 @@
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Auth"
     x:DataType="vm:LoginViewModel">
 
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding ExecutePrimaryActionCommand}" />
+  </UserControl.KeyBindings>
+
   <ScrollViewer>
     <Grid Margin="16,8,16,16">
       <Border Classes="card" HorizontalAlignment="Center" MaxWidth="520" MinWidth="280">

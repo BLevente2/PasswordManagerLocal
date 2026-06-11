@@ -54,7 +54,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             throw new InvalidOperationException("The local device cannot be a synchronization target.");
 
         var ts = item.ChangedAtTs > 0 ? item.ChangedAtTs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var payload = await BuildPayloadAsync(item, ct);
+        var payload = await BuildPayloadAsync(item, ts, ct);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, ts);
 
         var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(payload);
@@ -96,7 +96,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private async Task<SyncDeltaPayload> BuildPayloadAsync(SyncItem item, CancellationToken ct)
+    private async Task<SyncDeltaPayload> BuildPayloadAsync(SyncItem item, long timestamp, CancellationToken ct)
     {
         var payload = new SyncDeltaPayload
         {
@@ -124,7 +124,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             if (user is null)
                 throw new InvalidOperationException("User sync source was not found.");
 
-            payload.User = CreateUserPayload(user);
+            payload.User = CreateUserPayload(user, timestamp);
             return payload;
         }
 
@@ -134,7 +134,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             if (group is null)
                 throw new InvalidOperationException("Group sync source was not found.");
 
-            payload.Group = CreateGroupPayload(group);
+            payload.Group = CreateGroupPayload(group, timestamp);
             return payload;
         }
 
@@ -147,7 +147,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             if (IsLocalDevice(sourceDevice))
                 throw new InvalidOperationException("The local device cannot be synchronized as a stored device.");
 
-            payload.Device = CreateDevicePayload(sourceDevice);
+            payload.Device = CreateDevicePayload(sourceDevice, timestamp);
             return payload;
         }
 
@@ -155,43 +155,41 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private UserSyncPayload CreateUserPayload(User user)
+    private UserSyncPayload CreateUserPayload(User user, long timestamp)
     {
-        user.GenerateIntegrityHash();
-
-        return new()
+        var payload = new UserSyncPayload
         {
             UId = user.UId,
             UsernameHash = user.UsernameHash,
             UsernameSalt = user.UsernameSalt,
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
-            IntegrityHash = user.IntegrityHash,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
             DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted && !IsLocalDeviceId(ud.DeviceId)).Select(ud => ud.DeviceId).Distinct().ToList()
         };
+
+        payload.IntegrityHash = SyncCryptoUtil.CalculateUserHash(payload, timestamp);
+        return payload;
     }
 
 
-    private static GroupSyncPayload CreateGroupPayload(Group group)
+    private static GroupSyncPayload CreateGroupPayload(Group group, long timestamp)
     {
-        group.GenerateIntegrityHash();
-
-        return new()
+        var payload = new GroupSyncPayload
         {
             Id = group.Id,
             EncryptedPayload = group.EncryptedPayload,
-            IntegrityHash = group.IntegrityHash,
             UserIds = group.Users.Select(u => u.UId).Distinct().ToList()
         };
+
+        payload.IntegrityHash = SyncCryptoUtil.CalculateGroupHash(payload, timestamp);
+        return payload;
     }
 
 
-    private static DeviceSyncPayload CreateDevicePayload(Device device)
+    private static DeviceSyncPayload CreateDevicePayload(Device device, long timestamp)
     {
-        device.GenerateIntegrityHash();
-
-        return new()
+        var payload = new DeviceSyncPayload
         {
             Id = device.Id,
             PublicKey = device.PublicKey,
@@ -207,9 +205,11 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             BlockedAt = device.BlockedAt,
             InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
             LastInvalidSyncAttemptAt = device.LastInvalidSyncAttemptAt,
-            IntegrityHash = device.IntegrityHash,
             UserIds = device.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
         };
+
+        payload.IntegrityHash = SyncCryptoUtil.CalculateDeviceHash(payload, timestamp);
+        return payload;
     }
 
 

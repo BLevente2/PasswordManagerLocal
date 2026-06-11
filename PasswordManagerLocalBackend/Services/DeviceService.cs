@@ -100,6 +100,13 @@ public sealed class DeviceService : IDeviceService
 
         await _syncQueue.EnqueueAsync(new SyncItem
         {
+            ModelId = device.Id,
+            ModelType = SyncModelType.Device,
+            ChangeType = SyncChangeType.Updated
+        }, ct);
+
+        await _syncQueue.EnqueueAsync(new SyncItem
+        {
             ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
             ModelType = SyncModelType.UserDevice,
             ChangeType = SyncChangeType.Updated

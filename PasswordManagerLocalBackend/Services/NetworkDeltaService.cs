@@ -668,6 +668,53 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         payload.UserDevice.DeviceId == _identity.LocalDeviceId;
 
 
+    private UserSyncPayload CreateUserSyncPayloadForHash(User user) =>
+        new()
+        {
+            UId = user.UId,
+            UsernameHash = user.UsernameHash,
+            UsernameSalt = user.UsernameSalt,
+            PasswordSalt = user.PasswordSalt,
+            EncryptedPayload = user.EncryptedPayload,
+            GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
+            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted && !IsLocalDeviceId(ud.DeviceId)).Select(ud => ud.DeviceId).Distinct().ToList()
+        };
+
+
+    private static GroupSyncPayload CreateGroupSyncPayloadForHash(Group group) =>
+        new()
+        {
+            Id = group.Id,
+            EncryptedPayload = group.EncryptedPayload,
+            UserIds = group.Users.Select(u => u.UId).Distinct().ToList()
+        };
+
+
+    private static DeviceSyncPayload CreateDeviceSyncPayloadForHash(Device device) =>
+        new()
+        {
+            Id = device.Id,
+            PublicKey = device.PublicKey,
+            SignPublicKey = device.SignPublicKey,
+            TlsCertFingerprint = device.TlsCertFingerprint,
+            DeviceName = device.DeviceName,
+            LastKnownHash = device.LastKnownHash,
+            LastSync = device.LastSync,
+            LastSeen = device.LastSeen,
+            IsTrusted = device.IsTrusted,
+            IsBlocked = device.IsBlocked,
+            BlockedReason = device.BlockedReason,
+            BlockedAt = device.BlockedAt,
+            InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
+            LastInvalidSyncAttemptAt = device.LastInvalidSyncAttemptAt,
+            UserIds = device.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
+        };
+
+
+    private bool IsLocalDeviceId(Guid deviceId) =>
+        deviceId == _identity.LocalDeviceId;
+
+
     private bool IsLocalDevicePayload(SyncDeltaPayload payload) =>
         payload.ModelType == SyncModelType.Device &&
         (payload.ModelId == _identity.LocalDeviceId || IsLocalDevicePayload(payload.Device));
@@ -712,8 +759,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (existing is null)
                 return false;
 
-            existing.GenerateIntegrityHash();
-            return existing.IntegrityHash.SequenceEqual(payload.User.IntegrityHash);
+            var existingPayload = CreateUserSyncPayloadForHash(existing);
+            var existingHash = SyncCryptoUtil.CalculateUserHash(existingPayload, existing.LastModifiedAt.ToUnixTimeMilliseconds());
+            return existingHash.SequenceEqual(payload.User.IntegrityHash);
         }
 
         if (payload.ModelType == SyncModelType.Group)
@@ -725,8 +773,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (existing is null)
                 return false;
 
-            existing.GenerateIntegrityHash();
-            return existing.IntegrityHash.SequenceEqual(payload.Group.IntegrityHash);
+            var existingPayload = CreateGroupSyncPayloadForHash(existing);
+            var existingHash = SyncCryptoUtil.CalculateGroupHash(existingPayload, existing.LastModifiedAt.ToUnixTimeMilliseconds());
+            return existingHash.SequenceEqual(payload.Group.IntegrityHash);
         }
 
         if (payload.ModelType == SyncModelType.Device)
@@ -738,8 +787,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (existing is null)
                 return false;
 
-            existing.GenerateIntegrityHash();
-            return existing.IntegrityHash.SequenceEqual(payload.Device.IntegrityHash);
+            var existingPayload = CreateDeviceSyncPayloadForHash(existing);
+            var existingHash = SyncCryptoUtil.CalculateDeviceHash(existingPayload, existing.LastModifiedAt.ToUnixTimeMilliseconds());
+            return existingHash.SequenceEqual(payload.Device.IntegrityHash);
         }
 
         if (payload.ModelType == SyncModelType.UserDevice)

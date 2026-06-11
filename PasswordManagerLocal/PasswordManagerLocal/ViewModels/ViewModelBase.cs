@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
+using PasswordManagerLocalBackend.Exceptions;
 using ReactiveUI;
 
 namespace PasswordManagerLocal.ViewModels;
@@ -19,6 +20,22 @@ public abstract class ViewModelBase : ReactiveObject
     public AppThemeMode CurrentThemeMode => UiPreferences.CurrentThemeMode;
 
     protected string GetTranslation(string key) => UiPreferences.GetString(key);
+
+
+    protected string GetSafeErrorMessage(Exception exception) =>
+        exception switch
+        {
+            InvalidTokenException => GetTranslation("Error_InvalidSession"),
+            UserNotFoundException => GetTranslation("Error_InvalidCredentials"),
+            UnauthorizedAccessException => GetTranslation("Error_InvalidCredentials"),
+            InvalidInputException => GetTranslation("Error_InvalidInput"),
+            PasswordNotFoundException => GetTranslation("Error_NotFound"),
+            LimitReachedException => GetTranslation("Error_LimitReached"),
+            InvalidDataIntegrityException => GetTranslation("Error_DataIntegrity"),
+            DeviceIdentityNotInitilaizedException => GetTranslation("Error_DeviceIdentity"),
+            OperationCanceledException => GetTranslation("Error_OperationCanceled"),
+            _ => GetTranslation("Error_Generic")
+        };
 
     protected virtual void OnLanguageChanged()
     {

@@ -283,6 +283,14 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string AccountOverviewLabel => GetTranslation("Profile_Overview_Title");
 
+    public string OverviewTabLabel => GetTranslation("Profile_Tab_Overview");
+
+    public string DevicesTabLabel => GetTranslation("Profile_Tab_Devices");
+
+    public string AccountTabLabel => GetTranslation("Profile_Tab_Account");
+
+    public string SecurityTabLabel => GetTranslation("Profile_Tab_Security");
+
     public string PersonalInfoTitle => GetTranslation("Profile_Personal_Title");
 
     public string UsernameTitle => GetTranslation("Profile_Username_Title");
@@ -408,6 +416,10 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(Title));
         this.RaisePropertyChanged(nameof(Subtitle));
         this.RaisePropertyChanged(nameof(AccountOverviewLabel));
+        this.RaisePropertyChanged(nameof(OverviewTabLabel));
+        this.RaisePropertyChanged(nameof(DevicesTabLabel));
+        this.RaisePropertyChanged(nameof(AccountTabLabel));
+        this.RaisePropertyChanged(nameof(SecurityTabLabel));
         this.RaisePropertyChanged(nameof(PersonalInfoTitle));
         this.RaisePropertyChanged(nameof(UsernameTitle));
         this.RaisePropertyChanged(nameof(SecurityTitle));
@@ -469,6 +481,23 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(LocalSyncConfirmLabel));
         this.RaisePropertyChanged(nameof(RegistrationDateText));
         this.RaisePropertyChanged(nameof(LastLoginDateText));
+    }
+
+    public async Task RefreshCurrentDataAsync()
+    {
+        if (_token == Guid.Empty)
+            return;
+
+        try
+        {
+            var profile = await _endpoints.GetUserProfileInfoAsync(_token);
+            await LoadAsync(_token, profile);
+            StatusMessage = GetTranslation("Shell_DataRefreshed");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = GetSafeErrorMessage(ex);
+        }
     }
 
     public async Task LoadAsync(Guid token, UserProfileInfoResponse profile)
@@ -544,7 +573,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -563,7 +592,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -605,7 +634,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
         finally
         {
@@ -637,7 +666,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
         finally
         {
@@ -665,7 +694,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -719,7 +748,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -749,7 +778,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -766,7 +795,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -809,7 +838,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
         finally
         {
@@ -843,7 +872,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -866,7 +895,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
     }
 
@@ -899,7 +928,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = GetSafeErrorMessage(ex);
         }
         finally
         {

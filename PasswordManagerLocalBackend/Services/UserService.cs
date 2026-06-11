@@ -157,11 +157,15 @@ public sealed class UserService : IUserService
     public async Task<IReadOnlyList<User>> GetAndVerifyRememberMeEnabledUsersAsync(CancellationToken ct = default)
     {
         var users = await _users.GetAllRememberMeEnabledUsersAsync(ct);
+        var verifiedUsers = new List<User>(users.Count);
+
         foreach (var user in users)
         {
             user.VerifyIntegrity();
+            verifiedUsers.Add(user);
         }
-        return users;
+
+        return verifiedUsers;
     }
 
 
@@ -205,6 +209,7 @@ public sealed class UserService : IUserService
 
     public async Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, bool enqueueSync, CancellationToken ct = default)
     {
+        EnsureUserDataCanBePersisted(userData, user);
         userData.GenerateIntegrityHash();
         var newEncryptedPayload = await SerializeCompressEncryptAsync<UserData>(userData, key);
         CryptographicOperations.ZeroMemory(user.EncryptedPayload);
@@ -233,6 +238,16 @@ public sealed class UserService : IUserService
         using var key = GetEncryptionKeyFromToken(token);
         await UpdateUserDataAsync(userData, token, key, enqueueSync, ct);
     }
+
+    private static void EnsureUserDataCanBePersisted(UserData userData, User user)
+    {
+        if (userData.UId == Guid.Empty || userData.UId != user.UId)
+            throw new InvalidOperationException("Refusing to persist invalid user data.");
+
+        if (userData.Passwords.PasswordKey.Length == 0)
+            throw new InvalidOperationException("Refusing to persist incomplete user data.");
+    }
+
 
     public async Task<bool> UserExistsAsync(Guid uid, CancellationToken ct = default)
     {

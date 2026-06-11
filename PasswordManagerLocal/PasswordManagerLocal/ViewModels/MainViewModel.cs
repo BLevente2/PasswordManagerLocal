@@ -40,7 +40,7 @@ public sealed class MainViewModel : ViewModelBase
         LoginViewModel = new LoginViewModel(uiPreferences, _endpoints, NavigateToRegistration, OnAuthenticationSucceededAsync);
         RegistrationViewModel = new RegistrationViewModel(uiPreferences, _endpoints, NavigateToLogin, OnAuthenticationSucceededAsync);
         PasswordsViewModel = new PasswordsViewModel(uiPreferences, _endpoints);
-        ProfileViewModel = new ProfileViewModel(uiPreferences, _endpoints, RefreshAuthenticatedStateAsync, HandleAccountDeletedAsync);
+        ProfileViewModel = new ProfileViewModel(uiPreferences, _endpoints, RefreshProfileDataAsync, HandleAccountDeletedAsync);
 
         _currentPageViewModel = LoginViewModel;
 
@@ -54,6 +54,7 @@ public sealed class MainViewModel : ViewModelBase
         ShowRegistrationCommand = ReactiveCommand.Create(NavigateToRegistration);
         LogoutCommand = ReactiveCommand.CreateFromTask(LogoutAsync);
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAuthenticatedStateAsync);
+        RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshVisiblePageAsync);
     }
 
     public LoginViewModel LoginViewModel { get; }
@@ -126,6 +127,8 @@ public sealed class MainViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> RefreshVisiblePageCommand { get; }
+
     public string AppTitle => GetTranslation("AppTitle");
 
     public string SettingsLabel => GetTranslation("Settings");
@@ -153,6 +156,8 @@ public sealed class MainViewModel : ViewModelBase
     public string NavigationLabel => GetTranslation("Shell_Navigation");
 
     public string RefreshButtonLabel => GetTranslation("Common_Refresh");
+
+    public string RefreshVisiblePageLabel => $"↻ {GetTranslation("Shell_RefreshVisiblePage")}";
 
     public async Task InitializeAsync()
     {
@@ -196,6 +201,7 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(WelcomeLabel));
         this.RaisePropertyChanged(nameof(NavigationLabel));
         this.RaisePropertyChanged(nameof(RefreshButtonLabel));
+        this.RaisePropertyChanged(nameof(RefreshVisiblePageLabel));
     }
 
     private void NavigateToLogin()
@@ -252,6 +258,49 @@ public sealed class MainViewModel : ViewModelBase
         CurrentPageViewModel = PasswordsViewModel;
         StatusMessage = message;
         StartSessionMonitor(token);
+    }
+
+    private async Task RefreshVisiblePageAsync()
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty || !IsAuthenticated)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
+        {
+            await PasswordsViewModel.RefreshCurrentDataAsync();
+            StatusMessage = GetTranslation("Shell_DataRefreshed");
+            return;
+        }
+
+        if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
+        {
+            await RefreshProfileDataAsync();
+            StatusMessage = GetTranslation("Shell_DataRefreshed");
+            return;
+        }
+
+        await RefreshAuthenticatedStateAsync();
+    }
+
+    private async Task RefreshProfileDataAsync()
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty)
+        {
+            return;
+        }
+
+        var profile = await _endpoints.GetUserProfileInfoAsync(token);
+
+        CurrentUserDisplayName = BuildDisplayName(profile);
+        CurrentUserSubtitle = string.IsNullOrWhiteSpace(profile.Username)
+            ? profile.Email
+            : $"@{profile.Username}";
+
+        await ProfileViewModel.LoadAsync(token, profile);
     }
 
     private async Task RefreshAuthenticatedStateAsync()
