@@ -28,11 +28,14 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         if (list.Count == 0)
             return true;
 
+        if (list.Count > SyncConstants.MaxIncomingDeltaCountPerCall || list.Sum(delta => (long)delta.Payload.Length) > SyncConstants.MaxIncomingDeltaTotalBytesPerCall)
+            return false;
+
         try
         {
             await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
 
-            await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.HelloRequest, new HelloRequest
+            await WriteFrameAsync(connection.Stream, SyncTcpMessageType.HelloRequest, new HelloRequest
             {
                 DeviceId = _identity.DeviceIdHex,
                 SignPub = ByteString.CopyFrom(_identity.SignPublicKey)
@@ -43,12 +46,12 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             if (!hello.Ok)
                 return false;
 
-            await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.PushDeltaStart, ct);
+            await WriteFrameAsync(connection.Stream, SyncTcpMessageType.PushDeltaStart, ct);
 
             foreach (var delta in list.OrderBy(d => d.Ts))
-                await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.DeltaChunk, DeltaMapping.ToProto(PrepareDelta(delta)), ct);
+                await WriteFrameAsync(connection.Stream, SyncTcpMessageType.DeltaChunk, DeltaMapping.ToProto(PrepareDelta(delta)), ct);
 
-            await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.PushDeltaEnd, ct);
+            await WriteFrameAsync(connection.Stream, SyncTcpMessageType.PushDeltaEnd, ct);
 
             var ackFrame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.Ack, ct);
             var ack = ackFrame.Parse(Ack.Parser);
@@ -82,7 +85,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     {
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
 
-        await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.GetDeviceEnrollmentInfoRequest, request, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.GetDeviceEnrollmentInfoRequest, request, ct);
         var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.GetDeviceEnrollmentInfoReply, ct);
         return frame.Parse(GetDeviceEnrollmentInfoReply.Parser);
     }
@@ -92,14 +95,14 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     {
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
 
-        await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentStart, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentStart, ct);
 
         await foreach (var chunk in chunks.WithCancellation(ct))
-            await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentChunk, chunk, ct);
+            await WriteFrameAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentChunk, chunk, ct);
 
-        await SyncTcpFrameIo.WriteAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentEnd, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentEnd, ct);
 
-        var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentReply, ct);
+        var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentReply, ct, SyncConstants.DeviceEnrollmentTransferTimeoutSeconds);
         return frame.Parse(CompleteDeviceEnrollmentReply.Parser);
     }
 
@@ -113,6 +116,9 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         try
         {
             await client.ConnectAsync(host, port, timeout.Token);
+            client.NoDelay = true;
+            client.ReceiveTimeout = SyncConstants.SyncTcpIdleTimeoutSeconds * 1000;
+            client.SendTimeout = SyncConstants.SyncTcpWriteTimeoutSeconds * 1000;
             var stream = new SslStream(client.GetStream(), false);
             await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
             {
@@ -134,9 +140,11 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private async Task<SyncTcpFrame> ReadRequiredAsync(Stream stream, SyncTcpMessageType expectedType, CancellationToken ct)
+    private async Task<SyncTcpFrame> ReadRequiredAsync(Stream stream, SyncTcpMessageType expectedType, CancellationToken ct, int timeoutSeconds = SyncConstants.SyncTcpIdleTimeoutSeconds)
     {
-        var frame = await SyncTcpFrameIo.ReadAsync(stream, ct) ?? throw new EndOfStreamException();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        var frame = await SyncTcpFrameIo.ReadAsync(stream, timeout.Token) ?? throw new EndOfStreamException();
         if (frame.Type == SyncTcpMessageType.Error)
         {
             var error = frame.Parse(SyncError.Parser);
@@ -147,6 +155,22 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             throw new InvalidDataException($"Unexpected sync TCP frame type. Expected={expectedType}, Actual={frame.Type}.");
 
         return frame;
+    }
+
+
+    private static async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpWriteTimeoutSeconds));
+        await SyncTcpFrameIo.WriteAsync(stream, type, timeout.Token);
+    }
+
+
+    private static async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, IMessage message, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpWriteTimeoutSeconds));
+        await SyncTcpFrameIo.WriteAsync(stream, type, message, timeout.Token);
     }
 
 

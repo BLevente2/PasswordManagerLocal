@@ -1,4 +1,4 @@
-﻿namespace PasswordManagerLocalBackend.Constants;
+namespace PasswordManagerLocalBackend.Constants;
 
 public static class SyncConstants
 {
@@ -15,8 +15,10 @@ public static class SyncConstants
     public const int DeviceEnrollmentTransferTimeoutSeconds = 120;
 
     public const int MaxIncomingDeltaPayloadBytes = 4 * 1024 * 1024;
+    public const int MaxIncomingDeltaTotalBytesPerCall = 32 * 1024 * 1024;
     public const int MaxDeviceEnrollmentSnapshotBytes = 64 * 1024 * 1024;
     public const int DeviceEnrollmentSnapshotChunkBytes = 64 * 1024;
+
     public const int SyncDeltaEncryptionVersion = 1;
     public const int SyncDeltaNonceBytes = 12;
     public const int SyncDeltaTagBytes = 16;
@@ -25,7 +27,21 @@ public static class SyncConstants
     public const int SyncDeltaEd25519PublicKeyBytes = 32;
     public const int SyncDeltaEd25519SignatureBytes = 64;
     public const int MaxIncomingDeltaCountPerCall = 256;
-    public const int MaxSyncTcpFrameBytes = MaxDeviceEnrollmentSnapshotBytes + 4096;
+    public const int MaxSyncTcpFrameBytes = MaxIncomingDeltaPayloadBytes + 4096;
     public const int MaxIncomingDeltaFutureSeconds = 300;
     public const int MaxInvalidIncomingSyncAttempts = 5;
+    public const int MaxRecentIncomingDeltaReplayIds = 4096;
+    public const int RecentIncomingDeltaReplayWindowMinutes = 30;
+
+    public const int MaxConcurrentSyncConnections = 8;
+    public const int MaxSyncConnectionsPerRemoteIp = 2;
+    public const int SyncTcpHandshakeTimeoutSeconds = 10;
+    public const int SyncTcpIdleTimeoutSeconds = 30;
+    public const int SyncTcpWriteTimeoutSeconds = 30;
+
+    public const int EnrollmentSnapshotEncryptionVersion = 1;
+    public const int EnrollmentSnapshotEncryptionNonceBytes = 12;
+    public const int EnrollmentSnapshotEncryptionTagBytes = 16;
+    public const int EnrollmentCodeNoiseBytes = 16;
+    public const int MaxEnrollmentInvalidProofAttempts = 5;
 }

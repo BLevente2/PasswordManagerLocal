@@ -19,5 +19,8 @@ public interface IDeviceEnrollmentService
         string sourceTlsCertFingerprint,
         string actualClientTlsCertFingerprint,
         string? sourceHost,
+        int snapshotEncryptionVersion,
+        byte[] snapshotEncryptionNonce,
+        byte[] snapshotEncryptionTag,
         CancellationToken ct = default);
 }

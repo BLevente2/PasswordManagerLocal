@@ -9,12 +9,14 @@ using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Sync.Tcp;
 using PasswordManagerLocalBackend.Utils;
+using System.Collections.Concurrent;
 
 namespace PasswordManagerLocalBackend.Services.Tcp;
 
 public sealed class SyncPeerProtocolHandler
 {
     private readonly IServiceProvider _root;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentIncomingDeltaIds = new(StringComparer.Ordinal);
 
     public SyncPeerProtocolHandler(IServiceProvider root)
     {
@@ -46,7 +48,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    public async Task<Ack> PushDeltaAsync(IReadOnlyList<DeltaChunk> chunks, PeerConnectionContext context, CancellationToken ct)
+    public async Task<Ack> PushDeltaAsync(IAsyncEnumerable<DeltaChunk> chunks, PeerConnectionContext context, CancellationToken ct)
     {
         using var scope = _root.CreateScope();
         Device? remoteDevice = null;
@@ -58,17 +60,35 @@ public sealed class SyncPeerProtocolHandler
             var deviceSecurity = scope.ServiceProvider.GetRequiredService<IDeviceSecurityService>();
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
 
-            if (chunks.Count > SyncConstants.MaxIncomingDeltaCountPerCall)
-                throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Too many deltas in one sync call.");
-
             var lastSyncedTs = 0L;
+            var deltaCount = 0;
+            var totalPayloadBytes = 0L;
+            var seenDeltaIdsInCall = new HashSet<string>(StringComparer.Ordinal);
 
-            foreach (var chunk in chunks)
+            await foreach (var chunk in chunks.WithCancellation(ct))
             {
+                deltaCount++;
+                if (deltaCount > SyncConstants.MaxIncomingDeltaCountPerCall)
+                    throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Too many deltas in one sync call.");
+
                 var delta = DeltaMapping.FromProto(chunk);
+                totalPayloadBytes += delta.Payload.Length;
+                if (totalPayloadBytes > SyncConstants.MaxIncomingDeltaTotalBytesPerCall)
+                    throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Too much delta data in one sync call.");
+
                 ValidateDeltaTransport(delta, remoteDevice, identity.LocalDeviceId);
 
+                var deltaReplayId = BuildDeltaReplayId(delta);
+                if (!seenDeltaIdsInCall.Add(deltaReplayId) || IsRecentIncomingDeltaReplay(deltaReplayId))
+                {
+                    if (delta.Ts > lastSyncedTs)
+                        lastSyncedTs = delta.Ts;
+
+                    continue;
+                }
+
                 var appliedTs = await applier.ApplyAsync(delta, ct);
+                RememberIncomingDelta(deltaReplayId);
                 if (appliedTs > lastSyncedTs)
                     lastSyncedTs = appliedTs;
             }
@@ -155,7 +175,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IReadOnlyList<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, CancellationToken ct)
+    public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, CancellationToken ct)
     {
         using var scope = _root.CreateScope();
 
@@ -174,11 +194,14 @@ public sealed class SyncPeerProtocolHandler
             string? sourceDeviceId = null;
             byte[]? sourceSignPublicKey = null;
             string? sourceTlsCertFingerprint = null;
+            var snapshotEncryptionVersion = 0;
+            byte[]? snapshotEncryptionNonce = null;
+            byte[]? snapshotEncryptionTag = null;
             var totalBytes = 0L;
 
             await using var snapshotStream = new MemoryStream();
 
-            foreach (var chunk in chunks)
+            await foreach (var chunk in chunks.WithCancellation(ct))
             {
                 if (!string.IsNullOrWhiteSpace(chunk.SessionId))
                     sessionId = chunk.SessionId;
@@ -194,6 +217,15 @@ public sealed class SyncPeerProtocolHandler
 
                 if (!string.IsNullOrWhiteSpace(chunk.SourceTlsCertFingerprint))
                     sourceTlsCertFingerprint = chunk.SourceTlsCertFingerprint;
+
+                if (chunk.SnapshotEncryptionVersion > 0)
+                    snapshotEncryptionVersion = chunk.SnapshotEncryptionVersion;
+
+                if (chunk.SnapshotEncryptionNonce.Length > 0)
+                    snapshotEncryptionNonce = chunk.SnapshotEncryptionNonce.ToByteArray();
+
+                if (chunk.SnapshotEncryptionTag.Length > 0)
+                    snapshotEncryptionTag = chunk.SnapshotEncryptionTag.ToByteArray();
 
                 var bytes = chunk.SnapshotChunk.ToByteArray();
                 totalBytes += bytes.Length;
@@ -236,6 +268,9 @@ public sealed class SyncPeerProtocolHandler
                 sourceTlsCertFingerprint,
                 context.ClientCertificateFingerprint,
                 context.RemoteIpAddress,
+                snapshotEncryptionVersion,
+                snapshotEncryptionNonce ?? [],
+                snapshotEncryptionTag ?? [],
                 ct);
 
             DeviceEnrollmentTrace.Info($"Incoming streaming CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
@@ -411,6 +446,46 @@ public sealed class SyncPeerProtocolHandler
         statusCode == SyncProtocolStatusCode.PermissionDenied ||
         statusCode == SyncProtocolStatusCode.ResourceExhausted ||
         statusCode == SyncProtocolStatusCode.FailedPrecondition;
+
+
+    private bool IsRecentIncomingDeltaReplay(string deltaReplayId)
+    {
+        CleanupRecentIncomingDeltaReplayIds();
+
+        if (!_recentIncomingDeltaIds.TryGetValue(deltaReplayId, out var seenAt))
+            return false;
+
+        return DateTimeOffset.UtcNow - seenAt < TimeSpan.FromMinutes(SyncConstants.RecentIncomingDeltaReplayWindowMinutes);
+    }
+
+
+    private void RememberIncomingDelta(string deltaReplayId)
+    {
+        _recentIncomingDeltaIds[deltaReplayId] = DateTimeOffset.UtcNow;
+        CleanupRecentIncomingDeltaReplayIds();
+    }
+
+
+    private void CleanupRecentIncomingDeltaReplayIds()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-SyncConstants.RecentIncomingDeltaReplayWindowMinutes);
+
+        foreach (var item in _recentIncomingDeltaIds)
+        {
+            if (item.Value < cutoff)
+                _recentIncomingDeltaIds.TryRemove(item.Key, out _);
+        }
+
+        if (_recentIncomingDeltaIds.Count <= SyncConstants.MaxRecentIncomingDeltaReplayIds)
+            return;
+
+        foreach (var item in _recentIncomingDeltaIds.OrderBy(item => item.Value).Take(_recentIncomingDeltaIds.Count - SyncConstants.MaxRecentIncomingDeltaReplayIds))
+            _recentIncomingDeltaIds.TryRemove(item.Key, out _);
+    }
+
+
+    private static string BuildDeltaReplayId(NetworkDelta delta) =>
+        $"{delta.DeviceId}:{delta.Ts}:{Convert.ToHexString(delta.Sig)}";
 
 
     private static string BuildDeviceId(byte[] signPublicKey) =>

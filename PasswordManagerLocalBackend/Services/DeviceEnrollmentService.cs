@@ -33,6 +33,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         public DeviceEnrollmentState State { get; set; } = DeviceEnrollmentState.Waiting;
         public string? ErrorMessage { get; set; }
         public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
+        public int InvalidProofAttempts { get; set; }
         public ServiceDiscovery? Discovery { get; set; }
         public ServiceProfile? Profile { get; set; }
     }
@@ -293,7 +294,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 _identity.SignPublicKey,
                 _identity.FingerprintHex);
 
-            var result = await SendEnrollmentSnapshotAsync(endpoint, parsed.SessionId, proof, snapshot, ct);
+            var result = await SendEnrollmentSnapshotAsync(endpoint, parsed.SessionId, parsed.Secret, proof, snapshot, ct);
             if (!result.Ok)
                 throw new DeviceEnrollmentException(result.ErrorCode, result.Error ?? "The new device rejected the enrollment request.");
 
@@ -398,11 +399,20 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             var expectedProof = DeviceEnrollmentCode.BuildEnrollmentInfoProof(sessionId, session.Secret);
             if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
             {
+                session.InvalidProofAttempts++;
+                if (session.InvalidProofAttempts >= SyncConstants.MaxEnrollmentInvalidProofAttempts)
+                {
+                    session.State = DeviceEnrollmentState.Failed;
+                    session.ErrorCode = DeviceEnrollmentErrorCode.CodeProofInvalid;
+                    session.ErrorMessage = "Too many invalid enrollment proof attempts.";
+                    StopAdvertisingLocked();
+                }
+
                 return Task.FromResult(new DeviceEnrollmentInfoResponse
                 {
                     Ok = false,
                     ErrorCode = DeviceEnrollmentErrorCode.CodeProofInvalid,
-                    Error = "The enrollment code proof is invalid."
+                    Error = session.ErrorMessage ?? "The enrollment code proof is invalid."
                 });
             }
 
@@ -427,6 +437,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         string sourceTlsCertFingerprint,
         string actualClientTlsCertFingerprint,
         string? sourceHost,
+        int snapshotEncryptionVersion,
+        byte[] snapshotEncryptionNonce,
+        byte[] snapshotEncryptionTag,
         CancellationToken ct = default)
     {
         EnrollmentSession? session;
@@ -468,11 +481,34 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
             return await FailIncomingAsync(DeviceEnrollmentErrorCode.CodeProofInvalid, "The enrollment code proof is invalid.");
 
+        byte[] plaintextSnapshotBytes;
+        try
+        {
+            plaintextSnapshotBytes = DecryptEnrollmentSnapshot(
+                sessionId,
+                session.Secret,
+                snapshotBytes,
+                sourceDeviceId,
+                sourceSignPublicKey,
+                sourceTlsCertFingerprint,
+                snapshotEncryptionVersion,
+                snapshotEncryptionNonce,
+                snapshotEncryptionTag);
+        }
+        catch (CryptographicException ex)
+        {
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The encrypted enrollment snapshot could not be authenticated: {ex.Message}");
+        }
+        catch (InvalidDataException ex)
+        {
+            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
+        }
+
         DeviceEnrollmentSnapshot? snapshot;
         try
         {
-            RejectSensitiveLocalOnlySnapshotPayload(snapshotBytes);
-            snapshot = JsonSerializer.Deserialize<DeviceEnrollmentSnapshot>(snapshotBytes);
+            RejectSensitiveLocalOnlySnapshotPayload(plaintextSnapshotBytes);
+            snapshot = JsonSerializer.Deserialize<DeviceEnrollmentSnapshot>(plaintextSnapshotBytes);
         }
         catch (JsonException ex)
         {
@@ -481,6 +517,10 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         catch (InvalidDataException ex)
         {
             return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintextSnapshotBytes);
         }
 
         if (snapshot is null || snapshot.PrimaryUserId == Guid.Empty)
@@ -1514,7 +1554,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, DeviceEnrollmentSnapshot snapshot, CancellationToken ct)
+    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] secret, byte[] proof, DeviceEnrollmentSnapshot snapshot, CancellationToken ct)
     {
         byte[] snapshotBytes;
         try
@@ -1532,13 +1572,31 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (snapshotBytes.Length > SyncConstants.MaxDeviceEnrollmentSnapshotBytes)
             return (false, DeviceEnrollmentErrorCode.ProfileDataTooLarge, "The profile data is too large to transfer in one enrollment request.");
 
+        byte[] encryptedSnapshotBytes;
+        byte[] snapshotNonce;
+        byte[] snapshotTag;
+        try
+        {
+            (encryptedSnapshotBytes, snapshotNonce, snapshotTag) = EncryptEnrollmentSnapshot(
+                sessionId,
+                secret,
+                snapshotBytes,
+                _identity.LocalDeviceId.ToString("N"),
+                _identity.SignPublicKey,
+                _identity.FingerprintHex);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(snapshotBytes);
+        }
+
         using var transferTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         transferTimeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.DeviceEnrollmentTransferTimeoutSeconds));
 
         try
         {
             DeviceEnrollmentTrace.Info($"Trying TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
-            var result = await SendEnrollmentSnapshotStreamAsync(endpoint, sessionId, proof, snapshotBytes, transferTimeout.Token);
+            var result = await SendEnrollmentSnapshotStreamAsync(endpoint, sessionId, proof, encryptedSnapshotBytes, snapshotNonce, snapshotTag, transferTimeout.Token);
 
             if (result.Ok)
                 DeviceEnrollmentTrace.Info($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
@@ -1552,23 +1610,29 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             DeviceEnrollmentTrace.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {ex.Message}", ex);
             return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, ex.Message);
         }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(encryptedSnapshotBytes);
+            CryptographicOperations.ZeroMemory(snapshotNonce);
+            CryptographicOperations.ZeroMemory(snapshotTag);
+        }
     }
 
 
-    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotStreamAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, CancellationToken ct)
+    private async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> SendEnrollmentSnapshotStreamAsync(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, byte[] snapshotNonce, byte[] snapshotTag, CancellationToken ct)
     {
         var reply = await _syncTransport.CompleteDeviceEnrollmentStreamAsync(
             endpoint.Host,
             endpoint.Port,
             endpoint.TlsCertFingerprint,
-            BuildEnrollmentSnapshotChunks(sessionId, proof, snapshotBytes),
+            BuildEnrollmentSnapshotChunks(sessionId, proof, snapshotBytes, snapshotNonce, snapshotTag),
             ct);
 
         return ParseEnrollmentReply(reply);
     }
 
 
-    private async IAsyncEnumerable<CompleteDeviceEnrollmentChunk> BuildEnrollmentSnapshotChunks(string sessionId, byte[] proof, byte[] snapshotBytes)
+    private async IAsyncEnumerable<CompleteDeviceEnrollmentChunk> BuildEnrollmentSnapshotChunks(string sessionId, byte[] proof, byte[] snapshotBytes, byte[] snapshotNonce, byte[] snapshotTag)
     {
         var sourceDeviceId = _identity.LocalDeviceId.ToString("N");
 
@@ -1582,6 +1646,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SourceDeviceId = offset == 0 ? sourceDeviceId : string.Empty,
                 SourceSignPub = offset == 0 ? ByteString.CopyFrom(_identity.SignPublicKey) : ByteString.Empty,
                 SourceTlsCertFingerprint = offset == 0 ? _identity.FingerprintHex : string.Empty,
+                SnapshotEncryptionVersion = offset == 0 ? SyncConstants.EnrollmentSnapshotEncryptionVersion : 0,
+                SnapshotEncryptionNonce = offset == 0 ? ByteString.CopyFrom(snapshotNonce) : ByteString.Empty,
+                SnapshotEncryptionTag = offset == 0 ? ByteString.CopyFrom(snapshotTag) : ByteString.Empty,
                 SnapshotChunk = ByteString.CopyFrom(snapshotBytes, offset, count)
             };
 
@@ -1597,6 +1664,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SourceDeviceId = sourceDeviceId,
                 SourceSignPub = ByteString.CopyFrom(_identity.SignPublicKey),
                 SourceTlsCertFingerprint = _identity.FingerprintHex,
+                SnapshotEncryptionVersion = SyncConstants.EnrollmentSnapshotEncryptionVersion,
+                SnapshotEncryptionNonce = ByteString.CopyFrom(snapshotNonce),
+                SnapshotEncryptionTag = ByteString.CopyFrom(snapshotTag),
                 SnapshotChunk = ByteString.Empty
             };
         }
@@ -1613,6 +1683,70 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             : DeviceEnrollmentErrorCode.NewDeviceRejected;
 
         return (false, errorCode, string.IsNullOrWhiteSpace(reply.Error) ? "The new device rejected the enrollment request." : reply.Error);
+    }
+
+
+    private static (byte[] Ciphertext, byte[] Nonce, byte[] Tag) EncryptEnrollmentSnapshot(
+        string sessionId,
+        byte[] secret,
+        byte[] plaintext,
+        string sourceDeviceId,
+        byte[] sourceSignPublicKey,
+        string sourceTlsFingerprint)
+    {
+        var key = DeviceEnrollmentCode.BuildSnapshotEncryptionKey(sessionId, secret);
+        var nonce = RandomNumberGenerator.GetBytes(SyncConstants.EnrollmentSnapshotEncryptionNonceBytes);
+        var tag = new byte[SyncConstants.EnrollmentSnapshotEncryptionTagBytes];
+        var ciphertext = new byte[plaintext.Length];
+        var aad = DeviceEnrollmentCode.BuildSnapshotEncryptionAad(sessionId, sourceDeviceId, sourceSignPublicKey, sourceTlsFingerprint);
+
+        using var aes = new AesGcm(key, SyncConstants.EnrollmentSnapshotEncryptionTagBytes);
+        aes.Encrypt(nonce, plaintext, ciphertext, tag, aad);
+
+        CryptographicOperations.ZeroMemory(key);
+        return (ciphertext, nonce, tag);
+    }
+
+
+    private static byte[] DecryptEnrollmentSnapshot(
+        string sessionId,
+        byte[] secret,
+        byte[] ciphertext,
+        string sourceDeviceId,
+        byte[] sourceSignPublicKey,
+        string sourceTlsFingerprint,
+        int encryptionVersion,
+        byte[] nonce,
+        byte[] tag)
+    {
+        if (encryptionVersion != SyncConstants.EnrollmentSnapshotEncryptionVersion)
+            throw new InvalidDataException("The enrollment snapshot encryption version is invalid.");
+
+        if (nonce.Length != SyncConstants.EnrollmentSnapshotEncryptionNonceBytes)
+            throw new InvalidDataException("The enrollment snapshot encryption nonce is invalid.");
+
+        if (tag.Length != SyncConstants.EnrollmentSnapshotEncryptionTagBytes)
+            throw new InvalidDataException("The enrollment snapshot authentication tag is invalid.");
+
+        var key = DeviceEnrollmentCode.BuildSnapshotEncryptionKey(sessionId, secret);
+        var plaintext = new byte[ciphertext.Length];
+        var aad = DeviceEnrollmentCode.BuildSnapshotEncryptionAad(sessionId, sourceDeviceId, sourceSignPublicKey, sourceTlsFingerprint);
+
+        try
+        {
+            using var aes = new AesGcm(key, SyncConstants.EnrollmentSnapshotEncryptionTagBytes);
+            aes.Decrypt(nonce, ciphertext, tag, plaintext, aad);
+            return plaintext;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+            throw;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
     }
 
 

@@ -57,6 +57,9 @@ message CompleteDeviceEnrollmentChunk {
   bytes source_sign_pub = 4;
   string source_tls_cert_fingerprint = 5;
   bytes snapshot_chunk = 6;
+  int32 snapshot_encryption_version = 7;
+  bytes snapshot_encryption_nonce = 8;
+  bytes snapshot_encryption_tag = 9;
 }
 
 message CompleteDeviceEnrollmentReply {

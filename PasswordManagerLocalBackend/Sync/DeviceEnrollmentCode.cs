@@ -1,3 +1,4 @@
+using PasswordManagerLocalBackend.Constants;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -105,6 +106,14 @@ public static class DeviceEnrollmentCode
         Hmac(secret, $"complete:{sessionId}:{sourceDeviceId}:{Convert.ToHexString(sourceSignPublicKey)}:{NormalizeFingerprint(sourceTlsFingerprint)}");
 
 
+    public static byte[] BuildSnapshotEncryptionKey(string sessionId, byte[] secret) =>
+        Hmac(secret, $"snapshot-key:{sessionId}");
+
+
+    public static byte[] BuildSnapshotEncryptionAad(string sessionId, string sourceDeviceId, byte[] sourceSignPublicKey, string sourceTlsFingerprint) =>
+        Encoding.UTF8.GetBytes($"pml-enrollment-snapshot:v1:{sessionId}:{sourceDeviceId}:{Convert.ToHexString(sourceSignPublicKey)}:{NormalizeFingerprint(sourceTlsFingerprint)}");
+
+
     public static bool FixedTimeEquals(byte[] left, byte[] right)
     {
         if (left.Length != right.Length)
@@ -193,6 +202,8 @@ public static class DeviceEnrollmentCode
                 }
             }
 
+            writer.Write(RandomNumberGenerator.GetBytes(SyncConstants.EnrollmentCodeNoiseBytes));
+
             code = $"{CompactDirectPrefix}-{Group(Encode(ms.ToArray()))}";
             return true;
         }
@@ -247,6 +258,8 @@ public static class DeviceEnrollmentCode
                 writer.Write((byte)hostBytes.Length);
                 writer.Write(hostBytes);
             }
+
+            writer.Write(RandomNumberGenerator.GetBytes(SyncConstants.EnrollmentCodeNoiseBytes));
 
             code = $"{DirectPrefix}-{Group(Encode(ms.ToArray()))}";
             return true;
