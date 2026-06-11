@@ -1,5 +1,6 @@
 ﻿using Avalonia;
 using Avalonia.ReactiveUI;
+using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend;
 using System;
 using System.Threading.Tasks;
@@ -11,6 +12,7 @@ internal sealed class Program
     [STAThread]
     public static async Task Main(string[] args)
     {
+        ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
         await BackendHost.InitializeAsync(new DpapiKeyProtector());
 
         BuildAvaloniaApp()
