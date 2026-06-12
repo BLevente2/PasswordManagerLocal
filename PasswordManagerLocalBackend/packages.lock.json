@@ -488,6 +488,29 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.2"
         }
       }
+    },
+    "net10.0/win-x64": {
+      "SQLitePCLRaw.lib.e_sqlcipher": {
+        "type": "Transitive",
+        "resolved": "2.1.11",
+        "contentHash": "Cg6UPeDbH8jyaOs1vqXYIgeewH0wYrBnmbC5Ml3GYBo+GKzNmyxrWSO52JV68bfB7Addt/PZLMekJV1RH2ftWQ=="
+      },
+      "System.Diagnostics.EventLog": {
+        "type": "Transitive",
+        "resolved": "10.0.2",
+        "contentHash": "TJPpTLF5MFPobq09c9BQ5X8QuviQfsKvH0Jbm7MkGylGvfIdRqJQLZDPC5sMRFkk9aZhmgir1NJKekip2NxfaA=="
+      },
+      "Tmds.LibC": {
+        "type": "Transitive",
+        "resolved": "0.2.0",
+        "contentHash": "+RvLuNHOLW7cxzgDe9yHLoayBgjsuH2/gJtJnuVMxweKrxxYT6TwQNAmt06SFWpjwk68aRcwwD4FfMMA6tZvVA=="
+      },
+      "libsodium": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.20.2, )",
+        "resolved": "1.0.20.2",
+        "contentHash": "FButtPK6HZvOewaE20F1HXNJn4qOoGAf7FEDm0VbWJ+xBX9pN9+2nkQQnfaLz+Ae5KuEzRoe1GHO00UpabgNxA=="
+      }
     }
   }
 }
