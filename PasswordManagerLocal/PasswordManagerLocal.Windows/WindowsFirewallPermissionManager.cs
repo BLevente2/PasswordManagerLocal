@@ -81,7 +81,7 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
                 IsSupported = true,
                 IsConfigured = false,
                 CanRequestPermission = true,
-                Details = string.IsNullOrWhiteSpace(applyResult.Error) ? applyResult.Output : applyResult.Error
+                Details = GetBestProcessDetails(applyResult)
             };
         }
 
@@ -89,7 +89,8 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
         {
             IsSupported = true,
             IsConfigured = true,
-            CanRequestPermission = true
+            CanRequestPermission = true,
+            Details = GetBestProcessDetails(applyResult)
         };
     }
 
@@ -113,6 +114,67 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
         $$"""
 param([string]$AppExe)
 $ErrorActionPreference = 'Stop'
+Import-Module NetSecurity -ErrorAction Stop
+
+function Normalize-PmlPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ''
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path)).TrimEnd('\')
+    } catch {
+        return [Environment]::ExpandEnvironmentVariables($Path).TrimEnd('\')
+    }
+}
+
+function Test-PmlProgramMatch {
+    param(
+        [string]$RuleProgram,
+        [string]$AppExe
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RuleProgram) -or [string]::IsNullOrWhiteSpace($AppExe)) {
+        return $false
+    }
+
+    $program = Normalize-PmlPath $RuleProgram
+    $app = Normalize-PmlPath $AppExe
+
+    return [string]::Equals($program, $app, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-PmlAppRules {
+    param(
+        [string]$AppExe,
+        [string]$Action
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AppExe) -or -not (Test-Path -LiteralPath $AppExe)) {
+        return @()
+    }
+
+    $matched = @()
+    $rules = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {
+        ([string]$_.Enabled) -ieq 'True' -and
+        ([string]$_.Direction) -ieq 'Inbound' -and
+        ([string]$_.Action) -ieq $Action
+    })
+
+    foreach ($rule in $rules) {
+        $filters = @($rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue)
+        foreach ($filter in $filters) {
+            if (Test-PmlProgramMatch -RuleProgram ([string]$filter.Program) -AppExe $AppExe) {
+                $matched += $rule
+                break
+            }
+        }
+    }
+
+    return $matched
+}
 
 function Test-PmlFirewallPortRule {
     param(
@@ -129,11 +191,8 @@ function Test-PmlFirewallPortRule {
 
     foreach ($rule in $rules) {
         $portFilter = $rule | Get-NetFirewallPortFilter
-        $addressFilter = $rule | Get-NetFirewallAddressFilter
-
         $protocolValue = [string]$portFilter.Protocol
         $localPorts = @($portFilter.LocalPort | ForEach-Object { [string]$_ })
-        $remoteAddresses = @($addressFilter.RemoteAddress | ForEach-Object { [string]$_ })
         $profileText = [string]$rule.Profile
 
         $protocolOk =
@@ -142,14 +201,13 @@ function Test-PmlFirewallPortRule {
             ($Protocol -ieq 'UDP' -and $protocolValue -eq '17')
 
         $portOk = $localPorts -contains $Port -or $localPorts -contains 'Any'
-        $remoteOk = $remoteAddresses -contains 'LocalSubnet' -or $remoteAddresses -contains 'Any' -or $remoteAddresses -contains '*'
         $profileOk =
             $profileText -ieq 'Any' -or
             $profileText.Contains('Private') -or
             $profileText.Contains('Domain') -or
             $profileText.Contains('Public')
 
-        if ($protocolOk -and $portOk -and $remoteOk -and $profileOk) {
+        if ($protocolOk -and $portOk -and $profileOk) {
             return $true
         }
     }
@@ -157,6 +215,11 @@ function Test-PmlFirewallPortRule {
     return $false
 }
 
+$appBlockRules = @(Get-PmlAppRules -AppExe $AppExe -Action 'Block')
+if ($appBlockRules.Count -gt 0) {
+    Write-Error "A Windows Firewall inbound block rule is active for this executable: $($appBlockRules[0].DisplayName). Click Allow again so PasswordManagerLocal can replace the blocked app rule with an allow rule."
+    exit 3
+}
 $tcpOk = Test-PmlFirewallPortRule -DisplayName '{{TcpPortRuleName}}' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}'
 $udpOk = Test-PmlFirewallPortRule -DisplayName '{{MdnsPortRuleName}}' -Protocol 'UDP' -Port '5353'
 
@@ -179,39 +242,102 @@ exit 2
             MdnsPortRuleName
         }.Concat(LegacyRuleNames);
 
-        var deleteLines = string.Join(Environment.NewLine, allRuleNames.Select(name => $"& $netsh advfirewall firewall delete rule name='{EscapePowerShellSingleQuotedString(name)}' | Out-Null"));
+        var deleteLines = string.Join(Environment.NewLine, allRuleNames.Select(name => $"Remove-PmlFirewallRuleByDisplayName -DisplayName '{EscapePowerShellSingleQuotedString(name)}'"));
 
         return $$"""
-param([string]$AppExe)
+param(
+    [string]$AppExe,
+    [string]$StatusFile
+)
+
 $ErrorActionPreference = 'Stop'
-$netsh = Join-Path $env:WINDIR 'System32\netsh.exe'
 
-function Invoke-PmlNetsh {
-    param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+try {
+Import-Module NetSecurity -ErrorAction Stop
 
-    & $netsh @Arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "netsh failed: $($Arguments -join ' ')"
+function Normalize-PmlPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ''
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path)).TrimEnd('\')
+    } catch {
+        return [Environment]::ExpandEnvironmentVariables($Path).TrimEnd('\')
     }
 }
 
-function Invoke-PmlNetshOptional {
-    param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+function Test-PmlProgramMatch {
+    param(
+        [string]$RuleProgram,
+        [string]$AppExe
+    )
 
-    & $netsh @Arguments | Out-Null
+    if ([string]::IsNullOrWhiteSpace($RuleProgram) -or [string]::IsNullOrWhiteSpace($AppExe)) {
+        return $false
+    }
+
+    $program = Normalize-PmlPath $RuleProgram
+    $app = Normalize-PmlPath $AppExe
+
+    return [string]::Equals($program, $app, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Remove-PmlFirewallRuleByDisplayName {
+    param([string]$DisplayName)
+
+    Get-NetFirewallRule -DisplayName $DisplayName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+}
+
+function Remove-PmlConflictingAppBlockRules {
+    param([string]$AppExe)
+
+    if ([string]::IsNullOrWhiteSpace($AppExe) -or -not (Test-Path -LiteralPath $AppExe)) {
+        return
+    }
+
+    $rules = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {
+        ([string]$_.Direction) -ieq 'Inbound' -and
+        ([string]$_.Action) -ieq 'Block'
+    })
+
+    foreach ($rule in $rules) {
+        $filters = @($rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue)
+        foreach ($filter in $filters) {
+            if (Test-PmlProgramMatch -RuleProgram ([string]$filter.Program) -AppExe $AppExe) {
+                $rule | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+                break
+            }
+        }
+    }
 }
 
 {{deleteLines}}
-
-Invoke-PmlNetsh advfirewall firewall add rule name='{{TcpPortRuleName}}' dir=in action=allow enable=yes profile=any protocol=TCP localport={{SyncConstants.SyncPort}} remoteip=localsubnet
-Invoke-PmlNetsh advfirewall firewall add rule name='{{MdnsPortRuleName}}' dir=in action=allow enable=yes profile=any protocol=UDP localport=5353 remoteip=localsubnet
+Remove-PmlConflictingAppBlockRules -AppExe $AppExe
+New-NetFirewallRule -DisplayName '{{TcpPortRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP -LocalPort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+New-NetFirewallRule -DisplayName '{{MdnsPortRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($AppExe) -and (Test-Path -LiteralPath $AppExe)) {
-    Invoke-PmlNetshOptional advfirewall firewall add rule name='{{TcpAppRuleName}}' dir=in action=allow program="$AppExe" enable=yes profile=any protocol=TCP localport={{SyncConstants.SyncPort}} remoteip=localsubnet
-    Invoke-PmlNetshOptional advfirewall firewall add rule name='{{MdnsAppRuleName}}' dir=in action=allow program="$AppExe" enable=yes profile=any protocol=UDP localport=5353 remoteip=localsubnet
+    New-NetFirewallRule -DisplayName '{{TcpAppRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -LocalPort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '{{MdnsAppRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+}
+
+if (-not [string]::IsNullOrWhiteSpace($StatusFile)) {
+    Set-Content -LiteralPath $StatusFile -Value 'OK: Windows Firewall rules were added successfully.' -Encoding UTF8
 }
 
 exit 0
+} catch {
+    $message = $_.Exception.Message
+    if (-not [string]::IsNullOrWhiteSpace($StatusFile)) {
+        Set-Content -LiteralPath $StatusFile -Value ("ERROR: " + $message) -Encoding UTF8
+    }
+
+    [Console]::Error.WriteLine($message)
+    exit 1
+}
 """;
     }
 
@@ -220,14 +346,19 @@ exit 0
     private static async Task<(int ExitCode, string Output, string Error)> RunPowerShellScriptAsync(string script, string appExePath, bool elevated, CancellationToken ct)
     {
         var scriptPath = Path.Combine(Path.GetTempPath(), $"pml-firewall-{Guid.NewGuid():N}.ps1");
+        var statusPath = elevated ? Path.Combine(Path.GetTempPath(), $"pml-firewall-status-{Guid.NewGuid():N}.txt") : null;
         await File.WriteAllTextAsync(scriptPath, script, ct);
 
         try
         {
+            var arguments = $"-NoProfile -ExecutionPolicy Bypass -File {QuoteArgument(scriptPath)} -AppExe {QuoteArgument(appExePath)}";
+            if (!string.IsNullOrWhiteSpace(statusPath))
+                arguments += $" -StatusFile {QuoteArgument(statusPath)}";
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File {QuoteArgument(scriptPath)} -AppExe {QuoteArgument(appExePath)}",
+                Arguments = arguments,
                 UseShellExecute = elevated,
                 CreateNoWindow = !elevated
             };
@@ -260,6 +391,8 @@ exit 0
             else
             {
                 await process.WaitForExitAsync(ct);
+                if (!string.IsNullOrWhiteSpace(statusPath) && File.Exists(statusPath))
+                    output = await File.ReadAllTextAsync(statusPath, ct);
             }
 
             return (process.ExitCode, output.Trim(), error.Trim());
@@ -271,7 +404,22 @@ exit 0
         finally
         {
             TryDeleteFile(scriptPath);
+            if (!string.IsNullOrWhiteSpace(statusPath))
+                TryDeleteFile(statusPath);
         }
+    }
+
+
+
+    private static string GetBestProcessDetails((int ExitCode, string Output, string Error) result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.Error))
+            return result.Error;
+
+        if (!string.IsNullOrWhiteSpace(result.Output))
+            return result.Output;
+
+        return $"PowerShell exited with code {result.ExitCode}.";
     }
 
 

@@ -202,13 +202,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             }
         }
 
-        if (directEndpoints.Count > 0 && hasAuthoritativeSameSubnetDirectEndpoint)
+        if (directEndpoints.Count > 0)
         {
-            throw new DeviceEnrollmentException(
-                DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
-                BuildEndpointFailureMessage(
-                    "The enrollment code contains a same-subnet address for the new device, but the app could not connect to it. mDNS fallback was skipped because it often resolves to Windows virtual adapters on this machine.",
-                    directFailures));
+            var reason = hasAuthoritativeSameSubnetDirectEndpoint
+                ? "The same-subnet direct endpoint did not respond. Trying mDNS fallback because Wi-Fi/wired bridges can still expose another usable address."
+                : "The direct enrollment endpoints did not respond. Trying mDNS fallback.";
+
+            DeviceEnrollmentTrace.Info(reason);
         }
 
         IReadOnlyList<EnrollmentEndpoint> mdnsEndpoints;
@@ -222,7 +222,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             throw new DeviceEnrollmentException(
                 DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
                 BuildEndpointFailureMessage(
-                    "The new device was included in the enrollment code, but it could not be reached directly and mDNS discovery also failed.",
+                    BuildMdnsDiscoveryFailedMessage(hasAuthoritativeSameSubnetDirectEndpoint),
                     directFailures),
                 ex);
         }
@@ -246,7 +246,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         throw new DeviceEnrollmentException(
             DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
             BuildEndpointFailureMessage(
-                "The new device was discovered, but none of the reachable network addresses accepted the enrollment transfer.",
+                BuildNoEndpointAcceptedMessage(hasAuthoritativeSameSubnetDirectEndpoint),
                 directFailures.Concat(mdnsFailures)));
     }
 
@@ -262,6 +262,28 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             return message;
 
         return $"{message} Attempted endpoints: {string.Join("; ", failures)}";
+    }
+
+
+    private static string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint)
+    {
+        if (hadSameSubnetDirectEndpoint)
+        {
+            return "The enrollment code contained a same-subnet address for the new device, but the app could not connect to it by direct TCP or mDNS. If general LAN traffic works between the devices, the most likely cause is that this app or TCP port 26688 is blocked by Windows Firewall on the target device, or the sync TCP listener is not running on that device.";
+        }
+
+        return "The new device was discovered, but none of the reachable network addresses accepted the enrollment transfer.";
+    }
+
+
+    private static string BuildMdnsDiscoveryFailedMessage(bool hadSameSubnetDirectEndpoint)
+    {
+        if (hadSameSubnetDirectEndpoint)
+        {
+            return "The enrollment code contained a same-subnet address for the new device, but the app could not connect to it directly and mDNS discovery also failed. If general LAN traffic works between the devices, the most likely cause is that this app or TCP port 26688 is blocked by Windows Firewall on the target device, or the sync TCP listener is not running on that device.";
+        }
+
+        return "The new device was included in the enrollment code, but it could not be reached directly and mDNS discovery also failed.";
     }
 
 

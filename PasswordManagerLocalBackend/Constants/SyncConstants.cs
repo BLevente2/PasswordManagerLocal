@@ -11,7 +11,7 @@ public static class SyncConstants
     public const int MdnsRefreshIntervalSeconds = 30;
     public const int NetworkRefreshDebounceSeconds = 3;
     public const int DeviceEnrollmentDiscoveryTimeoutSeconds = 30;
-    public const int DeviceEnrollmentConnectTimeoutSeconds = 4;
+    public const int DeviceEnrollmentConnectTimeoutSeconds = 8;
     public const int DeviceEnrollmentTransferTimeoutSeconds = 120;
 
     public const int MaxIncomingDeltaPayloadBytes = 4 * 1024 * 1024;

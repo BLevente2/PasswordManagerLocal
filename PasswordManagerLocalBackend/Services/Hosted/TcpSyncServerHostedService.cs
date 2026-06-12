@@ -41,7 +41,10 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         if (!_identity.IsSyncOn)
+        {
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info("TCP sync server was not started because synchronization is disabled on this device.");
             return Task.CompletedTask;
+        }
 
         if (_listener is not null)
             return Task.CompletedTask;
@@ -49,6 +52,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _listener = new TcpListener(IPAddress.Any, SyncConstants.SyncPort);
         _listener.Start();
+        PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP sync server listening on 0.0.0.0:{SyncConstants.SyncPort}.");
 
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token), CancellationToken.None);
         return Task.CompletedTask;
