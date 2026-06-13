@@ -13,6 +13,24 @@ public sealed class DeviceItemViewModel : ReactiveObject
     private readonly Action<DeviceItemViewModel> _beginDisconnect;
     private string _editableName;
     private bool _isSyncEnabled;
+    private string _currentDeviceLabel;
+    private string _blockedLabel;
+    private string _trustedLabel;
+    private string _notTrustedLabel;
+    private string _syncEnabledLabel;
+    private string _syncDisabledLabel;
+    private string _syncToggleOnLabel;
+    private string _syncToggleOffLabel;
+    private string _saveNameLabel;
+    private string _unblockLabel;
+    private string _disconnectLabel;
+    private string _deviceNameLabel;
+    private string _deviceLastSeenLabel;
+    private string _deviceLastSyncLabel;
+    private string _deviceLinkedAtLabel;
+    private string _deviceBlockedReasonLabel;
+    private string _deviceBlockedAtLabel;
+    private string _deviceInvalidAttemptsLabel;
 
     private DeviceItemViewModel(
         UserDeviceInfoResponse device,
@@ -22,6 +40,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
         string notTrustedLabel,
         string syncEnabledLabel,
         string syncDisabledLabel,
+        string syncToggleOnLabel,
+        string syncToggleOffLabel,
         string saveNameLabel,
         string unblockLabel,
         string disconnectLabel,
@@ -52,22 +72,24 @@ public sealed class DeviceItemViewModel : ReactiveObject
         IsSyncEnabled = device.IsSyncEnabled;
         LinkedAt = device.LinkedAt;
         IsCurrentDevice = device.IsCurrentDevice;
-        CurrentDeviceLabel = currentDeviceLabel;
-        BlockedLabel = blockedLabel;
-        TrustedLabel = trustedLabel;
-        NotTrustedLabel = notTrustedLabel;
-        SyncEnabledLabel = syncEnabledLabel;
-        SyncDisabledLabel = syncDisabledLabel;
-        SaveNameLabel = saveNameLabel;
-        UnblockLabel = unblockLabel;
-        DisconnectLabel = disconnectLabel;
-        DeviceNameLabel = deviceNameLabel;
-        DeviceLastSeenLabel = deviceLastSeenLabel;
-        DeviceLastSyncLabel = deviceLastSyncLabel;
-        DeviceLinkedAtLabel = deviceLinkedAtLabel;
-        DeviceBlockedReasonLabel = deviceBlockedReasonLabel;
-        DeviceBlockedAtLabel = deviceBlockedAtLabel;
-        DeviceInvalidAttemptsLabel = deviceInvalidAttemptsLabel;
+        _currentDeviceLabel = currentDeviceLabel;
+        _blockedLabel = blockedLabel;
+        _trustedLabel = trustedLabel;
+        _notTrustedLabel = notTrustedLabel;
+        _syncEnabledLabel = syncEnabledLabel;
+        _syncDisabledLabel = syncDisabledLabel;
+        _syncToggleOnLabel = syncToggleOnLabel;
+        _syncToggleOffLabel = syncToggleOffLabel;
+        _saveNameLabel = saveNameLabel;
+        _unblockLabel = unblockLabel;
+        _disconnectLabel = disconnectLabel;
+        _deviceNameLabel = deviceNameLabel;
+        _deviceLastSeenLabel = deviceLastSeenLabel;
+        _deviceLastSyncLabel = deviceLastSyncLabel;
+        _deviceLinkedAtLabel = deviceLinkedAtLabel;
+        _deviceBlockedReasonLabel = deviceBlockedReasonLabel;
+        _deviceBlockedAtLabel = deviceBlockedAtLabel;
+        _deviceInvalidAttemptsLabel = deviceInvalidAttemptsLabel;
         _viewAsync = viewAsync;
         _saveNameAsync = saveNameAsync;
         _toggleSyncAsync = toggleSyncAsync;
@@ -131,37 +153,41 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public bool HasInvalidSyncAttempts => InvalidSyncAttemptCount > 0;
 
-    public string CurrentDeviceLabel { get; }
+    public string CurrentDeviceLabel => _currentDeviceLabel;
 
-    public string BlockedLabel { get; }
+    public string BlockedLabel => _blockedLabel;
 
-    public string TrustedLabel { get; }
+    public string TrustedLabel => _trustedLabel;
 
-    public string NotTrustedLabel { get; }
+    public string NotTrustedLabel => _notTrustedLabel;
 
-    public string SyncEnabledLabel { get; }
+    public string SyncEnabledLabel => _syncEnabledLabel;
 
-    public string SyncDisabledLabel { get; }
+    public string SyncDisabledLabel => _syncDisabledLabel;
 
-    public string SaveNameLabel { get; }
+    public string SyncToggleOnLabel => _syncToggleOnLabel;
 
-    public string UnblockLabel { get; }
+    public string SyncToggleOffLabel => _syncToggleOffLabel;
 
-    public string DisconnectLabel { get; }
+    public string SaveNameLabel => _saveNameLabel;
 
-    public string DeviceNameLabel { get; }
+    public string UnblockLabel => _unblockLabel;
 
-    public string DeviceLastSeenLabel { get; }
+    public string DisconnectLabel => _disconnectLabel;
 
-    public string DeviceLastSyncLabel { get; }
+    public string DeviceNameLabel => _deviceNameLabel;
 
-    public string DeviceLinkedAtLabel { get; }
+    public string DeviceLastSeenLabel => _deviceLastSeenLabel;
 
-    public string DeviceBlockedReasonLabel { get; }
+    public string DeviceLastSyncLabel => _deviceLastSyncLabel;
 
-    public string DeviceBlockedAtLabel { get; }
+    public string DeviceLinkedAtLabel => _deviceLinkedAtLabel;
 
-    public string DeviceInvalidAttemptsLabel { get; }
+    public string DeviceBlockedReasonLabel => _deviceBlockedReasonLabel;
+
+    public string DeviceBlockedAtLabel => _deviceBlockedAtLabel;
+
+    public string DeviceInvalidAttemptsLabel => _deviceInvalidAttemptsLabel;
 
     public string TrustStateText => IsTrusted ? TrustedLabel : NotTrustedLabel;
 
@@ -195,6 +221,67 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(Name));
     }
 
+    public void ApplyLocalization(
+        string currentDeviceLabel,
+        string blockedLabel,
+        string trustedLabel,
+        string notTrustedLabel,
+        string syncEnabledLabel,
+        string syncDisabledLabel,
+        string syncToggleOnLabel,
+        string syncToggleOffLabel,
+        string saveNameLabel,
+        string unblockLabel,
+        string disconnectLabel,
+        string deviceNameLabel,
+        string deviceLastSeenLabel,
+        string deviceLastSyncLabel,
+        string deviceLinkedAtLabel,
+        string deviceBlockedReasonLabel,
+        string deviceBlockedAtLabel,
+        string deviceInvalidAttemptsLabel)
+    {
+        _currentDeviceLabel = currentDeviceLabel;
+        _blockedLabel = blockedLabel;
+        _trustedLabel = trustedLabel;
+        _notTrustedLabel = notTrustedLabel;
+        _syncEnabledLabel = syncEnabledLabel;
+        _syncDisabledLabel = syncDisabledLabel;
+        _syncToggleOnLabel = syncToggleOnLabel;
+        _syncToggleOffLabel = syncToggleOffLabel;
+        _saveNameLabel = saveNameLabel;
+        _unblockLabel = unblockLabel;
+        _disconnectLabel = disconnectLabel;
+        _deviceNameLabel = deviceNameLabel;
+        _deviceLastSeenLabel = deviceLastSeenLabel;
+        _deviceLastSyncLabel = deviceLastSyncLabel;
+        _deviceLinkedAtLabel = deviceLinkedAtLabel;
+        _deviceBlockedReasonLabel = deviceBlockedReasonLabel;
+        _deviceBlockedAtLabel = deviceBlockedAtLabel;
+        _deviceInvalidAttemptsLabel = deviceInvalidAttemptsLabel;
+
+        this.RaisePropertyChanged(nameof(CurrentDeviceLabel));
+        this.RaisePropertyChanged(nameof(BlockedLabel));
+        this.RaisePropertyChanged(nameof(TrustedLabel));
+        this.RaisePropertyChanged(nameof(NotTrustedLabel));
+        this.RaisePropertyChanged(nameof(SyncEnabledLabel));
+        this.RaisePropertyChanged(nameof(SyncDisabledLabel));
+        this.RaisePropertyChanged(nameof(SyncToggleOnLabel));
+        this.RaisePropertyChanged(nameof(SyncToggleOffLabel));
+        this.RaisePropertyChanged(nameof(SaveNameLabel));
+        this.RaisePropertyChanged(nameof(UnblockLabel));
+        this.RaisePropertyChanged(nameof(DisconnectLabel));
+        this.RaisePropertyChanged(nameof(DeviceNameLabel));
+        this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
+        this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
+        this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
+        this.RaisePropertyChanged(nameof(DeviceBlockedReasonLabel));
+        this.RaisePropertyChanged(nameof(DeviceBlockedAtLabel));
+        this.RaisePropertyChanged(nameof(DeviceInvalidAttemptsLabel));
+        this.RaisePropertyChanged(nameof(TrustStateText));
+        this.RaisePropertyChanged(nameof(SyncStateText));
+    }
+
     public static DeviceItemViewModel Create(
         UserDeviceInfoResponse device,
         string currentDeviceLabel,
@@ -203,6 +290,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
         string notTrustedLabel,
         string syncEnabledLabel,
         string syncDisabledLabel,
+        string syncToggleOnLabel,
+        string syncToggleOffLabel,
         string saveNameLabel,
         string unblockLabel,
         string disconnectLabel,
@@ -226,6 +315,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
             notTrustedLabel,
             syncEnabledLabel,
             syncDisabledLabel,
+            syncToggleOnLabel,
+            syncToggleOffLabel,
             saveNameLabel,
             unblockLabel,
             disconnectLabel,

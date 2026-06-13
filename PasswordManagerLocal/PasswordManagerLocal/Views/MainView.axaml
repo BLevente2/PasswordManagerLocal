@@ -23,10 +23,13 @@
     <DataTemplate x:DataType="pagesVm:ProfileViewModel">
       <pagesViews:ProfileView />
     </DataTemplate>
+    <DataTemplate x:DataType="vm:MainPageContentViewModel">
+      <ContentControl Content="{Binding PageViewModel}" />
+    </DataTemplate>
   </UserControl.DataTemplates>
 
   <Grid RowDefinitions="Auto,Auto,*">
-    <Border Classes="card" Margin="16,16,16,8">
+    <Border Classes="card" Margin="16,16,16,4">
       <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
         <StackPanel Spacing="4">
           <TextBlock Text="{Binding AppTitle}" Classes="sectionTitle" />
@@ -90,17 +93,45 @@
       </Grid>
     </Border>
 
-    <Border Grid.Row="1"
-            Classes="card"
-            Margin="16,0,16,8"
-            IsVisible="{Binding IsAuthenticated}">
-      <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
-        <Button Classes="ghost" Command="{Binding ShowPasswordsCommand}" Content="{Binding PasswordVaultLabel}" Margin="4" />
-        <Button Classes="ghost" Command="{Binding ShowDevicesCommand}" Content="{Binding DevicesLabel}" Margin="4" />
-        <Button Classes="ghost" Command="{Binding ShowProfileCommand}" Content="{Binding ProfileLabel}" Margin="4" />
-      </WrapPanel>
-    </Border>
+    <Grid Grid.Row="1" IsVisible="{Binding IsAuthenticated}">
+      <Border Classes="card"
+              Margin="16,0,16,4"
+              Padding="10,6"
+              IsVisible="{Binding IsDesktopNavigationVisible}">
+        <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
+          <Button Classes="ghost" Command="{Binding ShowPasswordsCommand}" Content="{Binding PasswordVaultLabel}" Margin="3" Padding="12,6" MinHeight="32" />
+          <Button Classes="ghost" Command="{Binding ShowDevicesCommand}" Content="{Binding DevicesLabel}" Margin="3" Padding="12,6" MinHeight="32" />
+          <Button Classes="ghost" Command="{Binding ShowProfileCommand}" Content="{Binding ProfileLabel}" Margin="3" Padding="12,6" MinHeight="32" />
+        </WrapPanel>
+      </Border>
 
-    <ContentControl Grid.Row="2" Content="{Binding CurrentPageViewModel}" />
+      <Border Classes="card"
+              Margin="16,0,16,4"
+              Padding="8,4"
+              IsVisible="{Binding IsMobilePageIndicatorVisible}">
+        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+          <TextBlock Text="{Binding MobileCurrentPageLabel}"
+                     Classes="subtleText"
+                     FontSize="12"
+                     VerticalAlignment="Center" />
+          <TextBlock Text="{Binding MobilePageIndicatorText}"
+                     FontSize="18"
+                     VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <TransitioningContentControl Grid.Row="2"
+                                  Content="{Binding CurrentAnimatedPageViewModel}"
+                                  IsVisible="{Binding IsMobileNavigationEnabled}"
+                                  IsTransitionReversed="{Binding IsPageTransitionReversed}">
+      <TransitioningContentControl.PageTransition>
+        <PageSlide Duration="0:0:0.22" Orientation="Horizontal" />
+      </TransitioningContentControl.PageTransition>
+    </TransitioningContentControl>
+
+    <ContentControl Grid.Row="2"
+                    Content="{Binding CurrentPageViewModel}"
+                    IsVisible="{Binding IsDesktopContentVisible}" />
   </Grid>
 </UserControl>

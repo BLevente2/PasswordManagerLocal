@@ -61,6 +61,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAsync);
         ExecutePrimaryActionCommand = ReactiveCommand.CreateFromTask(ExecutePrimaryActionAsync);
         SearchCommand = ReactiveCommand.Create(ApplyCurrentSearch);
+        SelectSortOptionCommand = ReactiveCommand.Create<string>(SelectSortOptionByKey);
         BeginCreatePasswordCommand = ReactiveCommand.Create(BeginCreatePassword);
         EditSelectedPasswordCommand = ReactiveCommand.CreateFromTask(EditSelectedPasswordAsync);
         BeginDeleteSelectedPasswordCommand = ReactiveCommand.Create(BeginDeleteSelectedPassword);
@@ -212,6 +213,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(SavePasswordButtonLabel));
             this.RaisePropertyChanged(nameof(EditorPasswordHint));
             this.RaisePropertyChanged(nameof(CanRevealEditorStoredPassword));
+            this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
         }
     }
 
@@ -386,11 +388,14 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _isEditorStoredPasswordRevealed, value);
             this.RaisePropertyChanged(nameof(CanRevealEditorStoredPassword));
+            this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
             this.RaisePropertyChanged(nameof(EditorPasswordHint));
         }
     }
 
     public bool CanRevealEditorStoredPassword => IsEditMode && !IsEditorStoredPasswordRevealed;
+
+    public bool IsEditorPasswordVisibilityToggleVisible => IsCreateMode || IsEditorStoredPasswordRevealed;
 
     public char EditorPasswordMaskCharacter => IsEditorPasswordVisible ? '\0' : '●';
 
@@ -421,6 +426,8 @@ public sealed class PasswordsViewModel : ViewModelBase
             }
 
             this.RaiseAndSetIfChanged(ref _selectedSortOption, value);
+            UpdateSortOptionSelectionMarks();
+            RaiseSortMenuLabelProperties();
             ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
         }
     }
@@ -430,6 +437,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ExecutePrimaryActionCommand { get; }
 
     public ReactiveCommand<Unit, Unit> SearchCommand { get; }
+
+    public ReactiveCommand<string, Unit> SelectSortOptionCommand { get; }
 
     public ReactiveCommand<Unit, Unit> BeginCreatePasswordCommand { get; }
 
@@ -567,6 +576,18 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string SortLabel => GetTranslation("Passwords_Sort_Label");
 
+    public string SortNameAscMenuLabel => BuildSortMenuLabel("name-asc", "Passwords_Sort_NameAsc");
+
+    public string SortNameDescMenuLabel => BuildSortMenuLabel("name-desc", "Passwords_Sort_NameDesc");
+
+    public string SortCreatedNewestMenuLabel => BuildSortMenuLabel("created-desc", "Passwords_Sort_CreatedNewest");
+
+    public string SortCreatedOldestMenuLabel => BuildSortMenuLabel("created-asc", "Passwords_Sort_CreatedOldest");
+
+    public string SortUpdatedNewestMenuLabel => BuildSortMenuLabel("updated-desc", "Passwords_Sort_UpdatedNewest");
+
+    public string SortUpdatedOldestMenuLabel => BuildSortMenuLabel("updated-asc", "Passwords_Sort_UpdatedOldest");
+
     public string ClearSelectionLabel => GetTranslation("Common_ClearSelection");
 
     public string PasswordRevealHint => GetTranslation("Passwords_Reveal_Hint");
@@ -638,6 +659,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(SearchLabel));
         this.RaisePropertyChanged(nameof(SearchPlaceholder));
         this.RaisePropertyChanged(nameof(SortLabel));
+        RaiseSortMenuLabelProperties();
         this.RaisePropertyChanged(nameof(ClearSelectionLabel));
         this.RaisePropertyChanged(nameof(PasswordRevealHint));
         this.RaisePropertyChanged(nameof(DeleteConfirmationTitle));
@@ -648,6 +670,10 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DetailsTabLabel));
         this.RaisePropertyChanged(nameof(EditorClosedTitle));
         this.RaisePropertyChanged(nameof(EditorClosedDescription));
+        this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
+
+        foreach (var password in _allPasswords)
+            password.ApplyActionLabels(EditPasswordLabel, DeletePasswordLabel);
 
         var currentEditorColor = EditorColor;
         var selectedSortKey = SelectedSortOption?.Key;
@@ -658,6 +684,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
         SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == selectedSortKey)
             ?? SortOptions.FirstOrDefault();
+        UpdateSortOptionSelectionMarks();
+        RaiseSortMenuLabelProperties();
     }
 
     public async Task LoadAsync(Guid token)
@@ -730,7 +758,7 @@ public sealed class PasswordsViewModel : ViewModelBase
 
             foreach (var password in passwords)
             {
-                _allPasswords.Add(PasswordItemViewModel.Create(password, BeginViewPasswordAsync, BeginEditPasswordAsync, BeginDeletePasswordAsync));
+                _allPasswords.Add(PasswordItemViewModel.Create(password, EditPasswordLabel, DeletePasswordLabel, BeginViewPasswordAsync, BeginEditPasswordAsync, BeginDeletePasswordAsync));
             }
 
             ApplyFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
@@ -1129,6 +1157,33 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void SelectDefaultPresetColor() => ApplyEditorColor("#FFFFD700");
 
     private void SelectDefaultSortOption() => SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? SortOptions.FirstOrDefault();
+
+    private void UpdateSortOptionSelectionMarks()
+    {
+        foreach (var option in SortOptions)
+            option.IsSelected = ReferenceEquals(option, SelectedSortOption);
+    }
+
+    private void SelectSortOptionByKey(string key)
+    {
+        var option = SortOptions.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.Ordinal));
+
+        if (option is not null)
+            SelectedSortOption = option;
+    }
+
+    private string BuildSortMenuLabel(string key, string translationKey) =>
+        $"{(string.Equals(SelectedSortOption?.Key, key, StringComparison.Ordinal) ? "✓ " : "   ")}{GetTranslation(translationKey)}";
+
+    private void RaiseSortMenuLabelProperties()
+    {
+        this.RaisePropertyChanged(nameof(SortNameAscMenuLabel));
+        this.RaisePropertyChanged(nameof(SortNameDescMenuLabel));
+        this.RaisePropertyChanged(nameof(SortCreatedNewestMenuLabel));
+        this.RaisePropertyChanged(nameof(SortCreatedOldestMenuLabel));
+        this.RaisePropertyChanged(nameof(SortUpdatedNewestMenuLabel));
+        this.RaisePropertyChanged(nameof(SortUpdatedOldestMenuLabel));
+    }
 
     private void OpenCustomColorPicker()
     {

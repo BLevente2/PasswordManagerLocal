@@ -175,7 +175,7 @@
   "Common_Ok": "OK",
   "Login_DeviceTransfer_Button": "Bejelentkezés másik eszközről",
   "Login_DeviceTransfer_Title": "Profil áthozása másik eszközről",
-  "Login_DeviceTransfer_Description": "Ezt akkor használd, ha a profilod már létezik egy másik, ugyanazon a helyi hálózaton lévő eszközön. Ez az eszköz megjelenít egy rövid, egyszer használható kódot. A már bejelentkezett eszközön nyisd meg a Profil > Kapcsolt eszközök részt, válaszd az Eszköz hozzáadása lehetőséget, majd írd be ezt a kódot. Az adatok átmásolása után ezen az eszközön is be tudsz jelentkezni a meglévő jelszavaddal.",
+  "Login_DeviceTransfer_Description": "Ezt akkor használd, ha a profilod már létezik egy másik, ugyanazon a helyi hálózaton lévő eszközön. Ez az eszköz megjelenít egy rövid, egyszer használható kódot. A már bejelentkezett eszközön nyisd meg az Eszközök főmenüpontot, válaszd az Eszköz hozzáadása lehetőséget, majd írd be ezt a kódot. Az adatok átmásolása után ezen az eszközön is be tudsz jelentkezni a meglévő jelszavaddal.",
   "Login_DeviceTransfer_Start": "Kapcsolódási kód megjelenítése",
   "Login_DeviceTransfer_CodeTitle": "Kapcsolódási kód",
   "Login_DeviceTransfer_CodeDescription": "Hagyd nyitva ezt a képernyőt, és írd be ezt a kódot azon az eszközön, ahol már be vagy jelentkezve. A kód ideiglenes, és csak ugyanazon a helyi hálózaton működik.",
@@ -277,5 +277,7 @@
   "Error_TechnicalDetails": "Technikai részletek",
   "Shell_BackendStarting": "A háttérszolgáltatás indul. A felület már használható, a műveletek szükség esetén megvárják a betöltést.",
   "Shell_BackendStartupFailed": "A háttérszolgáltatás indítása nem sikerült. Próbáld újraindítani az alkalmazást.",
-  "Common_Loading": "Betöltés, kérlek várj..."
+  "Common_Loading": "Betöltés, kérlek várj...",
+  "Common_On": "Be",
+  "Common_Off": "Ki"
 }

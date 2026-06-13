@@ -175,7 +175,7 @@
   "Common_Ok": "OK",
   "Login_DeviceTransfer_Button": "Sign in from another device",
   "Login_DeviceTransfer_Title": "Bring your profile from another device",
-  "Login_DeviceTransfer_Description": "Use this when your profile already exists on another device on the same local network. This device will show a short one-time code. On your already signed-in device, open Profile > Linked devices, choose Add device, and enter this code. After the profile data is copied, you can sign in here with your existing account password.",
+  "Login_DeviceTransfer_Description": "Use this when your profile already exists on another device on the same local network. This device will show a short one-time code. On your already signed-in device, open the Devices main menu item, choose Add device, and enter this code. After the profile data is copied, you can sign in here with your existing account password.",
   "Login_DeviceTransfer_Start": "Show connection code",
   "Login_DeviceTransfer_CodeTitle": "Connection code",
   "Login_DeviceTransfer_CodeDescription": "Keep this screen open and enter this code on the device where you are already signed in. The code is temporary and only works on the same local network.",
@@ -277,5 +277,7 @@
   "Error_TechnicalDetails": "Technical details",
   "Shell_BackendStarting": "The background service is starting. The interface is already usable; actions will wait for startup when needed.",
   "Shell_BackendStartupFailed": "The background service could not start. Please restart the application.",
-  "Common_Loading": "Loading, please wait..."
+  "Common_Loading": "Loading, please wait...",
+  "Common_On": "On",
+  "Common_Off": "Off"
 }

@@ -81,6 +81,7 @@ public sealed class ProfileViewModel : ViewModelBase
         DeleteAccountCommand = ReactiveCommand.CreateFromTask(DeleteAccountAsync);
         RefreshDevicesCommand = ReactiveCommand.CreateFromTask(RefreshDevicesAsync);
         SearchDevicesCommand = ReactiveCommand.Create(ApplyCurrentDeviceSearch);
+        SelectDeviceSortOptionCommand = ReactiveCommand.Create<string>(SelectDeviceSortOptionByKey);
         BackToDevicesCommand = ReactiveCommand.Create(BackToDevices);
         ConfirmDisconnectDeviceCommand = ReactiveCommand.CreateFromTask(ConfirmDisconnectDeviceAsync);
         CancelDisconnectDeviceCommand = ReactiveCommand.Create(CancelDisconnectDevice);
@@ -291,6 +292,8 @@ public sealed class ProfileViewModel : ViewModelBase
             }
 
             this.RaiseAndSetIfChanged(ref _selectedDeviceSortOption, value);
+            UpdateDeviceSortOptionSelectionMarks();
+            RaiseDeviceSortMenuLabelProperties();
             ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
         }
     }
@@ -424,6 +427,8 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> SearchDevicesCommand { get; }
 
+    public ReactiveCommand<string, Unit> SelectDeviceSortOptionCommand { get; }
+
     public ReactiveCommand<Unit, Unit> BackToDevicesCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ConfirmDisconnectDeviceCommand { get; }
@@ -479,6 +484,10 @@ public sealed class ProfileViewModel : ViewModelBase
     public string AccountTabLabel => GetTranslation("Profile_Tab_Account");
 
     public string SecurityTabLabel => GetTranslation("Profile_Tab_Security");
+
+    public double ProfileTabHeaderFontSize => 13;
+
+    public double ProfileTabHeaderMaxWidth => OperatingSystem.IsAndroid() ? 78 : 160;
 
     public string PersonalInfoTitle => GetTranslation("Profile_Personal_Title");
 
@@ -546,6 +555,10 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string DeviceSortLabel => GetTranslation("Passwords_Sort_Label");
 
+    public string DeviceSortNameAscMenuLabel => BuildDeviceSortMenuLabel("name-asc", "Passwords_Sort_NameAsc");
+
+    public string DeviceSortNameDescMenuLabel => BuildDeviceSortMenuLabel("name-desc", "Passwords_Sort_NameDesc");
+
     public string DeviceSearchEmptyTitle => GetTranslation("Profile_Device_SearchEmpty_Title");
 
     public string DeviceSearchEmptyDescription => GetTranslation("Profile_Device_SearchEmpty_Description");
@@ -575,6 +588,10 @@ public sealed class ProfileViewModel : ViewModelBase
     public string SyncEnabledLabel => GetTranslation("Profile_Device_SyncEnabled");
 
     public string SyncDisabledLabel => GetTranslation("Profile_Device_SyncDisabled");
+
+    public string SyncToggleOnLabel => GetTranslation("Common_On");
+
+    public string SyncToggleOffLabel => GetTranslation("Common_Off");
 
     public string SaveDeviceNameLabel => GetTranslation("Profile_Device_SaveName");
 
@@ -664,6 +681,7 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeviceSearchLabel));
         this.RaisePropertyChanged(nameof(DeviceSearchPlaceholder));
         this.RaisePropertyChanged(nameof(DeviceSortLabel));
+        RaiseDeviceSortMenuLabelProperties();
         this.RaisePropertyChanged(nameof(DeviceSearchEmptyTitle));
         this.RaisePropertyChanged(nameof(DeviceSearchEmptyDescription));
         this.RaisePropertyChanged(nameof(BackToDevicesLabel));
@@ -679,6 +697,8 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(NotTrustedLabel));
         this.RaisePropertyChanged(nameof(SyncEnabledLabel));
         this.RaisePropertyChanged(nameof(SyncDisabledLabel));
+        this.RaisePropertyChanged(nameof(SyncToggleOnLabel));
+        this.RaisePropertyChanged(nameof(SyncToggleOffLabel));
         this.RaisePropertyChanged(nameof(SaveDeviceNameLabel));
         this.RaisePropertyChanged(nameof(UnblockDeviceLabel));
         this.RaisePropertyChanged(nameof(DisconnectDeviceLabel));
@@ -700,10 +720,14 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(RegistrationDateText));
         this.RaisePropertyChanged(nameof(LastLoginDateText));
 
+        ApplyLocalizationToDeviceItems();
+
         var selectedDeviceSortKey = SelectedDeviceSortOption?.Key;
         RebuildDeviceSortOptions();
         SelectedDeviceSortOption = DeviceSortOptions.FirstOrDefault(item => item.Key == selectedDeviceSortKey)
             ?? DeviceSortOptions.FirstOrDefault();
+        UpdateDeviceSortOptionSelectionMarks();
+        RaiseDeviceSortMenuLabelProperties();
     }
 
     
@@ -1011,6 +1035,8 @@ public sealed class ProfileViewModel : ViewModelBase
             NotTrustedLabel,
             SyncEnabledLabel,
             SyncDisabledLabel,
+            SyncToggleOnLabel,
+            SyncToggleOffLabel,
             SaveDeviceNameLabel,
             UnblockDeviceLabel,
             DisconnectDeviceLabel,
@@ -1321,6 +1347,55 @@ public sealed class ProfileViewModel : ViewModelBase
 
     private void SelectDefaultDeviceSortOption() =>
         SelectedDeviceSortOption = DeviceSortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? DeviceSortOptions.FirstOrDefault();
+
+    private void UpdateDeviceSortOptionSelectionMarks()
+    {
+        foreach (var option in DeviceSortOptions)
+            option.IsSelected = ReferenceEquals(option, SelectedDeviceSortOption);
+    }
+
+    private void SelectDeviceSortOptionByKey(string key)
+    {
+        var option = DeviceSortOptions.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.Ordinal));
+
+        if (option is not null)
+            SelectedDeviceSortOption = option;
+    }
+
+    private string BuildDeviceSortMenuLabel(string key, string translationKey) =>
+        $"{(string.Equals(SelectedDeviceSortOption?.Key, key, StringComparison.Ordinal) ? "✓ " : "   ")}{GetTranslation(translationKey)}";
+
+    private void RaiseDeviceSortMenuLabelProperties()
+    {
+        this.RaisePropertyChanged(nameof(DeviceSortNameAscMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortNameDescMenuLabel));
+    }
+
+    private void ApplyLocalizationToDeviceItems()
+    {
+        foreach (var device in _allDevices)
+        {
+            device.ApplyLocalization(
+                CurrentDeviceLabel,
+                BlockedLabel,
+                TrustedLabel,
+                NotTrustedLabel,
+                SyncEnabledLabel,
+                SyncDisabledLabel,
+                SyncToggleOnLabel,
+                SyncToggleOffLabel,
+                SaveDeviceNameLabel,
+                UnblockDeviceLabel,
+                DisconnectDeviceLabel,
+                DeviceNameLabel,
+                DeviceLastSeenLabel,
+                DeviceLastSyncLabel,
+                DeviceLinkedAtLabel,
+                DeviceBlockedReasonLabel,
+                DeviceBlockedAtLabel,
+                DeviceInvalidAttemptsLabel);
+        }
+    }
 
     private void RaiseDeviceCollectionStateChanged()
     {

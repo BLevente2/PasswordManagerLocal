@@ -7,8 +7,13 @@ namespace PasswordManagerLocal.ViewModels.Pages;
 
 public sealed class PasswordItemViewModel : ReactiveObject
 {
+    private string _editLabel;
+    private string _deleteLabel;
+
     private PasswordItemViewModel(
         PasswordInfoResponse password,
+        string editLabel,
+        string deleteLabel,
         Func<PasswordItemViewModel, Task> viewAsync,
         Func<PasswordItemViewModel, Task> editAsync,
         Func<PasswordItemViewModel, Task> deleteAsync)
@@ -20,6 +25,8 @@ public sealed class PasswordItemViewModel : ReactiveObject
         CreatedAt = password.CreatedAt;
         LastUpdatedAt = password.LastUpdatedAt;
         ColorBrush = ParseBrush(password.Color);
+        _editLabel = editLabel;
+        _deleteLabel = deleteLabel;
 
         ViewCommand = ReactiveCommand.CreateFromTask(() => viewAsync(this));
         EditCommand = ReactiveCommand.CreateFromTask(() => editAsync(this));
@@ -40,6 +47,18 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public IBrush ColorBrush { get; }
 
+    public string EditLabel
+    {
+        get => _editLabel;
+        private set => this.RaiseAndSetIfChanged(ref _editLabel, value);
+    }
+
+    public string DeleteLabel
+    {
+        get => _deleteLabel;
+        private set => this.RaiseAndSetIfChanged(ref _deleteLabel, value);
+    }
+
     public ReactiveCommand<Unit, Unit> ViewCommand { get; }
 
     public ReactiveCommand<Unit, Unit> EditCommand { get; }
@@ -52,12 +71,20 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public string LastUpdatedAtText => LastUpdatedAt.ToLocalTime().ToString("g");
 
+    public void ApplyActionLabels(string editLabel, string deleteLabel)
+    {
+        EditLabel = editLabel;
+        DeleteLabel = deleteLabel;
+    }
+
     public static PasswordItemViewModel Create(
         PasswordInfoResponse password,
+        string editLabel,
+        string deleteLabel,
         Func<PasswordItemViewModel, Task> viewAsync,
         Func<PasswordItemViewModel, Task> editAsync,
         Func<PasswordItemViewModel, Task> deleteAsync) =>
-        new(password, viewAsync, editAsync, deleteAsync);
+        new(password, editLabel, deleteLabel, viewAsync, editAsync, deleteAsync);
 
     private static IBrush ParseBrush(string color)
     {
