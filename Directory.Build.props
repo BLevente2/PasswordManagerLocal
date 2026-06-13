@@ -1,4 +1,10 @@
 <Project>
+  <PropertyGroup>
+    <RepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</RepositoryRoot>
+    <ArtifactsRoot>$(RepositoryRoot)artifacts\</ArtifactsRoot>
+    <PublishArtifactsRoot>$(ArtifactsRoot)publish\</PublishArtifactsRoot>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugSymbols>false</DebugSymbols>
     <DebugType>None</DebugType>

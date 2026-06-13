@@ -653,7 +653,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
                     priority += GetPrivateAddressPriority(address);
 
-                    if (addressInfo.PrefixOrigin is PrefixOrigin.Dhcp or PrefixOrigin.Manual)
+                    if (OperatingSystem.IsWindows() && (addressInfo.PrefixOrigin is PrefixOrigin.Dhcp or PrefixOrigin.Manual))
                         priority += 250;
 
                     candidates.Add(new LocalEnrollmentHostCandidate
@@ -1233,8 +1233,10 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (!txt.TryGetValue("deviceguid", out var deviceGuid) || !Guid.TryParseExact(deviceGuid, "N", out deviceId))
                 return false;
 
-            if (!txt.TryGetValue("tlsfp", out tlsFp) || string.IsNullOrWhiteSpace(tlsFp))
+            if (!txt.TryGetValue("tlsfp", out var tlsFingerprint) || string.IsNullOrWhiteSpace(tlsFingerprint))
                 return false;
+
+            tlsFp = tlsFingerprint;
 
             if (!txt.TryGetValue("signpub", out var signPubHex))
                 return false;

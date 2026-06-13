@@ -1,4 +1,4 @@
-﻿using Android.OS;
+using Android.OS;
 using Android.Runtime;
 using Android.Security.Keystore;
 using Java.Security;
@@ -84,7 +84,7 @@ public sealed class AndroidKeyProtector : IKeyProtector
             .SetEncryptionPaddings(KeyProperties.EncryptionPaddingNone)
             .SetRandomizedEncryptionRequired(true);
 
-        if (Build.VERSION.SdkInt >= BuildVersionCodes.P)
+        if (OperatingSystem.IsAndroidVersionAtLeast(28))
             builder.SetUnlockedDeviceRequired(true);
 
         keyGenerator.Init(builder.Build());

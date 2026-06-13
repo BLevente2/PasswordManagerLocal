@@ -11,26 +11,26 @@ public sealed class DeviceItemViewModel : ReactiveObject
     private readonly Func<DeviceItemViewModel, Task> _toggleSyncAsync;
     private readonly Func<DeviceItemViewModel, Task> _unblockAsync;
     private readonly Action<DeviceItemViewModel> _beginDisconnect;
-    private string _editableName;
+    private string _editableName = string.Empty;
     private bool _isSyncEnabled;
-    private string _currentDeviceLabel;
-    private string _blockedLabel;
-    private string _trustedLabel;
-    private string _notTrustedLabel;
-    private string _syncEnabledLabel;
-    private string _syncDisabledLabel;
-    private string _syncToggleOnLabel;
-    private string _syncToggleOffLabel;
-    private string _saveNameLabel;
-    private string _unblockLabel;
-    private string _disconnectLabel;
-    private string _deviceNameLabel;
-    private string _deviceLastSeenLabel;
-    private string _deviceLastSyncLabel;
-    private string _deviceLinkedAtLabel;
-    private string _deviceBlockedReasonLabel;
-    private string _deviceBlockedAtLabel;
-    private string _deviceInvalidAttemptsLabel;
+    private string _currentDeviceLabel = string.Empty;
+    private string _blockedLabel = string.Empty;
+    private string _trustedLabel = string.Empty;
+    private string _notTrustedLabel = string.Empty;
+    private string _syncEnabledLabel = string.Empty;
+    private string _syncDisabledLabel = string.Empty;
+    private string _syncToggleOnLabel = string.Empty;
+    private string _syncToggleOffLabel = string.Empty;
+    private string _saveNameLabel = string.Empty;
+    private string _unblockLabel = string.Empty;
+    private string _disconnectLabel = string.Empty;
+    private string _deviceNameLabel = string.Empty;
+    private string _deviceLastSeenLabel = string.Empty;
+    private string _deviceLastSyncLabel = string.Empty;
+    private string _deviceLinkedAtLabel = string.Empty;
+    private string _deviceBlockedReasonLabel = string.Empty;
+    private string _deviceBlockedAtLabel = string.Empty;
+    private string _deviceInvalidAttemptsLabel = string.Empty;
 
     private DeviceItemViewModel(
         UserDeviceInfoResponse device,

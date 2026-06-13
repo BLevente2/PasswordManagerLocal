@@ -1,4 +1,4 @@
-﻿using Makaretu.Dns;
+using Makaretu.Dns;
 using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using System.Net;
@@ -126,7 +126,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
 
                     priority += GetPrivateAddressPriority(address);
 
-                    if (addressInfo.PrefixOrigin is PrefixOrigin.Dhcp or PrefixOrigin.Manual)
+                    if (OperatingSystem.IsWindows() && (addressInfo.PrefixOrigin is PrefixOrigin.Dhcp or PrefixOrigin.Manual))
                         priority += 250;
 
                     candidates.Add(new LocalSyncHostCandidate
