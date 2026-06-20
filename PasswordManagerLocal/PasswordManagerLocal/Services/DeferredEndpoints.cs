@@ -176,6 +176,13 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
+    public async Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        return await endpoints.InitializeRememberMeSessionAsync(userId, ct);
+    }
+
+
     public async Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);

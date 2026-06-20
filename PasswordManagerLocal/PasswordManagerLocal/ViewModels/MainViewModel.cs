@@ -9,6 +9,7 @@ using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Responses;
 using ReactiveUI;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reactive;
 
@@ -33,10 +34,15 @@ public sealed class MainViewModel : ViewModelBase
     private bool _isSessionRenewalDialogOpen;
     private bool _isRenewingSession;
     private bool _isAddingProfile;
+    private bool _isStartupProfileSelection;
+    private bool _isCurrentRememberMeEnabled;
+    private bool _isApplyingRememberMeFromSession;
+    private bool _isSettingRememberMe;
     private int _profileChangeReturnPageIndex;
     private Guid _sessionRenewalDialogToken = Guid.Empty;
     private Guid _sessionRenewalPromptShownForToken = Guid.Empty;
     private string _sessionRenewalDialogProfileName = string.Empty;
+    private readonly HashSet<Guid> _autoRenewingSessionTokens = new();
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -119,6 +125,7 @@ public sealed class MainViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(IsDesktopContentVisible));
             this.RaisePropertyChanged(nameof(IsDesktopNavigationVisible));
             this.RaisePropertyChanged(nameof(IsMobilePageIndicatorVisible));
+            this.RaisePropertyChanged(nameof(CanChangeRememberMe));
         }
     }
 
@@ -196,6 +203,34 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
+    public bool IsCurrentRememberMeEnabled
+    {
+        get => _isCurrentRememberMeEnabled;
+        set
+        {
+            if (_isCurrentRememberMeEnabled == value)
+                return;
+
+            var previousValue = _isCurrentRememberMeEnabled;
+            this.RaiseAndSetIfChanged(ref _isCurrentRememberMeEnabled, value);
+
+            if (!_isApplyingRememberMeFromSession)
+                _ = SetCurrentRememberMeAsync(value, previousValue);
+        }
+    }
+
+    public bool IsSettingRememberMe
+    {
+        get => _isSettingRememberMe;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isSettingRememberMe, value);
+            this.RaisePropertyChanged(nameof(CanChangeRememberMe));
+        }
+    }
+
+    public bool CanChangeRememberMe => IsAuthenticated && !IsSettingRememberMe;
+
     public string? StatusMessage
     {
         get => _statusMessage;
@@ -266,6 +301,12 @@ public sealed class MainViewModel : ViewModelBase
 
     public string ChangeProfileLabel => GetTranslation("Shell_ChangeProfile");
 
+    public string RememberMeDropdownLabel => GetTranslation("Shell_RememberMeSwitch");
+
+    public string RememberMeOnLabel => GetTranslation("Common_On");
+
+    public string RememberMeOffLabel => GetTranslation("Common_Off");
+
     public string WelcomeLabel => GetTranslation("Shell_Welcome");
 
     public string NavigationLabel => GetTranslation("Shell_Navigation");
@@ -310,16 +351,24 @@ public sealed class MainViewModel : ViewModelBase
         try
         {
             var rememberedTokens = await _endpoints.InicializeAllRememberMeAsync();
+            var loadedRememberedTokens = new List<Guid>();
 
             foreach (var token in rememberedTokens)
             {
-                _authSessionRegistry.TryAdd(token);
+                if (await TryAddRememberedSessionAsync(token, false))
+                    loadedRememberedTokens.Add(token);
             }
 
-            var currentToken = _authSessionRegistry.CurrentUserToken;
-            if (currentToken != Guid.Empty)
+            if (loadedRememberedTokens.Count == 1)
             {
-                await LoadAuthenticatedStateAsync(currentToken, GetTranslation("Shell_RememberedSessionLoaded"));
+                await LoadAuthenticatedStateAsync(loadedRememberedTokens[0], GetTranslation("Shell_RememberedSessionLoaded"));
+                return;
+            }
+
+            if (loadedRememberedTokens.Count > 1)
+            {
+                await ShowStartupProfileSelectionAsync(GetTranslation("Shell_ChooseRememberedProfile"));
+                EnsureSessionMonitor();
                 return;
             }
 
@@ -347,6 +396,9 @@ public sealed class MainViewModel : ViewModelBase
 
         if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
         {
+            if (_isStartupProfileSelection)
+                return false;
+
             await NavigateBackFromChangeProfileAsync();
             return true;
         }
@@ -396,6 +448,9 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DevicesLabel));
         this.RaisePropertyChanged(nameof(LogoutLabel));
         this.RaisePropertyChanged(nameof(ChangeProfileLabel));
+        this.RaisePropertyChanged(nameof(RememberMeDropdownLabel));
+        this.RaisePropertyChanged(nameof(RememberMeOnLabel));
+        this.RaisePropertyChanged(nameof(RememberMeOffLabel));
         this.RaisePropertyChanged(nameof(WelcomeLabel));
         this.RaisePropertyChanged(nameof(NavigationLabel));
         this.RaisePropertyChanged(nameof(RefreshButtonLabel));
@@ -428,15 +483,36 @@ public sealed class MainViewModel : ViewModelBase
         StatusMessage = null;
     }
 
+    private async Task ShowStartupProfileSelectionAsync(string? message = null)
+    {
+        _isAddingProfile = false;
+        _isStartupProfileSelection = true;
+        _profileChangeReturnPageIndex = 0;
+        _authSessionRegistry.CurrentUserToken = Guid.Empty;
+        ApplyRememberMeFromSession(false);
+        IsAuthenticated = false;
+        CurrentUserDisplayName = string.Empty;
+        CurrentUserSubtitle = string.Empty;
+        PasswordsViewModel.Reset();
+        ProfileViewModel.Reset();
+        ChangeProfileViewModel.SetStartupSelectionMode(true);
+        ConfigureAuthBackNavigation();
+        await ChangeProfileViewModel.LoadAsync();
+        CurrentPageViewModel = ChangeProfileViewModel;
+        StatusMessage = message;
+    }
+
     private async Task ShowChangeProfileAsync()
     {
         if (!IsAuthenticated)
             return;
 
         _isAddingProfile = false;
+        _isStartupProfileSelection = false;
         if (IsMainContentPageVisible)
             _profileChangeReturnPageIndex = CurrentMainPageIndex;
 
+        ChangeProfileViewModel.SetStartupSelectionMode(false);
         ConfigureAuthBackNavigation();
         await ChangeProfileViewModel.LoadAsync();
         CurrentPageViewModel = ChangeProfileViewModel;
@@ -445,7 +521,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private void NavigateToLoginAnotherProfile()
     {
-        if (!IsAuthenticated)
+        if (!IsAuthenticated && !_isStartupProfileSelection)
             return;
 
         _isAddingProfile = true;
@@ -465,10 +541,18 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task NavigateBackFromAddProfileAsync()
     {
+        var wasStartupProfileSelection = _isStartupProfileSelection;
         _isAddingProfile = false;
         ConfigureAuthBackNavigation();
         LoginViewModel.Reset();
         RegistrationViewModel.Reset();
+
+        if (wasStartupProfileSelection)
+        {
+            await ShowStartupProfileSelectionAsync();
+            return;
+        }
+
         await ShowChangeProfileAsync();
     }
 
@@ -487,8 +571,12 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task SwitchToProfileAsync(Guid token)
     {
-        await LoadAuthenticatedStateAsync(token, GetTranslation("Shell_ProfileChanged"));
-        RestoreProfileChangeReturnPage();
+        var wasStartupSelection = _isStartupProfileSelection;
+        _isStartupProfileSelection = false;
+        await LoadAuthenticatedStateAsync(token, wasStartupSelection ? GetTranslation("Shell_RememberedSessionLoaded") : GetTranslation("Shell_ProfileChanged"));
+
+        if (!wasStartupSelection)
+            RestoreProfileChangeReturnPage();
     }
 
     private void RestoreProfileChangeReturnPage()
@@ -597,10 +685,86 @@ public sealed class MainViewModel : ViewModelBase
         return true;
     }
 
+    private async Task<bool> TryAddRememberedSessionAsync(Guid token, bool select)
+    {
+        if (token == Guid.Empty)
+            return false;
+
+        try
+        {
+            var status = await _endpoints.GetAuthSessionStatusAsync(token);
+            if (!status.IsAuthenticated)
+                return false;
+
+            var profile = await _endpoints.GetUserProfileInfoAsync(token);
+            if (await ContainsActiveUserIdAsync(profile.UId, token))
+            {
+                try { _endpoints.Logout(token); } catch { }
+                return false;
+            }
+
+            _authSessionRegistry.TryAdd(token, select);
+            SetSessionProfile(token, profile);
+            return true;
+        }
+        catch
+        {
+            try { _endpoints.Logout(token); } catch { }
+            _authSessionRegistry.TryRemove(token);
+            return false;
+        }
+    }
+
+
+    private void ApplyRememberMeFromSession(bool isEnabled)
+    {
+        _isApplyingRememberMeFromSession = true;
+        try
+        {
+            IsCurrentRememberMeEnabled = isEnabled;
+        }
+        finally
+        {
+            _isApplyingRememberMeFromSession = false;
+        }
+    }
+
+
+    private async Task SetCurrentRememberMeAsync(bool isEnabled, bool previousValue)
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty || !IsAuthenticated)
+        {
+            ApplyRememberMeFromSession(previousValue);
+            return;
+        }
+
+        try
+        {
+            IsSettingRememberMe = true;
+            await _endpoints.SetRememberMeAsync(token, isEnabled);
+            _authSessionRegistry.TrySetRememberMe(token, isEnabled);
+            StatusMessage = isEnabled
+                ? GetTranslation("Shell_RememberMeEnabled")
+                : GetTranslation("Shell_RememberMeDisabled");
+        }
+        catch
+        {
+            ApplyRememberMeFromSession(previousValue);
+            StatusMessage = GetTranslation("Shell_RememberMeUpdateFailed");
+        }
+        finally
+        {
+            IsSettingRememberMe = false;
+        }
+    }
+
+
     private async Task OnAuthenticationSucceededAsync(Guid token)
     {
         var profile = await _endpoints.GetUserProfileInfoAsync(token);
         var wasAddingProfile = _isAddingProfile;
+        var wasStartupProfileSelection = _isStartupProfileSelection;
 
         if (await ContainsActiveUserIdAsync(profile.UId, token))
         {
@@ -611,10 +775,11 @@ public sealed class MainViewModel : ViewModelBase
         _authSessionRegistry.TryAdd(token);
         SetSessionProfile(token, profile);
         _isAddingProfile = false;
+        _isStartupProfileSelection = false;
         ConfigureAuthBackNavigation();
         await LoadAuthenticatedStateAsync(token, profile, GetTranslation("Shell_SignedIn"));
 
-        if (wasAddingProfile)
+        if (wasAddingProfile && !wasStartupProfileSelection)
             RestoreProfileChangeReturnPage();
     }
 
@@ -631,6 +796,7 @@ public sealed class MainViewModel : ViewModelBase
         IsAuthenticated = true;
         CurrentUserDisplayName = BuildDisplayName(profile);
         CurrentUserSubtitle = BuildSubtitle(profile);
+        ApplyRememberMeFromSession(profile.IsRememberMeEnabled);
 
         PasswordsViewModel.Reset();
         ProfileViewModel.Reset();
@@ -687,6 +853,7 @@ public sealed class MainViewModel : ViewModelBase
 
         CurrentUserDisplayName = BuildDisplayName(profile);
         CurrentUserSubtitle = BuildSubtitle(profile);
+        ApplyRememberMeFromSession(profile.IsRememberMeEnabled);
         SetSessionProfile(token, profile);
 
         await ProfileViewModel.LoadAsync(token, profile);
@@ -744,10 +911,12 @@ public sealed class MainViewModel : ViewModelBase
         _sessionRenewalPromptShownForToken = Guid.Empty;
         _sessionRenewalDialogProfileName = string.Empty;
         _isAddingProfile = false;
+        _isStartupProfileSelection = false;
         ConfigureAuthBackNavigation();
         IsAuthenticated = false;
         CurrentUserDisplayName = string.Empty;
         CurrentUserSubtitle = string.Empty;
+        ApplyRememberMeFromSession(false);
         PasswordsViewModel.Reset();
         ProfileViewModel.Reset();
         LoginViewModel.Reset();
@@ -824,7 +993,7 @@ public sealed class MainViewModel : ViewModelBase
                 }
 
                 if (status.ExpiresAtUtc is { } expiresAtUtc)
-                    ShowSessionRenewalWarningIfNeeded(token, expiresAtUtc);
+                    await HandleSessionExpirationWarningAsync(token, expiresAtUtc);
             }
         }
         finally
@@ -834,12 +1003,25 @@ public sealed class MainViewModel : ViewModelBase
     }
 
 
-    private void ShowSessionRenewalWarningIfNeeded(Guid token, DateTimeOffset expiresAtUtc)
+    private async Task HandleSessionExpirationWarningAsync(Guid token, DateTimeOffset expiresAtUtc)
     {
-        if (IsSessionRenewalDialogOpen || _sessionRenewalPromptShownForToken == token)
+        if (expiresAtUtc - DateTimeOffset.UtcNow > SessionRenewalWarningLeadTime)
             return;
 
-        if (expiresAtUtc - DateTimeOffset.UtcNow > SessionRenewalWarningLeadTime)
+        var session = _authSessionRegistry.GetSession(token);
+        if (session?.IsRememberMeEnabled == true)
+        {
+            await AutoRenewRememberedSessionAsync(token);
+            return;
+        }
+
+        ShowSessionRenewalWarning(token);
+    }
+
+
+    private void ShowSessionRenewalWarning(Guid token)
+    {
+        if (IsSessionRenewalDialogOpen || _sessionRenewalPromptShownForToken == token)
             return;
 
         _sessionRenewalDialogToken = token;
@@ -850,13 +1032,31 @@ public sealed class MainViewModel : ViewModelBase
     }
 
 
+    private async Task AutoRenewRememberedSessionAsync(Guid token)
+    {
+        if (!_autoRenewingSessionTokens.Add(token))
+            return;
+
+        try
+        {
+            await RenewSessionTokenAsync(token);
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _autoRenewingSessionTokens.Remove(token);
+        }
+    }
+
+
     private async Task ConfirmSessionRenewalAsync()
     {
         if (IsRenewingSession)
             return;
 
         var oldToken = _sessionRenewalDialogToken;
-        var wasCurrent = oldToken == _authSessionRegistry.CurrentUserToken;
         if (oldToken == Guid.Empty || _authSessionRegistry.GetSession(oldToken) is null || !IsAuthenticated)
         {
             CloseSessionRenewalDialog();
@@ -866,21 +1066,7 @@ public sealed class MainViewModel : ViewModelBase
         try
         {
             IsRenewingSession = true;
-            var newToken = await _endpoints.RenewAuthSessionAsync(oldToken);
-
-            if (!_authSessionRegistry.TryReplaceToken(oldToken, newToken))
-            {
-                _authSessionRegistry.TryAdd(newToken);
-                _authSessionRegistry.TryRemove(oldToken);
-            }
-
-            if (wasCurrent)
-            {
-                _authSessionRegistry.CurrentUserToken = newToken;
-                PasswordsViewModel.SetSessionToken(newToken);
-                ProfileViewModel.SetSessionToken(newToken);
-            }
-
+            await RenewSessionTokenAsync(oldToken);
             CloseSessionRenewalDialog(true);
             StatusMessage = GetTranslation("Shell_SessionRenewed");
             EnsureSessionMonitor();
@@ -894,6 +1080,32 @@ public sealed class MainViewModel : ViewModelBase
         {
             IsRenewingSession = false;
         }
+    }
+
+
+    private async Task RenewSessionTokenAsync(Guid oldToken)
+    {
+        var wasCurrent = oldToken == _authSessionRegistry.CurrentUserToken;
+        var newToken = await _endpoints.RenewAuthSessionAsync(oldToken);
+
+        if (!_authSessionRegistry.TryReplaceToken(oldToken, newToken))
+        {
+            _authSessionRegistry.TryAdd(newToken, wasCurrent);
+            _authSessionRegistry.TryRemove(oldToken);
+        }
+
+        if (wasCurrent)
+        {
+            _authSessionRegistry.CurrentUserToken = newToken;
+            PasswordsViewModel.SetSessionToken(newToken);
+            ProfileViewModel.SetSessionToken(newToken);
+        }
+
+        if (_sessionRenewalPromptShownForToken == oldToken)
+            _sessionRenewalPromptShownForToken = Guid.Empty;
+
+        if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
+            await ChangeProfileViewModel.LoadAsync();
     }
 
 
@@ -911,6 +1123,13 @@ public sealed class MainViewModel : ViewModelBase
     {
         var wasCurrent = token == _authSessionRegistry.CurrentUserToken;
         var message = GetSessionInvalidationMessage(reason);
+        var session = _authSessionRegistry.GetSession(token);
+
+        if (reason == AuthSessionInvalidationReason.Expired && session?.IsRememberMeEnabled == true)
+        {
+            if (await TryRestoreRememberedSessionAsync(token, session, wasCurrent))
+                return;
+        }
 
         _authSessionRegistry.TryRemove(token);
 
@@ -924,7 +1143,52 @@ public sealed class MainViewModel : ViewModelBase
         }
 
         if (_authSessionRegistry.ListTokens().Count == 0)
+        {
             await HandleLoggedOutStateAsync(message);
+            return;
+        }
+
+        if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
+            await ChangeProfileViewModel.LoadAsync();
+    }
+
+
+    private async Task<bool> TryRestoreRememberedSessionAsync(Guid oldToken, AuthSessionProfile session, bool wasCurrent)
+    {
+        if (session.UserId == Guid.Empty)
+            return false;
+
+        try
+        {
+            var newToken = await _endpoints.InitializeRememberMeSessionAsync(session.UserId);
+
+            if (!_authSessionRegistry.TryReplaceToken(oldToken, newToken))
+            {
+                _authSessionRegistry.TryAdd(newToken, wasCurrent);
+                _authSessionRegistry.TryRemove(oldToken);
+            }
+
+            var profile = await _endpoints.GetUserProfileInfoAsync(newToken);
+            SetSessionProfile(newToken, profile);
+
+            if (_sessionRenewalDialogToken == oldToken)
+                CloseSessionRenewalDialog(true);
+
+            if (wasCurrent)
+            {
+                await LoadAuthenticatedStateAsync(newToken, profile, GetTranslation("Shell_RememberedSessionLoaded"));
+                return true;
+            }
+
+            if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
+                await ChangeProfileViewModel.LoadAsync();
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
 
@@ -979,7 +1243,8 @@ public sealed class MainViewModel : ViewModelBase
             BuildDisplayName(profile),
             BuildSubtitle(profile),
             profile.Username,
-            profile.Email);
+            profile.Email,
+            profile.IsRememberMeEnabled);
     }
 
 

@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
@@ -24,8 +24,9 @@ public class UserProfileService : IUserProfileService
 
     public async Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default)
     {
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(userData);
+        var user = await _userService.GetAndVerifyUserAsync(token, ct);
+        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(userData, user.SavedKey is not null);
     }
 
 

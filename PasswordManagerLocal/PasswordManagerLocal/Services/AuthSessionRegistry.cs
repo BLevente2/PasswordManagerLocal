@@ -27,7 +27,7 @@ public sealed class AuthSessionRegistry : IAuthSessionRegistry
         }
     }
 
-    public bool TryAdd(Guid token)
+    public bool TryAdd(Guid token, bool select = true)
     {
         if (token == Guid.Empty)
             return false;
@@ -35,11 +35,13 @@ public sealed class AuthSessionRegistry : IAuthSessionRegistry
         if (_sessions.All(session => session.Token != token))
             _sessions.Add(new AuthSessionProfile { Token = token });
 
-        CurrentUserToken = token;
+        if (select)
+            CurrentUserToken = token;
+
         return true;
     }
 
-    public bool TrySetProfile(Guid token, Guid userId, string displayName, string subtitle, string username, string email)
+    public bool TrySetProfile(Guid token, Guid userId, string displayName, string subtitle, string username, string email, bool isRememberMeEnabled)
     {
         if (token == Guid.Empty)
             return false;
@@ -55,7 +57,29 @@ public sealed class AuthSessionRegistry : IAuthSessionRegistry
             DisplayName = displayName,
             Subtitle = subtitle,
             Username = username,
-            Email = email
+            Email = email,
+            IsRememberMeEnabled = isRememberMeEnabled
+        };
+
+        return true;
+    }
+
+    public bool TrySetRememberMe(Guid token, bool isRememberMeEnabled)
+    {
+        var index = _sessions.FindIndex(session => session.Token == token);
+        if (index < 0)
+            return false;
+
+        var session = _sessions[index];
+        _sessions[index] = new AuthSessionProfile
+        {
+            Token = session.Token,
+            UserId = session.UserId,
+            DisplayName = session.DisplayName,
+            Subtitle = session.Subtitle,
+            Username = session.Username,
+            Email = session.Email,
+            IsRememberMeEnabled = isRememberMeEnabled
         };
 
         return true;
@@ -78,7 +102,8 @@ public sealed class AuthSessionRegistry : IAuthSessionRegistry
             DisplayName = oldSession.DisplayName,
             Subtitle = oldSession.Subtitle,
             Username = oldSession.Username,
-            Email = oldSession.Email
+            Email = oldSession.Email,
+            IsRememberMeEnabled = oldSession.IsRememberMeEnabled
         };
 
         if (_selection == oldToken)

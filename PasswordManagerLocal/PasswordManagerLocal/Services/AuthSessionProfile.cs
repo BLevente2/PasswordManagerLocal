@@ -8,4 +8,5 @@ public sealed class AuthSessionProfile
     public string Subtitle { get; init; } = string.Empty;
     public string Username { get; init; } = string.Empty;
     public string Email { get; init; } = string.Empty;
+    public bool IsRememberMeEnabled { get; init; }
 }

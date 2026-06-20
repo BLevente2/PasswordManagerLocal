@@ -18,6 +18,7 @@ public sealed class ChangeProfileViewModel : ViewModelBase
     private readonly Func<Guid, Task> _selectProfileAsync;
 
     private bool _isBusy;
+    private bool _isStartupSelection;
     private string? _errorMessage;
 
     public ChangeProfileViewModel(
@@ -48,6 +49,23 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _isBusy, value);
     }
 
+    public bool IsBackButtonVisible => !IsStartupSelection;
+
+    public bool IsStartupSelection
+    {
+        get => _isStartupSelection;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isStartupSelection, value);
+            this.RaisePropertyChanged(nameof(IsBackButtonVisible));
+            this.RaisePropertyChanged(nameof(Title));
+            this.RaisePropertyChanged(nameof(Subtitle));
+            this.RaisePropertyChanged(nameof(LoggedInProfilesLabel));
+            this.RaisePropertyChanged(nameof(EmptyProfilesTitle));
+            this.RaisePropertyChanged(nameof(EmptyProfilesDescription));
+        }
+    }
+
     public string? ErrorMessage
     {
         get => _errorMessage;
@@ -70,9 +88,13 @@ public sealed class ChangeProfileViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> LoginAnotherProfileCommand { get; }
 
-    public string Title => GetTranslation("Profiles_Title");
+    public string Title => IsStartupSelection
+        ? GetTranslation("Profiles_Startup_Title")
+        : GetTranslation("Profiles_Title");
 
-    public string Subtitle => GetTranslation("Profiles_Subtitle");
+    public string Subtitle => IsStartupSelection
+        ? GetTranslation("Profiles_Startup_Subtitle")
+        : GetTranslation("Profiles_Subtitle");
 
     public string BackLabel => GetTranslation("Common_Back");
 
@@ -80,11 +102,17 @@ public sealed class ChangeProfileViewModel : ViewModelBase
 
     public string LoginAnotherProfileLabel => GetTranslation("Profiles_LoginAnother");
 
-    public string LoggedInProfilesLabel => GetTranslation("Profiles_LoggedInProfiles");
+    public string LoggedInProfilesLabel => IsStartupSelection
+        ? GetTranslation("Profiles_RememberedProfiles")
+        : GetTranslation("Profiles_LoggedInProfiles");
 
-    public string EmptyProfilesTitle => GetTranslation("Profiles_Empty_Title");
+    public string EmptyProfilesTitle => IsStartupSelection
+        ? GetTranslation("Profiles_Startup_Empty_Title")
+        : GetTranslation("Profiles_Empty_Title");
 
-    public string EmptyProfilesDescription => GetTranslation("Profiles_Empty_Description");
+    public string EmptyProfilesDescription => IsStartupSelection
+        ? GetTranslation("Profiles_Startup_Empty_Description")
+        : GetTranslation("Profiles_Empty_Description");
 
     public string BusyText => GetTranslation("Common_Loading");
 
@@ -93,6 +121,7 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(Title));
         this.RaisePropertyChanged(nameof(Subtitle));
         this.RaisePropertyChanged(nameof(BackLabel));
+        this.RaisePropertyChanged(nameof(IsBackButtonVisible));
         this.RaisePropertyChanged(nameof(RefreshLabel));
         this.RaisePropertyChanged(nameof(LoginAnotherProfileLabel));
         this.RaisePropertyChanged(nameof(LoggedInProfilesLabel));
@@ -100,6 +129,12 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(EmptyProfilesDescription));
         this.RaisePropertyChanged(nameof(BusyText));
     }
+
+    public void SetStartupSelectionMode(bool isStartupSelection)
+    {
+        IsStartupSelection = isStartupSelection;
+    }
+
 
     public async Task LoadAsync()
     {
@@ -113,13 +148,37 @@ public sealed class ChangeProfileViewModel : ViewModelBase
 
         try
         {
-            foreach (var token in _authSessionRegistry.ListTokens().ToList())
+            foreach (var originalToken in _authSessionRegistry.ListTokens().ToList())
             {
+                var token = originalToken;
                 var status = await _endpoints.GetAuthSessionStatusAsync(token);
                 if (!status.IsAuthenticated)
                 {
-                    _authSessionRegistry.TryRemove(token);
-                    continue;
+                    var session = _authSessionRegistry.GetSession(token);
+                    if (session?.IsRememberMeEnabled == true && session.UserId != Guid.Empty)
+                    {
+                        try
+                        {
+                            var newToken = await _endpoints.InitializeRememberMeSessionAsync(session.UserId);
+                            if (!_authSessionRegistry.TryReplaceToken(token, newToken))
+                            {
+                                _authSessionRegistry.TryAdd(newToken, originalToken == _authSessionRegistry.CurrentUserToken);
+                                _authSessionRegistry.TryRemove(token);
+                            }
+
+                            token = newToken;
+                            status = await _endpoints.GetAuthSessionStatusAsync(token);
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (!status.IsAuthenticated)
+                    {
+                        _authSessionRegistry.TryRemove(originalToken);
+                        continue;
+                    }
                 }
 
                 var profile = await _endpoints.GetUserProfileInfoAsync(token);
@@ -134,7 +193,8 @@ public sealed class ChangeProfileViewModel : ViewModelBase
                     displayName,
                     subtitle,
                     profile.Username,
-                    profile.Email);
+                    profile.Email,
+                    profile.IsRememberMeEnabled);
 
                 Profiles.Add(new ProfileSessionItemViewModel(
                     UiPreferences,

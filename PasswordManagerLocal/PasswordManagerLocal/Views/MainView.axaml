@@ -49,6 +49,7 @@
                 Content="{Binding RefreshVisiblePageLabel}" />
 
         <Button Grid.Column="2"
+                x:Name="AccountMenuButton"
                 IsVisible="{Binding IsAuthenticated}"
                 Classes="ghost"
                 Padding="14,10"
@@ -58,10 +59,30 @@
             <TextBlock Text="▾" />
           </StackPanel>
           <Button.Flyout>
-            <MenuFlyout>
-              <MenuItem Header="{Binding ChangeProfileLabel}" Command="{Binding ShowChangeProfileCommand}" />
-              <MenuItem Header="{Binding LogoutLabel}" Command="{Binding LogoutCommand}" />
-            </MenuFlyout>
+            <Flyout>
+              <Border Classes="card" Padding="10" MinWidth="240">
+                <StackPanel Spacing="8">
+                  <ToggleSwitch IsChecked="{Binding IsCurrentRememberMeEnabled, Mode=TwoWay}"
+                                IsEnabled="{Binding CanChangeRememberMe}"
+                                Content="{Binding RememberMeDropdownLabel}"
+                                OnContent="{Binding RememberMeOnLabel}"
+                                OffContent="{Binding RememberMeOffLabel}" />
+                  <Border Classes="divider" />
+                  <Button Classes="ghost"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Left"
+                          Command="{Binding ShowChangeProfileCommand}"
+                          Click="HandleAccountMenuActionClick"
+                          Content="{Binding ChangeProfileLabel}" />
+                  <Button Classes="ghost"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Left"
+                          Command="{Binding LogoutCommand}"
+                          Click="HandleAccountMenuActionClick"
+                          Content="{Binding LogoutLabel}" />
+                </StackPanel>
+              </Border>
+            </Flyout>
           </Button.Flyout>
         </Button>
 

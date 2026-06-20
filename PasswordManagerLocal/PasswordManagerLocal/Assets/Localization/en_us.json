@@ -305,5 +305,15 @@
   "Profiles_SwitchTo": "Switch",
   "Profiles_UnknownProfile": "this profile",
   "Shell_SessionRenewal_ProfileMessage": "The session for {0} will expire in about one minute. Do you want to extend that login for another 30 minutes?",
-  "Error_ProfileAlreadyLoggedIn": "Error: This profile is already signed in on this device. Choose it from Change profile instead."
+  "Error_ProfileAlreadyLoggedIn": "Error: This profile is already signed in on this device. Choose it from Change profile instead.",
+  "Shell_RememberMeSwitch": "Remember me on this device",
+  "Shell_RememberMeEnabled": "Remember me is enabled for this profile on this device.",
+  "Shell_RememberMeDisabled": "Remember me is disabled for this profile on this device.",
+  "Shell_RememberMeUpdateFailed": "Remember me could not be changed. Please try again.",
+  "Shell_ChooseRememberedProfile": "Choose which remembered profile to open.",
+  "Profiles_Startup_Title": "Choose profile",
+  "Profiles_Startup_Subtitle": "Multiple remembered profiles are available on this device. Choose one to continue, or sign in to another account.",
+  "Profiles_RememberedProfiles": "Remembered profiles",
+  "Profiles_Startup_Empty_Title": "No remembered profiles found",
+  "Profiles_Startup_Empty_Description": "Sign in to continue."
 }

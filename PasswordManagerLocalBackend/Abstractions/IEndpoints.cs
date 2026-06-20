@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Requests;
+using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
 
 namespace PasswordManagerLocalBackend.Abstractions;
@@ -35,6 +35,7 @@ public interface IEndpoints
 
 
     Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default);
+    Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default);
     Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default);
 
 

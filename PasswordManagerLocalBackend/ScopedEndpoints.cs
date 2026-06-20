@@ -120,6 +120,10 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.InicializeAllRememberMeAsync(ct));
 
 
+    public Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.InitializeRememberMeSessionAsync(userId, ct));
+
+
     public Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default) =>
         RunAsync(endpoints => endpoints.SetRememberMeAsync(token, rememberMe, ct));
 

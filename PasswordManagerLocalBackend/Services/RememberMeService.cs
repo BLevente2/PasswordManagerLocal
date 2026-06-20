@@ -1,5 +1,6 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Security;
+using PasswordManagerLocalBackend.Abstractions.Security;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
@@ -37,21 +38,24 @@ public class RememberMeService : IRememberMeService
 
         foreach (var user in usersEnabledRM)
         {
-            var rawKey = _protector.Unprotect(user.SavedKey);
-            try
-            {
-                using var key = EncryptionKey.FromRaw(rawKey);
-                var token = _tokens.Issue(user.UId);
-                _keys.SetUserKey(token, key);
-                initializedTokens.Add(token);
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(rawKey);
-            }
+            var token = await TryInitializeRememberedUserAsync(user, ct);
+            if (token is not null)
+                initializedTokens.Add(token.Value);
         }
 
         return initializedTokens;
+    }
+
+
+    public async Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default)
+    {
+        var user = await _userService.GetAndVerifyUserByUidAsync(userId, ct);
+        var token = await TryInitializeRememberedUserAsync(user, ct);
+
+        if (token is null)
+            throw new InvalidTokenException();
+
+        return token.Value;
     }
 
 
@@ -87,6 +91,50 @@ public class RememberMeService : IRememberMeService
         finally
         {
             CryptographicOperations.ZeroMemory(raw);
+        }
+    }
+
+
+    private async Task<Guid?> TryInitializeRememberedUserAsync(User user, CancellationToken ct)
+    {
+        if (user.SavedKey is null)
+            return null;
+
+        byte[]? rawKey = null;
+
+        try
+        {
+            rawKey = _protector.Unprotect(user.SavedKey);
+            using var key = EncryptionKey.FromRaw(rawKey);
+            var token = _tokens.Issue(user.UId);
+            _keys.SetUserKey(token, key);
+            return token;
+        }
+        catch (Exception ex) when (ex is CryptographicException or ArgumentException)
+        {
+            await DisableBrokenRememberMeAsync(user, ct);
+            return null;
+        }
+        finally
+        {
+            if (rawKey is not null)
+                CryptographicOperations.ZeroMemory(rawKey);
+        }
+    }
+
+
+    private async Task DisableBrokenRememberMeAsync(User user, CancellationToken ct)
+    {
+        try
+        {
+            if (user.SavedKey is not null)
+                CryptographicOperations.ZeroMemory(user.SavedKey);
+
+            user.SavedKey = null;
+            await _userService.UpdateUserAsync(user, ct);
+        }
+        catch
+        {
         }
     }
 }

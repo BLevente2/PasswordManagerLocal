@@ -305,5 +305,15 @@
   "Profiles_SwitchTo": "Váltás",
   "Profiles_UnknownProfile": "ez a profil",
   "Shell_SessionRenewal_ProfileMessage": "A(z) {0} profil munkamenete körülbelül egy perc múlva lejár. Szeretnéd ezt a bejelentkezést további 30 perccel meghosszabbítani?",
-  "Error_ProfileAlreadyLoggedIn": "Hiba: Ez a profil már be van jelentkezve ezen az eszközön. Válaszd ki a Profilváltás menüből."
+  "Error_ProfileAlreadyLoggedIn": "Hiba: Ez a profil már be van jelentkezve ezen az eszközön. Válaszd ki a Profilváltás menüből.",
+  "Shell_RememberMeSwitch": "Emlékezz rám ezen az eszközön",
+  "Shell_RememberMeEnabled": "Az emlékezz rám be lett kapcsolva ehhez a profilhoz ezen az eszközön.",
+  "Shell_RememberMeDisabled": "Az emlékezz rám ki lett kapcsolva ehhez a profilhoz ezen az eszközön.",
+  "Shell_RememberMeUpdateFailed": "Az emlékezz rám beállítást nem sikerült módosítani. Próbáld újra.",
+  "Shell_ChooseRememberedProfile": "Válaszd ki, melyik megjegyzett profilt szeretnéd megnyitni.",
+  "Profiles_Startup_Title": "Profil kiválasztása",
+  "Profiles_Startup_Subtitle": "Több megjegyzett profil érhető el ezen az eszközön. Válassz egyet a folytatáshoz, vagy jelentkezz be egy másik fiókba.",
+  "Profiles_RememberedProfiles": "Megjegyzett profilok",
+  "Profiles_Startup_Empty_Title": "Nincs megjegyzett profil",
+  "Profiles_Startup_Empty_Description": "Jelentkezz be a folytatáshoz."
 }

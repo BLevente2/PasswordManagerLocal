@@ -2,7 +2,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
+using System.ComponentModel;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels;
 
@@ -15,6 +17,7 @@ public partial class MainView : UserControl
 
     private Point? _swipeStartPoint;
     private TopLevel? _keyboardTopLevel;
+    private MainViewModel? _observedViewModel;
 
     public MainView()
     {
@@ -32,12 +35,16 @@ public partial class MainView : UserControl
             RoutingStrategies.Tunnel | RoutingStrategies.Bubble | RoutingStrategies.Direct);
         AttachedToVisualTree += HandleAttachedToVisualTree;
         DetachedFromVisualTree += HandleDetachedFromVisualTree;
+        DataContextChanged += HandleDataContextChanged;
+        HandleDataContextChanged(this, EventArgs.Empty);
     }
 
 
 
     private void HandleAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
+        HandleDataContextChanged(this, EventArgs.Empty);
+
         var topLevel = TopLevel.GetTopLevel(this);
         ClipboardService.SetActiveTopLevel(topLevel);
 
@@ -57,8 +64,65 @@ public partial class MainView : UserControl
 
 
 
-    private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e) =>
+    private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
         DetachTopLevelKeyboardHandler();
+        DetachObservedViewModel();
+    }
+
+
+
+    private void HandleDataContextChanged(object? sender, EventArgs e)
+    {
+        DetachObservedViewModel();
+
+        if (DataContext is MainViewModel viewModel)
+        {
+            _observedViewModel = viewModel;
+            _observedViewModel.PropertyChanged += HandleViewModelPropertyChanged;
+        }
+    }
+
+
+
+    private void DetachObservedViewModel()
+    {
+        if (_observedViewModel is not null)
+        {
+            _observedViewModel.PropertyChanged -= HandleViewModelPropertyChanged;
+            _observedViewModel = null;
+        }
+    }
+
+
+
+    private void HandleViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if ((e.PropertyName == nameof(MainViewModel.IsAuthenticated)
+                && sender is MainViewModel { IsAuthenticated: false })
+            || e.PropertyName == nameof(MainViewModel.CurrentUserDisplayName))
+        {
+            HideAccountMenuFlyout();
+        }
+    }
+
+
+
+    private void HandleAccountMenuActionClick(object? sender, RoutedEventArgs e) =>
+        Dispatcher.UIThread.Post(HideAccountMenuFlyout);
+
+
+
+    private void HideAccountMenuFlyout()
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(HideAccountMenuFlyout);
+            return;
+        }
+
+        this.FindControl<Button>("AccountMenuButton")?.Flyout?.Hide();
+    }
 
 
 

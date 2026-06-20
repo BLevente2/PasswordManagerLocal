@@ -141,6 +141,10 @@ public sealed class Endpoints : IEndpoints
         _rememberMeService.InicializeAllRememberMeAsync(ct);
 
 
+    public Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default) =>
+        _rememberMeService.InitializeRememberMeSessionAsync(userId, ct);
+
+
     public Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default) =>
         _rememberMeService.SetRememberMeAsync(token, rememberMe, ct);
 
