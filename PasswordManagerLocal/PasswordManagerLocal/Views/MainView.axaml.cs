@@ -14,6 +14,7 @@ public partial class MainView : UserControl
     private const double SwipeDominanceRatio = 1.25;
 
     private Point? _swipeStartPoint;
+    private TopLevel? _keyboardTopLevel;
 
     public MainView()
     {
@@ -29,7 +30,58 @@ public partial class MainView : UserControl
             TextBox.CuttingToClipboardEvent,
             HandleCuttingToClipboard,
             RoutingStrategies.Tunnel | RoutingStrategies.Bubble | RoutingStrategies.Direct);
-        AttachedToVisualTree += (_, _) => ClipboardService.SetActiveTopLevel(TopLevel.GetTopLevel(this));
+        AttachedToVisualTree += HandleAttachedToVisualTree;
+        DetachedFromVisualTree += HandleDetachedFromVisualTree;
+    }
+
+
+
+    private void HandleAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        ClipboardService.SetActiveTopLevel(topLevel);
+
+        if (ReferenceEquals(_keyboardTopLevel, topLevel))
+        {
+            return;
+        }
+
+        DetachTopLevelKeyboardHandler();
+
+        if (topLevel is not null)
+        {
+            _keyboardTopLevel = topLevel;
+            topLevel.AddHandler(KeyDownEvent, HandleTopLevelKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        }
+    }
+
+
+
+    private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e) =>
+        DetachTopLevelKeyboardHandler();
+
+
+
+    private void DetachTopLevelKeyboardHandler()
+    {
+        if (_keyboardTopLevel is not null)
+        {
+            _keyboardTopLevel.RemoveHandler(KeyDownEvent, HandleTopLevelKeyDown);
+            _keyboardTopLevel = null;
+        }
+    }
+
+
+
+    private async void HandleTopLevelKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Handled || e.Key != Key.Escape || e.KeyModifiers != KeyModifiers.None)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await HandleEscapeAsync();
     }
 
 

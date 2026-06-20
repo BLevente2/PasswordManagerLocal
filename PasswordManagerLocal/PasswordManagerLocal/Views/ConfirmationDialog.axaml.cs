@@ -9,7 +9,7 @@ public partial class ConfirmationDialog : Window
     public ConfirmationDialog()
     {
         InitializeComponent();
-        AddHandler(KeyDownEvent, HandleKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, HandleKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
     public ConfirmationDialog(string title, string message, string yesLabel, string noLabel)
