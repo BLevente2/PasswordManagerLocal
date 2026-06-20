@@ -208,6 +208,7 @@
   "Error_InvalidCredentials": "Hiba: Hibás felhasználónév vagy jelszó.",
   "Error_InvalidSession": "Hiba: A munkamenet lejárt vagy érvénytelen. Jelentkezz be újra.",
   "Error_NotFound": "Hiba: A kért elem nem található.",
+  "Error_DuplicatePasswordName": "Már létezik ilyen nevű jelszó. Válassz másik nevet.",
   "Error_LimitReached": "Hiba: Elérted az engedélyezett mennyiségi korlátot.",
   "Error_DataIntegrity": "Hiba: Az adatok sérültek vagy nem ellenőrizhetők.",
   "Error_DeviceIdentity": "Hiba: Az eszközazonosító nincs inicializálva.",

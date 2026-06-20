@@ -35,6 +35,36 @@ public sealed class UserPasswordsServiceTests
         MSTestAssert.AreEqual("Email", list[0].Name);
     }
 
+
+    [TestMethod]
+    public async Task AddNewPassword_DuplicateName_Throws()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
+        var svc = (IUserPasswordsService)host.Services.GetRequiredService(typeof(IUserPasswordsService));
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("duplicate"));
+
+        await svc.AddNewPasswordAsync(token, new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = Encoding.UTF8.GetBytes("first")
+        });
+
+        await ExpectThrowsAsync<DuplicatePasswordNameException>(async () =>
+        {
+            await svc.AddNewPasswordAsync(token, new NewPasswordRequest
+            {
+                Name = "email",
+                Password = Encoding.UTF8.GetBytes("second")
+            });
+        });
+
+        var list = await svc.GetSavedPasswordsAsync(token);
+        MSTestAssert.HasCount(1, list);
+    }
+
     [TestMethod]
     public async Task RemovePassword_RemovesPersistently()
     {

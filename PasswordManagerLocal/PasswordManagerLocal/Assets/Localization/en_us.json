@@ -208,6 +208,7 @@
   "Error_InvalidCredentials": "Error: The username or password is incorrect.",
   "Error_InvalidSession": "Error: Your session has expired or is invalid. Please sign in again.",
   "Error_NotFound": "Error: The requested item could not be found.",
+  "Error_DuplicatePasswordName": "A password with this name already exists. Choose a different name.",
   "Error_LimitReached": "Error: The allowed limit has been reached.",
   "Error_DataIntegrity": "Error: The data is corrupted or could not be verified.",
   "Error_DeviceIdentity": "Error: The device identity is not initialized.",

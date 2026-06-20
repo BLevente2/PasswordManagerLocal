@@ -30,10 +30,13 @@ public sealed class PasswordService : IPasswordService
         if (passwords.Passwords.Count >= MaxNumberOfPasswords)
             throw new LimitReachedException(MaxNumberOfPasswords, "password");
 
+        var normalizedName = NormalizePasswordName(request.Name);
+        ThrowIfPasswordNameExists(normalizedName, passwords);
+
         var securePassword = new SecurePassword
         {
             Id = Guid.NewGuid(),
-            Name = request.Name,
+            Name = normalizedName,
             Description = request.Description,
             Color = request.Color,
             Password = await EncryptPasswordAsync(request.Password, passwords),
@@ -83,7 +86,11 @@ public sealed class PasswordService : IPasswordService
         var password = GetAndVerifyPasswordById(request.Id, passwords);
 
         if (request.Name is not null)
-            password.Name = request.Name;
+        {
+            var normalizedName = NormalizePasswordName(request.Name);
+            ThrowIfPasswordNameExists(normalizedName, passwords, password.Id);
+            password.Name = normalizedName;
+        }
 
         if (request.Description is not null)
             password.Description = request.Description;
@@ -100,6 +107,20 @@ public sealed class PasswordService : IPasswordService
         password.LastUpdatedAt = DateTime.UtcNow;
         password.GenerateIntegrityHash();
         passwords.GenerateIntegrityHash();
+    }
+
+
+    private static string NormalizePasswordName(string name) => name.Trim();
+
+
+    private static void ThrowIfPasswordNameExists(string name, SecurePasswords passwords, Guid? ignoredPasswordId = null)
+    {
+        var exists = passwords.Passwords.Any(password =>
+            (!ignoredPasswordId.HasValue || password.Id != ignoredPasswordId.Value)
+            && string.Equals(NormalizePasswordName(password.Name), name, StringComparison.OrdinalIgnoreCase));
+
+        if (exists)
+            throw new DuplicatePasswordNameException(name);
     }
 
 

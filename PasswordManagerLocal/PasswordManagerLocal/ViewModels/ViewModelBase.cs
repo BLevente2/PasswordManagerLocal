@@ -31,6 +31,7 @@ public abstract class ViewModelBase : ReactiveObject
             UnauthorizedAccessException => GetTranslation("Error_InvalidCredentials"),
             InvalidInputException => GetTranslation("Error_InvalidInput"),
             PasswordNotFoundException => GetTranslation("Error_NotFound"),
+            DuplicatePasswordNameException => GetTranslation("Error_DuplicatePasswordName"),
             LimitReachedException => GetTranslation("Error_LimitReached"),
             InvalidDataIntegrityException => GetTranslation("Error_DataIntegrity"),
             DeviceIdentityNotInitilaizedException => GetTranslation("Error_DeviceIdentity"),
