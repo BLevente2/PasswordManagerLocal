@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using PasswordManagerLocal.Abstractions.Services;
+using PasswordManagerLocal.Exceptions;
 using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels.Auth;
@@ -31,8 +32,11 @@ public sealed class MainViewModel : ViewModelBase
     private bool _isCheckingSession;
     private bool _isSessionRenewalDialogOpen;
     private bool _isRenewingSession;
+    private bool _isAddingProfile;
+    private int _profileChangeReturnPageIndex;
     private Guid _sessionRenewalDialogToken = Guid.Empty;
     private Guid _sessionRenewalPromptShownForToken = Guid.Empty;
+    private string _sessionRenewalDialogProfileName = string.Empty;
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -49,6 +53,13 @@ public sealed class MainViewModel : ViewModelBase
         RegistrationViewModel = new RegistrationViewModel(uiPreferences, _endpoints, NavigateToLogin, OnAuthenticationSucceededAsync);
         PasswordsViewModel = new PasswordsViewModel(uiPreferences, _endpoints);
         ProfileViewModel = new ProfileViewModel(uiPreferences, _endpoints, RefreshProfileDataAsync, HandleAccountDeletedAsync);
+        ChangeProfileViewModel = new ChangeProfileViewModel(
+            uiPreferences,
+            _endpoints,
+            _authSessionRegistry,
+            NavigateBackFromChangeProfileAsync,
+            NavigateToLoginAnotherProfile,
+            SwitchToProfileAsync);
 
         _currentPageViewModel = LoginViewModel;
         _currentAnimatedPageViewModel = new MainPageContentViewModel(LoginViewModel);
@@ -62,6 +73,7 @@ public sealed class MainViewModel : ViewModelBase
         ShowDevicesCommand = ReactiveCommand.Create(NavigateToDevices);
         ShowLoginCommand = ReactiveCommand.Create(NavigateToLogin);
         ShowRegistrationCommand = ReactiveCommand.Create(NavigateToRegistration);
+        ShowChangeProfileCommand = ReactiveCommand.CreateFromTask(ShowChangeProfileAsync);
         LogoutCommand = ReactiveCommand.CreateFromTask(LogoutAsync);
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAuthenticatedStateAsync);
         RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshVisiblePageAsync);
@@ -76,6 +88,8 @@ public sealed class MainViewModel : ViewModelBase
     public PasswordsViewModel PasswordsViewModel { get; }
 
     public ProfileViewModel ProfileViewModel { get; }
+
+    public ChangeProfileViewModel ChangeProfileViewModel { get; }
 
     public ViewModelBase CurrentPageViewModel
     {
@@ -142,9 +156,11 @@ public sealed class MainViewModel : ViewModelBase
 
     public bool IsDesktopContentVisible => !IsMobileNavigationEnabled;
 
-    public bool IsDesktopNavigationVisible => IsAuthenticated && !IsMobileNavigationEnabled;
+    public bool IsDesktopNavigationVisible => IsAuthenticated && !IsMobileNavigationEnabled && IsMainContentPageVisible;
 
-    public bool IsMobilePageIndicatorVisible => IsAuthenticated && IsMobileNavigationEnabled;
+    public bool IsMobilePageIndicatorVisible => IsAuthenticated && IsMobileNavigationEnabled && IsMainContentPageVisible;
+
+    private bool IsMainContentPageVisible => ReferenceEquals(CurrentPageViewModel, PasswordsViewModel) || ReferenceEquals(CurrentPageViewModel, ProfileViewModel);
 
     public int CurrentMobileNavigationIndex => CurrentMainPageIndex;
 
@@ -212,6 +228,8 @@ public sealed class MainViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> ShowRegistrationCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> ShowChangeProfileCommand { get; }
+
     public ReactiveCommand<Unit, Unit> LogoutCommand { get; }
 
     public ReactiveCommand<Unit, Unit> RefreshCommand { get; }
@@ -246,6 +264,8 @@ public sealed class MainViewModel : ViewModelBase
 
     public string LogoutLabel => GetTranslation("Shell_Logout");
 
+    public string ChangeProfileLabel => GetTranslation("Shell_ChangeProfile");
+
     public string WelcomeLabel => GetTranslation("Shell_Welcome");
 
     public string NavigationLabel => GetTranslation("Shell_Navigation");
@@ -268,7 +288,9 @@ public sealed class MainViewModel : ViewModelBase
 
     public string SessionRenewalWarningTitle => GetTranslation("Shell_SessionRenewal_Title");
 
-    public string SessionRenewalWarningMessage => GetTranslation("Shell_SessionRenewal_Message");
+    public string SessionRenewalWarningMessage => string.IsNullOrWhiteSpace(_sessionRenewalDialogProfileName)
+        ? GetTranslation("Shell_SessionRenewal_Message")
+        : string.Format(GetTranslation("Shell_SessionRenewal_ProfileMessage"), _sessionRenewalDialogProfileName);
 
     public string SessionRenewalYesButtonLabel => IsRenewingSession
         ? GetTranslation("Common_Loading")
@@ -323,14 +345,33 @@ public sealed class MainViewModel : ViewModelBase
             return ProfileViewModel.TryNavigateBack();
         }
 
+        if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
+        {
+            await NavigateBackFromChangeProfileAsync();
+            return true;
+        }
+
         if (ReferenceEquals(CurrentPageViewModel, LoginViewModel))
         {
-            return await LoginViewModel.TryNavigateBackAsync();
+            if (await LoginViewModel.TryNavigateBackAsync())
+                return true;
+
+            if (_isAddingProfile)
+            {
+                await NavigateBackFromAddProfileAsync();
+                return true;
+            }
+
+            return false;
         }
 
         if (ReferenceEquals(CurrentPageViewModel, RegistrationViewModel))
         {
-            NavigateToLogin();
+            if (_isAddingProfile)
+                await NavigateBackFromAddProfileAsync();
+            else
+                NavigateToLogin();
+
             return true;
         }
 
@@ -354,6 +395,7 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(ProfileLabel));
         this.RaisePropertyChanged(nameof(DevicesLabel));
         this.RaisePropertyChanged(nameof(LogoutLabel));
+        this.RaisePropertyChanged(nameof(ChangeProfileLabel));
         this.RaisePropertyChanged(nameof(WelcomeLabel));
         this.RaisePropertyChanged(nameof(NavigationLabel));
         this.RaisePropertyChanged(nameof(RefreshButtonLabel));
@@ -374,14 +416,95 @@ public sealed class MainViewModel : ViewModelBase
 
     private void NavigateToLogin()
     {
+        ConfigureAuthBackNavigation();
         CurrentPageViewModel = LoginViewModel;
         StatusMessage = null;
     }
 
     private void NavigateToRegistration()
     {
+        ConfigureAuthBackNavigation();
         CurrentPageViewModel = RegistrationViewModel;
         StatusMessage = null;
+    }
+
+    private async Task ShowChangeProfileAsync()
+    {
+        if (!IsAuthenticated)
+            return;
+
+        _isAddingProfile = false;
+        if (IsMainContentPageVisible)
+            _profileChangeReturnPageIndex = CurrentMainPageIndex;
+
+        ConfigureAuthBackNavigation();
+        await ChangeProfileViewModel.LoadAsync();
+        CurrentPageViewModel = ChangeProfileViewModel;
+        StatusMessage = null;
+    }
+
+    private void NavigateToLoginAnotherProfile()
+    {
+        if (!IsAuthenticated)
+            return;
+
+        _isAddingProfile = true;
+        LoginViewModel.Reset();
+        RegistrationViewModel.Reset();
+        ConfigureAuthBackNavigation();
+        CurrentPageViewModel = LoginViewModel;
+        StatusMessage = null;
+    }
+
+    private void ConfigureAuthBackNavigation()
+    {
+        var isVisible = _isAddingProfile;
+        LoginViewModel.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
+        RegistrationViewModel.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
+    }
+
+    private async Task NavigateBackFromAddProfileAsync()
+    {
+        _isAddingProfile = false;
+        ConfigureAuthBackNavigation();
+        LoginViewModel.Reset();
+        RegistrationViewModel.Reset();
+        await ShowChangeProfileAsync();
+    }
+
+    private async Task NavigateBackFromChangeProfileAsync()
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty)
+        {
+            await HandleLoggedOutStateAsync();
+            return;
+        }
+
+        await LoadAuthenticatedStateAsync(token);
+        RestoreProfileChangeReturnPage();
+    }
+
+    private async Task SwitchToProfileAsync(Guid token)
+    {
+        await LoadAuthenticatedStateAsync(token, GetTranslation("Shell_ProfileChanged"));
+        RestoreProfileChangeReturnPage();
+    }
+
+    private void RestoreProfileChangeReturnPage()
+    {
+        switch (_profileChangeReturnPageIndex)
+        {
+            case 1:
+                NavigateToDevices();
+                break;
+            case 2:
+                NavigateToProfile();
+                break;
+            default:
+                NavigateToPasswords();
+                break;
+        }
     }
 
     private void NavigateToPasswords()
@@ -424,7 +547,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public bool NavigateToNextMainPage()
     {
-        if (!IsAuthenticated)
+        if (!IsAuthenticated || !IsMainContentPageVisible)
         {
             return false;
         }
@@ -441,7 +564,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public bool NavigateToPreviousMainPage()
     {
-        if (!IsAuthenticated)
+        if (!IsAuthenticated || !IsMainContentPageVisible)
         {
             return false;
         }
@@ -476,26 +599,47 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task OnAuthenticationSucceededAsync(Guid token)
     {
+        var profile = await _endpoints.GetUserProfileInfoAsync(token);
+        var wasAddingProfile = _isAddingProfile;
+
+        if (await ContainsActiveUserIdAsync(profile.UId, token))
+        {
+            try { _endpoints.Logout(token); } catch { }
+            throw new DuplicateActiveProfileException();
+        }
+
         _authSessionRegistry.TryAdd(token);
-        await LoadAuthenticatedStateAsync(token, GetTranslation("Shell_SignedIn"));
+        SetSessionProfile(token, profile);
+        _isAddingProfile = false;
+        ConfigureAuthBackNavigation();
+        await LoadAuthenticatedStateAsync(token, profile, GetTranslation("Shell_SignedIn"));
+
+        if (wasAddingProfile)
+            RestoreProfileChangeReturnPage();
     }
 
     private async Task LoadAuthenticatedStateAsync(Guid token, string? message = null)
     {
         var profile = await _endpoints.GetUserProfileInfoAsync(token);
+        await LoadAuthenticatedStateAsync(token, profile, message);
+    }
 
+    private async Task LoadAuthenticatedStateAsync(Guid token, UserProfileInfoResponse profile, string? message = null)
+    {
+        _authSessionRegistry.CurrentUserToken = token;
+        SetSessionProfile(token, profile);
         IsAuthenticated = true;
         CurrentUserDisplayName = BuildDisplayName(profile);
-        CurrentUserSubtitle = string.IsNullOrWhiteSpace(profile.Username)
-            ? profile.Email
-            : $"@{profile.Username}";
+        CurrentUserSubtitle = BuildSubtitle(profile);
 
+        PasswordsViewModel.Reset();
+        ProfileViewModel.Reset();
         await PasswordsViewModel.LoadAsync(token);
         await ProfileViewModel.LoadAsync(token, profile);
 
         CurrentPageViewModel = PasswordsViewModel;
         StatusMessage = message;
-        StartSessionMonitor(token);
+        EnsureSessionMonitor();
     }
 
     private async Task RefreshVisiblePageAsync()
@@ -542,9 +686,8 @@ public sealed class MainViewModel : ViewModelBase
         var profile = await _endpoints.GetUserProfileInfoAsync(token);
 
         CurrentUserDisplayName = BuildDisplayName(profile);
-        CurrentUserSubtitle = string.IsNullOrWhiteSpace(profile.Username)
-            ? profile.Email
-            : $"@{profile.Username}";
+        CurrentUserSubtitle = BuildSubtitle(profile);
+        SetSessionProfile(token, profile);
 
         await ProfileViewModel.LoadAsync(token, profile);
     }
@@ -562,11 +705,10 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task LogoutAsync()
     {
-        StopSessionMonitor();
         var token = _authSessionRegistry.CurrentUserToken;
         if (token == Guid.Empty)
         {
-            NavigateToLogin();
+            await HandleLoggedOutStateAsync();
             return;
         }
 
@@ -574,10 +716,13 @@ public sealed class MainViewModel : ViewModelBase
         {
             _endpoints.Logout(token);
         }
+        catch
+        {
+        }
         finally
         {
             _authSessionRegistry.TryRemove(token);
-            await HandleLoggedOutStateAsync();
+            await LoadNextAvailableSessionOrLoginAsync(GetTranslation("Shell_LoggedOut"));
         }
     }
 
@@ -585,12 +730,9 @@ public sealed class MainViewModel : ViewModelBase
     {
         var token = _authSessionRegistry.CurrentUserToken;
         if (token != Guid.Empty)
-        {
             _authSessionRegistry.TryRemove(token);
-        }
 
-        await HandleLoggedOutStateAsync();
-        StatusMessage = GetTranslation("Profile_Delete_Success");
+        await LoadNextAvailableSessionOrLoginAsync(GetTranslation("Profile_Delete_Success"));
     }
 
     private Task HandleLoggedOutStateAsync(string? message = null)
@@ -600,6 +742,9 @@ public sealed class MainViewModel : ViewModelBase
         IsRenewingSession = false;
         _sessionRenewalDialogToken = Guid.Empty;
         _sessionRenewalPromptShownForToken = Guid.Empty;
+        _sessionRenewalDialogProfileName = string.Empty;
+        _isAddingProfile = false;
+        ConfigureAuthBackNavigation();
         IsAuthenticated = false;
         CurrentUserDisplayName = string.Empty;
         CurrentUserSubtitle = string.Empty;
@@ -612,16 +757,17 @@ public sealed class MainViewModel : ViewModelBase
         return Task.CompletedTask;
     }
 
-    private void StartSessionMonitor(Guid token)
+    private void EnsureSessionMonitor()
     {
-        StopSessionMonitor();
+        if (_sessionMonitorTimer is not null)
+            return;
 
         var timer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(3)
         };
 
-        timer.Tick += async (_, _) => await CheckCurrentSessionAsync(token);
+        timer.Tick += async (_, _) => await CheckAllSessionsAsync();
         _sessionMonitorTimer = timer;
         timer.Start();
     }
@@ -638,30 +784,48 @@ public sealed class MainViewModel : ViewModelBase
     }
 
 
-    private async Task CheckCurrentSessionAsync(Guid token)
+    private async Task CheckAllSessionsAsync()
     {
-        if (_isCheckingSession || !IsAuthenticated || token == Guid.Empty || token != _authSessionRegistry.CurrentUserToken)
+        if (_isCheckingSession)
             return;
+
+        var tokens = _authSessionRegistry.ListTokens();
+        if (tokens.Count == 0)
+        {
+            if (IsAuthenticated)
+                await HandleLoggedOutStateAsync();
+
+            return;
+        }
 
         try
         {
             _isCheckingSession = true;
-            var status = await _endpoints.GetAuthSessionStatusAsync(token);
 
-            if (token != _authSessionRegistry.CurrentUserToken)
-                return;
-
-            if (!status.IsAuthenticated)
+            foreach (var token in tokens.ToList())
             {
-                await HandleInvalidatedSessionAsync(token, status.InvalidationReason);
-                return;
-            }
+                if (_authSessionRegistry.GetSession(token) is null)
+                    continue;
 
-            if (status.ExpiresAtUtc is { } expiresAtUtc)
-                ShowSessionRenewalWarningIfNeeded(token, expiresAtUtc);
-        }
-        catch
-        {
+                AuthSessionStatusResponse status;
+                try
+                {
+                    status = await _endpoints.GetAuthSessionStatusAsync(token);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (!status.IsAuthenticated)
+                {
+                    await HandleInvalidatedSessionAsync(token, status.InvalidationReason);
+                    continue;
+                }
+
+                if (status.ExpiresAtUtc is { } expiresAtUtc)
+                    ShowSessionRenewalWarningIfNeeded(token, expiresAtUtc);
+            }
         }
         finally
         {
@@ -680,6 +844,8 @@ public sealed class MainViewModel : ViewModelBase
 
         _sessionRenewalDialogToken = token;
         _sessionRenewalPromptShownForToken = token;
+        _sessionRenewalDialogProfileName = GetSessionDisplayName(token);
+        this.RaisePropertyChanged(nameof(SessionRenewalWarningMessage));
         IsSessionRenewalDialogOpen = true;
     }
 
@@ -690,10 +856,10 @@ public sealed class MainViewModel : ViewModelBase
             return;
 
         var oldToken = _sessionRenewalDialogToken;
-        if (oldToken == Guid.Empty || oldToken != _authSessionRegistry.CurrentUserToken || !IsAuthenticated)
+        var wasCurrent = oldToken == _authSessionRegistry.CurrentUserToken;
+        if (oldToken == Guid.Empty || _authSessionRegistry.GetSession(oldToken) is null || !IsAuthenticated)
         {
-            IsSessionRenewalDialogOpen = false;
-            _sessionRenewalDialogToken = Guid.Empty;
+            CloseSessionRenewalDialog();
             return;
         }
 
@@ -702,21 +868,26 @@ public sealed class MainViewModel : ViewModelBase
             IsRenewingSession = true;
             var newToken = await _endpoints.RenewAuthSessionAsync(oldToken);
 
-            _authSessionRegistry.TryAdd(newToken);
-            _authSessionRegistry.TryRemove(oldToken);
-            _authSessionRegistry.CurrentUserToken = newToken;
-            PasswordsViewModel.SetSessionToken(newToken);
-            ProfileViewModel.SetSessionToken(newToken);
+            if (!_authSessionRegistry.TryReplaceToken(oldToken, newToken))
+            {
+                _authSessionRegistry.TryAdd(newToken);
+                _authSessionRegistry.TryRemove(oldToken);
+            }
 
-            _sessionRenewalDialogToken = Guid.Empty;
-            _sessionRenewalPromptShownForToken = Guid.Empty;
-            IsSessionRenewalDialogOpen = false;
+            if (wasCurrent)
+            {
+                _authSessionRegistry.CurrentUserToken = newToken;
+                PasswordsViewModel.SetSessionToken(newToken);
+                ProfileViewModel.SetSessionToken(newToken);
+            }
+
+            CloseSessionRenewalDialog(true);
             StatusMessage = GetTranslation("Shell_SessionRenewed");
-            StartSessionMonitor(newToken);
+            EnsureSessionMonitor();
         }
         catch
         {
-            IsSessionRenewalDialogOpen = false;
+            CloseSessionRenewalDialog();
             StatusMessage = GetTranslation("Shell_SessionRenewalFailed");
         }
         finally
@@ -731,18 +902,113 @@ public sealed class MainViewModel : ViewModelBase
         if (IsRenewingSession)
             return;
 
-        IsSessionRenewalDialogOpen = false;
-        _sessionRenewalDialogToken = Guid.Empty;
+        CloseSessionRenewalDialog();
         StatusMessage = GetTranslation("Shell_SessionRenewalDeclined");
     }
 
 
     private async Task HandleInvalidatedSessionAsync(Guid token, AuthSessionInvalidationReason reason)
     {
+        var wasCurrent = token == _authSessionRegistry.CurrentUserToken;
+        var message = GetSessionInvalidationMessage(reason);
+
         _authSessionRegistry.TryRemove(token);
-        await HandleLoggedOutStateAsync(GetSessionInvalidationMessage(reason));
+
+        if (_sessionRenewalDialogToken == token)
+            CloseSessionRenewalDialog();
+
+        if (wasCurrent)
+        {
+            await LoadNextAvailableSessionOrLoginAsync(message);
+            return;
+        }
+
+        if (_authSessionRegistry.ListTokens().Count == 0)
+            await HandleLoggedOutStateAsync(message);
     }
 
+
+
+    private async Task LoadNextAvailableSessionOrLoginAsync(string? message = null)
+    {
+        var nextToken = _authSessionRegistry.CurrentUserToken;
+        if (nextToken == Guid.Empty)
+        {
+            await HandleLoggedOutStateAsync(message);
+            return;
+        }
+
+        await LoadAuthenticatedStateAsync(nextToken, message);
+    }
+
+
+    private void CloseSessionRenewalDialog(bool resetPromptToken = false)
+    {
+        IsSessionRenewalDialogOpen = false;
+        _sessionRenewalDialogToken = Guid.Empty;
+        _sessionRenewalDialogProfileName = string.Empty;
+
+        if (resetPromptToken)
+            _sessionRenewalPromptShownForToken = Guid.Empty;
+
+        this.RaisePropertyChanged(nameof(SessionRenewalWarningMessage));
+    }
+
+
+    private string GetSessionDisplayName(Guid token)
+    {
+        var session = _authSessionRegistry.GetSession(token);
+        if (!string.IsNullOrWhiteSpace(session?.DisplayName))
+            return session.DisplayName;
+
+        if (token == _authSessionRegistry.CurrentUserToken && !string.IsNullOrWhiteSpace(CurrentUserDisplayName))
+            return CurrentUserDisplayName;
+
+        return GetTranslation("Profiles_UnknownProfile");
+    }
+
+
+    private void SetSessionProfile(Guid token, UserProfileInfoResponse profile)
+    {
+        if (_authSessionRegistry.GetSession(token) is null)
+            _authSessionRegistry.TryAdd(token);
+
+        _authSessionRegistry.TrySetProfile(
+            token,
+            profile.UId,
+            BuildDisplayName(profile),
+            BuildSubtitle(profile),
+            profile.Username,
+            profile.Email);
+    }
+
+
+    private async Task<bool> ContainsActiveUserIdAsync(Guid userId, Guid excludedToken = default)
+    {
+        if (_authSessionRegistry.ContainsUserId(userId, excludedToken))
+            return true;
+
+        foreach (var token in _authSessionRegistry.ListTokens().Where(token => token != excludedToken).ToList())
+        {
+            var session = _authSessionRegistry.GetSession(token);
+            if (session?.UserId == userId)
+                return true;
+
+            try
+            {
+                var profile = await _endpoints.GetUserProfileInfoAsync(token);
+                SetSessionProfile(token, profile);
+
+                if (profile.UId == userId)
+                    return true;
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
+    }
 
     private string GetSessionInvalidationMessage(AuthSessionInvalidationReason reason) =>
         reason switch
@@ -782,7 +1048,15 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(CurrentMobileNavigationIndex));
         this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
         this.RaisePropertyChanged(nameof(MobilePageIndicatorText));
+        this.RaisePropertyChanged(nameof(IsDesktopNavigationVisible));
+        this.RaisePropertyChanged(nameof(IsMobilePageIndicatorVisible));
     }
+
+
+    private static string BuildSubtitle(UserProfileInfoResponse profile) =>
+        string.IsNullOrWhiteSpace(profile.Username)
+            ? profile.Email
+            : $"@{profile.Username}";
 
 
     private static string BuildDisplayName(UserProfileInfoResponse profile)

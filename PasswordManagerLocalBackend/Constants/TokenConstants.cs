@@ -2,7 +2,7 @@
 
 public static class TokenConstants
 {
-    public const int LoginTokenExpirationMinutes = 2;
+    public const int LoginTokenExpirationMinutes = 30;
     public const int InvalidationReasonRetentionMinutes = LoginTokenExpirationMinutes;
 
     public static readonly TimeSpan LoginTokenExpirationTime = TimeSpan.FromMinutes(LoginTokenExpirationMinutes);

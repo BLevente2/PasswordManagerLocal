@@ -14,10 +14,17 @@
     <Grid Margin="16,8,16,16">
       <Border Classes="card" HorizontalAlignment="Center" MaxWidth="560" MinWidth="280">
         <StackPanel Spacing="16">
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
-          </StackPanel>
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <Button Classes="ghost iconButton"
+                    IsVisible="{Binding IsBackButtonVisible}"
+                    Command="{Binding NavigateBackCommand}"
+                    Content="←"
+                    ToolTip.Tip="{Binding BackLabel}" />
+            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+              <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
 
           <StackPanel Spacing="6" IsVisible="{Binding IsBusy}">
             <ProgressBar IsIndeterminate="True" />

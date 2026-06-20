@@ -291,5 +291,19 @@
   "Shell_LogoutConfirm_Message": "Do you want to log out of the current profile?",
   "Shell_ExitConfirm_Title": "Close app?",
   "Shell_ExitConfirm_Message": "Do you want to close Password Manager Local?",
-  "Login_DeviceTransfer_CodeReadabilityHint": "For readability, zeros are shown with a slash: 0̸. This makes them easier to distinguish from the letter O."
+  "Login_DeviceTransfer_CodeReadabilityHint": "For readability, zeros are shown with a slash: 0̸. This makes them easier to distinguish from the letter O.",
+  "Common_Back": "Back",
+  "Shell_ChangeProfile": "Change profile",
+  "Shell_ProfileChanged": "Profile changed.",
+  "Profiles_Title": "Change profile",
+  "Profiles_Subtitle": "Choose another signed-in profile on this device, or sign in to a different account.",
+  "Profiles_LoginAnother": "Sign in to another account",
+  "Profiles_LoggedInProfiles": "Signed-in profiles",
+  "Profiles_Empty_Title": "No signed-in profiles found",
+  "Profiles_Empty_Description": "Sign in to another account to add a profile to this device.",
+  "Profiles_Current": "Current",
+  "Profiles_SwitchTo": "Switch",
+  "Profiles_UnknownProfile": "this profile",
+  "Shell_SessionRenewal_ProfileMessage": "The session for {0} will expire in about one minute. Do you want to extend that login for another 30 minutes?",
+  "Error_ProfileAlreadyLoggedIn": "Error: This profile is already signed in on this device. Choose it from Change profile instead."
 }

@@ -4,6 +4,7 @@ namespace PasswordManagerLocalBackend.Responses;
 
 public sealed class UserProfileInfoResponse
 {
+    public Guid UId { get; set; }
     public string Username { get; set; } = string.Empty;
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
@@ -16,6 +17,7 @@ public sealed class UserProfileInfoResponse
     public static UserProfileInfoResponse ConvertToUserProfileInfoResponse(UserData user) =>
         new UserProfileInfoResponse
         {
+            UId = user.UId,
             Username = user.Username,
             FirstName = user.FirstName,
             LastName = user.LastName,

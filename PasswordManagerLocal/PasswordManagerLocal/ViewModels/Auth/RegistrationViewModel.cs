@@ -12,6 +12,7 @@ public sealed class RegistrationViewModel : ViewModelBase
     private readonly IEndpoints _endpoints;
     private readonly Action _navigateToLogin;
     private readonly Func<Guid, Task> _onAuthenticationSucceededAsync;
+    private Func<Task>? _navigateBackAsync;
 
     private string _username = string.Empty;
     private string _firstName = string.Empty;
@@ -24,6 +25,7 @@ public sealed class RegistrationViewModel : ViewModelBase
     private bool _isConfirmPasswordVisible;
     private string? _errorMessage;
     private bool _isBusy;
+    private bool _isBackButtonVisible;
 
     public RegistrationViewModel(
         UiPreferencesService uiPreferences,
@@ -38,6 +40,7 @@ public sealed class RegistrationViewModel : ViewModelBase
 
         RegisterCommand = ReactiveCommand.CreateFromTask(RegisterAsync);
         NavigateToLoginCommand = ReactiveCommand.Create(_navigateToLogin);
+        NavigateBackCommand = ReactiveCommand.CreateFromTask(NavigateBackAsync);
         TogglePasswordVisibilityCommand = ReactiveCommand.Create(TogglePasswordVisibility);
         ToggleConfirmPasswordVisibilityCommand = ReactiveCommand.Create(ToggleConfirmPasswordVisibility);
     }
@@ -120,6 +123,12 @@ public sealed class RegistrationViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _isBusy, value);
     }
 
+    public bool IsBackButtonVisible
+    {
+        get => _isBackButtonVisible;
+        private set => this.RaiseAndSetIfChanged(ref _isBackButtonVisible, value);
+    }
+
     public char PasswordMaskCharacter => IsPasswordVisible ? '\0' : '●';
 
     public char ConfirmPasswordMaskCharacter => IsConfirmPasswordVisible ? '\0' : '●';
@@ -128,11 +137,15 @@ public sealed class RegistrationViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> NavigateToLoginCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> NavigateBackCommand { get; }
+
     public ReactiveCommand<Unit, Unit> TogglePasswordVisibilityCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ToggleConfirmPasswordVisibilityCommand { get; }
 
     public string Title => GetTranslation("Register_Title");
+
+    public string BackLabel => GetTranslation("Common_Back");
 
     public string Subtitle => GetTranslation("Register_Subtitle");
 
@@ -177,6 +190,7 @@ public sealed class RegistrationViewModel : ViewModelBase
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(Title));
+        this.RaisePropertyChanged(nameof(BackLabel));
         this.RaisePropertyChanged(nameof(Subtitle));
         this.RaisePropertyChanged(nameof(UsernameLabel));
         this.RaisePropertyChanged(nameof(FirstNameLabel));
@@ -212,6 +226,22 @@ public sealed class RegistrationViewModel : ViewModelBase
         IsConfirmPasswordVisible = false;
         ErrorMessage = null;
         this.RaisePropertyChanged(nameof(HasError));
+    }
+
+
+    public void SetBackNavigation(bool isVisible, Func<Task>? navigateBackAsync)
+    {
+        IsBackButtonVisible = isVisible;
+        _navigateBackAsync = navigateBackAsync;
+    }
+
+
+    private async Task NavigateBackAsync()
+    {
+        if (IsBusy || _navigateBackAsync is null)
+            return;
+
+        await _navigateBackAsync();
     }
 
     private async Task RegisterAsync()

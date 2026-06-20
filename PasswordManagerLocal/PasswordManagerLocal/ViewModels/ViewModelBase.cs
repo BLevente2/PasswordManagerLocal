@@ -1,4 +1,5 @@
-﻿using PasswordManagerLocal.Localization;
+﻿using PasswordManagerLocal.Exceptions;
+using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using ReactiveUI;
@@ -34,6 +35,7 @@ public abstract class ViewModelBase : ReactiveObject
             InvalidDataIntegrityException => GetTranslation("Error_DataIntegrity"),
             DeviceIdentityNotInitilaizedException => GetTranslation("Error_DeviceIdentity"),
             DeviceEnrollmentException deviceEnrollmentException => GetDeviceEnrollmentErrorMessage(deviceEnrollmentException),
+            DuplicateActiveProfileException => GetTranslation("Error_ProfileAlreadyLoggedIn"),
             OperationCanceledException => GetTranslation("Error_OperationCanceled"),
             _ => GetTranslation("Error_Generic")
         };

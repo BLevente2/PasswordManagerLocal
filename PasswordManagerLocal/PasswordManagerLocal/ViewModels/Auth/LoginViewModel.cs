@@ -14,6 +14,7 @@ public sealed class LoginViewModel : ViewModelBase
     private readonly IEndpoints _endpoints;
     private readonly Action _navigateToRegistration;
     private readonly Func<Guid, Task> _onAuthenticationSucceededAsync;
+    private Func<Task>? _navigateBackAsync;
 
     private string _username = string.Empty;
     private string _password = string.Empty;
@@ -21,6 +22,7 @@ public sealed class LoginViewModel : ViewModelBase
     private bool _isPasswordVisible;
     private string? _errorMessage;
     private bool _isBusy;
+    private bool _isBackButtonVisible;
     private bool _isDeviceTransferIntroVisible;
     private bool _isDeviceTransferCodeVisible;
     private bool _isDeviceTransferFinished;
@@ -43,6 +45,7 @@ public sealed class LoginViewModel : ViewModelBase
         LoginCommand = ReactiveCommand.CreateFromTask(LoginAsync);
         ExecutePrimaryActionCommand = ReactiveCommand.CreateFromTask(ExecutePrimaryActionAsync);
         NavigateToRegistrationCommand = ReactiveCommand.Create(_navigateToRegistration);
+        NavigateBackCommand = ReactiveCommand.CreateFromTask(NavigateBackAsync);
         TogglePasswordVisibilityCommand = ReactiveCommand.Create(TogglePasswordVisibility);
         ShowDeviceTransferIntroCommand = ReactiveCommand.Create(ShowDeviceTransferIntro);
         StartDeviceTransferCommand = ReactiveCommand.CreateFromTask(StartDeviceTransferAsync);
@@ -93,6 +96,12 @@ public sealed class LoginViewModel : ViewModelBase
     {
         get => _isBusy;
         private set => this.RaiseAndSetIfChanged(ref _isBusy, value);
+    }
+
+    public bool IsBackButtonVisible
+    {
+        get => _isBackButtonVisible;
+        private set => this.RaiseAndSetIfChanged(ref _isBackButtonVisible, value);
     }
 
     public bool IsLoginFormVisible => !IsDeviceTransferIntroVisible && !IsDeviceTransferCodeVisible && !IsDeviceTransferFinished;
@@ -165,6 +174,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> NavigateToRegistrationCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> NavigateBackCommand { get; }
+
     public ReactiveCommand<Unit, Unit> TogglePasswordVisibilityCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ShowDeviceTransferIntroCommand { get; }
@@ -180,6 +191,8 @@ public sealed class LoginViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CopyDeviceTransferCodeCommand { get; }
 
     public string Title => GetTranslation("Login_Title");
+
+    public string BackLabel => GetTranslation("Common_Back");
 
     public string Subtitle => GetTranslation("Login_Subtitle");
 
@@ -234,6 +247,7 @@ public sealed class LoginViewModel : ViewModelBase
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(Title));
+        this.RaisePropertyChanged(nameof(BackLabel));
         this.RaisePropertyChanged(nameof(Subtitle));
         this.RaisePropertyChanged(nameof(UsernameLabel));
         this.RaisePropertyChanged(nameof(PasswordLabel));
@@ -294,6 +308,26 @@ public sealed class LoginViewModel : ViewModelBase
         return false;
     }
 
+
+
+    public void SetBackNavigation(bool isVisible, Func<Task>? navigateBackAsync)
+    {
+        IsBackButtonVisible = isVisible;
+        _navigateBackAsync = navigateBackAsync;
+    }
+
+
+    private async Task NavigateBackAsync()
+    {
+        if (IsBusy)
+            return;
+
+        if (await TryNavigateBackAsync())
+            return;
+
+        if (_navigateBackAsync is not null)
+            await _navigateBackAsync();
+    }
 
     private async Task ExecutePrimaryActionAsync()
     {

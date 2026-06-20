@@ -17,6 +17,9 @@
     <DataTemplate x:DataType="authVm:RegistrationViewModel">
       <authViews:RegistrationView />
     </DataTemplate>
+    <DataTemplate x:DataType="authVm:ChangeProfileViewModel">
+      <authViews:ChangeProfileView />
+    </DataTemplate>
     <DataTemplate x:DataType="pagesVm:PasswordsViewModel">
       <pagesViews:PasswordListView />
     </DataTemplate>
@@ -56,9 +59,7 @@
           </StackPanel>
           <Button.Flyout>
             <MenuFlyout>
-              <MenuItem Header="{Binding PasswordVaultLabel}" Command="{Binding ShowPasswordsCommand}" />
-              <MenuItem Header="{Binding DevicesLabel}" Command="{Binding ShowDevicesCommand}" />
-              <MenuItem Header="{Binding ProfileLabel}" Command="{Binding ShowProfileCommand}" />
+              <MenuItem Header="{Binding ChangeProfileLabel}" Command="{Binding ShowChangeProfileCommand}" />
               <MenuItem Header="{Binding LogoutLabel}" Command="{Binding LogoutCommand}" />
             </MenuFlyout>
           </Button.Flyout>

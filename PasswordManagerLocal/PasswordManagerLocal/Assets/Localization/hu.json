@@ -291,5 +291,19 @@
   "Shell_LogoutConfirm_Message": "Szeretnél kijelentkezni a jelenlegi profilból?",
   "Shell_ExitConfirm_Title": "Alkalmazás bezárása?",
   "Shell_ExitConfirm_Message": "Szeretnéd bezárni a Password Manager Local alkalmazást?",
-  "Login_DeviceTransfer_CodeReadabilityHint": "A jobb olvashatóság miatt a nullák áthúzva jelennek meg: 0̸. Így könnyebb megkülönböztetni őket az O betűtől."
+  "Login_DeviceTransfer_CodeReadabilityHint": "A jobb olvashatóság miatt a nullák áthúzva jelennek meg: 0̸. Így könnyebb megkülönböztetni őket az O betűtől.",
+  "Common_Back": "Vissza",
+  "Shell_ChangeProfile": "Profilváltás",
+  "Shell_ProfileChanged": "A profil megváltozott.",
+  "Profiles_Title": "Profilváltás",
+  "Profiles_Subtitle": "Válassz egy másik bejelentkezett profilt ezen az eszközön, vagy jelentkezz be egy másik fiókba.",
+  "Profiles_LoginAnother": "Bejelentkezés másik fiókba",
+  "Profiles_LoggedInProfiles": "Bejelentkezett profilok",
+  "Profiles_Empty_Title": "Nincs bejelentkezett profil",
+  "Profiles_Empty_Description": "Jelentkezz be egy másik fiókba, hogy profilt adj hozzá ehhez az eszközhöz.",
+  "Profiles_Current": "Jelenlegi",
+  "Profiles_SwitchTo": "Váltás",
+  "Profiles_UnknownProfile": "ez a profil",
+  "Shell_SessionRenewal_ProfileMessage": "A(z) {0} profil munkamenete körülbelül egy perc múlva lejár. Szeretnéd ezt a bejelentkezést további 30 perccel meghosszabbítani?",
+  "Error_ProfileAlreadyLoggedIn": "Hiba: Ez a profil már be van jelentkezve ezen az eszközön. Válaszd ki a Profilváltás menüből."
 }
