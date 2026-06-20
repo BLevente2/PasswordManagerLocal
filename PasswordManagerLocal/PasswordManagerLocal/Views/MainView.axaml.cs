@@ -25,6 +25,10 @@ public partial class MainView : UserControl
             TextBox.CopyingToClipboardEvent,
             HandleCopyingToClipboard,
             RoutingStrategies.Tunnel | RoutingStrategies.Bubble | RoutingStrategies.Direct);
+        AddHandler(
+            TextBox.CuttingToClipboardEvent,
+            HandleCuttingToClipboard,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble | RoutingStrategies.Direct);
         AttachedToVisualTree += (_, _) => ClipboardService.SetActiveTopLevel(TopLevel.GetTopLevel(this));
     }
 
@@ -33,21 +37,29 @@ public partial class MainView : UserControl
     private async void HandleKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Handled
-            || e.Key != Key.C
             || (e.KeyModifiers & KeyModifiers.Control) != KeyModifiers.Control
             || e.Source is not Control sourceControl)
         {
             return;
         }
 
-        var textBox = sourceControl as TextBox ?? sourceControl.FindAncestorOfType<TextBox>();
+        var textBox = FindSourceTextBox(sourceControl);
 
         if (textBox is null)
         {
             return;
         }
 
-        await CopySelectedTextAsync(textBox, e);
+        if (e.Key == Key.C)
+        {
+            await CopySelectedTextAsync(textBox, e);
+            return;
+        }
+
+        if (e.Key == Key.X)
+        {
+            await CutSelectedTextAsync(textBox, e);
+        }
     }
 
 
@@ -60,6 +72,18 @@ public partial class MainView : UserControl
         }
 
         await CopySelectedTextAsync(textBox, e);
+    }
+
+
+
+    private async void HandleCuttingToClipboard(object? sender, RoutedEventArgs e)
+    {
+        if (e.Handled || e.Source is not TextBox textBox)
+        {
+            return;
+        }
+
+        await CutSelectedTextAsync(textBox, e);
     }
 
 
@@ -131,8 +155,13 @@ public partial class MainView : UserControl
             return false;
         }
 
-        return sourceControl is TextBox || sourceControl.FindAncestorOfType<TextBox>() is not null;
+        return FindSourceTextBox(sourceControl) is not null;
     }
+
+
+
+    private static TextBox? FindSourceTextBox(Control sourceControl) =>
+        sourceControl as TextBox ?? sourceControl.FindAncestorOfType<TextBox>();
 
 
 
@@ -147,5 +176,38 @@ public partial class MainView : UserControl
 
         e.Handled = true;
         await ClipboardService.TrySetTextAsync(selectedText);
+    }
+
+
+
+    private static async Task CutSelectedTextAsync(TextBox textBox, RoutedEventArgs e)
+    {
+        e.Handled = true;
+
+        if (textBox.IsReadOnly)
+        {
+            return;
+        }
+
+        var text = textBox.Text ?? string.Empty;
+        var selectionStart = Math.Clamp(Math.Min(textBox.SelectionStart, textBox.SelectionEnd), 0, text.Length);
+        var selectionEnd = Math.Clamp(Math.Max(textBox.SelectionStart, textBox.SelectionEnd), 0, text.Length);
+
+        if (selectionStart >= selectionEnd)
+        {
+            return;
+        }
+
+        var selectedText = text[selectionStart..selectionEnd];
+
+        if (!await ClipboardService.TrySetTextAsync(selectedText))
+        {
+            return;
+        }
+
+        textBox.Text = text.Remove(selectionStart, selectionEnd - selectionStart);
+        textBox.CaretIndex = selectionStart;
+        textBox.SelectionStart = selectionStart;
+        textBox.SelectionEnd = selectionStart;
     }
 }
