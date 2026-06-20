@@ -33,6 +33,20 @@ public class MainActivity : AvaloniaMainActivity<App>
     }
 
 
+    protected override void OnPause()
+    {
+        SensitiveDataVisibilityService.RequestHideVisibleSecrets();
+        base.OnPause();
+    }
+
+
+    protected override void OnStop()
+    {
+        SensitiveDataVisibilityService.RequestHideVisibleSecrets();
+        base.OnStop();
+    }
+
+
     protected override void OnDestroy()
     {
         ReleaseMulticastLock();

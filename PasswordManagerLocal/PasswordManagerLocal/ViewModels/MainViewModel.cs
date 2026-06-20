@@ -85,6 +85,7 @@ public sealed class MainViewModel : ViewModelBase
         RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshVisiblePageAsync);
         ConfirmSessionRenewalCommand = ReactiveCommand.CreateFromTask(ConfirmSessionRenewalAsync);
         DeclineSessionRenewalCommand = ReactiveCommand.Create(DeclineSessionRenewal);
+        SensitiveDataVisibilityService.HideVisibleSecretsRequested += HandleHideVisibleSecretsRequested;
     }
 
     public LoginViewModel LoginViewModel { get; }
@@ -431,6 +432,23 @@ public sealed class MainViewModel : ViewModelBase
     }
 
     public Task RequestLogoutAsync() => LogoutAsync();
+
+    private void HandleHideVisibleSecretsRequested(object? sender, EventArgs e)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            HideVisibleSensitiveData();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(HideVisibleSensitiveData);
+    }
+
+
+    private void HideVisibleSensitiveData()
+    {
+        PasswordsViewModel.HideVisibleSensitiveData();
+    }
 
 
     protected override void OnLanguageChanged()

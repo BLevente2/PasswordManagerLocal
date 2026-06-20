@@ -717,6 +717,20 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
 
+    public void HideVisibleSensitiveData()
+    {
+        if (HasRevealedPassword)
+        {
+            HidePassword();
+        }
+
+        if (IsEditorPasswordVisible)
+        {
+            IsEditorPasswordVisible = false;
+        }
+    }
+
+
     public bool TryNavigateBack()
     {
         if (IsDeleteConfirmationOpen)
@@ -913,7 +927,7 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private async Task RevealPasswordAsync()
     {
-        if (SelectedPassword is null)
+        if (SelectedPassword is null || HasRevealedPassword)
         {
             return;
         }

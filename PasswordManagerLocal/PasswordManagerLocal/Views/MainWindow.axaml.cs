@@ -9,5 +9,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Opened += (_, _) => ClipboardService.SetActiveTopLevel(this);
+        Deactivated += (_, _) => SensitiveDataVisibilityService.RequestHideVisibleSecrets();
     }
 }
