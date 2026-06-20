@@ -1,3 +1,4 @@
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PasswordManagerLocal.Helpers;
 using PasswordManagerLocal.Services;
@@ -28,6 +29,7 @@ public sealed class LoginViewModel : ViewModelBase
     private bool _isDeviceTransferFinished;
     private bool _isDeviceTransferSuccess;
     private string _deviceTransferCode = string.Empty;
+    private Bitmap? _deviceTransferQrCode;
     private string? _deviceTransferMessage;
     private CancellationTokenSource? _deviceTransferPolling;
 
@@ -149,10 +151,23 @@ public sealed class LoginViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _deviceTransferCode, value);
             this.RaisePropertyChanged(nameof(ReadableDeviceTransferCode));
+            DeviceTransferQrCode = EnrollmentQrCodeService.CreateQrCodeBitmap(value);
         }
     }
 
     public string ReadableDeviceTransferCode => BuildReadableCode(DeviceTransferCode);
+
+    public Bitmap? DeviceTransferQrCode
+    {
+        get => _deviceTransferQrCode;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _deviceTransferQrCode, value);
+            this.RaisePropertyChanged(nameof(HasDeviceTransferQrCode));
+        }
+    }
+
+    public bool HasDeviceTransferQrCode => DeviceTransferQrCode is not null;
 
     public string? DeviceTransferMessage
     {
@@ -228,6 +243,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public string DeviceTransferCodeReadabilityHint => GetTranslation("Login_DeviceTransfer_CodeReadabilityHint");
 
+    public string DeviceTransferQrCodeLabel => GetTranslation("Login_DeviceTransfer_QrCodeLabel");
+
     public string DeviceTransferWaitingText => GetTranslation("Login_DeviceTransfer_Waiting");
 
     public string DeviceTransferCheckStatusLabel => GetTranslation("Login_DeviceTransfer_CheckStatus");
@@ -265,6 +282,7 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeviceTransferCodeTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeDescription));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeReadabilityHint));
+        this.RaisePropertyChanged(nameof(DeviceTransferQrCodeLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferWaitingText));
         this.RaisePropertyChanged(nameof(DeviceTransferCheckStatusLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferCopyCodeLabel));

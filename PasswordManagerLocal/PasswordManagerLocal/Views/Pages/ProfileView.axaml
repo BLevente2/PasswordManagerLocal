@@ -519,6 +519,20 @@
                                            TextWrapping="Wrap" />
                               </StackPanel>
                               <TextBlock Text="{Binding AddDeviceDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                              <StackPanel Spacing="8">
+                                <TextBlock Text="{Binding AddDeviceQrOptionsDescription}" Classes="subtleText" TextWrapping="Wrap" />
+                                <WrapPanel Orientation="Horizontal">
+                                  <Button Classes="ghost"
+                                          Command="{Binding ScanDeviceEnrollmentQrCodeCommand}"
+                                          Content="{Binding ScanDeviceEnrollmentQrCodeLabel}"
+                                          IsVisible="{Binding IsDeviceEnrollmentCameraScanAvailable}"
+                                          Margin="0,0,8,8" />
+                                  <Button Classes="ghost"
+                                          Command="{Binding PickDeviceEnrollmentQrImageCommand}"
+                                          Content="{Binding PickDeviceEnrollmentQrImageLabel}"
+                                          Margin="0,0,8,8" />
+                                </WrapPanel>
+                              </StackPanel>
                               <StackPanel Spacing="6">
                                 <TextBlock Text="{Binding AddDeviceCodeLabel}" Classes="subtleText" />
                                 <TextBox Text="{Binding DeviceEnrollmentCodeInput}"

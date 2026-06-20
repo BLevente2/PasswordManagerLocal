@@ -47,6 +47,7 @@ public partial class MainView : UserControl
 
         var topLevel = TopLevel.GetTopLevel(this);
         ClipboardService.SetActiveTopLevel(topLevel);
+        QrImagePickerService.SetActiveTopLevel(topLevel);
 
         if (ReferenceEquals(_keyboardTopLevel, topLevel))
         {

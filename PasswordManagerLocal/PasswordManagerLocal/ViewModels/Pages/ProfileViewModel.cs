@@ -89,6 +89,8 @@ public sealed class ProfileViewModel : ViewModelBase
         CancelLocalSyncToggleCommand = ReactiveCommand.Create(CancelLocalSyncToggle);
         BeginAddDeviceCommand = ReactiveCommand.CreateFromTask(BeginAddDeviceAsync);
         ConfirmAddDeviceCommand = ReactiveCommand.CreateFromTask(ConfirmAddDeviceAsync);
+        ScanDeviceEnrollmentQrCodeCommand = ReactiveCommand.CreateFromTask(ScanDeviceEnrollmentQrCodeAsync);
+        PickDeviceEnrollmentQrImageCommand = ReactiveCommand.CreateFromTask(PickDeviceEnrollmentQrImageAsync);
         CancelAddDeviceCommand = ReactiveCommand.Create(CancelAddDevice);
         BackToProfileCommand = ReactiveCommand.Create(BackToProfile);
         BeginEditPersonalInfoCommand = ReactiveCommand.Create(BeginEditPersonalInfo);
@@ -443,6 +445,10 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> ConfirmAddDeviceCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> ScanDeviceEnrollmentQrCodeCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> PickDeviceEnrollmentQrImageCommand { get; }
+
     public ReactiveCommand<Unit, Unit> CancelAddDeviceCommand { get; }
 
     public ReactiveCommand<Unit, Unit> BackToProfileCommand { get; }
@@ -575,6 +581,20 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string AddDeviceCodePlaceholder => GetTranslation("Profile_Device_Add_Code_Placeholder");
 
+    public string AddDeviceQrOptionsDescription => GetTranslation("Profile_Device_Add_QrOptions_Description");
+
+    public string ScanDeviceEnrollmentQrCodeLabel => GetTranslation("Profile_Device_Add_QrScan");
+
+    public string PickDeviceEnrollmentQrImageLabel => GetTranslation("Profile_Device_Add_QrUpload");
+
+    public string PickDeviceEnrollmentQrImageTitle => GetTranslation("Profile_Device_Add_QrUpload_Title");
+
+    public string ScanDeviceEnrollmentQrCodeTitle => GetTranslation("Profile_Device_Add_QrScanner_Title");
+
+    public string ScanDeviceEnrollmentQrCodeDescription => GetTranslation("Profile_Device_Add_QrScanner_Description");
+
+    public bool IsDeviceEnrollmentCameraScanAvailable => EnrollmentQrCodeCameraScannerService.IsAvailable;
+
     public string ConfirmAddDeviceLabel => GetTranslation("Profile_Device_Add_Confirm");
 
     public string CurrentDeviceLabel => GetTranslation("Profile_Device_Current");
@@ -690,6 +710,12 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(AddDeviceDescription));
         this.RaisePropertyChanged(nameof(AddDeviceCodeLabel));
         this.RaisePropertyChanged(nameof(AddDeviceCodePlaceholder));
+        this.RaisePropertyChanged(nameof(AddDeviceQrOptionsDescription));
+        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeLabel));
+        this.RaisePropertyChanged(nameof(PickDeviceEnrollmentQrImageLabel));
+        this.RaisePropertyChanged(nameof(PickDeviceEnrollmentQrImageTitle));
+        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeTitle));
+        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeDescription));
         this.RaisePropertyChanged(nameof(ConfirmAddDeviceLabel));
         this.RaisePropertyChanged(nameof(CurrentDeviceLabel));
         this.RaisePropertyChanged(nameof(BlockedLabel));
@@ -1305,6 +1331,88 @@ public sealed class ProfileViewModel : ViewModelBase
         if (IsDeviceAddPaneVisible)
             CurrentDevicePane = DeviceListPane;
     }
+
+    private async Task ScanDeviceEnrollmentQrCodeAsync()
+    {
+        if (_token == Guid.Empty || IsAddingDevice)
+            return;
+
+        if (!EnrollmentQrCodeCameraScannerService.IsAvailable)
+        {
+            StatusMessage = GetTranslation("Profile_Device_Add_QrCameraUnavailable");
+            return;
+        }
+
+        try
+        {
+            StatusMessage = null;
+            var code = await EnrollmentQrCodeCameraScannerService.ScanEnrollmentCodeAsync(
+                ScanDeviceEnrollmentQrCodeTitle,
+                ScanDeviceEnrollmentQrCodeDescription);
+
+            if (string.IsNullOrWhiteSpace(code))
+                return;
+
+            await AddDeviceFromQrTextAsync(code);
+        }
+        catch
+        {
+            StatusMessage = GetTranslation("Profile_Device_Add_QrDecodeFailed");
+        }
+    }
+
+
+
+    private async Task PickDeviceEnrollmentQrImageAsync()
+    {
+        if (_token == Guid.Empty || IsAddingDevice)
+            return;
+
+        try
+        {
+            StatusMessage = null;
+            var imageBytes = await QrImagePickerService.PickImageBytesAsync(PickDeviceEnrollmentQrImageTitle);
+            if (imageBytes is null || imageBytes.Length == 0)
+                return;
+
+            await AddDeviceFromQrImageBytesAsync(imageBytes);
+        }
+        catch
+        {
+            StatusMessage = GetTranslation("Profile_Device_Add_QrDecodeFailed");
+        }
+    }
+
+
+
+    private async Task AddDeviceFromQrImageBytesAsync(byte[] imageBytes)
+    {
+        var code = EnrollmentQrCodeService.DecodeEnrollmentCodeFromQrImage(imageBytes);
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            StatusMessage = GetTranslation("Profile_Device_Add_QrNotFound");
+            return;
+        }
+
+        await AddDeviceFromQrTextAsync(code);
+    }
+
+
+
+    private async Task AddDeviceFromQrTextAsync(string qrText)
+    {
+        var code = EnrollmentQrCodeService.ExtractEnrollmentCode(qrText);
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            StatusMessage = GetTranslation("Profile_Device_Add_QrNotFound");
+            return;
+        }
+
+        DeviceEnrollmentCodeInput = code.Trim();
+        await ConfirmAddDeviceAsync();
+    }
+
+
 
     private async Task ConfirmAddDeviceAsync()
     {
