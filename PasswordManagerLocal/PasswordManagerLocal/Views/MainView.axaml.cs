@@ -16,15 +16,15 @@ public partial class MainView : UserControl
     private const double SwipeDominanceRatio = 1.25;
 
     private Point? _swipeStartPoint;
-    private TopLevel? _keyboardTopLevel;
+    private IPointer? _trackedSwipePointer;
+    private bool _swipeTrackingCancelled;
+    private TopLevel? _inputTopLevel;
     private MainViewModel? _observedViewModel;
 
     public MainView()
     {
         InitializeComponent();
         AddHandler(KeyDownEvent, HandleKeyDown, RoutingStrategies.Tunnel);
-        AddHandler(PointerPressedEvent, HandlePointerPressed, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
-        AddHandler(PointerReleasedEvent, HandlePointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
         AddHandler(
             TextBox.CopyingToClipboardEvent,
             HandleCopyingToClipboard,
@@ -49,17 +49,24 @@ public partial class MainView : UserControl
         ClipboardService.SetActiveTopLevel(topLevel);
         QrImagePickerService.SetActiveTopLevel(topLevel);
 
-        if (ReferenceEquals(_keyboardTopLevel, topLevel))
+        if (ReferenceEquals(_inputTopLevel, topLevel))
         {
             return;
         }
 
-        DetachTopLevelKeyboardHandler();
+        DetachTopLevelInputHandlers();
 
         if (topLevel is not null)
         {
-            _keyboardTopLevel = topLevel;
+            _inputTopLevel = topLevel;
             topLevel.AddHandler(KeyDownEvent, HandleTopLevelKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+            if (OperatingSystem.IsAndroid())
+            {
+                topLevel.AddHandler(PointerPressedEvent, HandlePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+                topLevel.AddHandler(PointerMovedEvent, HandlePointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
+                topLevel.AddHandler(PointerReleasedEvent, HandlePointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+            }
         }
     }
 
@@ -67,7 +74,7 @@ public partial class MainView : UserControl
 
     private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
-        DetachTopLevelKeyboardHandler();
+        DetachTopLevelInputHandlers();
         DetachObservedViewModel();
     }
 
@@ -127,13 +134,23 @@ public partial class MainView : UserControl
 
 
 
-    private void DetachTopLevelKeyboardHandler()
+    private void DetachTopLevelInputHandlers()
     {
-        if (_keyboardTopLevel is not null)
+        if (_inputTopLevel is not null)
         {
-            _keyboardTopLevel.RemoveHandler(KeyDownEvent, HandleTopLevelKeyDown);
-            _keyboardTopLevel = null;
+            _inputTopLevel.RemoveHandler(KeyDownEvent, HandleTopLevelKeyDown);
+
+            if (OperatingSystem.IsAndroid())
+            {
+                _inputTopLevel.RemoveHandler(PointerPressedEvent, HandlePointerPressed);
+                _inputTopLevel.RemoveHandler(PointerMovedEvent, HandlePointerMoved);
+                _inputTopLevel.RemoveHandler(PointerReleasedEvent, HandlePointerReleased);
+            }
+
+            _inputTopLevel = null;
         }
+
+        ResetSwipeTracking();
     }
 
 
@@ -275,34 +292,93 @@ public partial class MainView : UserControl
 
     private void HandlePointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!IsMobileSwipeNavigationEnabled() || IsTextInputSource(e.Source))
+        if (!CanStartSwipeTracking(e))
         {
-            _swipeStartPoint = null;
+            ResetSwipeTracking();
             return;
         }
 
+        _trackedSwipePointer = e.Pointer;
         _swipeStartPoint = e.GetPosition(this);
+        _swipeTrackingCancelled = false;
+    }
+
+
+
+    private void HandlePointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (!CanContinueSwipeTracking(e))
+        {
+            return;
+        }
+
+        var startPoint = _swipeStartPoint!.Value;
+        var currentPoint = e.GetPosition(this);
+        var deltaX = currentPoint.X - startPoint.X;
+        var deltaY = currentPoint.Y - startPoint.Y;
+
+        if (IsMostlyVerticalMovement(deltaX, deltaY))
+        {
+            _swipeTrackingCancelled = true;
+            return;
+        }
+
+        TryCompleteSwipe(deltaX, deltaY, e);
     }
 
 
 
     private void HandlePointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        if (_swipeStartPoint is not { } startPoint)
+        if (!CanContinueSwipeTracking(e))
         {
+            ResetSwipeTracking();
             return;
         }
 
-        _swipeStartPoint = null;
-
-        if (!IsMobileSwipeNavigationEnabled())
-        {
-            return;
-        }
-
+        var startPoint = _swipeStartPoint!.Value;
         var endPoint = e.GetPosition(this);
         var deltaX = endPoint.X - startPoint.X;
         var deltaY = endPoint.Y - startPoint.Y;
+
+        TryCompleteSwipe(deltaX, deltaY, e);
+        ResetSwipeTracking();
+    }
+
+
+
+    private bool CanStartSwipeTracking(PointerEventArgs e) =>
+        IsMobileSwipeNavigationEnabled()
+        && IsPointerInsideMainView(e)
+        && !IsTextInputSource(e.Source);
+
+
+
+    private bool CanContinueSwipeTracking(PointerEventArgs e) =>
+        _swipeStartPoint is not null
+        && !_swipeTrackingCancelled
+        && IsTrackedSwipePointer(e.Pointer)
+        && IsMobileSwipeNavigationEnabled();
+
+
+
+    private bool IsTrackedSwipePointer(IPointer pointer) =>
+        _trackedSwipePointer is not null && Equals(_trackedSwipePointer, pointer);
+
+
+
+    private bool IsPointerInsideMainView(PointerEventArgs e) =>
+        new Rect(0, 0, Bounds.Width, Bounds.Height).Contains(e.GetPosition(this));
+
+
+
+    private static bool IsMostlyVerticalMovement(double deltaX, double deltaY) =>
+        Math.Abs(deltaY) >= SwipeThreshold && Math.Abs(deltaY) > Math.Abs(deltaX);
+
+
+
+    private void TryCompleteSwipe(double deltaX, double deltaY, PointerEventArgs e)
+    {
         var absoluteDeltaX = Math.Abs(deltaX);
         var absoluteDeltaY = Math.Abs(deltaY);
 
@@ -313,6 +389,7 @@ public partial class MainView : UserControl
 
         if (DataContext is not MainViewModel viewModel)
         {
+            ResetSwipeTracking();
             return;
         }
 
@@ -324,12 +401,23 @@ public partial class MainView : UserControl
         {
             e.Handled = true;
         }
+
+        ResetSwipeTracking();
+    }
+
+
+
+    private void ResetSwipeTracking()
+    {
+        _swipeStartPoint = null;
+        _trackedSwipePointer = null;
+        _swipeTrackingCancelled = false;
     }
 
 
 
     private bool IsMobileSwipeNavigationEnabled() =>
-        DataContext is MainViewModel { IsMobileNavigationEnabled: true, IsAuthenticated: true };
+        DataContext is MainViewModel { IsMobileNavigationEnabled: true, IsAuthenticated: true, IsSessionRenewalDialogOpen: false };
 
 
 
