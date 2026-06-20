@@ -44,6 +44,10 @@ public sealed class Endpoints : IEndpoints
         _authService.LoginAsync(request, ct);
 
 
+    public Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default) =>
+        _authService.RenewSessionAsync(token, ct);
+
+
     public void Logout(Guid token) =>
         _authService.Logout(token);
 

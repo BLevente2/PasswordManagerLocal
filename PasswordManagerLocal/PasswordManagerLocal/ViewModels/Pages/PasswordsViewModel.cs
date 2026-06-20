@@ -694,6 +694,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         await RefreshAsync();
     }
 
+    public void SetSessionToken(Guid token) => _token = token;
+
     public async Task RefreshCurrentDataAsync() => await RefreshAsync();
 
     public void Reset()

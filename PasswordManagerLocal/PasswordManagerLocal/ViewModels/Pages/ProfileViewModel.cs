@@ -825,6 +825,8 @@ public sealed class ProfileViewModel : ViewModelBase
         await LoadDevicesAsync();
     }
 
+    public void SetSessionToken(Guid token) => _token = token;
+
     public void Reset()
     {
         _token = Guid.Empty;

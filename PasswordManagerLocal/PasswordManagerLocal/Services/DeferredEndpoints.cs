@@ -22,6 +22,13 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
+    public async Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        return await endpoints.RenewAuthSessionAsync(token, ct);
+    }
+
+
     public void Logout(Guid token)
     {
         var endpoints = GetEndpoints();

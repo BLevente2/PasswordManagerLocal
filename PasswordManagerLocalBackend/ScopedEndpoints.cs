@@ -26,6 +26,10 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.LoginAsync(request, ct));
 
 
+    public Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.RenewAuthSessionAsync(token, ct));
+
+
     public void Logout(Guid token) =>
         Run(endpoints => endpoints.Logout(token));
 

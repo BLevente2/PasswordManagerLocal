@@ -65,9 +65,14 @@ public sealed class DataCachingService : IDataCachingService
                 candidate.Dispose();
         }
 
+        var expiresAt = DateTimeOffset.UtcNow.Add(ttl);
+
+        if (_tokens.TryGetExpiresAtUtc(token, out var tokenExpiresAt) && tokenExpiresAt < expiresAt)
+            expiresAt = tokenExpiresAt;
+
         var opts = new MemoryCacheEntryOptions
         {
-            AbsoluteExpirationRelativeToNow = ttl,
+            AbsoluteExpiration = expiresAt,
             Size = 1
         };
 

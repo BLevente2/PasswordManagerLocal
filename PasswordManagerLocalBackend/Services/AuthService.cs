@@ -109,6 +109,35 @@ public sealed class AuthService : IAuthService
     }
 
 
+    public Task<Guid> RenewSessionAsync(Guid token, CancellationToken ct = default)
+    {
+        if (!_tokens.TryGetUid(token, out var uid))
+            throw new InvalidTokenException();
+
+        if (!_keys.TryGetEncryptionKey(token, out var key))
+        {
+            InvalidateToken(token, AuthSessionInvalidationReason.Expired);
+            throw new InvalidTokenException();
+        }
+
+        try
+        {
+            var newToken = _tokens.Issue(uid);
+            _keys.SetUserKey(newToken, key);
+
+            if (_cache.TryGetUserData(token, out var userData) && userData is not null)
+                _cache.SetUserData(newToken, userData);
+
+            InvalidateToken(token, AuthSessionInvalidationReason.LoggedOut);
+            return Task.FromResult(newToken);
+        }
+        finally
+        {
+            key.Dispose();
+        }
+    }
+
+
     public void Logout(Guid token)
     {
         if (!_tokens.Validate(token))
@@ -131,12 +160,13 @@ public sealed class AuthService : IAuthService
 
     public AuthSessionStatusResponse GetSessionStatus(Guid token)
     {
-        if (_tokens.Validate(token))
+        if (_tokens.TryGetUid(token, out _) && _tokens.TryGetExpiresAtUtc(token, out var expiresAtUtc))
         {
             return new AuthSessionStatusResponse
             {
                 IsAuthenticated = true,
-                InvalidationReason = AuthSessionInvalidationReason.None
+                InvalidationReason = AuthSessionInvalidationReason.None,
+                ExpiresAtUtc = expiresAtUtc
             };
         }
 

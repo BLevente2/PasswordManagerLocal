@@ -2,7 +2,7 @@
 using PasswordManagerLocalBackend.Security;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using static PasswordManagerLocalBackend.Constants.TokenConstrants;
+using static PasswordManagerLocalBackend.Constants.TokenConstants;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -31,7 +31,7 @@ public sealed class KeyVaultService : IKeyVaultService
         try
         {
             var owned = EncryptionKey.FromRaw(raw);
-            var exp = expiresAt ?? DateTimeOffset.UtcNow.Add(TokenExpirationTime);
+            var exp = expiresAt ?? DateTimeOffset.UtcNow.Add(LoginTokenExpirationTime);
 
             while (true)
             {

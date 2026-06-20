@@ -15,6 +15,8 @@ namespace PasswordManagerLocal.ViewModels;
 
 public sealed class MainViewModel : ViewModelBase
 {
+    private static readonly TimeSpan SessionRenewalWarningLeadTime = TimeSpan.FromMinutes(1);
+
     private readonly IEndpoints _endpoints;
     private readonly IAuthSessionRegistry _authSessionRegistry;
 
@@ -27,6 +29,10 @@ public sealed class MainViewModel : ViewModelBase
     private string? _statusMessage;
     private DispatcherTimer? _sessionMonitorTimer;
     private bool _isCheckingSession;
+    private bool _isSessionRenewalDialogOpen;
+    private bool _isRenewingSession;
+    private Guid _sessionRenewalDialogToken = Guid.Empty;
+    private Guid _sessionRenewalPromptShownForToken = Guid.Empty;
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -59,6 +65,8 @@ public sealed class MainViewModel : ViewModelBase
         LogoutCommand = ReactiveCommand.CreateFromTask(LogoutAsync);
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAuthenticatedStateAsync);
         RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshVisiblePageAsync);
+        ConfirmSessionRenewalCommand = ReactiveCommand.CreateFromTask(ConfirmSessionRenewalAsync);
+        DeclineSessionRenewalCommand = ReactiveCommand.Create(DeclineSessionRenewal);
     }
 
     public LoginViewModel LoginViewModel { get; }
@@ -101,6 +109,22 @@ public sealed class MainViewModel : ViewModelBase
     }
 
     public bool IsAnonymous => !IsAuthenticated;
+
+    public bool IsSessionRenewalDialogOpen
+    {
+        get => _isSessionRenewalDialogOpen;
+        private set => this.RaiseAndSetIfChanged(ref _isSessionRenewalDialogOpen, value);
+    }
+
+    public bool IsRenewingSession
+    {
+        get => _isRenewingSession;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isRenewingSession, value);
+            this.RaisePropertyChanged(nameof(SessionRenewalYesButtonLabel));
+        }
+    }
 
     public MainPageContentViewModel CurrentAnimatedPageViewModel
     {
@@ -194,6 +218,10 @@ public sealed class MainViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> RefreshVisiblePageCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> ConfirmSessionRenewalCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> DeclineSessionRenewalCommand { get; }
+
     public string AppTitle => GetTranslation("AppTitle");
 
     public string SettingsLabel => GetTranslation("Settings");
@@ -237,6 +265,14 @@ public sealed class MainViewModel : ViewModelBase
     public string ExitConfirmationTitle => GetTranslation("Shell_ExitConfirm_Title");
 
     public string ExitConfirmationMessage => GetTranslation("Shell_ExitConfirm_Message");
+
+    public string SessionRenewalWarningTitle => GetTranslation("Shell_SessionRenewal_Title");
+
+    public string SessionRenewalWarningMessage => GetTranslation("Shell_SessionRenewal_Message");
+
+    public string SessionRenewalYesButtonLabel => IsRenewingSession
+        ? GetTranslation("Common_Loading")
+        : YesLabel;
 
     public string HeaderSubtitle => IsAuthenticated ? CurrentUserSubtitle : StatusMessage ?? string.Empty;
 
@@ -328,6 +364,9 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(LogoutConfirmationMessage));
         this.RaisePropertyChanged(nameof(ExitConfirmationTitle));
         this.RaisePropertyChanged(nameof(ExitConfirmationMessage));
+        this.RaisePropertyChanged(nameof(SessionRenewalWarningTitle));
+        this.RaisePropertyChanged(nameof(SessionRenewalWarningMessage));
+        this.RaisePropertyChanged(nameof(SessionRenewalYesButtonLabel));
         this.RaisePropertyChanged(nameof(HeaderSubtitle));
         this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
         this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
@@ -557,6 +596,10 @@ public sealed class MainViewModel : ViewModelBase
     private Task HandleLoggedOutStateAsync(string? message = null)
     {
         StopSessionMonitor();
+        IsSessionRenewalDialogOpen = false;
+        IsRenewingSession = false;
+        _sessionRenewalDialogToken = Guid.Empty;
+        _sessionRenewalPromptShownForToken = Guid.Empty;
         IsAuthenticated = false;
         CurrentUserDisplayName = string.Empty;
         CurrentUserSubtitle = string.Empty;
@@ -605,8 +648,17 @@ public sealed class MainViewModel : ViewModelBase
             _isCheckingSession = true;
             var status = await _endpoints.GetAuthSessionStatusAsync(token);
 
+            if (token != _authSessionRegistry.CurrentUserToken)
+                return;
+
             if (!status.IsAuthenticated)
+            {
                 await HandleInvalidatedSessionAsync(token, status.InvalidationReason);
+                return;
+            }
+
+            if (status.ExpiresAtUtc is { } expiresAtUtc)
+                ShowSessionRenewalWarningIfNeeded(token, expiresAtUtc);
         }
         catch
         {
@@ -615,6 +667,73 @@ public sealed class MainViewModel : ViewModelBase
         {
             _isCheckingSession = false;
         }
+    }
+
+
+    private void ShowSessionRenewalWarningIfNeeded(Guid token, DateTimeOffset expiresAtUtc)
+    {
+        if (IsSessionRenewalDialogOpen || _sessionRenewalPromptShownForToken == token)
+            return;
+
+        if (expiresAtUtc - DateTimeOffset.UtcNow > SessionRenewalWarningLeadTime)
+            return;
+
+        _sessionRenewalDialogToken = token;
+        _sessionRenewalPromptShownForToken = token;
+        IsSessionRenewalDialogOpen = true;
+    }
+
+
+    private async Task ConfirmSessionRenewalAsync()
+    {
+        if (IsRenewingSession)
+            return;
+
+        var oldToken = _sessionRenewalDialogToken;
+        if (oldToken == Guid.Empty || oldToken != _authSessionRegistry.CurrentUserToken || !IsAuthenticated)
+        {
+            IsSessionRenewalDialogOpen = false;
+            _sessionRenewalDialogToken = Guid.Empty;
+            return;
+        }
+
+        try
+        {
+            IsRenewingSession = true;
+            var newToken = await _endpoints.RenewAuthSessionAsync(oldToken);
+
+            _authSessionRegistry.TryAdd(newToken);
+            _authSessionRegistry.TryRemove(oldToken);
+            _authSessionRegistry.CurrentUserToken = newToken;
+            PasswordsViewModel.SetSessionToken(newToken);
+            ProfileViewModel.SetSessionToken(newToken);
+
+            _sessionRenewalDialogToken = Guid.Empty;
+            _sessionRenewalPromptShownForToken = Guid.Empty;
+            IsSessionRenewalDialogOpen = false;
+            StatusMessage = GetTranslation("Shell_SessionRenewed");
+            StartSessionMonitor(newToken);
+        }
+        catch
+        {
+            IsSessionRenewalDialogOpen = false;
+            StatusMessage = GetTranslation("Shell_SessionRenewalFailed");
+        }
+        finally
+        {
+            IsRenewingSession = false;
+        }
+    }
+
+
+    private void DeclineSessionRenewal()
+    {
+        if (IsRenewingSession)
+            return;
+
+        IsSessionRenewalDialogOpen = false;
+        _sessionRenewalDialogToken = Guid.Empty;
+        StatusMessage = GetTranslation("Shell_SessionRenewalDeclined");
     }
 
 
