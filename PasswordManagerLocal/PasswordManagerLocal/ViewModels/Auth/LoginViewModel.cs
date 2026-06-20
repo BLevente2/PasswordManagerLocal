@@ -136,8 +136,14 @@ public sealed class LoginViewModel : ViewModelBase
     public string DeviceTransferCode
     {
         get => _deviceTransferCode;
-        private set => this.RaiseAndSetIfChanged(ref _deviceTransferCode, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _deviceTransferCode, value);
+            this.RaisePropertyChanged(nameof(ReadableDeviceTransferCode));
+        }
     }
+
+    public string ReadableDeviceTransferCode => BuildReadableCode(DeviceTransferCode);
 
     public string? DeviceTransferMessage
     {
@@ -207,6 +213,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     public string DeviceTransferCodeDescription => GetTranslation("Login_DeviceTransfer_CodeDescription");
 
+    public string DeviceTransferCodeReadabilityHint => GetTranslation("Login_DeviceTransfer_CodeReadabilityHint");
+
     public string DeviceTransferWaitingText => GetTranslation("Login_DeviceTransfer_Waiting");
 
     public string DeviceTransferCheckStatusLabel => GetTranslation("Login_DeviceTransfer_CheckStatus");
@@ -242,6 +250,7 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeviceTransferStartLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeDescription));
+        this.RaisePropertyChanged(nameof(DeviceTransferCodeReadabilityHint));
         this.RaisePropertyChanged(nameof(DeviceTransferWaitingText));
         this.RaisePropertyChanged(nameof(DeviceTransferCheckStatusLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferCopyCodeLabel));
@@ -260,6 +269,29 @@ public sealed class LoginViewModel : ViewModelBase
         ErrorMessage = null;
         this.RaisePropertyChanged(nameof(HasError));
         ResetDeviceTransferState(false);
+    }
+
+
+    public async Task<bool> TryNavigateBackAsync()
+    {
+        if (IsBusy)
+        {
+            return false;
+        }
+
+        if (IsDeviceTransferCodeVisible)
+        {
+            await CancelDeviceTransferAsync();
+            return true;
+        }
+
+        if (IsDeviceTransferIntroVisible || IsDeviceTransferFinished)
+        {
+            ResetDeviceTransferState(true);
+            return true;
+        }
+
+        return false;
     }
 
 
@@ -508,6 +540,11 @@ public sealed class LoginViewModel : ViewModelBase
         if (clearCode)
             DeviceTransferCode = string.Empty;
     }
+
+    private static string BuildReadableCode(string code) =>
+        string.IsNullOrEmpty(code)
+            ? string.Empty
+            : code.Replace("0", "0\u0338", StringComparison.Ordinal);
 
     private void TogglePasswordVisibility() => IsPasswordVisible = !IsPasswordVisible;
 }

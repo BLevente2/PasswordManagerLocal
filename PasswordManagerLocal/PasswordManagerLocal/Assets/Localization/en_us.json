@@ -279,5 +279,12 @@
   "Shell_BackendStartupFailed": "The background service could not start. Please restart the application.",
   "Common_Loading": "Loading, please wait...",
   "Common_On": "On",
-  "Common_Off": "Off"
+  "Common_Off": "Off",
+  "Common_Yes": "Yes",
+  "Common_No": "No",
+  "Shell_LogoutConfirm_Title": "Log out?",
+  "Shell_LogoutConfirm_Message": "Do you want to log out of the current profile?",
+  "Shell_ExitConfirm_Title": "Close app?",
+  "Shell_ExitConfirm_Message": "Do you want to close Password Manager Local?",
+  "Login_DeviceTransfer_CodeReadabilityHint": "For readability, zeros are shown with a slash: 0̸. This makes them easier to distinguish from the letter O."
 }

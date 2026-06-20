@@ -715,6 +715,36 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
 
+    public bool TryNavigateBack()
+    {
+        if (IsDeleteConfirmationOpen)
+        {
+            CancelDeletePassword();
+            return true;
+        }
+
+        if (IsColorPaneVisible)
+        {
+            BackToPasswordEditor();
+            return true;
+        }
+
+        if (IsEditorPaneVisible)
+        {
+            CancelPasswordEditor();
+            return true;
+        }
+
+        if (IsDetailsPaneVisible)
+        {
+            BackToList();
+            return true;
+        }
+
+        return false;
+    }
+
+
     private async Task ExecutePrimaryActionAsync()
     {
         if (IsDeleteConfirmationOpen)

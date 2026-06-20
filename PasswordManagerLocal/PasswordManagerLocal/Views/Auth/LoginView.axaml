@@ -88,9 +88,9 @@
                       CornerRadius="12"
                       BorderThickness="1"
                       BorderBrush="#33808080">
-                <TextBlock Text="{Binding DeviceTransferCode}"
-                           FontFamily="Consolas"
-                           FontSize="18"
+                <TextBlock Text="{Binding ReadableDeviceTransferCode}"
+                           Classes="readableCode"
+                           FontSize="22"
                            TextWrapping="Wrap" />
               </Border>
               <Button Grid.Column="1"
@@ -98,6 +98,7 @@
                       Command="{Binding CopyDeviceTransferCodeCommand}"
                       Content="{Binding DeviceTransferCopyCodeLabel}" />
             </Grid>
+            <TextBlock Text="{Binding DeviceTransferCodeReadabilityHint}" Classes="subtleText" TextWrapping="Wrap" />
             <TextBlock Text="{Binding DeviceTransferMessage}" Classes="subtleText" IsVisible="{Binding HasDeviceTransferMessage}" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
               <Button Classes="ghost"

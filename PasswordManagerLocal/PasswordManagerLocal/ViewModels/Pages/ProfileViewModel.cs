@@ -742,6 +742,36 @@ public sealed class ProfileViewModel : ViewModelBase
         CurrentMainPage = MainDevicesPage;
     }
 
+    public bool TryNavigateBack()
+    {
+        if (IsLocalSyncDialogOpen)
+        {
+            CancelLocalSyncToggle();
+            return true;
+        }
+
+        if (IsDeviceDisconnectDialogOpen)
+        {
+            CancelDisconnectDevice();
+            return true;
+        }
+
+        if (IsDevicesMainPage && !IsDeviceListPaneVisible)
+        {
+            BackToDevices();
+            return true;
+        }
+
+        if (IsProfileMainPage && !IsProfileTabsPaneVisible)
+        {
+            BackToProfile();
+            return true;
+        }
+
+        return false;
+    }
+
+
     public async Task RefreshDevicesOnlyAsync()
     {
         if (_token == Guid.Empty)

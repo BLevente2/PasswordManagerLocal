@@ -523,7 +523,7 @@
                                 <TextBlock Text="{Binding AddDeviceCodeLabel}" Classes="subtleText" />
                                 <TextBox Text="{Binding DeviceEnrollmentCodeInput}"
                                          Watermark="{Binding AddDeviceCodePlaceholder}"
-                                         FontFamily="Consolas">
+                                         Classes="readableCode">
                                   <TextBox.KeyBindings>
                                     <KeyBinding Gesture="Enter" Command="{Binding ConfirmAddDeviceCommand}" />
                                   </TextBox.KeyBindings>

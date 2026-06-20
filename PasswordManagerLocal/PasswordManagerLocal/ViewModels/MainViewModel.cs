@@ -226,6 +226,18 @@ public sealed class MainViewModel : ViewModelBase
 
     public string RefreshVisiblePageLabel => $"↻ {GetTranslation("Shell_RefreshVisiblePage")}";
 
+    public string YesLabel => GetTranslation("Common_Yes");
+
+    public string NoLabel => GetTranslation("Common_No");
+
+    public string LogoutConfirmationTitle => GetTranslation("Shell_LogoutConfirm_Title");
+
+    public string LogoutConfirmationMessage => GetTranslation("Shell_LogoutConfirm_Message");
+
+    public string ExitConfirmationTitle => GetTranslation("Shell_ExitConfirm_Title");
+
+    public string ExitConfirmationMessage => GetTranslation("Shell_ExitConfirm_Message");
+
     public string HeaderSubtitle => IsAuthenticated ? CurrentUserSubtitle : StatusMessage ?? string.Empty;
 
     public bool HasHeaderSubtitle => !string.IsNullOrWhiteSpace(HeaderSubtitle);
@@ -263,6 +275,35 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
+    public async Task<bool> TryNavigateBackAsync()
+    {
+        if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
+        {
+            return PasswordsViewModel.TryNavigateBack();
+        }
+
+        if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
+        {
+            return ProfileViewModel.TryNavigateBack();
+        }
+
+        if (ReferenceEquals(CurrentPageViewModel, LoginViewModel))
+        {
+            return await LoginViewModel.TryNavigateBackAsync();
+        }
+
+        if (ReferenceEquals(CurrentPageViewModel, RegistrationViewModel))
+        {
+            NavigateToLogin();
+            return true;
+        }
+
+        return false;
+    }
+
+    public Task RequestLogoutAsync() => LogoutAsync();
+
+
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(AppTitle));
@@ -281,6 +322,12 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(NavigationLabel));
         this.RaisePropertyChanged(nameof(RefreshButtonLabel));
         this.RaisePropertyChanged(nameof(RefreshVisiblePageLabel));
+        this.RaisePropertyChanged(nameof(YesLabel));
+        this.RaisePropertyChanged(nameof(NoLabel));
+        this.RaisePropertyChanged(nameof(LogoutConfirmationTitle));
+        this.RaisePropertyChanged(nameof(LogoutConfirmationMessage));
+        this.RaisePropertyChanged(nameof(ExitConfirmationTitle));
+        this.RaisePropertyChanged(nameof(ExitConfirmationMessage));
         this.RaisePropertyChanged(nameof(HeaderSubtitle));
         this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
         this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));

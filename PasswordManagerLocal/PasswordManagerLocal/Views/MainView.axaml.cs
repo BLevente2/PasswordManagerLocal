@@ -36,8 +36,19 @@ public partial class MainView : UserControl
 
     private async void HandleKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Handled
-            || (e.KeyModifiers & KeyModifiers.Control) != KeyModifiers.Control
+        if (e.Handled)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None)
+        {
+            e.Handled = true;
+            await HandleEscapeAsync();
+            return;
+        }
+
+        if ((e.KeyModifiers & KeyModifiers.Control) != KeyModifiers.Control
             || e.Source is not Control sourceControl)
         {
             return;
@@ -60,6 +71,63 @@ public partial class MainView : UserControl
         {
             await CutSelectedTextAsync(textBox, e);
         }
+    }
+
+
+
+    private async Task HandleEscapeAsync()
+    {
+        if (DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        if (await viewModel.TryNavigateBackAsync())
+        {
+            return;
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        if (viewModel.IsAuthenticated)
+        {
+            if (await ShowConfirmationDialogAsync(
+                    viewModel.LogoutConfirmationTitle,
+                    viewModel.LogoutConfirmationMessage,
+                    viewModel.YesLabel,
+                    viewModel.NoLabel))
+            {
+                await viewModel.RequestLogoutAsync();
+            }
+
+            return;
+        }
+
+        if (await ShowConfirmationDialogAsync(
+                viewModel.ExitConfirmationTitle,
+                viewModel.ExitConfirmationMessage,
+                viewModel.YesLabel,
+                viewModel.NoLabel))
+        {
+            (TopLevel.GetTopLevel(this) as Window)?.Close();
+        }
+    }
+
+
+
+    private async Task<bool> ShowConfirmationDialogAsync(string title, string message, string yesLabel, string noLabel)
+    {
+        if (TopLevel.GetTopLevel(this) is not Window owner)
+        {
+            return false;
+        }
+
+        var dialog = new ConfirmationDialog(title, message, yesLabel, noLabel);
+        var result = await dialog.ShowDialog<bool?>(owner);
+        return result == true;
     }
 
 
