@@ -25,7 +25,7 @@ public sealed class ProfileViewModel : ViewModelBase
     private const string DeviceDisconnectPane = "disconnect";
 
     private readonly IEndpoints _endpoints;
-    private readonly Func<Task> _refreshAuthenticatedStateAsync;
+    private readonly Func<Task<bool>> _refreshAuthenticatedStateAsync;
     private readonly Func<Task> _handleAccountDeletedAsync;
     private readonly List<DeviceItemViewModel> _allDevices = [];
 
@@ -45,7 +45,6 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _confirmNewPassword = string.Empty;
     private string _deleteAccountPassword = string.Empty;
     private string _disconnectDevicePassword = string.Empty;
-    private string? _statusMessage;
     private DeviceItemViewModel? _selectedDevice;
     private DeviceItemViewModel? _deviceToDisconnect;
     private DeviceItemViewModel? _pendingLocalSyncDevice;
@@ -64,7 +63,7 @@ public sealed class ProfileViewModel : ViewModelBase
     public ProfileViewModel(
         UiPreferencesService uiPreferences,
         IEndpoints endpoints,
-        Func<Task> refreshAuthenticatedStateAsync,
+        Func<Task<bool>> refreshAuthenticatedStateAsync,
         Func<Task> handleAccountDeletedAsync)
         : base(uiPreferences)
     {
@@ -89,6 +88,8 @@ public sealed class ProfileViewModel : ViewModelBase
         CancelLocalSyncToggleCommand = ReactiveCommand.Create(CancelLocalSyncToggle);
         BeginAddDeviceCommand = ReactiveCommand.CreateFromTask(BeginAddDeviceAsync);
         ConfirmAddDeviceCommand = ReactiveCommand.CreateFromTask(ConfirmAddDeviceAsync);
+        ScanDeviceEnrollmentQrCodeCommand = ReactiveCommand.CreateFromTask(ScanDeviceEnrollmentQrCodeAsync);
+        PickDeviceEnrollmentQrImageCommand = ReactiveCommand.CreateFromTask(PickDeviceEnrollmentQrImageAsync);
         CancelAddDeviceCommand = ReactiveCommand.Create(CancelAddDevice);
         BackToProfileCommand = ReactiveCommand.Create(BackToProfile);
         BeginEditPersonalInfoCommand = ReactiveCommand.Create(BeginEditPersonalInfo);
@@ -197,18 +198,6 @@ public sealed class ProfileViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _disconnectDevicePassword, value);
     }
 
-    public string? StatusMessage
-    {
-        get => _statusMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _statusMessage, value);
-            this.RaisePropertyChanged(nameof(HasStatusMessage));
-        }
-    }
-
-    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
-
     public ObservableCollection<DeviceItemViewModel> Devices { get; }
 
     public ObservableCollection<PasswordSortOptionViewModel> DeviceSortOptions { get; }
@@ -309,6 +298,7 @@ public sealed class ProfileViewModel : ViewModelBase
                 return;
             }
 
+            ClearStatusMessage();
             this.RaiseAndSetIfChanged(ref _currentMainPage, value);
             this.RaisePropertyChanged(nameof(IsProfileMainPage));
             this.RaisePropertyChanged(nameof(IsDevicesMainPage));
@@ -329,6 +319,7 @@ public sealed class ProfileViewModel : ViewModelBase
                 return;
             }
 
+            ClearStatusMessage();
             this.RaiseAndSetIfChanged(ref _currentProfilePane, value);
             this.RaisePropertyChanged(nameof(IsProfileTabsPaneVisible));
             this.RaisePropertyChanged(nameof(IsProfilePersonalInfoPaneVisible));
@@ -358,6 +349,7 @@ public sealed class ProfileViewModel : ViewModelBase
                 return;
             }
 
+            ClearStatusMessage();
             this.RaiseAndSetIfChanged(ref _currentDevicePane, value);
             this.RaisePropertyChanged(nameof(IsDeviceListPaneVisible));
             this.RaisePropertyChanged(nameof(IsDeviceDetailsPaneVisible));
@@ -442,6 +434,10 @@ public sealed class ProfileViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> BeginAddDeviceCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ConfirmAddDeviceCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ScanDeviceEnrollmentQrCodeCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> PickDeviceEnrollmentQrImageCommand { get; }
 
     public ReactiveCommand<Unit, Unit> CancelAddDeviceCommand { get; }
 
@@ -575,6 +571,20 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string AddDeviceCodePlaceholder => GetTranslation("Profile_Device_Add_Code_Placeholder");
 
+    public string AddDeviceQrOptionsDescription => GetTranslation("Profile_Device_Add_QrOptions_Description");
+
+    public string ScanDeviceEnrollmentQrCodeLabel => GetTranslation("Profile_Device_Add_QrScan");
+
+    public string PickDeviceEnrollmentQrImageLabel => GetTranslation("Profile_Device_Add_QrUpload");
+
+    public string PickDeviceEnrollmentQrImageTitle => GetTranslation("Profile_Device_Add_QrUpload_Title");
+
+    public string ScanDeviceEnrollmentQrCodeTitle => GetTranslation("Profile_Device_Add_QrScanner_Title");
+
+    public string ScanDeviceEnrollmentQrCodeDescription => GetTranslation("Profile_Device_Add_QrScanner_Description");
+
+    public bool IsDeviceEnrollmentCameraScanAvailable => EnrollmentQrCodeCameraScannerService.IsAvailable;
+
     public string ConfirmAddDeviceLabel => GetTranslation("Profile_Device_Add_Confirm");
 
     public string CurrentDeviceLabel => GetTranslation("Profile_Device_Current");
@@ -600,6 +610,14 @@ public sealed class ProfileViewModel : ViewModelBase
     public string DisconnectDeviceLabel => GetTranslation("Profile_Device_Disconnect");
 
     public string DeviceNameLabel => GetTranslation("Profile_Device_Name");
+
+    public string DeviceTypeLabel => GetTranslation("Profile_Device_Type");
+
+    public string WindowsPcDeviceTypeLabel => GetTranslation("Profile_Device_Type_WindowsPc");
+
+    public string AndroidMobileDeviceTypeLabel => GetTranslation("Profile_Device_Type_AndroidMobile");
+
+    public string UnknownDeviceTypeLabel => GetTranslation("Profile_Device_Type_Unknown");
 
     public string DeviceLastSeenLabel => GetTranslation("Profile_Device_LastSeen");
 
@@ -690,6 +708,12 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(AddDeviceDescription));
         this.RaisePropertyChanged(nameof(AddDeviceCodeLabel));
         this.RaisePropertyChanged(nameof(AddDeviceCodePlaceholder));
+        this.RaisePropertyChanged(nameof(AddDeviceQrOptionsDescription));
+        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeLabel));
+        this.RaisePropertyChanged(nameof(PickDeviceEnrollmentQrImageLabel));
+        this.RaisePropertyChanged(nameof(PickDeviceEnrollmentQrImageTitle));
+        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeTitle));
+        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeDescription));
         this.RaisePropertyChanged(nameof(ConfirmAddDeviceLabel));
         this.RaisePropertyChanged(nameof(CurrentDeviceLabel));
         this.RaisePropertyChanged(nameof(BlockedLabel));
@@ -703,6 +727,10 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(UnblockDeviceLabel));
         this.RaisePropertyChanged(nameof(DisconnectDeviceLabel));
         this.RaisePropertyChanged(nameof(DeviceNameLabel));
+        this.RaisePropertyChanged(nameof(DeviceTypeLabel));
+        this.RaisePropertyChanged(nameof(WindowsPcDeviceTypeLabel));
+        this.RaisePropertyChanged(nameof(AndroidMobileDeviceTypeLabel));
+        this.RaisePropertyChanged(nameof(UnknownDeviceTypeLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
         this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
@@ -733,22 +761,90 @@ public sealed class ProfileViewModel : ViewModelBase
     
     public void ShowProfileMainPage()
     {
+        DiscardTransientNavigationState();
         CurrentMainPage = MainProfilePage;
-        CurrentProfilePane = ProfileTabsPane;
     }
 
     public void ShowDevicesMainPage()
     {
+        DiscardTransientNavigationState();
         CurrentMainPage = MainDevicesPage;
     }
+
+    public void DiscardTransientNavigationState()
+    {
+        ClearStatusMessage();
+        DeviceSearchQuery = string.Empty;
+        ResetProfileEditFields();
+        ResetDeviceNavigationState();
+        CurrentProfilePane = ProfileTabsPane;
+    }
+
+    private void ResetProfileEditFields()
+    {
+        EditUsername = Username;
+        EditFirstName = FirstName;
+        EditLastName = LastName;
+        EditEmail = Email;
+        CurrentPassword = string.Empty;
+        NewPassword = string.Empty;
+        ConfirmNewPassword = string.Empty;
+        DeleteAccountPassword = string.Empty;
+    }
+
+    private void ResetDeviceNavigationState()
+    {
+        SelectedDevice = null;
+        DeviceToDisconnect = null;
+        PendingLocalSyncDevice = null;
+        PendingLocalSyncEnabled = false;
+        IsDeviceDisconnectDialogOpen = false;
+        IsLocalSyncDialogOpen = false;
+        IsAddDeviceDialogOpen = false;
+        IsAddingDevice = false;
+        DisconnectDevicePassword = string.Empty;
+        DeviceEnrollmentCodeInput = string.Empty;
+        CurrentDevicePane = DeviceListPane;
+    }
+
+    public bool TryNavigateBack()
+    {
+        if (IsLocalSyncDialogOpen)
+        {
+            CancelLocalSyncToggle();
+            return true;
+        }
+
+        if (IsDeviceDisconnectDialogOpen)
+        {
+            CancelDisconnectDevice();
+            return true;
+        }
+
+        if (IsDevicesMainPage && !IsDeviceListPaneVisible)
+        {
+            BackToDevices();
+            return true;
+        }
+
+        if (IsProfileMainPage && !IsProfileTabsPaneVisible)
+        {
+            BackToProfile();
+            return true;
+        }
+
+        return false;
+    }
+
 
     public async Task RefreshDevicesOnlyAsync()
     {
         if (_token == Guid.Empty)
             return;
 
-        await LoadDevicesAsync();
-        StatusMessage = GetTranslation("Shell_DataRefreshed");
+        ClearStatusMessage();
+        if (await LoadDevicesAsync())
+            ShowSuccessMessage(GetTranslation("Shell_DataRefreshed"));
     }
 
     public async Task RefreshCurrentDataAsync()
@@ -758,17 +854,18 @@ public sealed class ProfileViewModel : ViewModelBase
 
         try
         {
+            ClearStatusMessage();
             var profile = await _endpoints.GetUserProfileInfoAsync(_token);
-            await LoadAsync(_token, profile);
-            StatusMessage = GetTranslation("Shell_DataRefreshed");
+            if (await LoadAsync(_token, profile))
+                ShowSuccessMessage(GetTranslation("Shell_DataRefreshed"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
-    public async Task LoadAsync(Guid token, UserProfileInfoResponse profile)
+    public async Task<bool> LoadAsync(Guid token, UserProfileInfoResponse profile)
     {
         _token = token;
         Username = profile.Username;
@@ -786,14 +883,16 @@ public sealed class ProfileViewModel : ViewModelBase
         ConfirmNewPassword = string.Empty;
         DeleteAccountPassword = string.Empty;
         DisconnectDevicePassword = string.Empty;
-        StatusMessage = null;
+        ClearStatusMessage();
         CancelDisconnectDevice();
         CancelLocalSyncToggle();
         CancelAddDevice();
         CurrentProfilePane = ProfileTabsPane;
         CurrentDevicePane = DeviceListPane;
-        await LoadDevicesAsync();
+        return await LoadDevicesAsync();
     }
+
+    public void SetSessionToken(Guid token) => _token = token;
 
     public void Reset()
     {
@@ -813,7 +912,7 @@ public sealed class ProfileViewModel : ViewModelBase
         ConfirmNewPassword = string.Empty;
         DeleteAccountPassword = string.Empty;
         DisconnectDevicePassword = string.Empty;
-        StatusMessage = null;
+        ClearStatusMessage();
         _allDevices.Clear();
         Devices.Clear();
         SelectedDevice = null;
@@ -835,6 +934,8 @@ public sealed class ProfileViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         try
         {
             await _endpoints.UpdateUserProfileInfoAsync(new UpdateUserProfileRequest
@@ -845,13 +946,15 @@ public sealed class ProfileViewModel : ViewModelBase
                 NewLastName = EditLastName.Trim()
             });
 
-            await _refreshAuthenticatedStateAsync();
-            StatusMessage = GetTranslation("Profile_Save_Success");
+            if (!await _refreshAuthenticatedStateAsync())
+                return;
+
             CurrentProfilePane = ProfileTabsPane;
+            ShowSuccessMessage(GetTranslation("Profile_Save_Success"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -862,16 +965,20 @@ public sealed class ProfileViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         try
         {
             await _endpoints.ChangeUsernameAsync(_token, EditUsername.Trim());
-            await _refreshAuthenticatedStateAsync();
-            StatusMessage = GetTranslation("Profile_Username_Success");
+            if (!await _refreshAuthenticatedStateAsync())
+                return;
+
             CurrentProfilePane = ProfileTabsPane;
+            ShowSuccessMessage(GetTranslation("Profile_Username_Success"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -882,15 +989,17 @@ public sealed class ProfileViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         if (!string.Equals(NewPassword, ConfirmNewPassword, StringComparison.Ordinal))
         {
-            StatusMessage = GetTranslation("Validation_RegisterPassword_Mismatch");
+            ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Mismatch"));
             return;
         }
 
         if (string.IsNullOrWhiteSpace(CurrentPassword) || string.IsNullOrWhiteSpace(NewPassword))
         {
-            StatusMessage = GetTranslation("Validation_Password_Required");
+            ShowErrorMessage(GetTranslation("Validation_Password_Required"));
             return;
         }
 
@@ -909,12 +1018,12 @@ public sealed class ProfileViewModel : ViewModelBase
             CurrentPassword = string.Empty;
             NewPassword = string.Empty;
             ConfirmNewPassword = string.Empty;
-            StatusMessage = GetTranslation("Profile_MasterPassword_Success");
             CurrentProfilePane = ProfileTabsPane;
+            ShowSuccessMessage(GetTranslation("Profile_MasterPassword_Success"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -930,9 +1039,11 @@ public sealed class ProfileViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         if (string.IsNullOrWhiteSpace(DeleteAccountPassword))
         {
-            StatusMessage = GetTranslation("Validation_Password_Required");
+            ShowErrorMessage(GetTranslation("Validation_Password_Required"));
             return;
         }
 
@@ -946,7 +1057,7 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -964,7 +1075,7 @@ public sealed class ProfileViewModel : ViewModelBase
         EditLastName = LastName;
         EditEmail = Email;
         EditUsername = Username;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentProfilePane = ProfileTabsPane;
     }
 
@@ -973,14 +1084,14 @@ public sealed class ProfileViewModel : ViewModelBase
         EditFirstName = FirstName;
         EditLastName = LastName;
         EditEmail = Email;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentProfilePane = ProfilePersonalInfoPane;
     }
 
     private void BeginChangeUsername()
     {
         EditUsername = Username;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentProfilePane = ProfileUsernamePane;
     }
 
@@ -989,24 +1100,28 @@ public sealed class ProfileViewModel : ViewModelBase
         CurrentPassword = string.Empty;
         NewPassword = string.Empty;
         ConfirmNewPassword = string.Empty;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentProfilePane = ProfilePasswordPane;
     }
 
     private void BeginDeleteAccount()
     {
         DeleteAccountPassword = string.Empty;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentProfilePane = ProfileDeleteAccountPane;
     }
 
-    private async Task RefreshDevicesAsync() =>
-        await LoadDevicesAsync();
+    private async Task RefreshDevicesAsync()
+    {
+        ClearStatusMessage();
+        if (await LoadDevicesAsync())
+            ShowSuccessMessage(GetTranslation("Shell_DataRefreshed"));
+    }
 
-    private async Task LoadDevicesAsync()
+    private async Task<bool> LoadDevicesAsync()
     {
         if (_token == Guid.Empty)
-            return;
+            return false;
 
         var selectedId = SelectedDevice?.DeviceId;
 
@@ -1019,10 +1134,12 @@ public sealed class ProfileViewModel : ViewModelBase
                 _allDevices.Add(CreateDeviceItem(device));
 
             ApplyDeviceFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
+            return true;
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
+            return false;
         }
     }
 
@@ -1037,6 +1154,9 @@ public sealed class ProfileViewModel : ViewModelBase
             SyncDisabledLabel,
             SyncToggleOnLabel,
             SyncToggleOffLabel,
+            WindowsPcDeviceTypeLabel,
+            AndroidMobileDeviceTypeLabel,
+            UnknownDeviceTypeLabel,
             SaveDeviceNameLabel,
             UnblockDeviceLabel,
             DisconnectDeviceLabel,
@@ -1058,7 +1178,7 @@ public sealed class ProfileViewModel : ViewModelBase
     private Task BeginViewDeviceAsync(DeviceItemViewModel device)
     {
         SelectedDevice = device;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentDevicePane = DeviceDetailsPane;
         return Task.CompletedTask;
     }
@@ -1070,7 +1190,7 @@ public sealed class ProfileViewModel : ViewModelBase
         DisconnectDevicePassword = string.Empty;
         DeviceEnrollmentCodeInput = string.Empty;
         IsAddingDevice = false;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentDevicePane = DeviceListPane;
     }
 
@@ -1082,10 +1202,12 @@ public sealed class ProfileViewModel : ViewModelBase
         if (_token == Guid.Empty)
             return;
 
+        ClearStatusMessage();
+
         var normalizedName = device.EditableName.Trim();
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
-            StatusMessage = GetTranslation("Profile_Device_NameRequired");
+            ShowErrorMessage(GetTranslation("Profile_Device_NameRequired"));
             return;
         }
 
@@ -1097,12 +1219,14 @@ public sealed class ProfileViewModel : ViewModelBase
                 await _endpoints.SetUserDeviceNameAsync(_token, device.DeviceId, normalizedName);
 
             device.ApplySavedName(normalizedName);
-            await LoadDevicesAsync();
-            StatusMessage = GetTranslation("Profile_Device_NameSaved");
+            if (!await LoadDevicesAsync())
+                return;
+
+            ShowSuccessMessage(GetTranslation("Profile_Device_NameSaved"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -1111,7 +1235,9 @@ public sealed class ProfileViewModel : ViewModelBase
         if (_token == Guid.Empty)
             return;
 
-        var targetState = !device.IsSyncEnabled;
+        ClearStatusMessage();
+
+        var targetState = !device.IsSyncOn;
 
         if (device.IsCurrentDevice)
         {
@@ -1123,16 +1249,18 @@ public sealed class ProfileViewModel : ViewModelBase
 
         try
         {
-            await _endpoints.SetUserDeviceSyncEnabledAsync(_token, device.DeviceId, targetState);
+            await _endpoints.SetUserDeviceSyncOnAsync(_token, device.DeviceId, targetState);
             device.ApplySyncState(targetState);
-            await LoadDevicesAsync();
-            StatusMessage = targetState
+            if (!await LoadDevicesAsync())
+                return;
+
+            ShowSuccessMessage(targetState
                 ? GetTranslation("Profile_Device_SyncTurnedOn")
-                : GetTranslation("Profile_Device_SyncTurnedOff");
+                : GetTranslation("Profile_Device_SyncTurnedOff"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -1141,15 +1269,19 @@ public sealed class ProfileViewModel : ViewModelBase
         if (_token == Guid.Empty)
             return;
 
+        ClearStatusMessage();
+
         try
         {
             await _endpoints.UnblockUserDeviceAsync(_token, device.DeviceId);
-            await LoadDevicesAsync();
-            StatusMessage = GetTranslation("Profile_Device_Unblocked");
+            if (!await LoadDevicesAsync())
+                return;
+
+            ShowSuccessMessage(GetTranslation("Profile_Device_Unblocked"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -1162,12 +1294,13 @@ public sealed class ProfileViewModel : ViewModelBase
         DeviceToDisconnect = device;
         DisconnectDevicePassword = string.Empty;
         IsDeviceDisconnectDialogOpen = false;
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentDevicePane = DeviceDisconnectPane;
     }
 
     private void CancelDisconnectDevice()
     {
+        ClearStatusMessage();
         IsDeviceDisconnectDialogOpen = false;
         DeviceToDisconnect = null;
         DisconnectDevicePassword = string.Empty;
@@ -1181,9 +1314,11 @@ public sealed class ProfileViewModel : ViewModelBase
         if (_token == Guid.Empty || DeviceToDisconnect is null)
             return;
 
+        ClearStatusMessage();
+
         if (string.IsNullOrWhiteSpace(DisconnectDevicePassword))
         {
-            StatusMessage = GetTranslation("Validation_Password_Required");
+            ShowErrorMessage(GetTranslation("Validation_Password_Required"));
             return;
         }
 
@@ -1195,12 +1330,14 @@ public sealed class ProfileViewModel : ViewModelBase
             CancelDisconnectDevice();
             SelectedDevice = null;
             CurrentDevicePane = DeviceListPane;
-            await LoadDevicesAsync();
-            StatusMessage = GetTranslation("Profile_Device_Disconnected");
+            if (!await LoadDevicesAsync())
+                return;
+
+            ShowSuccessMessage(GetTranslation("Profile_Device_Disconnected"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -1210,6 +1347,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
     private void CancelLocalSyncToggle()
     {
+        ClearStatusMessage();
         IsLocalSyncDialogOpen = false;
         PendingLocalSyncDevice = null;
         PendingLocalSyncEnabled = false;
@@ -1220,21 +1358,31 @@ public sealed class ProfileViewModel : ViewModelBase
         if (PendingLocalSyncDevice is null)
             return;
 
+        ClearStatusMessage();
+
         var targetState = PendingLocalSyncEnabled;
 
         try
         {
-            await _endpoints.SetLocalDeviceSyncEnabledAsync(targetState);
+            if (targetState && !await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                ShowErrorMessage(GetTranslation("Firewall_RequiredForLocalNetwork"));
+                return;
+            }
+
+            await _endpoints.SetLocalUserSyncOnAsync(_token, targetState);
             PendingLocalSyncDevice.ApplySyncState(targetState);
             CancelLocalSyncToggle();
-            await LoadDevicesAsync();
-            StatusMessage = targetState
+            if (!await LoadDevicesAsync())
+                return;
+
+            ShowSuccessMessage(targetState
                 ? GetTranslation("Profile_LocalSync_OnSuccess")
-                : GetTranslation("Profile_LocalSync_OffSuccess");
+                : GetTranslation("Profile_LocalSync_OffSuccess"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -1243,29 +1391,38 @@ public sealed class ProfileViewModel : ViewModelBase
         if (_token == Guid.Empty)
             return;
 
+        ClearStatusMessage();
+
         try
         {
-            var isLocalSyncOn = await _endpoints.GetLocalDeviceSyncEnabledAsync();
+            var isLocalSyncOn = await _endpoints.GetLocalUserSyncOnAsync(_token);
             if (!isLocalSyncOn)
             {
-                StatusMessage = GetTranslation("Profile_Device_AddSyncDisabled");
+                ShowErrorMessage(GetTranslation("Profile_Device_AddSyncDisabled"));
+                return;
+            }
+
+            if (!await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                ShowErrorMessage(GetTranslation("Firewall_RequiredForLocalNetwork"));
                 return;
             }
 
             SelectedDevice = null;
             DeviceEnrollmentCodeInput = string.Empty;
             IsAddDeviceDialogOpen = false;
-            StatusMessage = null;
+            ClearStatusMessage();
             CurrentDevicePane = DeviceAddPane;
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
     private void CancelAddDevice()
     {
+        ClearStatusMessage();
         IsAddDeviceDialogOpen = false;
         DeviceEnrollmentCodeInput = string.Empty;
         IsAddingDevice = false;
@@ -1274,30 +1431,123 @@ public sealed class ProfileViewModel : ViewModelBase
             CurrentDevicePane = DeviceListPane;
     }
 
+    private async Task ScanDeviceEnrollmentQrCodeAsync()
+    {
+        if (_token == Guid.Empty || IsAddingDevice)
+            return;
+
+        ClearStatusMessage();
+
+        if (!EnrollmentQrCodeCameraScannerService.IsAvailable)
+        {
+            ShowErrorMessage(GetTranslation("Profile_Device_Add_QrCameraUnavailable"));
+            return;
+        }
+
+        try
+        {
+            var code = await EnrollmentQrCodeCameraScannerService.ScanEnrollmentCodeAsync(
+                ScanDeviceEnrollmentQrCodeTitle,
+                ScanDeviceEnrollmentQrCodeDescription);
+
+            if (string.IsNullOrWhiteSpace(code))
+                return;
+
+            await AddDeviceFromQrTextAsync(code);
+        }
+        catch
+        {
+            ShowErrorMessage(GetTranslation("Profile_Device_Add_QrDecodeFailed"));
+        }
+    }
+
+
+
+    private async Task PickDeviceEnrollmentQrImageAsync()
+    {
+        if (_token == Guid.Empty || IsAddingDevice)
+            return;
+
+        try
+        {
+            ClearStatusMessage();
+            var imageBytes = await QrImagePickerService.PickImageBytesAsync(PickDeviceEnrollmentQrImageTitle);
+            if (imageBytes is null || imageBytes.Length == 0)
+                return;
+
+            await AddDeviceFromQrImageBytesAsync(imageBytes);
+        }
+        catch
+        {
+            ShowErrorMessage(GetTranslation("Profile_Device_Add_QrDecodeFailed"));
+        }
+    }
+
+
+
+    private async Task AddDeviceFromQrImageBytesAsync(byte[] imageBytes)
+    {
+        var code = EnrollmentQrCodeService.DecodeEnrollmentCodeFromQrImage(imageBytes);
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            ShowErrorMessage(GetTranslation("Profile_Device_Add_QrNotFound"));
+            return;
+        }
+
+        await AddDeviceFromQrTextAsync(code);
+    }
+
+
+
+    private async Task AddDeviceFromQrTextAsync(string qrText)
+    {
+        var code = EnrollmentQrCodeService.ExtractEnrollmentCode(qrText);
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            ShowErrorMessage(GetTranslation("Profile_Device_Add_QrNotFound"));
+            return;
+        }
+
+        DeviceEnrollmentCodeInput = code.Trim();
+        await ConfirmAddDeviceAsync();
+    }
+
+
+
     private async Task ConfirmAddDeviceAsync()
     {
         if (_token == Guid.Empty || IsAddingDevice)
             return;
 
+        ClearStatusMessage();
+
         var code = DeviceEnrollmentCodeInput.Trim();
         if (string.IsNullOrWhiteSpace(code))
         {
-            StatusMessage = GetTranslation("Profile_Device_Add_CodeRequired");
+            ShowErrorMessage(GetTranslation("Profile_Device_Add_CodeRequired"));
             return;
         }
 
         try
         {
             IsAddingDevice = true;
+            if (!await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                ShowErrorMessage(GetTranslation("Firewall_RequiredForLocalNetwork"));
+                return;
+            }
+
             await _endpoints.AddDeviceByCodeAsync(_token, code);
             CancelAddDevice();
             CurrentDevicePane = DeviceListPane;
-            await LoadDevicesAsync();
-            StatusMessage = GetTranslation("Profile_Device_AddSuccess");
+            if (!await LoadDevicesAsync())
+                return;
+
+            ShowSuccessMessage(GetTranslation("Profile_Device_AddSuccess"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -1315,7 +1565,7 @@ public sealed class ProfileViewModel : ViewModelBase
             var searchTerm = DeviceSearchQuery.Trim();
             query = query.Where(item =>
                 item.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
-                || item.DeviceName.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
+                || item.DeviceTypeText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
                 || item.TrustStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
                 || item.SyncStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase));
         }
@@ -1384,6 +1634,9 @@ public sealed class ProfileViewModel : ViewModelBase
                 SyncDisabledLabel,
                 SyncToggleOnLabel,
                 SyncToggleOffLabel,
+                WindowsPcDeviceTypeLabel,
+                AndroidMobileDeviceTypeLabel,
+                UnknownDeviceTypeLabel,
                 SaveDeviceNameLabel,
                 UnblockDeviceLabel,
                 DisconnectDeviceLabel,

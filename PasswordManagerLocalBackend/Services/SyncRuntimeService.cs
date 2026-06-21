@@ -1,11 +1,15 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 
 namespace PasswordManagerLocalBackend.Services;
 
 public sealed class SyncRuntimeService : ISyncRuntimeService
 {
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
+    private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
@@ -13,40 +17,36 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public SyncRuntimeService(
+        IServiceScopeFactory scopeFactory,
         IDeviceIdentityService identity,
+        IEnrollmentRuntimeState enrollmentState,
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceSyncTaskService deviceSyncTasks,
         IEnumerable<IHostedService> hostedServices)
     {
+        _scopeFactory = scopeFactory;
         _identity = identity;
+        _enrollmentState = enrollmentState;
         _syncDeviceIdentities = syncDeviceIdentities;
         _endpointCache = endpointCache;
         _deviceSyncTasks = deviceSyncTasks;
         _hostedServices = hostedServices;
     }
 
-
-
-
-    public async Task SetSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default)
+    public async Task RefreshSyncEnabledAsync(CancellationToken ct = default)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var localUsers = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
+        var shouldEnable = await localUsers.AnySyncOnAsync(ct);
+
         await _lock.WaitAsync(ct);
         try
         {
-            if (_identity.IsSyncOn == isSyncOn)
-            {
-                if (isSyncOn)
-                    await StartCoreAsync(ct);
-                else
-                    await StopCoreAsync(ct);
+            if (_identity.IsSyncOn != shouldEnable)
+                await _identity.SetSyncOnAsync(shouldEnable, ct);
 
-                return;
-            }
-
-            await _identity.SetSyncOnAsync(isSyncOn, ct);
-
-            if (isSyncOn)
+            if (shouldEnable || _enrollmentState.IsActive)
                 await StartCoreAsync(ct);
             else
                 await StopCoreAsync(ct);
@@ -57,6 +57,36 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         }
     }
 
+    public async Task BeginEnrollmentOnlyAsync(CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            _enrollmentState.Activate();
+            await StartCoreAsync(ct);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task EndEnrollmentOnlyAsync(CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            _enrollmentState.Deactivate();
+            if (_identity.IsSyncOn)
+                await StartCoreAsync(ct);
+            else
+                await StopCoreAsync(ct);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
 
     public async Task StartAsync(CancellationToken ct = default)
     {
@@ -71,12 +101,12 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         }
     }
 
-
     public async Task StopAsync(CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
         {
+            _enrollmentState.Deactivate();
             await StopCoreAsync(ct);
         }
         finally
@@ -85,16 +115,14 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         }
     }
 
-
     private async Task StartCoreAsync(CancellationToken ct)
     {
-        if (!_identity.IsSyncOn)
+        if (!_identity.IsSyncOn && !_enrollmentState.IsActive)
             return;
 
         foreach (var hostedService in ListControlledServices().OrderBy(s => s.StartOrder))
             await hostedService.StartAsync(ct);
     }
-
 
     private async Task StopCoreAsync(CancellationToken ct)
     {
@@ -106,7 +134,6 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         _syncDeviceIdentities.Clear();
         _endpointCache.Clear();
     }
-
 
     private IReadOnlyList<ISyncControlledHostedService> ListControlledServices() =>
         _hostedServices

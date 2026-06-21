@@ -18,16 +18,19 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
 {
     private readonly IDeviceIdentityService _identity;
     private readonly SyncPeerProtocolHandler _handler;
+    private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly SemaphoreSlim _connectionSlots = new(SyncConstants.MaxConcurrentSyncConnections, SyncConstants.MaxConcurrentSyncConnections);
+    private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly ConcurrentDictionary<string, int> _connectionsByRemoteIp = new(StringComparer.OrdinalIgnoreCase);
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
 
-    public TcpSyncServerHostedService(IDeviceIdentityService identity, SyncPeerProtocolHandler handler)
+    public TcpSyncServerHostedService(IDeviceIdentityService identity, SyncPeerProtocolHandler handler, IEnrollmentRuntimeState enrollmentState)
     {
         _identity = identity;
         _handler = handler;
+        _enrollmentState = enrollmentState;
     }
 
 
@@ -38,68 +41,121 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
 
 
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (!_identity.IsSyncOn)
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
         {
-            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info("TCP sync server was not started because synchronization is disabled on this device.");
-            return Task.CompletedTask;
+            if (!_identity.IsSyncOn && !_enrollmentState.IsActive)
+            {
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info("TCP sync server was not started because synchronization is disabled on this device.");
+                return;
+            }
+
+            if (_listener is not null)
+                return;
+
+            var listener = new TcpListener(IPAddress.Any, SyncConstants.SyncPort)
+            {
+                ExclusiveAddressUse = true
+            };
+            var lifetime = new CancellationTokenSource();
+
+            try
+            {
+                listener.Start();
+                _listener = listener;
+                _cts = lifetime;
+                _acceptLoopTask = Task.Run(() => AcceptLoopAsync(listener, lifetime.Token), CancellationToken.None);
+                var localEndpoint = listener.LocalEndpoint?.ToString() ?? $"0.0.0.0:{SyncConstants.SyncPort}";
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP sync server listening on {localEndpoint}. ProcessId={Environment.ProcessId}, ExclusiveAddressUse={listener.ExclusiveAddressUse}.");
+            }
+            catch (Exception ex)
+            {
+                listener.Stop();
+                lifetime.Dispose();
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TCP sync server could not start on 0.0.0.0:{SyncConstants.SyncPort}: {ex.Message}", ex);
+                throw;
+            }
         }
-
-        if (_listener is not null)
-            return Task.CompletedTask;
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _listener = new TcpListener(IPAddress.Any, SyncConstants.SyncPort);
-        _listener.Start();
-        PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP sync server listening on 0.0.0.0:{SyncConstants.SyncPort}.");
-
-        _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token), CancellationToken.None);
-        return Task.CompletedTask;
+        finally
+        {
+            _lifecycleLock.Release();
+        }
     }
 
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _cts?.Cancel();
-        _listener?.Stop();
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            var lifetime = _cts;
+            var listener = _listener;
+            var acceptLoopTask = _acceptLoopTask;
 
-        if (_acceptLoopTask is not null)
-            await Task.WhenAny(_acceptLoopTask, Task.Delay(TimeSpan.FromSeconds(2), cancellationToken));
+            _cts = null;
+            _listener = null;
+            _acceptLoopTask = null;
 
-        _listener = null;
-        _acceptLoopTask = null;
+            lifetime?.Cancel();
+            listener?.Stop();
 
-        _cts?.Dispose();
-        _cts = null;
+            if (acceptLoopTask is not null)
+                await Task.WhenAny(acceptLoopTask, Task.Delay(TimeSpan.FromSeconds(2), cancellationToken));
+
+            lifetime?.Dispose();
+
+            if (listener is not null)
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP sync server stopped on port {SyncConstants.SyncPort}.");
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
     }
 
 
-    private async Task AcceptLoopAsync(CancellationToken ct)
+    private async Task AcceptLoopAsync(TcpListener listener, CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested && _listener is not null)
+        while (!ct.IsCancellationRequested)
         {
             TcpClient client;
 
             try
             {
-                client = await _listener.AcceptTcpClientAsync(ct);
+                client = await listener.AcceptTcpClientAsync(ct);
             }
-            catch when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 return;
             }
-            catch
+            catch (ObjectDisposedException) when (ct.IsCancellationRequested)
             {
+                return;
+            }
+            catch (Exception ex)
+            {
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TCP sync server accept failed: {ex.Message}", ex);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
                 continue;
             }
 
             if (!TryBeginConnection(client, out var remoteIp))
             {
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info("TCP sync server rejected an incoming connection because the connection limit was reached.");
                 client.Dispose();
                 continue;
             }
 
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP sync server accepted an incoming connection from {remoteIp}.");
             _ = Task.Run(() => HandleClientAsync(client, remoteIp, ct), CancellationToken.None);
         }
     }
@@ -129,6 +185,8 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
                 }, handshakeTimeout.Token);
 
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TLS authentication completed for incoming connection from {remoteIp}.");
+
                 var context = new PeerConnectionContext
                 {
                     RemoteIpAddress = remoteIp,
@@ -138,8 +196,20 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                 await HandleFramesAsync(ssl, context, ct);
             }
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+        }
+        catch (AuthenticationException ex)
+        {
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TLS authentication failed for incoming connection from {remoteIp}: {ex.Message}", ex);
+        }
+        catch (IOException ex)
+        {
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TCP sync connection from {remoteIp} ended with an I/O error: {ex.Message}", ex);
+        }
+        catch (Exception ex)
+        {
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TCP sync connection from {remoteIp} failed: {ex.Message}", ex);
         }
         finally
         {

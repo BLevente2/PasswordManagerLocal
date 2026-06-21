@@ -14,10 +14,17 @@
     <Grid Margin="16,8,16,16">
       <Border Classes="card" HorizontalAlignment="Center" MaxWidth="520" MinWidth="280">
         <StackPanel Spacing="16">
-          <StackPanel Spacing="6">
-            <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
-          </StackPanel>
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <Button Classes="ghost iconButton"
+                    IsVisible="{Binding IsBackButtonVisible}"
+                    Command="{Binding NavigateBackCommand}"
+                    Content="←"
+                    ToolTip.Tip="{Binding BackLabel}" />
+            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+              <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
 
           <StackPanel Spacing="6" IsVisible="{Binding IsBusy}">
             <ProgressBar IsIndeterminate="True" />
@@ -46,7 +53,7 @@
 
             <CheckBox IsChecked="{Binding RememberMe}" Content="{Binding RememberMeLabel}" />
 
-            <TextBlock Text="{Binding ErrorMessage}" Classes="errorText" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding StatusMessage}" Classes="errorText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
 
             <Button Classes="primary"
                     Command="{Binding LoginCommand}"
@@ -83,14 +90,27 @@
           <StackPanel Spacing="14" IsVisible="{Binding IsDeviceTransferCodeVisible}">
             <TextBlock Text="{Binding DeviceTransferCodeTitle}" Classes="sectionTitle" TextWrapping="Wrap" />
             <TextBlock Text="{Binding DeviceTransferCodeDescription}" Classes="subtleText" TextWrapping="Wrap" />
+            <StackPanel Spacing="6" HorizontalAlignment="Center" IsVisible="{Binding HasDeviceTransferQrCode}">
+              <TextBlock Text="{Binding DeviceTransferQrCodeLabel}" Classes="subtleText" TextWrapping="Wrap" TextAlignment="Center" />
+              <Border Padding="12"
+                      CornerRadius="12"
+                      Background="White"
+                      BorderThickness="1"
+                      BorderBrush="#33808080">
+                <Image Source="{Binding DeviceTransferQrCode}"
+                       Width="240"
+                       Height="240"
+                       Stretch="Uniform" />
+              </Border>
+            </StackPanel>
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
               <Border Padding="12,10"
                       CornerRadius="12"
                       BorderThickness="1"
                       BorderBrush="#33808080">
-                <TextBlock Text="{Binding DeviceTransferCode}"
-                           FontFamily="Consolas"
-                           FontSize="18"
+                <TextBlock Text="{Binding ReadableDeviceTransferCode}"
+                           Classes="readableCode"
+                           FontSize="22"
                            TextWrapping="Wrap" />
               </Border>
               <Button Grid.Column="1"
@@ -98,7 +118,17 @@
                       Command="{Binding CopyDeviceTransferCodeCommand}"
                       Content="{Binding DeviceTransferCopyCodeLabel}" />
             </Grid>
-            <TextBlock Text="{Binding DeviceTransferMessage}" Classes="subtleText" IsVisible="{Binding HasDeviceTransferMessage}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding DeviceTransferCodeReadabilityHint}" Classes="subtleText" TextWrapping="Wrap" />
+            <Grid>
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="subtleText"
+                         IsVisible="{Binding DeviceTransferStatus.HasNonErrorMessage}"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="errorText"
+                         IsVisible="{Binding DeviceTransferStatus.IsError}"
+                         TextWrapping="Wrap" />
+            </Grid>
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
               <Button Classes="ghost"
                       Command="{Binding CancelDeviceTransferCommand}"
@@ -112,7 +142,16 @@
 
           <StackPanel Spacing="14" IsVisible="{Binding IsDeviceTransferFinished}">
             <TextBlock Text="{Binding DeviceTransferFinishTitle}" Classes="sectionTitle" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding DeviceTransferMessage}" Classes="subtleText" IsVisible="{Binding HasDeviceTransferMessage}" TextWrapping="Wrap" />
+            <Grid>
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="subtleText"
+                         IsVisible="{Binding DeviceTransferStatus.HasNonErrorMessage}"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="errorText"
+                         IsVisible="{Binding DeviceTransferStatus.IsError}"
+                         TextWrapping="Wrap" />
+            </Grid>
             <Button Classes="primary"
                     Command="{Binding FinishDeviceTransferCommand}"
                     Content="{Binding DeviceTransferFinishLabel}" />

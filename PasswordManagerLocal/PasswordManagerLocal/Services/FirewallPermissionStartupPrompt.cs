@@ -1,50 +1,155 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using PasswordManagerLocal.Localization;
 
 namespace PasswordManagerLocal.Services;
 
 public static class FirewallPermissionStartupPrompt
 {
+    private static readonly SemaphoreSlim PromptLock = new(1, 1);
+    private static WeakReference<Window>? _activeOwner;
+
+    public static void SetActiveTopLevel(TopLevel? topLevel)
+    {
+        _activeOwner = topLevel is Window window
+            ? new WeakReference<Window>(window)
+            : null;
+    }
+
+
+
     public static async Task TryShowAsync(Window owner, AppLanguage language, CancellationToken ct = default)
     {
-        FirewallPermissionCheckResult check;
+        await EnsureConfiguredAsync(owner, language, ct);
+    }
 
+
+
+    public static Task<bool> EnsureConfiguredAsync(AppLanguage language, CancellationToken ct = default) =>
+        EnsureConfiguredAsync(ResolveOwner(), language, ct);
+
+
+
+    private static async Task<bool> EnsureConfiguredAsync(Window? owner, AppLanguage language, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            return true;
+
+        await PromptLock.WaitAsync(ct);
         try
         {
-            check = await FirewallPermissionService.CheckAsync(ct);
-        }
-        catch
-        {
-            return;
-        }
-
-        if (!check.IsSupported || check.IsConfigured || !check.CanRequestPermission)
-            return;
-
-        var approved = await ShowConfirmDialogAsync(owner, language);
-        if (!approved)
-            return;
-
-        FirewallPermissionCheckResult result;
-        try
-        {
-            result = await FirewallPermissionService.RequestPermissionAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            result = new FirewallPermissionCheckResult
+            FirewallPermissionCheckResult check;
+            try
             {
-                IsSupported = true,
-                IsConfigured = false,
-                CanRequestPermission = true,
-                Details = ex.Message
-            };
-        }
+                check = await FirewallPermissionService.CheckAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                check = new FirewallPermissionCheckResult
+                {
+                    IsSupported = true,
+                    IsConfigured = false,
+                    CanRequestPermission = true,
+                    Details = ex.Message
+                };
+            }
 
-        if (!result.IsConfigured)
-            await ShowErrorDialogAsync(owner, language, result.Details);
+            if (!check.IsSupported || check.IsConfigured)
+                return true;
+
+            if (!check.CanRequestPermission || owner is null)
+                return false;
+
+            var approved = await RunOnUiThreadAsync(() => ShowConfirmDialogAsync(owner, language));
+            if (!approved)
+                return false;
+
+            FirewallPermissionCheckResult result;
+            try
+            {
+                result = await FirewallPermissionService.RequestPermissionAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                result = new FirewallPermissionCheckResult
+                {
+                    IsSupported = true,
+                    IsConfigured = false,
+                    CanRequestPermission = true,
+                    Details = ex.Message
+                };
+            }
+
+            if (!result.IsConfigured)
+                await RunOnUiThreadAsync(() => ShowErrorDialogAsync(owner, language, result.Details));
+
+            return result.IsConfigured;
+        }
+        finally
+        {
+            PromptLock.Release();
+        }
+    }
+
+
+
+    private static Window? ResolveOwner()
+    {
+        if (_activeOwner is not null && _activeOwner.TryGetTarget(out var owner))
+            return owner;
+
+        return Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
+    }
+
+
+
+    private static Task<T> RunOnUiThreadAsync<T>(Func<Task<T>> action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+            return action();
+
+        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                completion.TrySetResult(await action());
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+            }
+        });
+        return completion.Task;
+    }
+
+
+
+    private static Task RunOnUiThreadAsync(Func<Task> action)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+            return action();
+
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.UIThread.Post(async () =>
+        {
+            try
+            {
+                await action();
+                completion.TrySetResult();
+            }
+            catch (Exception ex)
+            {
+                completion.TrySetException(ex);
+            }
+        });
+        return completion.Task;
     }
 
 
@@ -101,7 +206,7 @@ public static class FirewallPermissionStartupPrompt
         {
             Text = isMessageKey ? T(language, messageKeyOrText) : messageKeyOrText,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Avalonia.Thickness(0, 14, 0, 0)
+            Margin = new Thickness(0, 14, 0, 0)
         };
 
         var primaryButton = new Button
@@ -122,7 +227,7 @@ public static class FirewallPermissionStartupPrompt
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
             Spacing = 10,
-            Margin = new Avalonia.Thickness(0, 24, 0, 0)
+            Margin = new Thickness(0, 24, 0, 0)
         };
 
         if (secondaryButtonKey is not null)
@@ -147,7 +252,7 @@ public static class FirewallPermissionStartupPrompt
 
         dialog.Content = new StackPanel
         {
-            Margin = new Avalonia.Thickness(24),
+            Margin = new Thickness(24),
             Children =
             {
                 title,

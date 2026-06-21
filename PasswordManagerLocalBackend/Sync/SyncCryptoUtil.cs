@@ -156,7 +156,7 @@ public static class SyncCryptoUtil
             if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length == 0)
                 throw new InvalidDataException("User device sync hash is missing.");
 
-            if (!Hashing.Verify(payload.UserDevice.IntegrityHash, SyncHashUtil.CalculateUserDeviceHash(payload.UserDevice)))
+            if (!Hashing.Verify(payload.UserDevice.IntegrityHash, SyncHashUtil.CalculateUserDeviceHash(payload.UserDevice, timestamp)))
                 throw new InvalidDataException("User device sync hash is invalid.");
         }
     }
@@ -209,7 +209,7 @@ public static class SyncCryptoUtil
         bw.Write(payload.PublicKey);
         bw.Write(payload.SignPublicKey);
         bw.Write(Encoding.UTF8.GetBytes(payload.TlsCertFingerprint ?? string.Empty));
-        bw.Write(Encoding.UTF8.GetBytes(payload.DeviceName ?? string.Empty));
+        bw.Write((byte)payload.DeviceType);
         bw.Write(payload.LastKnownHash);
         bw.Write(payload.LastSync.ToBinary());
         bw.Write(payload.LastSeen.ToBinary());

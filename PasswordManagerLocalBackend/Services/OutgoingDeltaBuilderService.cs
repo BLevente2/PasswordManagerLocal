@@ -14,6 +14,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     private readonly IGroupRepository _groups;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
+    private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly IDeviceIdentityService _identity;
 
     public OutgoingDeltaBuilderService(
@@ -21,12 +22,14 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
+        ILocalUserDeviceRepository localUserDevices,
         IDeviceIdentityService identity)
     {
         _users = users;
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
+        _localUserDevices = localUserDevices;
         _identity = identity;
     }
 
@@ -54,7 +57,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             throw new InvalidOperationException("The local device cannot be a synchronization target.");
 
         var ts = item.ChangedAtTs > 0 ? item.ChangedAtTs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var payload = await BuildPayloadAsync(item, ts, ct);
+        var payload = await BuildPayloadAsync(item, device.Id, ts, ct);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, ts);
 
         var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(payload);
@@ -96,7 +99,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private async Task<SyncDeltaPayload> BuildPayloadAsync(SyncItem item, long timestamp, CancellationToken ct)
+    private async Task<SyncDeltaPayload> BuildPayloadAsync(SyncItem item, Guid targetDeviceId, long timestamp, CancellationToken ct)
     {
         var payload = new SyncDeltaPayload
         {
@@ -147,7 +150,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             if (IsLocalDevice(sourceDevice))
                 throw new InvalidOperationException("The local device cannot be synchronized as a stored device.");
 
-            payload.Device = CreateDevicePayload(sourceDevice, timestamp);
+            payload.Device = await CreateDevicePayloadAsync(sourceDevice, targetDeviceId, timestamp, ct);
             return payload;
         }
 
@@ -157,6 +160,9 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
     private UserSyncPayload CreateUserPayload(User user, long timestamp)
     {
+        foreach (var link in user.UserDevices)
+            link.VerifyIntegrity();
+
         var payload = new UserSyncPayload
         {
             UId = user.UId,
@@ -165,7 +171,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
-            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Distinct().ToList()
+            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Append(_identity.LocalDeviceId).Distinct().ToList()
         };
 
         payload.IntegrityHash = SyncCryptoUtil.CalculateUserHash(payload, timestamp);
@@ -187,15 +193,32 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private static DeviceSyncPayload CreateDevicePayload(Device device, long timestamp)
+    private async Task<DeviceSyncPayload> CreateDevicePayloadAsync(Device device, Guid targetDeviceId, long timestamp, CancellationToken ct)
     {
+        foreach (var link in device.UserDevices)
+            link.VerifyIntegrity();
+
+        var userIds = new List<Guid>();
+        foreach (var userId in device.UserDevices
+                     .Where(ud => !ud.IsDeleted && ud.IsSyncOn)
+                     .Select(ud => ud.UserId)
+                     .Where(id => id != Guid.Empty)
+                     .Distinct())
+        {
+            if (!await _localUserDevices.IsSyncOnAsync(userId, ct))
+                continue;
+
+            if (await _userDevices.HasActiveLinkAsync(userId, targetDeviceId, ct))
+                userIds.Add(userId);
+        }
+
         var payload = new DeviceSyncPayload
         {
             Id = device.Id,
             PublicKey = device.PublicKey,
             SignPublicKey = device.SignPublicKey,
             TlsCertFingerprint = device.TlsCertFingerprint,
-            DeviceName = device.DeviceName,
+            DeviceType = device.DeviceType,
             LastKnownHash = device.LastKnownHash,
             LastSync = device.LastSync,
             LastSeen = device.LastSeen,
@@ -205,7 +228,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             BlockedAt = device.BlockedAt,
             InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
             LastInvalidSyncAttemptAt = device.LastInvalidSyncAttemptAt,
-            UserIds = device.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
+            UserIds = userIds
         };
 
         payload.IntegrityHash = SyncCryptoUtil.CalculateDeviceHash(payload, timestamp);
@@ -213,18 +236,19 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private static UserDeviceSyncPayload CreateUserDevicePayload(UserDevice userDevice) =>
-        new()
+    private static UserDeviceSyncPayload CreateUserDevicePayload(UserDevice userDevice)
+    {
+        userDevice.VerifyIntegrity();
+        return new UserDeviceSyncPayload
         {
             UserId = userDevice.UserId,
             DeviceId = userDevice.DeviceId,
-            Name = userDevice.Name,
-            IsSyncEnabled = userDevice.IsSyncEnabled,
+            IsSyncOn = userDevice.IsSyncOn,
             IsDeleted = userDevice.IsDeleted,
-            LinkedAt = userDevice.LinkedAt,
             DeletedAt = userDevice.DeletedAt,
-            IntegrityHash = SyncHashUtil.CalculateUserDeviceHash(userDevice)
+            IntegrityHash = userDevice.IntegrityHash.ToArray()
         };
+    }
 
 
     private bool IsLocalDevice(Device device) =>

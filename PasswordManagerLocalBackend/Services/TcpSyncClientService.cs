@@ -3,7 +3,10 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Sync.Tcp;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -58,6 +61,10 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
             return ack.LastSyncedTs >= list.Max(x => x.Ts);
         }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
         catch (IOException)
         {
             return false;
@@ -75,6 +82,14 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             return false;
         }
         catch (AuthenticationException)
+        {
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (OperationCanceledException)
         {
             return false;
         }
@@ -109,17 +124,23 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
     private async Task<TcpSyncClientConnection> ConnectAsync(string host, int port, string serverFingerprintHex, CancellationToken ct)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.DeviceEnrollmentConnectTimeoutSeconds));
+        var preferredSourceAddress = FindPreferredSourceAddress(host);
+        var client = await ConnectTcpAsync(host, port, preferredSourceAddress, ct);
 
-        var client = new System.Net.Sockets.TcpClient();
         try
         {
-            await client.ConnectAsync(host, port, timeout.Token);
             client.NoDelay = true;
             client.ReceiveTimeout = SyncConstants.SyncTcpIdleTimeoutSeconds * 1000;
             client.SendTimeout = SyncConstants.SyncTcpWriteTimeoutSeconds * 1000;
+
+            var localEndpoint = client.Client.LocalEndPoint?.ToString() ?? "unknown";
+            var remoteEndpoint = client.Client.RemoteEndPoint?.ToString() ?? $"{host}:{port}";
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP connection established. Local={localEndpoint}, Remote={remoteEndpoint}. Starting TLS authentication.");
+
             var stream = new SslStream(client.GetStream(), false);
+            using var handshakeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            handshakeTimeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpHandshakeTimeoutSeconds));
+
             await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
             {
                 TargetHost = host,
@@ -128,8 +149,13 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                 LocalCertificateSelectionCallback = (_, _, _, _, _) => _identity.Certificate,
                 RemoteCertificateValidationCallback = (_, cert, _, _) => ValidatePinnedServerCertificate(cert, serverFingerprintHex),
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-            }, timeout.Token);
+            }, handshakeTimeout.Token);
 
+            var serverFingerprint = stream.RemoteCertificate is null
+                ? string.Empty
+                : _identity.GetFingerprintHex(new X509Certificate2(stream.RemoteCertificate));
+
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={NormalizeFingerprint(serverFingerprint)[..Math.Min(16, NormalizeFingerprint(serverFingerprint).Length)]}.");
             return new TcpSyncClientConnection(client, stream);
         }
         catch
@@ -138,6 +164,163 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             throw;
         }
     }
+
+
+    private static async Task<TcpClient> ConnectTcpAsync(string host, int port, IPAddress? preferredSourceAddress, CancellationToken ct)
+    {
+        var attempts = preferredSourceAddress is null
+            ? new IPAddress?[] { null }
+            : new IPAddress?[] { preferredSourceAddress, null };
+
+        var errors = new List<Exception>();
+        var perAttemptTimeout = TimeSpan.FromSeconds(Math.Max(2, SyncConstants.DeviceEnrollmentConnectTimeoutSeconds / attempts.Length));
+
+        foreach (var sourceAddress in attempts)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var client = CreateTcpClient(host, sourceAddress);
+            try
+            {
+                if (sourceAddress is not null)
+                    client.Client.Bind(new IPEndPoint(sourceAddress, 0));
+
+                var sourceText = sourceAddress?.ToString() ?? "OS-selected";
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TCP connection attempt started. Source={sourceText}, Target={host}:{port}.");
+
+                using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                connectTimeout.CancelAfter(perAttemptTimeout);
+                await client.ConnectAsync(host, port, connectTimeout.Token);
+                return client;
+            }
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                errors.Add(ex);
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TCP connection attempt timed out. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}.", ex);
+                client.Dispose();
+            }
+            catch (Exception ex) when (ex is SocketException or IOException or ArgumentException or InvalidOperationException)
+            {
+                errors.Add(ex);
+                PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Error($"TCP connection attempt failed. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}: {ex.Message}", ex);
+                client.Dispose();
+            }
+        }
+
+        throw new IOException(
+            $"No TCP route could connect to {host}:{port}. Tried source addresses: {string.Join(", ", attempts.Select(address => address?.ToString() ?? "OS-selected"))}.",
+            errors.LastOrDefault());
+    }
+
+
+    private static TcpClient CreateTcpClient(string host, IPAddress? sourceAddress)
+    {
+        if (sourceAddress is not null)
+            return new TcpClient(sourceAddress.AddressFamily);
+
+        if (IPAddress.TryParse(host, out var remoteAddress))
+            return new TcpClient(remoteAddress.AddressFamily);
+
+        return new TcpClient();
+    }
+
+
+    private static IPAddress? FindPreferredSourceAddress(string host)
+    {
+        if (!IPAddress.TryParse(host, out var remoteAddress) || remoteAddress.AddressFamily != AddressFamily.InterNetwork)
+            return null;
+
+        try
+        {
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .Where(networkInterface => networkInterface.OperationalStatus == OperationalStatus.Up)
+                .Where(networkInterface => networkInterface.NetworkInterfaceType is not NetworkInterfaceType.Loopback and not NetworkInterfaceType.Tunnel)
+                .SelectMany(networkInterface =>
+                {
+                    var properties = networkInterface.GetIPProperties();
+                    var hasGateway = properties.GatewayAddresses.Any(gateway => IsUsableIpv4(gateway.Address));
+                    var isVirtual = IsVirtualAdapter(networkInterface);
+
+                    return properties.UnicastAddresses
+                        .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork && address.IPv4Mask is not null)
+                        .Where(address => IsUsableIpv4(address.Address))
+                        .Select(address => new
+                        {
+                            Address = address.Address,
+                            SameSubnet = IsInSameIpv4Subnet(remoteAddress, address.Address, address.IPv4Mask!),
+                            Priority = (isVirtual ? 0 : 10000) +
+                                       (hasGateway ? 3000 : 0) +
+                                       GetInterfacePriority(networkInterface.NetworkInterfaceType)
+                        });
+                })
+                .Where(candidate => candidate.SameSubnet)
+                .OrderByDescending(candidate => candidate.Priority)
+                .ThenBy(candidate => candidate.Address.ToString(), StringComparer.Ordinal)
+                .Select(candidate => candidate.Address)
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+
+    private static bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
+    {
+        var remoteBytes = remoteAddress.GetAddressBytes();
+        var localBytes = localAddress.GetAddressBytes();
+        var maskBytes = mask.GetAddressBytes();
+
+        if (remoteBytes.Length != 4 || localBytes.Length != 4 || maskBytes.Length != 4)
+            return false;
+
+        for (var index = 0; index < 4; index++)
+        {
+            if ((remoteBytes[index] & maskBytes[index]) != (localBytes[index] & maskBytes[index]))
+                return false;
+        }
+
+        return true;
+    }
+
+
+    private static bool IsUsableIpv4(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast))
+            return false;
+
+        var bytes = address.GetAddressBytes();
+        return bytes.Length == 4 && !(bytes[0] == 169 && bytes[1] == 254);
+    }
+
+
+    private static bool IsVirtualAdapter(NetworkInterface networkInterface)
+    {
+        var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
+        return text.Contains("virtual") ||
+               text.Contains("vethernet") ||
+               text.Contains("hyper-v") ||
+               text.Contains("vmware") ||
+               text.Contains("virtualbox") ||
+               text.Contains("wsl") ||
+               text.Contains("docker") ||
+               text.Contains("vpn") ||
+               text.Contains("tap") ||
+               text.Contains("tunnel");
+    }
+
+
+    private static int GetInterfacePriority(NetworkInterfaceType interfaceType) =>
+        interfaceType switch
+        {
+            NetworkInterfaceType.Ethernet => 2500,
+            NetworkInterfaceType.GigabitEthernet => 2500,
+            NetworkInterfaceType.FastEthernetFx => 2500,
+            NetworkInterfaceType.FastEthernetT => 2500,
+            NetworkInterfaceType.Wireless80211 => 2000,
+            _ => 0
+        };
 
 
     private async Task<SyncTcpFrame> ReadRequiredAsync(Stream stream, SyncTcpMessageType expectedType, CancellationToken ct, int timeoutSeconds = SyncConstants.SyncTcpIdleTimeoutSeconds)

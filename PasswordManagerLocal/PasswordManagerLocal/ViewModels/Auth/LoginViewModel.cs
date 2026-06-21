@@ -1,3 +1,4 @@
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PasswordManagerLocal.Helpers;
 using PasswordManagerLocal.Services;
@@ -14,19 +15,20 @@ public sealed class LoginViewModel : ViewModelBase
     private readonly IEndpoints _endpoints;
     private readonly Action _navigateToRegistration;
     private readonly Func<Guid, Task> _onAuthenticationSucceededAsync;
+    private Func<Task>? _navigateBackAsync;
 
     private string _username = string.Empty;
     private string _password = string.Empty;
     private bool _rememberMe;
     private bool _isPasswordVisible;
-    private string? _errorMessage;
     private bool _isBusy;
+    private bool _isBackButtonVisible;
     private bool _isDeviceTransferIntroVisible;
     private bool _isDeviceTransferCodeVisible;
     private bool _isDeviceTransferFinished;
     private bool _isDeviceTransferSuccess;
     private string _deviceTransferCode = string.Empty;
-    private string? _deviceTransferMessage;
+    private Bitmap? _deviceTransferQrCode;
     private CancellationTokenSource? _deviceTransferPolling;
 
     public LoginViewModel(
@@ -43,6 +45,7 @@ public sealed class LoginViewModel : ViewModelBase
         LoginCommand = ReactiveCommand.CreateFromTask(LoginAsync);
         ExecutePrimaryActionCommand = ReactiveCommand.CreateFromTask(ExecutePrimaryActionAsync);
         NavigateToRegistrationCommand = ReactiveCommand.Create(_navigateToRegistration);
+        NavigateBackCommand = ReactiveCommand.CreateFromTask(NavigateBackAsync);
         TogglePasswordVisibilityCommand = ReactiveCommand.Create(TogglePasswordVisibility);
         ShowDeviceTransferIntroCommand = ReactiveCommand.Create(ShowDeviceTransferIntro);
         StartDeviceTransferCommand = ReactiveCommand.CreateFromTask(StartDeviceTransferAsync);
@@ -81,18 +84,16 @@ public sealed class LoginViewModel : ViewModelBase
         }
     }
 
-    public string? ErrorMessage
-    {
-        get => _errorMessage;
-        private set => this.RaiseAndSetIfChanged(ref _errorMessage, value);
-    }
-
-    public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
-
     public bool IsBusy
     {
         get => _isBusy;
         private set => this.RaiseAndSetIfChanged(ref _isBusy, value);
+    }
+
+    public bool IsBackButtonVisible
+    {
+        get => _isBackButtonVisible;
+        private set => this.RaiseAndSetIfChanged(ref _isBackButtonVisible, value);
     }
 
     public bool IsLoginFormVisible => !IsDeviceTransferIntroVisible && !IsDeviceTransferCodeVisible && !IsDeviceTransferFinished;
@@ -136,20 +137,29 @@ public sealed class LoginViewModel : ViewModelBase
     public string DeviceTransferCode
     {
         get => _deviceTransferCode;
-        private set => this.RaiseAndSetIfChanged(ref _deviceTransferCode, value);
-    }
-
-    public string? DeviceTransferMessage
-    {
-        get => _deviceTransferMessage;
         private set
         {
-            this.RaiseAndSetIfChanged(ref _deviceTransferMessage, value);
-            this.RaisePropertyChanged(nameof(HasDeviceTransferMessage));
+            this.RaiseAndSetIfChanged(ref _deviceTransferCode, value);
+            this.RaisePropertyChanged(nameof(ReadableDeviceTransferCode));
+            DeviceTransferQrCode = EnrollmentQrCodeService.CreateQrCodeBitmap(value);
         }
     }
 
-    public bool HasDeviceTransferMessage => !string.IsNullOrWhiteSpace(DeviceTransferMessage);
+    public string ReadableDeviceTransferCode => BuildReadableCode(DeviceTransferCode);
+
+    public Bitmap? DeviceTransferQrCode
+    {
+        get => _deviceTransferQrCode;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _deviceTransferQrCode, value);
+            this.RaisePropertyChanged(nameof(HasDeviceTransferQrCode));
+        }
+    }
+
+    public bool HasDeviceTransferQrCode => DeviceTransferQrCode is not null;
+
+    public OperationMessageState DeviceTransferStatus { get; } = new();
 
     public char PasswordMaskCharacter => IsPasswordVisible ? '\0' : '●';
 
@@ -158,6 +168,8 @@ public sealed class LoginViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> ExecutePrimaryActionCommand { get; }
 
     public ReactiveCommand<Unit, Unit> NavigateToRegistrationCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> NavigateBackCommand { get; }
 
     public ReactiveCommand<Unit, Unit> TogglePasswordVisibilityCommand { get; }
 
@@ -174,6 +186,8 @@ public sealed class LoginViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CopyDeviceTransferCodeCommand { get; }
 
     public string Title => GetTranslation("Login_Title");
+
+    public string BackLabel => GetTranslation("Common_Back");
 
     public string Subtitle => GetTranslation("Login_Subtitle");
 
@@ -207,6 +221,10 @@ public sealed class LoginViewModel : ViewModelBase
 
     public string DeviceTransferCodeDescription => GetTranslation("Login_DeviceTransfer_CodeDescription");
 
+    public string DeviceTransferCodeReadabilityHint => GetTranslation("Login_DeviceTransfer_CodeReadabilityHint");
+
+    public string DeviceTransferQrCodeLabel => GetTranslation("Login_DeviceTransfer_QrCodeLabel");
+
     public string DeviceTransferWaitingText => GetTranslation("Login_DeviceTransfer_Waiting");
 
     public string DeviceTransferCheckStatusLabel => GetTranslation("Login_DeviceTransfer_CheckStatus");
@@ -226,6 +244,7 @@ public sealed class LoginViewModel : ViewModelBase
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(Title));
+        this.RaisePropertyChanged(nameof(BackLabel));
         this.RaisePropertyChanged(nameof(Subtitle));
         this.RaisePropertyChanged(nameof(UsernameLabel));
         this.RaisePropertyChanged(nameof(PasswordLabel));
@@ -242,6 +261,8 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(DeviceTransferStartLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeDescription));
+        this.RaisePropertyChanged(nameof(DeviceTransferCodeReadabilityHint));
+        this.RaisePropertyChanged(nameof(DeviceTransferQrCodeLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferWaitingText));
         this.RaisePropertyChanged(nameof(DeviceTransferCheckStatusLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferCopyCodeLabel));
@@ -251,17 +272,65 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(BusyText));
     }
 
+    public override void OnNavigatedFrom()
+    {
+        base.OnNavigatedFrom();
+        ResetDeviceTransferState(true);
+    }
+
     public void Reset()
     {
         Username = string.Empty;
         Password = string.Empty;
         RememberMe = false;
         IsPasswordVisible = false;
-        ErrorMessage = null;
-        this.RaisePropertyChanged(nameof(HasError));
+        ClearStatusMessage();
         ResetDeviceTransferState(false);
     }
 
+
+    public async Task<bool> TryNavigateBackAsync()
+    {
+        if (IsBusy)
+        {
+            return false;
+        }
+
+        if (IsDeviceTransferCodeVisible)
+        {
+            await CancelDeviceTransferAsync();
+            return true;
+        }
+
+        if (IsDeviceTransferIntroVisible || IsDeviceTransferFinished)
+        {
+            ResetDeviceTransferState(true);
+            return true;
+        }
+
+        return false;
+    }
+
+
+
+    public void SetBackNavigation(bool isVisible, Func<Task>? navigateBackAsync)
+    {
+        IsBackButtonVisible = isVisible;
+        _navigateBackAsync = navigateBackAsync;
+    }
+
+
+    private async Task NavigateBackAsync()
+    {
+        if (IsBusy)
+            return;
+
+        if (await TryNavigateBackAsync())
+            return;
+
+        if (_navigateBackAsync is not null)
+            await _navigateBackAsync();
+    }
 
     private async Task ExecutePrimaryActionAsync()
     {
@@ -298,20 +367,17 @@ public sealed class LoginViewModel : ViewModelBase
         if (IsBusy || !IsLoginFormVisible)
             return;
 
-        ErrorMessage = null;
-        this.RaisePropertyChanged(nameof(HasError));
+        ClearStatusMessage();
 
         if (string.IsNullOrWhiteSpace(Username))
         {
-            ErrorMessage = GetTranslation("Validation_Username_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_Username_Required"));
             return;
         }
 
         if (string.IsNullOrWhiteSpace(Password))
         {
-            ErrorMessage = GetTranslation("Validation_Password_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_Password_Required"));
             return;
         }
 
@@ -333,8 +399,7 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ErrorMessage = GetSafeErrorMessage(ex);
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -345,22 +410,29 @@ public sealed class LoginViewModel : ViewModelBase
 
     private void ShowDeviceTransferIntro()
     {
-        ErrorMessage = null;
-        this.RaisePropertyChanged(nameof(HasError));
+        ClearStatusMessage();
         IsDeviceTransferIntroVisible = true;
         IsDeviceTransferCodeVisible = false;
         IsDeviceTransferFinished = false;
-        DeviceTransferMessage = null;
+        DeviceTransferStatus.Clear();
     }
 
     private async Task StartDeviceTransferAsync()
     {
+        DeviceTransferStatus.Clear();
+
         try
         {
             IsBusy = true;
+            if (!await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                DeviceTransferStatus.ShowError(GetTranslation("Firewall_RequiredForLocalNetwork"));
+                return;
+            }
+
             var response = await _endpoints.StartDeviceEnrollmentAsync();
             DeviceTransferCode = response.Code;
-            DeviceTransferMessage = GetTranslation("Login_DeviceTransfer_CodeReady");
+            DeviceTransferStatus.ShowInformation(GetTranslation("Login_DeviceTransfer_CodeReady"), autoDismiss: true);
             IsDeviceTransferIntroVisible = false;
             IsDeviceTransferCodeVisible = true;
             IsDeviceTransferFinished = false;
@@ -368,7 +440,7 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            DeviceTransferMessage = GetSafeErrorMessage(ex);
+            DeviceTransferStatus.ShowError(GetSafeErrorMessage(ex));
             IsDeviceTransferSuccess = false;
             IsDeviceTransferIntroVisible = false;
             IsDeviceTransferCodeVisible = false;
@@ -388,13 +460,16 @@ public sealed class LoginViewModel : ViewModelBase
         try
         {
             if (await TryCopyTextToClipboardAsync(DeviceTransferCode))
-                DeviceTransferMessage = GetTranslation("Common_Copied");
+            {
+                if (!DeviceTransferStatus.IsError)
+                    DeviceTransferStatus.ShowSuccess(GetTranslation("Common_Copied"));
+            }
             else
-                DeviceTransferMessage = GetTranslation("Error_ClipboardUnavailable");
+                DeviceTransferStatus.ShowError(GetTranslation("Error_ClipboardUnavailable"));
         }
         catch
         {
-            DeviceTransferMessage = GetTranslation("Error_ClipboardUnavailable");
+            DeviceTransferStatus.ShowError(GetTranslation("Error_ClipboardUnavailable"));
         }
     }
 
@@ -416,6 +491,8 @@ public sealed class LoginViewModel : ViewModelBase
 
     private async Task CheckDeviceTransferStatusAsync()
     {
+        DeviceTransferStatus.Clear();
+
         try
         {
             var status = await _endpoints.GetDeviceEnrollmentStatusAsync();
@@ -423,7 +500,7 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            DeviceTransferMessage = GetSafeErrorMessage(ex);
+            DeviceTransferStatus.ShowError(GetSafeErrorMessage(ex));
         }
     }
 
@@ -458,7 +535,7 @@ public sealed class LoginViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                await Dispatcher.UIThread.InvokeAsync(() => DeviceTransferMessage = GetSafeErrorMessage(ex));
+                await Dispatcher.UIThread.InvokeAsync(() => DeviceTransferStatus.ShowError(GetSafeErrorMessage(ex)));
             }
         }, ct);
     }
@@ -467,7 +544,9 @@ public sealed class LoginViewModel : ViewModelBase
     {
         if (status.State == DeviceEnrollmentState.Waiting)
         {
-            DeviceTransferMessage = GetTranslation("Login_DeviceTransfer_Waiting");
+            if (DeviceTransferStatus.Kind is not OperationMessageKind.Error and not OperationMessageKind.Success)
+                DeviceTransferStatus.ShowInformation(GetTranslation("Login_DeviceTransfer_Waiting"));
+
             return;
         }
 
@@ -475,7 +554,7 @@ public sealed class LoginViewModel : ViewModelBase
         {
             _deviceTransferPolling?.Cancel();
             IsDeviceTransferSuccess = true;
-            DeviceTransferMessage = GetTranslation("Login_DeviceTransfer_SuccessMessage");
+            DeviceTransferStatus.ShowSuccess(GetTranslation("Login_DeviceTransfer_SuccessMessage"));
             IsDeviceTransferCodeVisible = false;
             IsDeviceTransferFinished = true;
             this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));
@@ -486,9 +565,9 @@ public sealed class LoginViewModel : ViewModelBase
         {
             _deviceTransferPolling?.Cancel();
             IsDeviceTransferSuccess = false;
-            DeviceTransferMessage = status.ErrorCode == PasswordManagerLocalBackend.Exceptions.DeviceEnrollmentErrorCode.Unknown
+            DeviceTransferStatus.ShowError(status.ErrorCode == PasswordManagerLocalBackend.Exceptions.DeviceEnrollmentErrorCode.Unknown
                 ? GetTranslation("Login_DeviceTransfer_ErrorMessage")
-                : GetDeviceEnrollmentErrorMessage(status.ErrorCode);
+                : GetDeviceEnrollmentErrorMessage(status.ErrorCode));
             IsDeviceTransferCodeVisible = false;
             IsDeviceTransferFinished = true;
             this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));
@@ -503,11 +582,16 @@ public sealed class LoginViewModel : ViewModelBase
         IsDeviceTransferCodeVisible = false;
         IsDeviceTransferFinished = false;
         IsDeviceTransferSuccess = false;
-        DeviceTransferMessage = null;
+        DeviceTransferStatus.Clear();
 
         if (clearCode)
             DeviceTransferCode = string.Empty;
     }
+
+    private static string BuildReadableCode(string code) =>
+        string.IsNullOrEmpty(code)
+            ? string.Empty
+            : code.Replace("0", "0\u0338", StringComparison.Ordinal);
 
     private void TogglePasswordVisibility() => IsPasswordVisible = !IsPasswordVisible;
 }

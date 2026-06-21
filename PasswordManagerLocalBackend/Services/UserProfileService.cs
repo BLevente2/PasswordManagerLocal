@@ -1,5 +1,6 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Security;
@@ -24,8 +25,9 @@ public class UserProfileService : IUserProfileService
 
     public async Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default)
     {
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(userData);
+        var user = await _userService.GetAndVerifyUserAsync(token, ct);
+        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(userData, user.SavedKey is not null);
     }
 
 
@@ -39,7 +41,7 @@ public class UserProfileService : IUserProfileService
         if (!_authService.IsPasswordValid(token, password, user.PasswordSalt))
             throw new InvalidInputException();
 
-        _authService.Logout(token);
+        _authService.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
 
         await _userService.DeleteUserAsync(user, true, ct);
     }
@@ -52,12 +54,15 @@ public class UserProfileService : IUserProfileService
 
         var user = await _userService.GetAndVerifyUserAsync(token, ct);
         var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-
-        userData.Username = newUsername;
         var usernameBytes = Encoding.UTF8.GetBytes(newUsername);
 
         try
         {
+            var existingUser = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
+            if (existingUser is not null && existingUser.UId != user.UId)
+                throw new InvalidInputException();
+
+            userData.Username = newUsername;
             CryptographicOperations.ZeroMemory(user.UsernameSalt);
             CryptographicOperations.ZeroMemory(user.UsernameHash);
 

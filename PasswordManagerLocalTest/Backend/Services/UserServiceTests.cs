@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
@@ -104,6 +104,7 @@ public sealed class UserServiceTests
 
         var auth = host.Services.GetRequiredService<IAuthService>();
         var users = host.Services.GetRequiredService<IUserService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("dave"));
 
@@ -112,6 +113,7 @@ public sealed class UserServiceTests
 
         await users.UpdateUserDataAsync(data, token);
 
+        cache.InvalidateToken(token);
         var reloaded = await users.GetLoadAndVerifyUserDataAsync(token);
 
         MSTestAssert.AreEqual("Updated", reloaded.FirstName);

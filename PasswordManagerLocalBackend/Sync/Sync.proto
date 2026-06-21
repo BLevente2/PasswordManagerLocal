@@ -39,6 +39,7 @@ message GetDeviceEnrollmentInfoReply {
   string tls_cert_fingerprint = 5;
   bytes sign_pub = 6;
   bytes agreement_pub = 7;
+  uint32 device_type = 8;
 }
 
 message CompleteDeviceEnrollmentRequest {

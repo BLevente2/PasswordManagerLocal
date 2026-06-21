@@ -29,16 +29,6 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
         return Task.FromResult(result);
     }
 
-    public Task<UserDevice?> GetActiveByNameAsync(Guid userId, string name, Guid? exceptDeviceId = null, CancellationToken ct = default)
-    {
-        var result = _items
-            .Where(x => x.UserId == userId && !x.IsDeleted && x.Name == name && (!exceptDeviceId.HasValue || x.DeviceId != exceptDeviceId.Value))
-            .Select(Clone)
-            .FirstOrDefault();
-
-        return Task.FromResult(result);
-    }
-
     public Task<bool> ExistsAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
         Task.FromResult(_items.Any(x => x.UserId == userId && x.DeviceId == deviceId));
 
@@ -49,7 +39,7 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
         Task.FromResult(_items.Any(x => x.DeviceId == deviceId && !x.IsDeleted));
 
     public Task<bool> HasAnyActiveSyncEnabledLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
-        Task.FromResult(_items.Any(x => x.DeviceId == deviceId && !x.IsDeleted && x.IsSyncEnabled));
+        Task.FromResult(_items.Any(x => x.DeviceId == deviceId && !x.IsDeleted && x.IsSyncOn));
 
     public Task<bool> HasAnyDeletedLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
         Task.FromResult(_items.Any(x => x.DeviceId == deviceId && x.IsDeleted));
@@ -68,9 +58,6 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
         return Task.FromResult(result);
     }
 
-    public Task<bool> IsNameTakenAsync(Guid userId, string name, Guid? exceptDeviceId = null, CancellationToken ct = default) =>
-        Task.FromResult(_items.Any(x => x.UserId == userId && !x.IsDeleted && x.Name == name && (!exceptDeviceId.HasValue || x.DeviceId != exceptDeviceId.Value)));
-
     public Task AddAsync(UserDevice userDevice, CancellationToken ct = default)
     {
         _items.RemoveAll(x => x.UserId == userDevice.UserId && x.DeviceId == userDevice.DeviceId);
@@ -84,10 +71,8 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
         _items.Add(Clone(userDevice));
     }
 
-    public void Delete(UserDevice userDevice)
-    {
+    public void Delete(UserDevice userDevice) =>
         _items.RemoveAll(x => x.UserId == userDevice.UserId && x.DeviceId == userDevice.DeviceId);
-    }
 
     private static UserDevice Clone(UserDevice item) =>
         new()
@@ -96,11 +81,10 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
             User = item.User,
             DeviceId = item.DeviceId,
             Device = item.Device,
-            Name = item.Name,
-            IsSyncEnabled = item.IsSyncEnabled,
+            IsSyncOn = item.IsSyncOn,
             IsDeleted = item.IsDeleted,
-            LinkedAt = item.LinkedAt,
             DeletedAt = item.DeletedAt,
-            LastModifiedAt = item.LastModifiedAt
+            LastModifiedAt = item.LastModifiedAt,
+            IntegrityHash = item.IntegrityHash.ToArray()
         };
 }

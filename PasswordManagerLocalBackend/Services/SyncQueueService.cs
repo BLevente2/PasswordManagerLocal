@@ -2,6 +2,7 @@ using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Sync;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -18,6 +19,7 @@ public sealed class SyncQueueService : ISyncQueueService
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly IDeviceIdentityService _identity;
+    private readonly ISyncAuthorizationService _authorization;
     private readonly IUnitOfWork _uow;
 
     public SyncQueueService(
@@ -32,6 +34,7 @@ public sealed class SyncQueueService : ISyncQueueService
         IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceSyncTaskService deviceSyncTasks,
         IDeviceIdentityService identity,
+        ISyncAuthorizationService authorization,
         IUnitOfWork uow)
     {
         _syncQueue = syncQueue;
@@ -45,6 +48,7 @@ public sealed class SyncQueueService : ISyncQueueService
         _endpointCache = endpointCache;
         _deviceSyncTasks = deviceSyncTasks;
         _identity = identity;
+        _authorization = authorization;
         _uow = uow;
     }
 
@@ -113,6 +117,84 @@ public sealed class SyncQueueService : ISyncQueueService
         await _uow.SaveChangesAsync(ct);
 
         RefreshDiscoveryCache(targetDevices);
+    }
+
+
+    public async Task EnqueueForDeviceAsync(SyncItem item, Guid targetDeviceId, CancellationToken ct = default)
+    {
+        if (targetDeviceId == Guid.Empty || targetDeviceId == _identity.LocalDeviceId)
+            return;
+
+        var changedAtTs = item.ChangedAtTs > 0 ? item.ChangedAtTs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        item.ChangedAtTs = changedAtTs;
+        var syncItem = await GetOrCreateSyncItemAsync(item, changedAtTs, ct);
+        if (!await _authorization.CanSendAsync(syncItem, targetDeviceId, ct))
+        {
+            await _uow.SaveChangesAsync(ct);
+            return;
+        }
+
+        var existing = await _syncQueue.ListQueuedDeviceIdsAsync(syncItem.Id, [targetDeviceId], ct);
+        if (existing.Count == 0)
+            await _syncQueue.EnqueueAsync([new SyncQueueItem { DeviceId = targetDeviceId, SyncItemId = syncItem.Id }], ct);
+        await _uow.SaveChangesAsync(ct);
+
+        var target = await _devices.GetByIdAsync(targetDeviceId, ct);
+        if (target is not null)
+            RefreshDiscoveryCache([target]);
+    }
+
+
+    public async Task EnqueueUserCatchUpAsync(Guid userId, Guid targetDeviceId, CancellationToken ct = default)
+    {
+        var user = await _users.GetByIdWithRelationsAsync(userId, ct);
+        if (user is null)
+            return;
+
+        await EnqueueForDeviceAsync(new SyncItem
+        {
+            ModelId = userId,
+            ModelType = SyncModelType.User,
+            ChangeType = SyncChangeType.Updated,
+            ChangedAtTs = ToSyncTimestamp(user.LastModifiedAt)
+        }, targetDeviceId, ct);
+
+        foreach (var group in user.Groups)
+        {
+            await EnqueueForDeviceAsync(new SyncItem
+            {
+                ModelId = group.Id,
+                ModelType = SyncModelType.Group,
+                ChangeType = SyncChangeType.Updated,
+                ChangedAtTs = ToSyncTimestamp(group.LastModifiedAt)
+            }, targetDeviceId, ct);
+        }
+
+        foreach (var link in user.UserDevices)
+        {
+            if (!link.IsDeleted && link.DeviceId != targetDeviceId)
+            {
+                var sourceDevice = await _devices.GetByIdAsync(link.DeviceId, ct);
+                if (sourceDevice is not null)
+                {
+                    await EnqueueForDeviceAsync(new SyncItem
+                    {
+                        ModelId = link.DeviceId,
+                        ModelType = SyncModelType.Device,
+                        ChangeType = SyncChangeType.Updated,
+                        ChangedAtTs = ToSyncTimestamp(sourceDevice.LastModifiedAt)
+                    }, targetDeviceId, ct);
+                }
+            }
+
+            await EnqueueForDeviceAsync(new SyncItem
+            {
+                ModelId = SyncIdentityUtil.BuildUserDeviceModelId(link.UserId, link.DeviceId),
+                ModelType = SyncModelType.UserDevice,
+                ChangeType = link.IsDeleted ? SyncChangeType.Deleted : SyncChangeType.Updated,
+                ChangedAtTs = ToSyncTimestamp(link.LastModifiedAt)
+            }, targetDeviceId, ct);
+        }
     }
 
 
@@ -212,7 +294,9 @@ public sealed class SyncQueueService : ISyncQueueService
             if (userDevice is null)
                 return;
 
+            userDevice.VerifyIntegrity();
             userDevice.LastModifiedAt = modifiedAt;
+            userDevice.GenerateIntegrityHash();
             _userDevices.Update(userDevice);
         }
     }
@@ -243,7 +327,7 @@ public sealed class SyncQueueService : ISyncQueueService
             if (userDevice is null)
                 return [];
 
-            return await _devices.ListUserDeviceChangeTargetDevicesAsync(userDevice.UserId, userDevice.DeviceId, ct);
+            return await _devices.ListUserDeviceChangeTargetDevicesAsync(userDevice.UserId, userDevice.DeviceId, item.ChangeType == SyncChangeType.Deleted, ct);
         }
 
         return [];
@@ -325,6 +409,10 @@ public sealed class SyncQueueService : ISyncQueueService
 
         return fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
     }
+
+
+    private static long ToSyncTimestamp(DateTimeOffset modifiedAt) =>
+        (modifiedAt == default ? DateTimeOffset.UtcNow : modifiedAt).ToUnixTimeMilliseconds();
 
 
     private static SyncChangeType MergeChangeType(SyncChangeType current, SyncChangeType incoming)

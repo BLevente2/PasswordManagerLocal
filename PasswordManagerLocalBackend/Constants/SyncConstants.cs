@@ -43,5 +43,5 @@ public static class SyncConstants
     public const int EnrollmentSnapshotEncryptionNonceBytes = 12;
     public const int EnrollmentSnapshotEncryptionTagBytes = 16;
     public const int EnrollmentCodeNoiseBytes = 16;
-    public const int MaxEnrollmentInvalidProofAttempts = 5;
+    public const int MaxEnrollmentValidationAttempts = 3;
 }

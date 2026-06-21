@@ -14,8 +14,8 @@ public sealed class User : IntegrityCheckableBase
 
 
     public ICollection<Group> Groups { get; set; } = [];
-    public ICollection<Device> Devices { get; set; } = [];
     public ICollection<UserDevice> UserDevices { get; set; } = [];
+    public ICollection<LocalUserDevice> LocalUserDevices { get; set; } = [];
 
 
 

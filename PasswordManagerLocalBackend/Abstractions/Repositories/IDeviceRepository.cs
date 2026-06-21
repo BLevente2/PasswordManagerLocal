@@ -8,7 +8,7 @@ public interface IDeviceRepository : IGenericRepository<Device>
     Task<IReadOnlyList<Device>> ListUserDevicesAsync(Guid uid, CancellationToken ct = default);
     Task<IReadOnlyList<Device>> ListGroupDevicesAsync(Guid groupId, CancellationToken ct = default);
     Task<IReadOnlyList<Device>> ListDevicesLinkedToDeviceUsersAsync(Guid deviceId, CancellationToken ct = default);
-    Task<IReadOnlyList<Device>> ListUserDeviceChangeTargetDevicesAsync(Guid userId, Guid changedDeviceId, CancellationToken ct = default);
+    Task<IReadOnlyList<Device>> ListUserDeviceChangeTargetDevicesAsync(Guid userId, Guid changedDeviceId, bool includeChangedDevice, CancellationToken ct = default);
     Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default);

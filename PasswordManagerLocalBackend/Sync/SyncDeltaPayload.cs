@@ -39,7 +39,7 @@ public sealed class DeviceSyncPayload
     public byte[] PublicKey { get; set; } = [];
     public byte[] SignPublicKey { get; set; } = [];
     public string TlsCertFingerprint { get; set; } = string.Empty;
-    public string DeviceName { get; set; } = string.Empty;
+    public DeviceType DeviceType { get; set; }
     public byte[] LastKnownHash { get; set; } = [];
     public DateTime LastSync { get; set; }
     public DateTime LastSeen { get; set; }
@@ -57,10 +57,8 @@ public sealed class UserDeviceSyncPayload
 {
     public Guid UserId { get; set; }
     public Guid DeviceId { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public bool IsSyncEnabled { get; set; }
+    public bool IsSyncOn { get; set; }
     public bool IsDeleted { get; set; }
-    public DateTimeOffset LinkedAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
     public byte[] IntegrityHash { get; set; } = [];
 }

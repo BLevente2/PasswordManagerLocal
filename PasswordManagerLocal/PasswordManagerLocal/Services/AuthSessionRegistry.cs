@@ -7,7 +7,7 @@ namespace PasswordManagerLocal.Services;
 
 public sealed class AuthSessionRegistry : IAuthSessionRegistry
 {
-    private readonly List<Guid> _tokens = new();
+    private readonly List<AuthSessionProfile> _sessions = new();
     private Guid _selection = Guid.Empty;
 
     public Guid CurrentUserToken
@@ -21,40 +21,128 @@ public sealed class AuthSessionRegistry : IAuthSessionRegistry
                 return;
             }
 
-            if (_tokens.Contains(value))
-                _selection = value;
-            else
-                _selection = Guid.Empty;
+            _selection = _sessions.Any(session => session.Token == value)
+                ? value
+                : Guid.Empty;
         }
     }
 
-    public bool TryAdd(Guid token)
+    public bool TryAdd(Guid token, bool select = true)
     {
         if (token == Guid.Empty)
             return false;
 
-        if (!_tokens.Contains(token))
-            _tokens.Add(token);
+        if (_sessions.All(session => session.Token != token))
+            _sessions.Add(new AuthSessionProfile { Token = token });
 
-        CurrentUserToken = token;
+        if (select)
+            CurrentUserToken = token;
+
+        return true;
+    }
+
+    public bool TrySetProfile(Guid token, Guid userId, string displayName, string subtitle, string username, string email, bool isRememberMeEnabled)
+    {
+        if (token == Guid.Empty)
+            return false;
+
+        var index = _sessions.FindIndex(session => session.Token == token);
+        if (index < 0)
+            return false;
+
+        _sessions[index] = new AuthSessionProfile
+        {
+            Token = token,
+            UserId = userId,
+            DisplayName = displayName,
+            Subtitle = subtitle,
+            Username = username,
+            Email = email,
+            IsRememberMeEnabled = isRememberMeEnabled
+        };
+
+        return true;
+    }
+
+    public bool TrySetRememberMe(Guid token, bool isRememberMeEnabled)
+    {
+        var index = _sessions.FindIndex(session => session.Token == token);
+        if (index < 0)
+            return false;
+
+        var session = _sessions[index];
+        _sessions[index] = new AuthSessionProfile
+        {
+            Token = session.Token,
+            UserId = session.UserId,
+            DisplayName = session.DisplayName,
+            Subtitle = session.Subtitle,
+            Username = session.Username,
+            Email = session.Email,
+            IsRememberMeEnabled = isRememberMeEnabled
+        };
+
+        return true;
+    }
+
+    public bool TryReplaceToken(Guid oldToken, Guid newToken)
+    {
+        if (oldToken == Guid.Empty || newToken == Guid.Empty)
+            return false;
+
+        var index = _sessions.FindIndex(session => session.Token == oldToken);
+        if (index < 0)
+            return false;
+
+        var oldSession = _sessions[index];
+        _sessions[index] = new AuthSessionProfile
+        {
+            Token = newToken,
+            UserId = oldSession.UserId,
+            DisplayName = oldSession.DisplayName,
+            Subtitle = oldSession.Subtitle,
+            Username = oldSession.Username,
+            Email = oldSession.Email,
+            IsRememberMeEnabled = oldSession.IsRememberMeEnabled
+        };
+
+        if (_selection == oldToken)
+            _selection = newToken;
+
         return true;
     }
 
     public bool TryRemove(Guid token)
     {
-        if (!_tokens.Contains(token))
+        var index = _sessions.FindIndex(session => session.Token == token);
+        if (index < 0)
             return false;
 
-        _tokens.Remove(token);
+        var wasSelected = _selection == token;
+        _sessions.RemoveAt(index);
 
-        if (_tokens.Count > 0)
-            CurrentUserToken = _tokens.First();
-        else
-            CurrentUserToken = Guid.Empty;
+        if (wasSelected)
+            CurrentUserToken = _sessions.FirstOrDefault()?.Token ?? Guid.Empty;
 
         return true;
     }
 
+    public bool ContainsUserId(Guid userId, Guid excludedToken = default)
+    {
+        if (userId == Guid.Empty)
+            return false;
+
+        return _sessions.Any(session =>
+            session.UserId == userId &&
+            (excludedToken == Guid.Empty || session.Token != excludedToken));
+    }
+
+    public AuthSessionProfile? GetSession(Guid token) =>
+        _sessions.FirstOrDefault(session => session.Token == token);
+
     public IReadOnlyList<Guid> ListTokens() =>
-        _tokens.AsReadOnly();
+        _sessions.Select(session => session.Token).ToList();
+
+    public IReadOnlyList<AuthSessionProfile> ListSessions() =>
+        _sessions.ToList();
 }

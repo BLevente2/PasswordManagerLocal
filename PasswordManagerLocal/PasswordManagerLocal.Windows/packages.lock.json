@@ -565,7 +565,10 @@
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.11, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.2, )",
-          "PasswordManagerLocalBackend": "[1.0.0, )"
+          "PasswordManagerLocalBackend": "[1.0.0, )",
+          "SkiaSharp": "[3.119.1, )",
+          "ZXing.Net": "[0.16.11, )",
+          "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"
         }
       },
       "passwordmanagerlocalbackend": {
@@ -734,6 +737,22 @@
         "requested": "[0.21.3, )",
         "resolved": "0.21.3",
         "contentHash": "hDwB8WsQoyALQKqIbwzS68UKdlnafDm4T/DkO/JrA/YIneP/rKv96SxYPVXeh3FP4i/SXfShrYftKLtciJAIlw=="
+      },
+      "ZXing.Net": {
+        "type": "CentralTransitive",
+        "requested": "[0.16.11, )",
+        "resolved": "0.16.11",
+        "contentHash": "OZfAVu88hl87BffQ+rlWCj/vLvAhhCK4QnFaoveeF/MY8SjHNSYBQ3qyUEWlPKNgBQGh1syXhCDg10vUnCsqkg=="
+      },
+      "ZXing.Net.Bindings.SkiaSharp": {
+        "type": "CentralTransitive",
+        "requested": "[0.16.22, )",
+        "resolved": "0.16.22",
+        "contentHash": "jdlarXJKukpYjnNf6bS7/ncRSZQh7v4uwUMFsaIc3MPZtY+fcQS0ONGXI4BSEEcNhxb8UfrULtRuL9ToLPhn1g==",
+        "dependencies": {
+          "SkiaSharp": "3.119.1",
+          "ZXing.Net": "0.16.11"
+        }
       }
     }
   }

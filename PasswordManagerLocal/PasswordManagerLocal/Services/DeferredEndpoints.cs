@@ -22,6 +22,13 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
+    public async Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        return await endpoints.RenewAuthSessionAsync(token, ct);
+    }
+
+
     public void Logout(Guid token)
     {
         var endpoints = GetEndpoints();
@@ -78,17 +85,17 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default)
+    public async Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        return await endpoints.GetLocalDeviceSyncEnabledAsync(ct);
+        return await endpoints.GetLocalUserSyncOnAsync(token, ct);
     }
 
 
-    public async Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default)
+    public async Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.SetLocalDeviceSyncEnabledAsync(isSyncOn, ct);
+        await endpoints.SetLocalUserSyncOnAsync(token, isSyncOn, ct);
     }
 
 
@@ -113,10 +120,10 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default)
+    public async Task SetUserDeviceSyncOnAsync(Guid token, Guid deviceId, bool isSyncOn, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.SetUserDeviceSyncEnabledAsync(token, deviceId, isSyncEnabled, ct);
+        await endpoints.SetUserDeviceSyncOnAsync(token, deviceId, isSyncOn, ct);
     }
 
 
@@ -166,6 +173,13 @@ public sealed class DeferredEndpoints : IEndpoints
     {
         var endpoints = await GetEndpointsAsync(ct);
         return await endpoints.InicializeAllRememberMeAsync(ct);
+    }
+
+
+    public async Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        return await endpoints.InitializeRememberMeSessionAsync(userId, ct);
     }
 
 

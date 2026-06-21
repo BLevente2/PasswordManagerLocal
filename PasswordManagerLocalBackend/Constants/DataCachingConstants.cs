@@ -2,6 +2,6 @@
 
 public static class DataCachingConstants
 {
-    public static readonly TimeSpan UserDataCacheExpirationTime = TimeSpan.FromMinutes(60);
-    public static readonly TimeSpan GroupDataCacheExpirationTime = TimeSpan.FromMinutes(60);
+    public static readonly TimeSpan UserDataCacheExpirationTime = TokenConstants.LoginTokenExpirationTime;
+    public static readonly TimeSpan GroupDataCacheExpirationTime = TokenConstants.LoginTokenExpirationTime;
 }

@@ -44,6 +44,10 @@ public sealed class Endpoints : IEndpoints
         _authService.LoginAsync(request, ct);
 
 
+    public Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default) =>
+        _authService.RenewSessionAsync(token, ct);
+
+
     public void Logout(Guid token) =>
         _authService.Logout(token);
 
@@ -81,12 +85,12 @@ public sealed class Endpoints : IEndpoints
         _deviceService.GetLocalDeviceInfoAsync(ct);
 
 
-    public Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default) =>
-        _deviceService.GetLocalDeviceSyncEnabledAsync(ct);
+    public Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default) =>
+        _deviceService.GetLocalUserSyncOnAsync(token, ct);
 
 
-    public Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default) =>
-        _deviceService.SetLocalDeviceSyncEnabledAsync(isSyncOn, ct);
+    public Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default) =>
+        _deviceService.SetLocalUserSyncOnAsync(token, isSyncOn, ct);
 
 
     public Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default) =>
@@ -104,8 +108,8 @@ public sealed class Endpoints : IEndpoints
         _deviceService.SetUserDeviceNameAsync(token, deviceId, name, ct);
 
 
-    public Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default) =>
-        _deviceService.SetUserDeviceSyncEnabledAsync(token, deviceId, isSyncEnabled, ct);
+    public Task SetUserDeviceSyncOnAsync(Guid token, Guid deviceId, bool isSyncOn, CancellationToken ct = default) =>
+        _deviceService.SetUserDeviceSyncOnAsync(token, deviceId, isSyncOn, ct);
 
 
     public Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default) =>
@@ -135,6 +139,10 @@ public sealed class Endpoints : IEndpoints
 
     public Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default) =>
         _rememberMeService.InicializeAllRememberMeAsync(ct);
+
+
+    public Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default) =>
+        _rememberMeService.InitializeRememberMeSessionAsync(userId, ct);
 
 
     public Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default) =>

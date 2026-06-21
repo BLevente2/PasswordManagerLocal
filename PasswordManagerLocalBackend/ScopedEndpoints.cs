@@ -26,6 +26,10 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.LoginAsync(request, ct));
 
 
+    public Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.RenewAuthSessionAsync(token, ct));
+
+
     public void Logout(Guid token) =>
         Run(endpoints => endpoints.Logout(token));
 
@@ -62,12 +66,12 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.GetLocalDeviceInfoAsync(ct));
 
 
-    public Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default) =>
-        RunAsync(endpoints => endpoints.GetLocalDeviceSyncEnabledAsync(ct));
+    public Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.GetLocalUserSyncOnAsync(token, ct));
 
 
-    public Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default) =>
-        RunAsync(endpoints => endpoints.SetLocalDeviceSyncEnabledAsync(isSyncOn, ct));
+    public Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.SetLocalUserSyncOnAsync(token, isSyncOn, ct));
 
 
     public Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default) =>
@@ -82,8 +86,8 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.SetUserDeviceNameAsync(token, deviceId, name, ct));
 
 
-    public Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default) =>
-        RunAsync(endpoints => endpoints.SetUserDeviceSyncEnabledAsync(token, deviceId, isSyncEnabled, ct));
+    public Task SetUserDeviceSyncOnAsync(Guid token, Guid deviceId, bool isSyncOn, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.SetUserDeviceSyncOnAsync(token, deviceId, isSyncOn, ct));
 
 
     public Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default) =>
@@ -114,6 +118,10 @@ public sealed class ScopedEndpoints : IEndpoints
 
     public Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default) =>
         RunAsync(endpoints => endpoints.InicializeAllRememberMeAsync(ct));
+
+
+    public Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.InitializeRememberMeSessionAsync(userId, ct));
 
 
     public Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default) =>

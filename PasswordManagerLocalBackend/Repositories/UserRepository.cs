@@ -15,22 +15,41 @@ public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepositor
     public async Task<User?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
         await Set.AsNoTracking().FirstOrDefaultAsync(u => u.UId == id, ct);
 
-    public async Task<User?> GetByIdWithRelationsAsync(Guid id, CancellationToken ct = default) =>
-        await Set
+    public async Task<User?> GetByIdWithRelationsAsync(Guid id, CancellationToken ct = default)
+    {
+        var user = await Set
             .Include(u => u.Groups)
-            .Include(u => u.Devices)
             .Include(u => u.UserDevices)
+            .Include(u => u.LocalUserDevices)
             .FirstOrDefaultAsync(u => u.UId == id, ct);
+        VerifyRelationshipIntegrity(user);
+        return user;
+    }
 
-    public async Task<User?> GetByIdAsNoTrackingWithRelationsAsync(Guid id, CancellationToken ct = default) =>
-        await Set.AsNoTracking()
+    public async Task<User?> GetByIdAsNoTrackingWithRelationsAsync(Guid id, CancellationToken ct = default)
+    {
+        var user = await Set.AsNoTracking()
             .Include(u => u.Groups)
-            .Include(u => u.Devices)
             .Include(u => u.UserDevices)
+            .Include(u => u.LocalUserDevices)
             .FirstOrDefaultAsync(u => u.UId == id, ct);
+        VerifyRelationshipIntegrity(user);
+        return user;
+    }
 
     public async Task<IReadOnlyList<User>> GetAllRememberMeEnabledUsersAsync(CancellationToken ct = default) =>
         await Set.AsNoTracking()
             .Where(u => u.SavedKey != null)
             .ToListAsync(ct);
+
+    private static void VerifyRelationshipIntegrity(User? user)
+    {
+        if (user is null)
+            return;
+
+        foreach (var link in user.UserDevices)
+            link.VerifyIntegrity();
+        foreach (var link in user.LocalUserDevices)
+            link.VerifyIntegrity();
+    }
 }

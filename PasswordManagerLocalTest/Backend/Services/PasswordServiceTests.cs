@@ -55,6 +55,63 @@ public sealed class PasswordServiceTests
         });
     }
 
+
+    [TestMethod]
+    public async Task AddNewPassword_DuplicateName_Throws()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = Encoding.UTF8.GetBytes("first")
+        }, passwords);
+
+        await ExpectThrowsAsync<DuplicatePasswordNameException>(async () =>
+        {
+            await service.AddNewPassword(new NewPasswordRequest
+            {
+                Name = " email ",
+                Password = Encoding.UTF8.GetBytes("second")
+            }, passwords);
+        });
+
+        MSTestAssert.HasCount(1, passwords.Passwords);
+    }
+
+    [TestMethod]
+    public async Task UpdatePassword_DuplicateName_Throws()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = Encoding.UTF8.GetBytes("first")
+        }, passwords);
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Bank",
+            Password = Encoding.UTF8.GetBytes("second")
+        }, passwords);
+
+        var bankId = passwords.Passwords.Single(password => password.Name == "Bank").Id;
+
+        await ExpectThrowsAsync<DuplicatePasswordNameException>(async () =>
+        {
+            await service.UpdatePasswordAsync(new UpdatePasswordRequest
+            {
+                Id = bankId,
+                Name = "email"
+            }, passwords);
+        });
+
+        MSTestAssert.AreEqual("Bank", passwords.Passwords.Single(password => password.Id == bankId).Name);
+    }
+
     [TestMethod]
     public async Task GetUnsecurePassword_Roundtrip_Works()
     {

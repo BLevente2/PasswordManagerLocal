@@ -81,5 +81,15 @@
       <Setter Property="Foreground" Value="#FFD13438" />
       <Setter Property="FontWeight" Value="Medium" />
     </Style>
+
+    <Style Selector="TextBlock.readableCode">
+      <Setter Property="FontFamily" Value="Cascadia Code, Consolas, DejaVu Sans Mono, Courier New" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <Style Selector="TextBox.readableCode">
+      <Setter Property="FontFamily" Value="Cascadia Code, Consolas, DejaVu Sans Mono, Courier New" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
   </Application.Styles>
 </Application>

@@ -3,14 +3,12 @@ using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
-using static PasswordManagerLocalBackend.Constants.TokenConstrants;
+using static PasswordManagerLocalBackend.Constants.TokenConstants;
 
 namespace PasswordManagerLocalBackend.Services;
 
 public sealed class TokenService : ITokenService
 {
-    private static readonly TimeSpan InvalidationReasonRetentionTime = TimeSpan.FromMinutes(30);
-
     private readonly ConcurrentDictionary<Guid, TokenEntry> _storage = new();
     private readonly ConcurrentDictionary<Guid, InvalidationEntry> _invalidations = new();
 
@@ -23,7 +21,7 @@ public sealed class TokenService : ITokenService
             if (token == Guid.Empty)
                 continue;
 
-            var expiresTicksUtc = DateTime.UtcNow.Add(TokenExpirationTime).Ticks;
+            var expiresTicksUtc = DateTime.UtcNow.Add(LoginTokenExpirationTime).Ticks;
             var entry = new TokenEntry(uid, expiresTicksUtc);
 
             if (_storage.TryAdd(token, entry))
@@ -58,6 +56,28 @@ public sealed class TokenService : ITokenService
         }
 
         uid = entry.Uid;
+        return true;
+    }
+
+    public bool TryGetExpiresAtUtc(Guid token, out DateTimeOffset expiresAtUtc)
+    {
+        expiresAtUtc = default;
+
+        if (token == Guid.Empty)
+            return false;
+
+        if (!_storage.TryGetValue(token, out var entry))
+            return false;
+
+        var nowTicksUtc = DateTime.UtcNow.Ticks;
+
+        if (entry.ExpiresTicksUtc <= nowTicksUtc)
+        {
+            Revoke(token, AuthSessionInvalidationReason.Expired);
+            return false;
+        }
+
+        expiresAtUtc = new DateTimeOffset(new DateTime(entry.ExpiresTicksUtc, DateTimeKind.Utc));
         return true;
     }
 

@@ -1,4 +1,6 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Persistence;
+using PasswordManagerLocalBackend.Abstractions.Repositories;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
@@ -8,6 +10,7 @@ using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
 using System.Text;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -18,19 +21,31 @@ public sealed class AuthService : IAuthService
     private readonly IDataCachingService _cache;
     private readonly IKeyVaultService _keys;
     private readonly IRememberMeService _rememberMe;
+    private readonly IDeviceIdentityService _identity;
+    private readonly ILocalUserDeviceRepository _localUserDevices;
+    private readonly ISyncRuntimeService _syncRuntime;
+    private readonly IUnitOfWork _uow;
 
     public AuthService(
         IUserService userService,
         ITokenService tokens,
         IRememberMeService rememberMe,
         IDataCachingService cache,
-        IKeyVaultService keys)
+        IKeyVaultService keys,
+        IDeviceIdentityService identity,
+        ILocalUserDeviceRepository localUserDevices,
+        ISyncRuntimeService syncRuntime,
+        IUnitOfWork uow)
     {
         _userService = userService;
         _tokens = tokens;
         _rememberMe = rememberMe;
         _cache = cache;
         _keys = keys;
+        _identity = identity;
+        _localUserDevices = localUserDevices;
+        _syncRuntime = syncRuntime;
+        _uow = uow;
     }
 
 
@@ -59,6 +74,17 @@ public sealed class AuthService : IAuthService
         using var passwordsKey = EncryptionKey.Create();
         userData.Passwords.PasswordKey = passwordsKey.ExportCopy();
         userData.Passwords.GenerateIntegrityHash();
+
+        var linkedAt = DateTimeOffset.UtcNow;
+        var localDeviceData = new UserDeviceData
+        {
+            Id = _identity.LocalDeviceId,
+            Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
+            LinkedAt = linkedAt
+        };
+        localDeviceData.GenerateIntegrityHash();
+        userData.UserDevices.Devices.Add(localDeviceData);
+        userData.UserDevices.GenerateIntegrityHash();
         userData.GenerateIntegrityHash();
 
         var usernameSalt = Hashing.GenerateSalt();
@@ -79,6 +105,15 @@ public sealed class AuthService : IAuthService
 
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
         await _userService.AddNewUserAsync(user, ct);
+
+        await _localUserDevices.AddAsync(new LocalUserDevice
+        {
+            UserId = user.UId,
+            LocalDeviceIdentityId = _identity.LocalDeviceId,
+            IsSyncOn = true
+        }, ct);
+        await _uow.SaveChangesAsync(ct);
+        await _syncRuntime.RefreshSyncEnabledAsync(ct);
 
         var token = _tokens.Issue(userData.UId);
         _keys.SetUserKey(token, key);
@@ -109,6 +144,35 @@ public sealed class AuthService : IAuthService
     }
 
 
+    public Task<Guid> RenewSessionAsync(Guid token, CancellationToken ct = default)
+    {
+        if (!_tokens.TryGetUid(token, out var uid))
+            throw new InvalidTokenException();
+
+        if (!_keys.TryGetEncryptionKey(token, out var key))
+        {
+            InvalidateToken(token, AuthSessionInvalidationReason.Expired);
+            throw new InvalidTokenException();
+        }
+
+        try
+        {
+            var newToken = _tokens.Issue(uid);
+            _keys.SetUserKey(newToken, key);
+
+            if (_cache.TryGetUserData(token, out var userData) && userData is not null)
+                _cache.SetUserData(newToken, userData);
+
+            InvalidateToken(token, AuthSessionInvalidationReason.LoggedOut);
+            return Task.FromResult(newToken);
+        }
+        finally
+        {
+            key.Dispose();
+        }
+    }
+
+
     public void Logout(Guid token)
     {
         if (!_tokens.Validate(token))
@@ -131,12 +195,13 @@ public sealed class AuthService : IAuthService
 
     public AuthSessionStatusResponse GetSessionStatus(Guid token)
     {
-        if (_tokens.Validate(token))
+        if (_tokens.TryGetUid(token, out _) && _tokens.TryGetExpiresAtUtc(token, out var expiresAtUtc))
         {
             return new AuthSessionStatusResponse
             {
                 IsAuthenticated = true,
-                InvalidationReason = AuthSessionInvalidationReason.None
+                InvalidationReason = AuthSessionInvalidationReason.None,
+                ExpiresAtUtc = expiresAtUtc
             };
         }
 
@@ -212,6 +277,12 @@ public sealed class AuthService : IAuthService
             _rememberMe.SetRememberMe(user, true, newKey);
 
         await _userService.UpdateUserDataAsync(userData, user, newKey, true, ct);
+
+        foreach (var otherToken in _tokens.ListTokensByUid(user.UId))
+        {
+            if (otherToken != request.Token)
+                InvalidateToken(otherToken, AuthSessionInvalidationReason.ProfilePasswordChanged);
+        }
     }
 
 
