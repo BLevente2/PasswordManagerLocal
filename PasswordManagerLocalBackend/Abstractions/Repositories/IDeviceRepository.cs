@@ -5,15 +5,14 @@ namespace PasswordManagerLocalBackend.Abstractions.Repositories;
 public interface IDeviceRepository : IGenericRepository<Device>
 {
     Task<IReadOnlyList<Device>> ListDevicesNeedingSyncAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<Device>> ListUserDevicesAsync(Guid uid, CancellationToken ct = default);
-    Task<IReadOnlyList<Device>> ListGroupDevicesAsync(Guid groupId, CancellationToken ct = default);
-    Task<IReadOnlyList<Device>> ListDevicesLinkedToDeviceUsersAsync(Guid deviceId, CancellationToken ct = default);
-    Task<IReadOnlyList<Device>> ListUserDeviceChangeTargetDevicesAsync(Guid userId, Guid changedDeviceId, bool includeChangedDevice, CancellationToken ct = default);
     Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default);
+    Task<Device?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetBySignPublicKeyAsync(byte[] signPublicKey, CancellationToken ct = default);
     Task<Device?> GetByTlsCertFingerprintAsync(string tlsCertFingerprint, CancellationToken ct = default);
     Task<Device?> GetByTlsCertFingerprintWithUserDevicesAsync(string tlsCertFingerprint, CancellationToken ct = default);
     Task<IReadOnlyList<Device>> ListLocalSelfDevicesAsync(Guid localDeviceId, byte[] signPublicKey, string tlsCertFingerprint, CancellationToken ct = default);
+    Task<IReadOnlyList<Device>> ListByIdsWithUserDevicesAsNoTrackingAsync(IReadOnlyCollection<Guid> deviceIds, Guid excludedDeviceId, CancellationToken ct = default);
+    Task<IReadOnlyList<Device>> ListTrustedUnblockedAsync(CancellationToken ct = default);
 }

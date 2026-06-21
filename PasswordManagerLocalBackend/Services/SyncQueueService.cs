@@ -14,6 +14,7 @@ public sealed class SyncQueueService : ISyncQueueService
     private readonly IGroupRepository _groups;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
+    private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly ISyncTombstoneRepository _tombstones;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
@@ -29,6 +30,7 @@ public sealed class SyncQueueService : ISyncQueueService
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
+        ILocalUserDeviceRepository localUserDevices,
         ISyncTombstoneRepository tombstones,
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDiscoveredDeviceEndpointCache endpointCache,
@@ -43,6 +45,7 @@ public sealed class SyncQueueService : ISyncQueueService
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
+        _localUserDevices = localUserDevices;
         _tombstones = tombstones;
         _syncDeviceIdentities = syncDeviceIdentities;
         _endpointCache = endpointCache;
@@ -313,13 +316,13 @@ public sealed class SyncQueueService : ISyncQueueService
     private async Task<IReadOnlyList<Device>> ListTargetDevicesAsync(SyncItem item, CancellationToken ct = default)
     {
         if (item.ModelType == SyncModelType.User)
-            return await _devices.ListUserDevicesAsync(item.ModelId, ct);
+            return await ListUserTargetDevicesAsync(item.ModelId, ct);
 
         if (item.ModelType == SyncModelType.Group)
-            return await _devices.ListGroupDevicesAsync(item.ModelId, ct);
+            return await ListGroupTargetDevicesAsync(item.ModelId, ct);
 
         if (item.ModelType == SyncModelType.Device)
-            return await _devices.ListDevicesLinkedToDeviceUsersAsync(item.ModelId, ct);
+            return await ListDeviceTargetDevicesAsync(item.ModelId, ct);
 
         if (item.ModelType == SyncModelType.UserDevice)
         {
@@ -327,11 +330,96 @@ public sealed class SyncQueueService : ISyncQueueService
             if (userDevice is null)
                 return [];
 
-            return await _devices.ListUserDeviceChangeTargetDevicesAsync(userDevice.UserId, userDevice.DeviceId, item.ChangeType == SyncChangeType.Deleted, ct);
+            return await ListUserDeviceChangeTargetDevicesAsync(
+                userDevice.UserId,
+                userDevice.DeviceId,
+                item.ChangeType == SyncChangeType.Deleted,
+                ct);
         }
 
         return [];
     }
+
+
+    private async Task<IReadOnlyList<Device>> ListUserTargetDevicesAsync(Guid userId, CancellationToken ct)
+    {
+        if (!await _localUserDevices.IsSyncOnAsync(userId, ct))
+            return [];
+
+        var links = await _userDevices.ListByUserAsync(userId, ct);
+        return SelectDistinctDevices(links.Where(link => !link.IsDeleted && link.IsSyncOn));
+    }
+
+
+    private async Task<IReadOnlyList<Device>> ListGroupTargetDevicesAsync(Guid groupId, CancellationToken ct)
+    {
+        var group = await _groups.GetByIdAsNoTrackingWithUsersAsync(groupId, ct);
+        if (group is null || group.Users.Count == 0)
+            return [];
+
+        var locallyEnabledUserIds = (await _localUserDevices.ListSyncOnUserIdsAsync(ct)).ToHashSet();
+        var enabledGroupUserIds = group.Users
+            .Select(user => user.UId)
+            .Where(locallyEnabledUserIds.Contains)
+            .Distinct()
+            .ToList();
+        if (enabledGroupUserIds.Count == 0)
+            return [];
+
+        var links = await _userDevices.ListByUsersAsync(enabledGroupUserIds, ct);
+        return SelectDistinctDevices(links.Where(link => !link.IsDeleted && link.IsSyncOn));
+    }
+
+
+    private async Task<IReadOnlyList<Device>> ListDeviceTargetDevicesAsync(Guid sourceDeviceId, CancellationToken ct)
+    {
+        var sourceLinks = await _userDevices.ListByDeviceAsync(sourceDeviceId, ct);
+        var sourceUserIds = sourceLinks
+            .Where(link => !link.IsDeleted)
+            .Select(link => link.UserId)
+            .Distinct()
+            .ToHashSet();
+        if (sourceUserIds.Count == 0)
+            return [];
+
+        var enabledUserIds = (await _localUserDevices.ListSyncOnUserIdsAsync(ct))
+            .Where(sourceUserIds.Contains)
+            .Distinct()
+            .ToList();
+        if (enabledUserIds.Count == 0)
+            return [];
+
+        var targetLinks = await _userDevices.ListByUsersAsync(enabledUserIds, ct);
+        return SelectDistinctDevices(targetLinks.Where(link =>
+            link.DeviceId != sourceDeviceId &&
+            !link.IsDeleted &&
+            link.IsSyncOn));
+    }
+
+
+    private async Task<IReadOnlyList<Device>> ListUserDeviceChangeTargetDevicesAsync(
+        Guid userId,
+        Guid changedDeviceId,
+        bool includeChangedDevice,
+        CancellationToken ct)
+    {
+        if (!await _localUserDevices.IsSyncOnAsync(userId, ct))
+            return [];
+
+        var links = await _userDevices.ListByUserAsync(userId, ct);
+        return SelectDistinctDevices(links.Where(link =>
+            !link.IsDeleted &&
+            ((link.DeviceId != changedDeviceId && link.IsSyncOn) ||
+             (includeChangedDevice && link.DeviceId == changedDeviceId))));
+    }
+
+
+    private static IReadOnlyList<Device> SelectDistinctDevices(IEnumerable<UserDevice> links) =>
+        links
+            .Where(link => link.Device is not null)
+            .Select(link => link.Device!)
+            .DistinctBy(device => device.Id)
+            .ToList();
 
 
     private void RefreshDiscoveryCache(IReadOnlyList<Device> targetDevices)

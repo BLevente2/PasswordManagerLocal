@@ -1,6 +1,5 @@
 using Google.Protobuf;
 using Makaretu.Dns;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
@@ -9,7 +8,6 @@ using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
-using PasswordManagerLocalBackend.Persistence;
 using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
@@ -400,14 +398,15 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, TlsFingerprintPrefix={NormalizeFingerprint(endpoint.TlsCertFingerprint)[..Math.Min(16, NormalizeFingerprint(endpoint.TlsCertFingerprint).Length)]}.");
 
         using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var devices = scope.ServiceProvider.GetRequiredService<IDeviceRepository>();
         var users = scope.ServiceProvider.GetRequiredService<IUserService>();
         var cache = scope.ServiceProvider.GetRequiredService<IDataCachingService>();
         var syncIdentities = scope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
         var syncTasks = scope.ServiceProvider.GetRequiredService<IDeviceSyncTaskService>();
         var user = await users.GetAndVerifyUserAsync(token, ct);
 
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
 
         try
         {
@@ -430,7 +429,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             await transaction.CommitAsync(ct);
             cache.InvalidateToken(token);
 
-            var remoteDevice = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == endpoint.DeviceId, ct);
+            var remoteDevice = await devices.GetByIdAsNoTrackingAsync(endpoint.DeviceId, ct);
             if (remoteDevice is not null)
             {
                 syncIdentities.TryAdd(remoteDevice);
@@ -1627,12 +1626,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private async Task RegisterRemoteDeviceAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint endpoint, CancellationToken ct)
     {
-        var db = services.GetRequiredService<AppDbContext>();
+        var devices = services.GetRequiredService<IDeviceRepository>();
+        var userDevices = services.GetRequiredService<IUserDeviceRepository>();
+        var localUserDevices = services.GetRequiredService<ILocalUserDeviceRepository>();
+        var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
 
-        var device = await db.Devices
-            .Include(d => d.UserDevices)
-            .FirstOrDefaultAsync(d => d.Id == endpoint.DeviceId, ct);
+        var device = await devices.GetByIdWithUserDevicesAsync(endpoint.DeviceId, ct);
 
         if (device is not null)
         {
@@ -1647,7 +1647,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 Id = endpoint.DeviceId,
                 PublicKey = endpoint.AgreementPublicKey,
                 SignPublicKey = endpoint.SignPublicKey,
-                TlsCertFingerprint = endpoint.TlsCertFingerprint,
+                TlsCertFingerprint = NormalizeFingerprint(endpoint.TlsCertFingerprint),
                 DeviceType = endpoint.DeviceType,
                 LastSync = now.UtcDateTime,
                 LastSeen = now.UtcDateTime,
@@ -1656,7 +1656,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 LastModifiedAt = now
             };
             device.GenerateIntegrityHash();
-            await db.Devices.AddAsync(device, ct);
+            await devices.AddAsync(device, ct);
         }
         else
         {
@@ -1672,10 +1672,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             device.BlockedAt = null;
             device.LastSeen = now.UtcDateTime;
             device.LastModifiedAt = now;
+            device.TlsCertFingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
             device.GenerateIntegrityHash();
+            devices.Update(device);
         }
 
-        var link = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == userId && ud.DeviceId == endpoint.DeviceId, ct);
+        var link = await userDevices.GetAsync(userId, endpoint.DeviceId, ct);
         if (link is null)
         {
             link = new UserDevice
@@ -1687,7 +1689,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 IsDeleted = false,
                 LastModifiedAt = now
             };
-            await db.UserDevices.AddAsync(link, ct);
+            await userDevices.AddAsync(link, ct);
         }
         else
         {
@@ -1697,14 +1699,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             link.DeletedAt = null;
             link.IsSyncOn = true;
             link.LastModifiedAt = now;
+            userDevices.Update(link);
         }
 
         link.GenerateIntegrityHash();
-        await EnsureLocalUserDeviceAsync(db, userId, ct);
-        await db.SaveChangesAsync(ct);
+        await EnsureLocalUserDeviceAsync(devices, localUserDevices, userId, ct);
+        await unitOfWork.SaveChangesAsync(ct);
     }
-
-
 
 
     private async Task CacheIncomingEnrollmentSourceEndpointAsync(
@@ -1733,11 +1734,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 return;
         }
 
-        var db = services.GetRequiredService<AppDbContext>();
+        var devices = services.GetRequiredService<IDeviceRepository>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
         var syncTasks = services.GetRequiredService<IDeviceSyncTaskService>();
 
-        var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == parsedDeviceId, ct);
+        var device = await devices.GetByIdAsNoTrackingAsync(parsedDeviceId, ct);
         if (device is null || !device.IsTrusted || device.IsBlocked)
             return;
 
@@ -1759,34 +1760,23 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private async Task<DeviceEnrollmentSnapshot> BuildSnapshotAsync(IServiceProvider services, Guid userId, CancellationToken ct)
     {
-        var db = services.GetRequiredService<AppDbContext>();
-        var user = await db.Users
-            .AsNoTracking()
-            .Include(u => u.Groups)
-            .Include(u => u.UserDevices)
-            .FirstOrDefaultAsync(u => u.UId == userId, ct);
+        var users = services.GetRequiredService<IUserRepository>();
+        var userDevicesRepository = services.GetRequiredService<IUserDeviceRepository>();
+        var groupsRepository = services.GetRequiredService<IGroupRepository>();
+        var devicesRepository = services.GetRequiredService<IDeviceRepository>();
 
+        var user = await users.GetByIdAsNoTrackingAsync(userId, ct);
         if (user is null)
             throw new UserNotFoundException();
 
-        var allUserDevices = await db.UserDevices.AsNoTracking()
-            .Where(ud => ud.UserId == userId)
-            .ToListAsync(ct);
+        var allUserDevices = await userDevicesRepository.ListByUserAsync(userId, ct);
         foreach (var userDevice in allUserDevices)
             userDevice.VerifyIntegrity();
 
         var userDevices = allUserDevices.Where(ud => !ud.IsDeleted).ToList();
         var userDeviceIds = userDevices.Select(ud => ud.DeviceId).Distinct().ToList();
-
-        var groups = await db.Groups.AsNoTracking()
-            .Include(g => g.Users)
-            .Where(g => g.Users.Any(u => u.UId == userId))
-            .ToListAsync(ct);
-
-        var devices = await db.Devices.AsNoTracking()
-            .Include(d => d.UserDevices)
-            .Where(d => d.Id != _identity.LocalDeviceId && userDeviceIds.Contains(d.Id))
-            .ToListAsync(ct);
+        var groups = await groupsRepository.ListByUserWithUsersAsNoTrackingAsync(userId, ct);
+        var devices = await devicesRepository.ListByIdsWithUserDevicesAsNoTrackingAsync(userDeviceIds, _identity.LocalDeviceId, ct);
 
         foreach (var device in devices)
         {
@@ -2340,12 +2330,17 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private async Task ImportSnapshotAsync(IServiceProvider services, DeviceEnrollmentSnapshot snapshot, CancellationToken ct)
     {
-        var db = services.GetRequiredService<AppDbContext>();
+        var devices = services.GetRequiredService<IDeviceRepository>();
+        var users = services.GetRequiredService<IUserRepository>();
+        var groups = services.GetRequiredService<IGroupRepository>();
+        var userDevices = services.GetRequiredService<IUserDeviceRepository>();
+        var localUserDevices = services.GetRequiredService<ILocalUserDeviceRepository>();
+        var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
         var now = DateTimeOffset.UtcNow;
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
 
-        await RemoveLocalDeviceRowsAsync(db, ct);
+        await RemoveLocalDeviceRowsAsync(devices, ct);
 
         foreach (var deviceSnapshot in snapshot.Devices)
         {
@@ -2359,16 +2354,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (isLocalDevice)
                 continue;
 
-            var device = await db.Devices.FirstOrDefaultAsync(d => d.Id == deviceSnapshot.Id, ct);
+            var device = await devices.GetByIdAsync(deviceSnapshot.Id, ct);
             if (device is null)
             {
                 device = new Device { Id = deviceSnapshot.Id };
-                await db.Devices.AddAsync(device, ct);
+                await devices.AddAsync(device, ct);
             }
 
             device.PublicKey = deviceSnapshot.PublicKey;
             device.SignPublicKey = deviceSnapshot.SignPublicKey;
-            device.TlsCertFingerprint = deviceSnapshot.TlsCertFingerprint;
+            device.TlsCertFingerprint = NormalizeFingerprint(deviceSnapshot.TlsCertFingerprint);
             device.DeviceType = deviceSnapshot.DeviceType;
             device.LastKnownHash = deviceSnapshot.LastKnownHash;
             device.LastSync = deviceSnapshot.LastSync;
@@ -2383,15 +2378,15 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             device.GenerateIntegrityHash();
         }
 
-        await db.SaveChangesAsync(ct);
+        await unitOfWork.SaveChangesAsync(ct);
 
         foreach (var userSnapshot in snapshot.Users)
         {
-            var user = await db.Users.Include(u => u.Groups).FirstOrDefaultAsync(u => u.UId == userSnapshot.UId, ct);
+            var user = await users.GetByIdAsync(userSnapshot.UId, ct);
             if (user is null)
             {
                 user = new User { UId = userSnapshot.UId };
-                await db.Users.AddAsync(user, ct);
+                await users.AddAsync(user, ct);
             }
 
             user.UsernameHash = userSnapshot.UsernameHash;
@@ -2405,11 +2400,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         foreach (var groupSnapshot in snapshot.Groups)
         {
-            var group = await db.Groups.Include(g => g.Users).FirstOrDefaultAsync(g => g.Id == groupSnapshot.Id, ct);
+            var group = await groups.GetByIdWithUsersAsync(groupSnapshot.Id, ct);
             if (group is null)
             {
                 group = new Group { Id = groupSnapshot.Id };
-                await db.Groups.AddAsync(group, ct);
+                await groups.AddAsync(group, ct);
             }
 
             group.EncryptedPayload = groupSnapshot.EncryptedPayload;
@@ -2417,11 +2412,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             group.IntegrityHash = groupSnapshot.IntegrityHash;
         }
 
-        await db.SaveChangesAsync(ct);
+        await unitOfWork.SaveChangesAsync(ct);
 
         foreach (var groupSnapshot in snapshot.Groups)
         {
-            var group = await db.Groups.Include(g => g.Users).FirstAsync(g => g.Id == groupSnapshot.Id, ct);
+            var group = await groups.GetByIdWithUsersAsync(groupSnapshot.Id, ct)
+                ?? throw new InvalidDataException("The enrollment snapshot group could not be persisted.");
             var userIds = groupSnapshot.UserIds.Where(id => id != Guid.Empty).Distinct().ToHashSet();
 
             foreach (var user in group.Users.Where(u => !userIds.Contains(u.UId)).ToList())
@@ -2432,7 +2428,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 if (group.Users.Any(u => u.UId == userId))
                     continue;
 
-                var user = await db.Users.FirstOrDefaultAsync(u => u.UId == userId, ct);
+                var user = await users.GetByIdAsync(userId, ct);
                 if (user is not null)
                     group.Users.Add(user);
             }
@@ -2465,11 +2461,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (linkSnapshot.DeviceId == _identity.LocalDeviceId)
                 continue;
 
-            var remoteDevice = await db.Devices.FirstOrDefaultAsync(d => d.Id == linkSnapshot.DeviceId, ct);
+            var remoteDevice = await devices.GetByIdAsync(linkSnapshot.DeviceId, ct);
             if (remoteDevice is null)
                 continue;
 
-            var link = await GetOrCreateTrackedUserDeviceAsync(db, linkSnapshot.UserId, linkSnapshot.DeviceId, ct);
+            var link = await GetOrCreateUserDeviceAsync(userDevices, linkSnapshot.UserId, linkSnapshot.DeviceId, ct);
             link.Device = remoteDevice;
             link.IsSyncOn = linkSnapshot.IsSyncOn;
             link.IsDeleted = linkSnapshot.IsDeleted;
@@ -2478,33 +2474,26 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             link.IntegrityHash = verifiedSnapshotLink.IntegrityHash.ToArray();
         }
 
-        await EnsureLocalUserDeviceAsync(db, snapshot.PrimaryUserId, ct);
+        await EnsureLocalUserDeviceAsync(devices, localUserDevices, snapshot.PrimaryUserId, ct);
 
-        await db.SaveChangesAsync(ct);
-        await RemoveLocalDeviceRowsAsync(db, ct);
-        await db.SaveChangesAsync(ct);
+        await unitOfWork.SaveChangesAsync(ct);
+        await RemoveLocalDeviceRowsAsync(devices, ct);
+        await unitOfWork.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
 
-        var trustedDevices = await db.Devices.AsNoTracking()
-            .Where(d => d.IsTrusted && !d.IsBlocked)
-            .ToListAsync(ct);
-
+        var trustedDevices = await devices.ListTrustedUnblockedAsync(ct);
         foreach (var device in trustedDevices)
             syncIdentities.TryAdd(device);
     }
 
 
-    private static async Task<UserDevice> GetOrCreateTrackedUserDeviceAsync(AppDbContext db, Guid userId, Guid deviceId, CancellationToken ct)
+    private static async Task<UserDevice> GetOrCreateUserDeviceAsync(
+        IUserDeviceRepository userDevices,
+        Guid userId,
+        Guid deviceId,
+        CancellationToken ct)
     {
-        var tracked = db.ChangeTracker.Entries<UserDevice>()
-            .Where(e => e.State != EntityState.Deleted && e.State != EntityState.Detached)
-            .Select(e => e.Entity)
-            .FirstOrDefault(ud => ud.UserId == userId && ud.DeviceId == deviceId);
-
-        if (tracked is not null)
-            return tracked;
-
-        var existing = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct);
+        var existing = await userDevices.GetAsync(userId, deviceId, ct);
         if (existing is not null)
         {
             existing.VerifyIntegrity();
@@ -2517,29 +2506,32 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             DeviceId = deviceId
         };
 
-        await db.UserDevices.AddAsync(created, ct);
+        await userDevices.AddAsync(created, ct);
         return created;
     }
 
 
-    private async Task RemoveLocalDeviceRowsAsync(AppDbContext db, CancellationToken ct)
+    private async Task RemoveLocalDeviceRowsAsync(IDeviceRepository devices, CancellationToken ct)
     {
-        var devices = await db.Devices.ToListAsync(ct);
-        var localRows = devices.Where(device =>
-            device.Id == _identity.LocalDeviceId ||
-            device.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
-            string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var localRows = await devices.ListLocalSelfDevicesAsync(
+            _identity.LocalDeviceId,
+            _identity.SignPublicKey,
+            _identity.FingerprintHex,
+            ct);
 
-        if (localRows.Count != 0)
-            db.Devices.RemoveRange(localRows);
+        foreach (var localRow in localRows)
+            devices.Delete(localRow);
     }
 
 
-    private async Task EnsureLocalUserDeviceAsync(AppDbContext db, Guid userId, CancellationToken ct)
+    private async Task EnsureLocalUserDeviceAsync(
+        IDeviceRepository devices,
+        ILocalUserDeviceRepository localUserDevices,
+        Guid userId,
+        CancellationToken ct)
     {
-        await RemoveLocalDeviceRowsAsync(db, ct);
-        var link = await db.LocalUserDevices.FirstOrDefaultAsync(x => x.UserId == userId, ct);
+        await RemoveLocalDeviceRowsAsync(devices, ct);
+        var link = await localUserDevices.GetAsync(userId, ct);
         if (link is null)
         {
             var localUserDevice = new LocalUserDevice
@@ -2549,24 +2541,22 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 IsSyncOn = true
             };
             localUserDevice.GenerateIntegrityHash();
-            await db.LocalUserDevices.AddAsync(localUserDevice, ct);
+            await localUserDevices.AddAsync(localUserDevice, ct);
             return;
         }
+
         link.VerifyIntegrity();
         link.LocalDeviceIdentityId = _identity.LocalDeviceId;
         link.GenerateIntegrityHash();
+        localUserDevices.Update(link);
     }
 
 
     private async Task QueueInitialSyncAsync(IServiceProvider services, Guid userId, Guid newDeviceId, CancellationToken ct)
     {
-        var db = services.GetRequiredService<AppDbContext>();
+        var groups = services.GetRequiredService<IGroupRepository>();
         var syncQueue = services.GetRequiredService<ISyncQueueService>();
-
-        var groupIds = await db.Groups.AsNoTracking()
-            .Where(g => g.Users.Any(u => u.UId == userId))
-            .Select(g => g.Id)
-            .ToListAsync(ct);
+        var groupIds = await groups.ListIdsByUserAsync(userId, ct);
 
         await syncQueue.EnqueueAsync(new SyncItem { ModelId = userId, ModelType = SyncModelType.User, ChangeType = SyncChangeType.Updated }, ct);
 

@@ -133,7 +133,9 @@ namespace PasswordManagerLocalBackend
                         });
                     }
 
-                    services.AddDbContext<AppDbContext>((sp, opts) =>
+                    services.AddSingleton<RelationshipIntegrityMaterializationInterceptor>();
+
+                    services.AddDbContextPool<AppDbContext>((sp, opts) =>
                     {
                         var protector = sp.GetRequiredService<IKeyProtector>();
                         var dbPassword = DbConfigManager.GetOrCreateSqlCipherPassword(protector);
@@ -145,6 +147,7 @@ namespace PasswordManagerLocalBackend
                         }.ToString();
 
                         opts.UseSqlite(connStr);
+                        opts.AddInterceptors(sp.GetRequiredService<RelationshipIntegrityMaterializationInterceptor>());
                     });
 
                     services.AddScoped<Endpoints>();

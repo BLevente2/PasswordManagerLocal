@@ -6,6 +6,7 @@ public interface IUserDeviceRepository
 {
     Task<IReadOnlyList<UserDevice>> ListByUserAsync(Guid userId, CancellationToken ct = default);
     Task<IReadOnlyList<UserDevice>> ListByDeviceAsync(Guid deviceId, CancellationToken ct = default);
+    Task<IReadOnlyList<UserDevice>> ListByUsersAsync(IReadOnlyCollection<Guid> userIds, CancellationToken ct = default);
     Task<IReadOnlyList<UserDevice>> ListActiveByDeviceAsync(Guid deviceId, CancellationToken ct = default);
     Task<UserDevice?> GetAsync(Guid userId, Guid deviceId, CancellationToken ct = default);
     Task<UserDevice?> GetByModelIdAsync(Guid modelId, CancellationToken ct = default);
