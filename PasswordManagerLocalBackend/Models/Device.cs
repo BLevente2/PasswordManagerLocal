@@ -9,7 +9,7 @@ public sealed class Device : IntegrityCheckableBase
     public byte[] PublicKey { get; set; } = [];
     public byte[] SignPublicKey { get; set; } = [];
     public string TlsCertFingerprint { get; set; } = string.Empty;
-    public string DeviceName { get; set; } = string.Empty;
+    public DeviceType DeviceType { get; set; }
     public byte[] LastKnownHash { get; set; } = [];
 
     public DateTime LastSync { get; set; } = DateTime.UtcNow;
@@ -23,7 +23,6 @@ public sealed class Device : IntegrityCheckableBase
     public DateTimeOffset? LastInvalidSyncAttemptAt { get; set; }
     public DateTimeOffset LastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
 
-    public ICollection<User> Users { get; set; } = [];
     public ICollection<UserDevice> UserDevices { get; set; } = [];
     public ICollection<SyncQueueItem> ItemsNeedingSync { get; set; } = [];
 
@@ -36,7 +35,7 @@ public sealed class Device : IntegrityCheckableBase
         bw.Write(PublicKey);
         bw.Write(SignPublicKey);
         bw.Write(Encoding.UTF8.GetBytes(TlsCertFingerprint));
-        bw.Write(Encoding.UTF8.GetBytes(DeviceName ?? string.Empty));
+        bw.Write((byte)DeviceType);
         bw.Write(LastKnownHash);
         bw.Write(LastSync.ToBinary());
         bw.Write(LastSeen.ToBinary());

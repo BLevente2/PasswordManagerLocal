@@ -8,6 +8,7 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Persistence;
 using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Security;
@@ -33,7 +34,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         public DeviceEnrollmentState State { get; set; } = DeviceEnrollmentState.Waiting;
         public string? ErrorMessage { get; set; }
         public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
-        public int InvalidProofAttempts { get; set; }
+        public int FailedValidationAttempts { get; set; }
         public ServiceDiscovery? Discovery { get; set; }
         public ServiceProfile? Profile { get; set; }
     }
@@ -46,6 +47,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         public string TlsCertFingerprint { get; set; } = string.Empty;
         public byte[] SignPublicKey { get; set; } = [];
         public byte[] AgreementPublicKey { get; set; } = [];
+        public DeviceType DeviceType { get; set; }
     }
 
 
@@ -72,88 +74,102 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private readonly IDeviceIdentityService _identity;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly ISyncTransportClientService _syncTransport;
+    private readonly ISyncRuntimeService _syncRuntime;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
+    private CancellationTokenSource? _enrollmentExpirationCancellation;
 
-    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache, ISyncTransportClientService syncTransport)
+    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache, ISyncTransportClientService syncTransport, ISyncRuntimeService syncRuntime)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
         _endpointCache = endpointCache;
         _syncTransport = syncTransport;
+        _syncRuntime = syncRuntime;
     }
 
 
 
 
-    public Task<DeviceEnrollmentCodeResponse> StartEnrollmentAsync(CancellationToken ct = default)
+    public async Task<DeviceEnrollmentCodeResponse> StartEnrollmentAsync(CancellationToken ct = default)
     {
-        if (!_identity.IsSyncOn)
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.SyncDisabled, "Device synchronization is disabled on this device.");
-
-        lock (_lock)
+        await _syncRuntime.BeginEnrollmentOnlyAsync(ct);
+        try
         {
-            StopAdvertisingLocked();
-
-            var directEndpointInfo = BuildDirectEndpointInfo();
-            var generated = DeviceEnrollmentCode.Create(directEndpointInfo);
-            var session = new EnrollmentSession
+            lock (_lock)
             {
-                SessionId = generated.SessionId,
-                Secret = generated.Secret,
-                Code = generated.Code,
-                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
-                State = DeviceEnrollmentState.Waiting
-            };
-
-            StartAdvertisingLocked(session, directEndpointInfo.Hosts);
-            _currentSession = session;
-
-            return Task.FromResult(new DeviceEnrollmentCodeResponse
-            {
-                Code = session.Code,
-                ExpiresAt = session.ExpiresAt
-            });
+                CancelEnrollmentExpirationLocked();
+                StopAdvertisingLocked();
+                var directEndpointInfo = BuildDirectEndpointInfo();
+                var generated = DeviceEnrollmentCode.Create(directEndpointInfo);
+                var session = new EnrollmentSession
+                {
+                    SessionId = generated.SessionId,
+                    Secret = generated.Secret,
+                    Code = generated.Code,
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+                    State = DeviceEnrollmentState.Waiting
+                };
+                StartAdvertisingLocked(session, directEndpointInfo.Hosts);
+                _currentSession = session;
+                StartEnrollmentExpirationCountdownLocked(session);
+                return new DeviceEnrollmentCodeResponse { Code = session.Code, ExpiresAt = session.ExpiresAt };
+            }
+        }
+        catch
+        {
+            await _syncRuntime.EndEnrollmentOnlyAsync(CancellationToken.None);
+            throw;
         }
     }
 
 
-    public Task<DeviceEnrollmentStatusResponse> GetEnrollmentStatusAsync(CancellationToken ct = default)
+    public async Task<DeviceEnrollmentStatusResponse> GetEnrollmentStatusAsync(CancellationToken ct = default)
     {
+        DeviceEnrollmentStatusResponse response;
+        var endTemporaryMode = false;
         lock (_lock)
         {
             if (_currentSession is null)
-                return Task.FromResult(new DeviceEnrollmentStatusResponse { State = DeviceEnrollmentState.None });
-
+                return new DeviceEnrollmentStatusResponse { State = DeviceEnrollmentState.None };
             ExpireSessionIfNeededLocked();
-
-            return Task.FromResult(new DeviceEnrollmentStatusResponse
+            response = new DeviceEnrollmentStatusResponse
             {
                 State = _currentSession.State,
                 ErrorMessage = _currentSession.ErrorMessage,
                 ErrorCode = _currentSession.ErrorCode,
                 ExpiresAt = _currentSession.ExpiresAt
-            });
+            };
+            endTemporaryMode = _currentSession.State is DeviceEnrollmentState.Expired or DeviceEnrollmentState.Failed or DeviceEnrollmentState.Completed;
         }
+        if (endTemporaryMode)
+            await _syncRuntime.EndEnrollmentOnlyAsync(ct);
+        return response;
     }
 
 
-    public Task CancelEnrollmentAsync(CancellationToken ct = default)
+    public async Task CancelEnrollmentAsync(CancellationToken ct = default)
     {
         lock (_lock)
         {
+            CancelEnrollmentExpirationLocked();
             StopAdvertisingLocked();
             _currentSession = null;
         }
-
-        return Task.CompletedTask;
+        await _syncRuntime.EndEnrollmentOnlyAsync(ct);
     }
 
 
     public async Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default)
     {
-        if (!_identity.IsSyncOn)
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.SyncDisabled, "Synchronization is disabled on this device. Turn synchronization on before adding a new device.");
+        using (var authorizationScope = _scopeFactory.CreateScope())
+        {
+            var users = authorizationScope.ServiceProvider.GetRequiredService<IUserService>();
+            var localUsers = authorizationScope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
+            var user = await users.GetAndVerifyUserAsync(token, ct);
+            if (!await localUsers.IsSyncOnAsync(user.UId, ct))
+                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.SyncDisabled, "Synchronization is disabled for this profile on the current device.");
+        }
 
         DeviceEnrollmentParsedCode parsed;
         try
@@ -298,6 +314,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var users = scope.ServiceProvider.GetRequiredService<IUserService>();
+        var cache = scope.ServiceProvider.GetRequiredService<IDataCachingService>();
         var syncIdentities = scope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
         var syncTasks = scope.ServiceProvider.GetRequiredService<IDeviceSyncTaskService>();
         var user = await users.GetAndVerifyUserAsync(token, ct);
@@ -307,6 +324,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         try
         {
             await RegisterRemoteDeviceAsync(scope.ServiceProvider, user.UId, endpoint, ct);
+            await EnsureEncryptedDeviceNameAsync(users, user, token, endpoint.DeviceId, ct);
             var snapshot = await BuildSnapshotAsync(scope.ServiceProvider, user.UId, ct);
 
             var proof = DeviceEnrollmentCode.BuildCompletionProof(
@@ -322,6 +340,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             await QueueInitialSyncAsync(scope.ServiceProvider, user.UId, endpoint.DeviceId, ct);
             await transaction.CommitAsync(ct);
+            cache.InvalidateToken(token);
 
             var remoteDevice = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.Id == endpoint.DeviceId, ct);
             if (remoteDevice is not null)
@@ -376,8 +395,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    public Task<DeviceEnrollmentInfoResponse> GetIncomingEnrollmentInfoAsync(string sessionId, byte[] codeProof, CancellationToken ct = default)
+    public async Task<DeviceEnrollmentInfoResponse> GetIncomingEnrollmentInfoAsync(string sessionId, byte[] codeProof, CancellationToken ct = default)
     {
+        DeviceEnrollmentInfoResponse response;
+        var endTemporaryMode = false;
+
         lock (_lock)
         {
             ExpireSessionIfNeededLocked();
@@ -385,68 +407,96 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             if (session is null || session.State != DeviceEnrollmentState.Waiting)
             {
-                return Task.FromResult(new DeviceEnrollmentInfoResponse
+                endTemporaryMode = session?.State is DeviceEnrollmentState.Expired or DeviceEnrollmentState.Failed or DeviceEnrollmentState.Completed;
+                response = new DeviceEnrollmentInfoResponse
                 {
                     Ok = false,
-                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
-                    Error = "No active enrollment session was found."
-                });
+                    ErrorCode = session?.ErrorCode ?? DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    Error = session?.ErrorMessage ?? "No active enrollment session was found."
+                };
             }
-
-            if (!string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
+            else if (!string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
             {
-                return Task.FromResult(new DeviceEnrollmentInfoResponse
-                {
-                    Ok = false,
-                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
-                    Error = "The enrollment session does not match."
-                });
-            }
-
-            if (DateTimeOffset.UtcNow > session.ExpiresAt)
-            {
-                session.State = DeviceEnrollmentState.Expired;
-                session.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
-                session.ErrorMessage = "The enrollment code expired.";
-                StopAdvertisingLocked();
-
-                return Task.FromResult(new DeviceEnrollmentInfoResponse
-                {
-                    Ok = false,
-                    ErrorCode = session.ErrorCode,
-                    Error = session.ErrorMessage
-                });
-            }
-
-            var expectedProof = DeviceEnrollmentCode.BuildEnrollmentInfoProof(sessionId, session.Secret);
-            if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
-            {
-                session.InvalidProofAttempts++;
-                if (session.InvalidProofAttempts >= SyncConstants.MaxEnrollmentInvalidProofAttempts)
-                {
-                    session.State = DeviceEnrollmentState.Failed;
-                    session.ErrorCode = DeviceEnrollmentErrorCode.CodeProofInvalid;
-                    session.ErrorMessage = "Too many invalid enrollment proof attempts.";
-                    StopAdvertisingLocked();
-                }
-
-                return Task.FromResult(new DeviceEnrollmentInfoResponse
+                var failure = RegisterFailedEnrollmentValidationLocked(
+                    session,
+                    DeviceEnrollmentErrorCode.CodeProofInvalid,
+                    "The enrollment session does not match the displayed code.");
+                endTemporaryMode = failure.LimitReached;
+                response = new DeviceEnrollmentInfoResponse
                 {
                     Ok = false,
                     ErrorCode = DeviceEnrollmentErrorCode.CodeProofInvalid,
-                    Error = session.ErrorMessage ?? "The enrollment code proof is invalid."
-                });
+                    Error = failure.Message
+                };
             }
-
-            return Task.FromResult(new DeviceEnrollmentInfoResponse
+            else
             {
-                Ok = true,
-                DeviceId = _identity.LocalDeviceId,
-                TlsCertFingerprint = _identity.FingerprintHex,
-                SignPublicKey = _identity.SignPublicKey,
-                AgreementPublicKey = _identity.AgreementPublicKey
-            });
+                var expectedProof = DeviceEnrollmentCode.BuildEnrollmentInfoProof(sessionId, session.Secret);
+                if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
+                {
+                    var failure = RegisterFailedEnrollmentValidationLocked(
+                        session,
+                        DeviceEnrollmentErrorCode.CodeProofInvalid,
+                        "The enrollment code proof is invalid.");
+                    endTemporaryMode = failure.LimitReached;
+                    response = new DeviceEnrollmentInfoResponse
+                    {
+                        Ok = false,
+                        ErrorCode = DeviceEnrollmentErrorCode.CodeProofInvalid,
+                        Error = failure.Message
+                    };
+                }
+                else
+                {
+                    response = new DeviceEnrollmentInfoResponse
+                    {
+                        Ok = true,
+                        DeviceId = _identity.LocalDeviceId,
+                        DeviceType = _identity.DeviceType,
+                        TlsCertFingerprint = _identity.FingerprintHex,
+                        SignPublicKey = _identity.SignPublicKey,
+                        AgreementPublicKey = _identity.AgreementPublicKey
+                    };
+                }
+            }
         }
+
+        if (endTemporaryMode)
+            await _syncRuntime.EndEnrollmentOnlyAsync(CancellationToken.None);
+
+        return response;
+    }
+
+
+    public async Task<string> RegisterIncomingEnrollmentValidationFailureAsync(
+        DeviceEnrollmentErrorCode errorCode,
+        string message,
+        CancellationToken ct = default)
+    {
+        var endEnrollmentOnlyMode = false;
+        var responseMessage = message;
+
+        lock (_lock)
+        {
+            ExpireSessionIfNeededLocked();
+            var current = _currentSession;
+
+            if (current is not null && current.State == DeviceEnrollmentState.Waiting)
+            {
+                var failure = RegisterFailedEnrollmentValidationLocked(current, errorCode, message);
+                endEnrollmentOnlyMode = failure.LimitReached;
+                responseMessage = failure.Message;
+            }
+            else if (current?.ErrorMessage is not null)
+            {
+                responseMessage = current.ErrorMessage;
+            }
+        }
+
+        if (endEnrollmentOnlyMode)
+            await _syncRuntime.EndEnrollmentOnlyAsync(CancellationToken.None);
+
+        return responseMessage;
     }
 
 
@@ -465,6 +515,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         CancellationToken ct = default)
     {
         EnrollmentSession? session;
+        (DeviceEnrollmentErrorCode Code, string Message)? earlyFailure = null;
+        var endTemporaryMode = false;
 
         lock (_lock)
         {
@@ -472,43 +524,54 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             session = _currentSession;
 
             if (session is null || session.State != DeviceEnrollmentState.Waiting)
-                return (false, DeviceEnrollmentErrorCode.NewDeviceRejected, "No active enrollment session was found.");
-
-            if (!string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
-                return (false, DeviceEnrollmentErrorCode.NewDeviceRejected, "The enrollment session does not match.");
-
-            if (DateTimeOffset.UtcNow > session.ExpiresAt)
             {
-                session.State = DeviceEnrollmentState.Expired;
-                session.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
-                session.ErrorMessage = "The enrollment code expired.";
-                StopAdvertisingLocked();
-                return (false, session.ErrorCode, session.ErrorMessage);
+                earlyFailure = (
+                    session?.ErrorCode ?? DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    session?.ErrorMessage ?? "No active enrollment session was found.");
+                endTemporaryMode = session?.State is DeviceEnrollmentState.Expired or DeviceEnrollmentState.Failed or DeviceEnrollmentState.Completed;
+            }
+            else if (!string.Equals(session.SessionId, sessionId, StringComparison.Ordinal))
+            {
+                var failure = RegisterFailedEnrollmentValidationLocked(
+                    session,
+                    DeviceEnrollmentErrorCode.CodeProofInvalid,
+                    "The enrollment session does not match the displayed code.");
+                earlyFailure = (DeviceEnrollmentErrorCode.CodeProofInvalid, failure.Message);
+                endTemporaryMode = failure.LimitReached;
             }
         }
+
+        if (earlyFailure is not null)
+        {
+            if (endTemporaryMode)
+                await _syncRuntime.EndEnrollmentOnlyAsync(CancellationToken.None);
+            return (false, earlyFailure.Value.Code, earlyFailure.Value.Message);
+        }
+
+        var activeSession = session!;
 
         if (!string.Equals(NormalizeFingerprint(sourceTlsCertFingerprint), NormalizeFingerprint(actualClientTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
         {
             DeviceEnrollmentTrace.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={NormalizeFingerprint(sourceTlsCertFingerprint)}, Actual={NormalizeFingerprint(actualClientTlsCertFingerprint)}.");
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.NewDeviceRejected, "The source device TLS certificate does not match the enrollment request.");
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.NewDeviceRejected, "The source device TLS certificate does not match the enrollment request.");
         }
 
         var expectedProof = DeviceEnrollmentCode.BuildCompletionProof(
             sessionId,
-            session.Secret,
+            activeSession.Secret,
             sourceDeviceId,
             sourceSignPublicKey,
             sourceTlsCertFingerprint);
 
         if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.CodeProofInvalid, "The enrollment code proof is invalid.");
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.CodeProofInvalid, "The enrollment code proof is invalid.");
 
         byte[] plaintextSnapshotBytes;
         try
         {
             plaintextSnapshotBytes = DecryptEnrollmentSnapshot(
                 sessionId,
-                session.Secret,
+                activeSession.Secret,
                 snapshotBytes,
                 sourceDeviceId,
                 sourceSignPublicKey,
@@ -519,11 +582,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
         catch (CryptographicException ex)
         {
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The encrypted enrollment snapshot could not be authenticated: {ex.Message}");
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The encrypted enrollment snapshot could not be authenticated: {ex.Message}");
         }
         catch (InvalidDataException ex)
         {
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
 
         DeviceEnrollmentSnapshot? snapshot;
@@ -534,11 +597,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
         catch (JsonException ex)
         {
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The received profile data is invalid: {ex.Message}");
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, $"The received profile data is invalid: {ex.Message}");
         }
         catch (InvalidDataException ex)
         {
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
         finally
         {
@@ -546,20 +609,21 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
 
         if (snapshot is null || snapshot.PrimaryUserId == Guid.Empty)
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The received profile data is empty.");
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The received profile data is empty.");
 
         try
         {
             using var scope = _scopeFactory.CreateScope();
             DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
             await ImportSnapshotAsync(scope.ServiceProvider, snapshot, ct);
+            await _syncRuntime.RefreshSyncEnabledAsync(ct);
             await CacheIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
             DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");
         }
         catch (Exception ex)
         {
             DeviceEnrollmentTrace.Error($"Incoming enrollment snapshot import failed: {ex.Message}", ex);
-            return await FailIncomingAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
 
         lock (_lock)
@@ -569,27 +633,44 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 _currentSession.State = DeviceEnrollmentState.Completed;
                 _currentSession.ErrorCode = DeviceEnrollmentErrorCode.Unknown;
                 _currentSession.ErrorMessage = null;
+                CancelEnrollmentExpirationLocked();
                 StopAdvertisingLocked();
             }
         }
 
+        await _syncRuntime.EndEnrollmentOnlyAsync(ct);
         return (true, DeviceEnrollmentErrorCode.Unknown, null);
 
-        Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> FailIncomingAsync(DeviceEnrollmentErrorCode errorCode, string message)
+        async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> RejectIncomingValidationAsync(DeviceEnrollmentErrorCode errorCode, string message)
         {
-            lock (_lock)
-            {
-                if (_currentSession is not null)
-                {
-                    _currentSession.State = DeviceEnrollmentState.Failed;
-                    _currentSession.ErrorCode = errorCode;
-                    _currentSession.ErrorMessage = message;
-                    StopAdvertisingLocked();
-                }
-            }
-
-            return Task.FromResult<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)>((false, errorCode, message));
+            var responseMessage = await RegisterIncomingEnrollmentValidationFailureAsync(errorCode, message, CancellationToken.None);
+            return (false, errorCode, responseMessage);
         }
+    }
+
+
+    private (bool LimitReached, string Message) RegisterFailedEnrollmentValidationLocked(
+        EnrollmentSession session,
+        DeviceEnrollmentErrorCode errorCode,
+        string message)
+    {
+        session.FailedValidationAttempts++;
+        var remainingAttempts = Math.Max(0, SyncConstants.MaxEnrollmentValidationAttempts - session.FailedValidationAttempts);
+
+        if (remainingAttempts == 0)
+        {
+            session.State = DeviceEnrollmentState.Failed;
+            session.ErrorCode = errorCode;
+            session.ErrorMessage = "Enrollment was stopped after three failed validation attempts. Generate a new enrollment code before trying again.";
+            CancelEnrollmentExpirationLocked();
+            StopAdvertisingLocked();
+            return (true, session.ErrorMessage);
+        }
+
+        var suffix = remainingAttempts == 1
+            ? "1 validation attempt remains."
+            : $"{remainingAttempts} validation attempts remain.";
+        return (false, $"{message} {suffix}");
     }
 
 
@@ -1003,6 +1084,75 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
+    private void StartEnrollmentExpirationCountdownLocked(EnrollmentSession session)
+    {
+        CancelEnrollmentExpirationLocked();
+        var cancellation = new CancellationTokenSource();
+        _enrollmentExpirationCancellation = cancellation;
+        _ = ExpireEnrollmentSessionAsync(session.SessionId, session.ExpiresAt, cancellation);
+    }
+
+
+    private async Task ExpireEnrollmentSessionAsync(string sessionId, DateTimeOffset expiresAt, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            var ct = cancellation.Token;
+            var delay = expiresAt - DateTimeOffset.UtcNow;
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay, ct);
+
+            var expired = false;
+            lock (_lock)
+            {
+                if (!ct.IsCancellationRequested &&
+                    _currentSession is not null &&
+                    string.Equals(_currentSession.SessionId, sessionId, StringComparison.Ordinal) &&
+                    _currentSession.State == DeviceEnrollmentState.Waiting)
+                {
+                    _currentSession.State = DeviceEnrollmentState.Expired;
+                    _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
+                    _currentSession.ErrorMessage = "The enrollment code expired.";
+                    _enrollmentExpirationCancellation = null;
+                    StopAdvertisingLocked();
+                    expired = true;
+                }
+            }
+
+            if (expired)
+                await _syncRuntime.EndEnrollmentOnlyAsync(CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            cancellation.Dispose();
+        }
+    }
+
+
+    private void CancelEnrollmentExpirationLocked()
+    {
+        var cancellation = _enrollmentExpirationCancellation;
+        _enrollmentExpirationCancellation = null;
+        if (cancellation is null)
+            return;
+
+        try
+        {
+            cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        cancellation.Dispose();
+    }
+
+
     private void StopAdvertisingLocked()
     {
         if (_currentSession?.Discovery is not null)
@@ -1028,6 +1178,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         _currentSession.State = DeviceEnrollmentState.Expired;
         _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
         _currentSession.ErrorMessage = "The enrollment code expired.";
+        CancelEnrollmentExpirationLocked();
         StopAdvertisingLocked();
     }
 
@@ -1274,7 +1425,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 PublicKey = endpoint.AgreementPublicKey,
                 SignPublicKey = endpoint.SignPublicKey,
                 TlsCertFingerprint = endpoint.TlsCertFingerprint,
-                DeviceName = DeviceNameUtil.BuildDefaultDeviceName(endpoint.DeviceId),
+                DeviceType = endpoint.DeviceType,
                 LastSync = now.UtcDateTime,
                 LastSeen = now.UtcDateTime,
                 IsTrusted = true,
@@ -1288,7 +1439,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             if (!device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
                 !device.PublicKey.SequenceEqual(endpoint.AgreementPublicKey) ||
-                !string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+                !string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
+                device.DeviceType != endpoint.DeviceType)
                 throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different device already uses this device identity.");
 
             device.IsTrusted = true;
@@ -1307,8 +1459,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             {
                 UserId = userId,
                 DeviceId = endpoint.DeviceId,
-                Name = await BuildUniqueDeviceNameAsync(db, userId, endpoint.DeviceId, device.DeviceName, ct),
-                IsSyncEnabled = true,
+                Device = device,
+                IsSyncOn = true,
                 IsDeleted = false,
                 LinkedAt = now,
                 LastModifiedAt = now
@@ -1317,13 +1469,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
         else
         {
+            link.Device = device;
             link.IsDeleted = false;
             link.DeletedAt = null;
-            link.IsSyncEnabled = true;
+            link.IsSyncOn = true;
             link.LastModifiedAt = now;
         }
 
-        await EnsureLocalDeviceAndLinkAsync(db, userId, ct);
+        await EnsureLocalUserDeviceAsync(db, userId, ct);
         await db.SaveChangesAsync(ct);
     }
 
@@ -1405,7 +1558,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var devices = await db.Devices.AsNoTracking()
             .Include(d => d.UserDevices)
-            .Where(d => userDeviceIds.Contains(d.Id))
+            .Where(d => d.Id != _identity.LocalDeviceId && userDeviceIds.Contains(d.Id))
             .ToListAsync(ct);
 
         var userDevices = await db.UserDevices.AsNoTracking()
@@ -1414,11 +1567,62 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         foreach (var device in devices)
             device.GenerateIntegrityHash();
-
         foreach (var group in groups)
             group.GenerateIntegrityHash();
-
         user.GenerateIntegrityHash();
+
+        var deviceSnapshots = devices.Select(d => new DeviceEnrollmentDeviceSnapshot
+        {
+            Id = d.Id,
+            PublicKey = d.PublicKey,
+            SignPublicKey = d.SignPublicKey,
+            TlsCertFingerprint = d.TlsCertFingerprint,
+            DeviceType = d.DeviceType,
+            LastKnownHash = d.LastKnownHash,
+            LastSync = d.LastSync,
+            LastSeen = d.LastSeen,
+            IsTrusted = d.IsTrusted,
+            IsBlocked = d.IsBlocked,
+            BlockedReason = d.BlockedReason,
+            BlockedAt = d.BlockedAt,
+            InvalidSyncAttemptCount = d.InvalidSyncAttemptCount,
+            LastInvalidSyncAttemptAt = d.LastInvalidSyncAttemptAt,
+            LastModifiedAt = d.LastModifiedAt,
+            IntegrityHash = d.IntegrityHash,
+            UserIds = d.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
+        }).ToList();
+
+        var now = DateTimeOffset.UtcNow;
+        var localDevice = new Device
+        {
+            Id = _identity.LocalDeviceId,
+            PublicKey = _identity.AgreementPublicKey,
+            SignPublicKey = _identity.SignPublicKey,
+            TlsCertFingerprint = _identity.FingerprintHex,
+            DeviceType = _identity.DeviceType,
+            LastSync = now.UtcDateTime,
+            LastSeen = now.UtcDateTime,
+            IsTrusted = true,
+            IsBlocked = false,
+            LastModifiedAt = now
+        };
+        localDevice.GenerateIntegrityHash();
+        deviceSnapshots.Add(new DeviceEnrollmentDeviceSnapshot
+        {
+            Id = localDevice.Id,
+            PublicKey = localDevice.PublicKey,
+            SignPublicKey = localDevice.SignPublicKey,
+            TlsCertFingerprint = localDevice.TlsCertFingerprint,
+            DeviceType = localDevice.DeviceType,
+            LastKnownHash = localDevice.LastKnownHash,
+            LastSync = localDevice.LastSync,
+            LastSeen = localDevice.LastSeen,
+            IsTrusted = true,
+            IsBlocked = false,
+            LastModifiedAt = localDevice.LastModifiedAt,
+            IntegrityHash = localDevice.IntegrityHash,
+            UserIds = [userId]
+        });
 
         return new DeviceEnrollmentSnapshot
         {
@@ -1445,52 +1649,73 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 IntegrityHash = g.IntegrityHash,
                 UserIds = g.Users.Select(u => u.UId).Distinct().ToList()
             }).ToList(),
-            Devices = devices.Select(d => new DeviceEnrollmentDeviceSnapshot
-            {
-                Id = d.Id,
-                PublicKey = d.PublicKey,
-                SignPublicKey = d.SignPublicKey,
-                TlsCertFingerprint = d.TlsCertFingerprint,
-                DeviceName = d.DeviceName,
-                LastKnownHash = d.LastKnownHash,
-                LastSync = d.LastSync,
-                LastSeen = d.LastSeen,
-                IsTrusted = d.IsTrusted,
-                IsBlocked = d.IsBlocked,
-                BlockedReason = d.BlockedReason,
-                BlockedAt = d.BlockedAt,
-                InvalidSyncAttemptCount = d.InvalidSyncAttemptCount,
-                LastInvalidSyncAttemptAt = d.LastInvalidSyncAttemptAt,
-                LastModifiedAt = d.LastModifiedAt,
-                IntegrityHash = d.IntegrityHash,
-                UserIds = d.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
-            }).ToList(),
+            Devices = deviceSnapshots,
             UserDevices = userDevices.Select(ud => new DeviceEnrollmentUserDeviceSnapshot
             {
                 UserId = ud.UserId,
                 DeviceId = ud.DeviceId,
-                Name = ud.Name,
-                IsSyncEnabled = ud.IsSyncEnabled,
+                IsSyncOn = ud.IsSyncOn,
                 IsDeleted = ud.IsDeleted,
                 LinkedAt = ud.LinkedAt,
                 DeletedAt = ud.DeletedAt,
                 LastModifiedAt = ud.LastModifiedAt
+            }).Append(new DeviceEnrollmentUserDeviceSnapshot
+            {
+                UserId = userId,
+                DeviceId = _identity.LocalDeviceId,
+                IsSyncOn = true,
+                IsDeleted = false,
+                LinkedAt = now,
+                LastModifiedAt = now
             }).ToList()
         };
     }
 
 
-    private async Task<EnrollmentEndpoint> ResolveEndpointIdentityAsync(EnrollmentEndpoint endpoint, DeviceEnrollmentParsedCode parsed, CancellationToken ct)
+    private async Task EnsureEncryptedDeviceNameAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct)
     {
-        if (endpoint.DeviceId != Guid.Empty &&
-            !string.IsNullOrWhiteSpace(endpoint.TlsCertFingerprint) &&
-            endpoint.SignPublicKey.Length == SyncConstants.SyncDeltaEd25519PublicKeyBytes &&
-            endpoint.AgreementPublicKey.Length == SyncConstants.SyncDeltaX25519PublicKeyBytes)
+        using var userData = await users.GetAndVerifyUserDataAsync(user, token);
+        if (userData.UserDevices.Devices.Any(device => device.Id == deviceId))
+            return;
+
+        var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
+        var name = BuildUniqueEncryptedDeviceName(userData, baseName, deviceId);
+        var deviceData = new UserDeviceData { Id = deviceId, Name = name };
+        deviceData.GenerateIntegrityHash();
+        userData.UserDevices.Devices.Add(deviceData);
+        userData.UserDevices.GenerateIntegrityHash();
+        await users.UpdateUserDataAsync(userData, token, false, ct);
+    }
+
+
+    private static string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
+    {
+        var baseName = string.IsNullOrWhiteSpace(requestedName)
+            ? DeviceNameUtil.BuildDefaultDeviceName(deviceId)
+            : requestedName.Trim();
+
+        bool IsTaken(string value) => userData.UserDevices.Devices.Any(device =>
+            device.Id != deviceId && string.Equals(device.Name, value, StringComparison.OrdinalIgnoreCase));
+
+        if (!IsTaken(baseName))
+            return baseName;
+
+        for (var i = 2; i < 100; i++)
         {
-            return endpoint;
+            var suffix = $"-{i}";
+            var prefixLength = Math.Min(baseName.Length, 64 - suffix.Length);
+            var candidate = baseName[..prefixLength] + suffix;
+            if (!IsTaken(candidate))
+                return candidate;
         }
 
-        DeviceEnrollmentTrace.Info($"Fetching enrollment identity from {endpoint.Host}:{endpoint.Port}.");
+        throw new InvalidInputException();
+    }
+
+
+    private async Task<EnrollmentEndpoint> ResolveEndpointIdentityAsync(EnrollmentEndpoint endpoint, DeviceEnrollmentParsedCode parsed, CancellationToken ct)
+    {
+        DeviceEnrollmentTrace.Info($"Fetching and verifying enrollment identity from {endpoint.Host}:{endpoint.Port}.");
         var info = await FetchEnrollmentInfoAsync(endpoint, parsed, ct);
         if (!info.Ok)
         {
@@ -1498,13 +1723,30 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             throw new DeviceEnrollmentException(info.ErrorCode, info.Error ?? "The new device did not return its enrollment identity.");
         }
 
-        DeviceEnrollmentTrace.Info($"Fetched enrollment identity from {endpoint.Host}:{endpoint.Port}. DeviceId={info.DeviceId}.");
+        DeviceEnrollmentTrace.Info($"Fetched enrollment identity from {endpoint.Host}:{endpoint.Port}. DeviceId={info.DeviceId}, DeviceType={info.DeviceType}.");
 
         if (info.DeviceId == Guid.Empty ||
             string.IsNullOrWhiteSpace(info.TlsCertFingerprint) ||
             info.SignPublicKey.Length != SyncConstants.SyncDeltaEd25519PublicKeyBytes ||
-            info.AgreementPublicKey.Length != SyncConstants.SyncDeltaX25519PublicKeyBytes)
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The new device returned incomplete enrollment identity data.");
+            info.AgreementPublicKey.Length != SyncConstants.SyncDeltaX25519PublicKeyBytes ||
+            !DeviceTypeDetector.IsValid(info.DeviceType))
+        {
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The new device returned incomplete or invalid enrollment identity data.");
+        }
+
+        if (endpoint.DeviceId != Guid.Empty && endpoint.DeviceId != info.DeviceId)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code device id does not match the responding device.");
+
+        if (endpoint.SignPublicKey.Length > 0 && !endpoint.SignPublicKey.SequenceEqual(info.SignPublicKey))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code signing key does not match the responding device.");
+
+        if (endpoint.AgreementPublicKey.Length > 0 && !endpoint.AgreementPublicKey.SequenceEqual(info.AgreementPublicKey))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code agreement key does not match the responding device.");
+
+        var expectedFingerprint = NormalizeFingerprint(endpoint.TlsCertFingerprint);
+        var actualFingerprint = NormalizeFingerprint(info.TlsCertFingerprint);
+        if (expectedFingerprint.Length > 0 && !actualFingerprint.StartsWith(expectedFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code TLS fingerprint does not match the responding device.");
 
         var resolved = new EnrollmentEndpoint
         {
@@ -1513,7 +1755,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             DeviceId = info.DeviceId,
             TlsCertFingerprint = info.TlsCertFingerprint,
             SignPublicKey = info.SignPublicKey,
-            AgreementPublicKey = info.AgreementPublicKey
+            AgreementPublicKey = info.AgreementPublicKey,
+            DeviceType = info.DeviceType
         };
 
         if (IsLocalEndpoint(resolved))
@@ -1557,10 +1800,21 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 };
             }
 
+            if (reply.DeviceType > byte.MaxValue || !DeviceTypeDetector.IsValid((DeviceType)(byte)reply.DeviceType))
+            {
+                return new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    Error = "The new device returned an invalid device type."
+                };
+            }
+
             return new DeviceEnrollmentInfoResponse
             {
                 Ok = true,
                 DeviceId = deviceId,
+                DeviceType = (DeviceType)(byte)reply.DeviceType,
                 TlsCertFingerprint = reply.TlsCertFingerprint,
                 SignPublicKey = reply.SignPub.ToByteArray(),
                 AgreementPublicKey = reply.AgreementPub.ToByteArray()
@@ -1796,6 +2050,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     [
         "SavedKey",
         "LocalDeviceIdentity",
+        "LocalUserDevice",
+        "LocalUserDevices",
         "DeviceIdentity",
         "AgreementPrivateKeyBlob",
         "SignPrivateKeyBlob",
@@ -1838,13 +2094,19 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var now = DateTimeOffset.UtcNow;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
-        await EnsureLocalDeviceOnlyAsync(db, ct);
+        await RemoveLocalDeviceRowsAsync(db, ct);
 
         foreach (var deviceSnapshot in snapshot.Devices)
         {
+            if (!DeviceTypeDetector.IsValid(deviceSnapshot.DeviceType))
+                throw new InvalidDataException("The enrollment snapshot contains an invalid device type.");
+
             var isLocalDevice = deviceSnapshot.Id == _identity.LocalDeviceId ||
                 deviceSnapshot.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
                 string.Equals(NormalizeFingerprint(deviceSnapshot.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
+
+            if (isLocalDevice)
+                continue;
 
             var device = await db.Devices.FirstOrDefaultAsync(d => d.Id == deviceSnapshot.Id, ct);
             if (device is null)
@@ -1853,36 +2115,19 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 await db.Devices.AddAsync(device, ct);
             }
 
-            if (isLocalDevice)
-            {
-                device.PublicKey = _identity.AgreementPublicKey;
-                device.SignPublicKey = _identity.SignPublicKey;
-                device.TlsCertFingerprint = _identity.FingerprintHex;
-                device.DeviceName = _identity.DeviceName;
-                device.LastSync = now.UtcDateTime;
-                device.LastSeen = now.UtcDateTime;
-                device.IsTrusted = true;
-                device.IsBlocked = false;
-                device.BlockedReason = null;
-                device.BlockedAt = null;
-            }
-            else
-            {
-                device.PublicKey = deviceSnapshot.PublicKey;
-                device.SignPublicKey = deviceSnapshot.SignPublicKey;
-                device.TlsCertFingerprint = deviceSnapshot.TlsCertFingerprint;
-                device.DeviceName = deviceSnapshot.DeviceName;
-                device.LastSync = deviceSnapshot.LastSync;
-                device.LastSeen = deviceSnapshot.LastSeen;
-                device.IsTrusted = true;
-                device.IsBlocked = deviceSnapshot.IsBlocked;
-                device.BlockedReason = deviceSnapshot.BlockedReason;
-                device.BlockedAt = deviceSnapshot.BlockedAt;
-            }
-
+            device.PublicKey = deviceSnapshot.PublicKey;
+            device.SignPublicKey = deviceSnapshot.SignPublicKey;
+            device.TlsCertFingerprint = deviceSnapshot.TlsCertFingerprint;
+            device.DeviceType = deviceSnapshot.DeviceType;
             device.LastKnownHash = deviceSnapshot.LastKnownHash;
-            device.InvalidSyncAttemptCount = isLocalDevice ? 0 : deviceSnapshot.InvalidSyncAttemptCount;
-            device.LastInvalidSyncAttemptAt = isLocalDevice ? null : deviceSnapshot.LastInvalidSyncAttemptAt;
+            device.LastSync = deviceSnapshot.LastSync;
+            device.LastSeen = deviceSnapshot.LastSeen;
+            device.IsTrusted = true;
+            device.IsBlocked = deviceSnapshot.IsBlocked;
+            device.BlockedReason = deviceSnapshot.BlockedReason;
+            device.BlockedAt = deviceSnapshot.BlockedAt;
+            device.InvalidSyncAttemptCount = deviceSnapshot.InvalidSyncAttemptCount;
+            device.LastInvalidSyncAttemptAt = deviceSnapshot.LastInvalidSyncAttemptAt;
             device.LastModifiedAt = deviceSnapshot.LastModifiedAt == default ? now : deviceSnapshot.LastModifiedAt;
             device.GenerateIntegrityHash();
         }
@@ -1945,36 +2190,36 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var linkSnapshots = snapshot.UserDevices
             .Where(ud => ud.UserId != Guid.Empty && ud.DeviceId != Guid.Empty)
             .GroupBy(ud => new { ud.UserId, ud.DeviceId })
-            .Select(g => g.OrderByDescending(ud => ud.LastModifiedAt).First())
+            .Select(group => group.OrderByDescending(ud => ud.LastModifiedAt).First())
             .ToList();
 
         foreach (var linkSnapshot in linkSnapshots)
         {
-            var link = await GetOrCreateTrackedUserDeviceAsync(db, linkSnapshot.UserId, linkSnapshot.DeviceId, ct);
+            if (linkSnapshot.DeviceId == _identity.LocalDeviceId)
+                continue;
 
-            link.Name = string.IsNullOrWhiteSpace(linkSnapshot.Name) ? DeviceNameUtil.BuildDefaultDeviceName(linkSnapshot.DeviceId) : linkSnapshot.Name.Trim();
-            link.IsSyncEnabled = linkSnapshot.IsSyncEnabled;
+            var remoteDevice = await db.Devices.FirstOrDefaultAsync(d => d.Id == linkSnapshot.DeviceId, ct);
+            if (remoteDevice is null)
+                continue;
+
+            var link = await GetOrCreateTrackedUserDeviceAsync(db, linkSnapshot.UserId, linkSnapshot.DeviceId, ct);
+            link.Device = remoteDevice;
+            link.IsSyncOn = linkSnapshot.IsSyncOn;
             link.IsDeleted = linkSnapshot.IsDeleted;
             link.LinkedAt = linkSnapshot.LinkedAt == default ? now : linkSnapshot.LinkedAt;
             link.DeletedAt = linkSnapshot.DeletedAt;
             link.LastModifiedAt = linkSnapshot.LastModifiedAt == default ? now : linkSnapshot.LastModifiedAt;
         }
 
-        var localLink = await GetOrCreateTrackedUserDeviceAsync(db, snapshot.PrimaryUserId, _identity.LocalDeviceId, ct);
-        if (string.IsNullOrWhiteSpace(localLink.Name))
-            localLink.Name = await BuildUniqueDeviceNameAsync(db, snapshot.PrimaryUserId, _identity.LocalDeviceId, _identity.DeviceName, ct);
+        await EnsureLocalUserDeviceAsync(db, snapshot.PrimaryUserId, ct);
 
-        localLink.IsSyncEnabled = true;
-        localLink.IsDeleted = false;
-        localLink.DeletedAt = null;
-        localLink.LinkedAt = localLink.LinkedAt == default ? now : localLink.LinkedAt;
-        localLink.LastModifiedAt = now;
-
+        await db.SaveChangesAsync(ct);
+        await RemoveLocalDeviceRowsAsync(db, ct);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
 
         var trustedDevices = await db.Devices.AsNoTracking()
-            .Where(d => d.Id != _identity.LocalDeviceId && d.IsTrusted && !d.IsBlocked)
+            .Where(d => d.IsTrusted && !d.IsBlocked)
             .ToListAsync(ct);
 
         foreach (var device in trustedDevices)
@@ -2007,99 +2252,36 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private async Task EnsureLocalDeviceOnlyAsync(AppDbContext db, CancellationToken ct)
+    private async Task RemoveLocalDeviceRowsAsync(AppDbContext db, CancellationToken ct)
     {
-        var now = DateTimeOffset.UtcNow;
-        var device = await db.Devices.FirstOrDefaultAsync(d => d.Id == _identity.LocalDeviceId, ct);
-        if (device is null)
-        {
-            device = new Device
-            {
-                Id = _identity.LocalDeviceId,
-                PublicKey = _identity.AgreementPublicKey,
-                SignPublicKey = _identity.SignPublicKey,
-                TlsCertFingerprint = _identity.FingerprintHex,
-                DeviceName = _identity.DeviceName,
-                LastSync = now.UtcDateTime,
-                LastSeen = now.UtcDateTime,
-                IsTrusted = true,
-                IsBlocked = false,
-                LastModifiedAt = now
-            };
-            device.GenerateIntegrityHash();
-            await db.Devices.AddAsync(device, ct);
-        }
-        else
-        {
-            device.PublicKey = _identity.AgreementPublicKey;
-            device.SignPublicKey = _identity.SignPublicKey;
-            device.TlsCertFingerprint = _identity.FingerprintHex;
-            device.DeviceName = _identity.DeviceName;
-            device.IsTrusted = true;
-            device.IsBlocked = false;
-            device.LastSeen = now.UtcDateTime;
-            device.LastModifiedAt = now;
-            device.GenerateIntegrityHash();
-        }
+        var devices = await db.Devices.ToListAsync(ct);
+        var localRows = devices.Where(device =>
+            device.Id == _identity.LocalDeviceId ||
+            device.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
+            string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (localRows.Count != 0)
+            db.Devices.RemoveRange(localRows);
     }
 
 
-    private async Task EnsureLocalDeviceAndLinkAsync(AppDbContext db, Guid userId, CancellationToken ct)
+    private async Task EnsureLocalUserDeviceAsync(AppDbContext db, Guid userId, CancellationToken ct)
     {
-        var now = DateTimeOffset.UtcNow;
-        var device = await db.Devices.FirstOrDefaultAsync(d => d.Id == _identity.LocalDeviceId, ct);
-        if (device is null)
-        {
-            device = new Device
-            {
-                Id = _identity.LocalDeviceId,
-                PublicKey = _identity.AgreementPublicKey,
-                SignPublicKey = _identity.SignPublicKey,
-                TlsCertFingerprint = _identity.FingerprintHex,
-                DeviceName = _identity.DeviceName,
-                LastSync = now.UtcDateTime,
-                LastSeen = now.UtcDateTime,
-                IsTrusted = true,
-                IsBlocked = false,
-                LastModifiedAt = now
-            };
-            device.GenerateIntegrityHash();
-            await db.Devices.AddAsync(device, ct);
-        }
-        else
-        {
-            device.PublicKey = _identity.AgreementPublicKey;
-            device.SignPublicKey = _identity.SignPublicKey;
-            device.TlsCertFingerprint = _identity.FingerprintHex;
-            device.DeviceName = _identity.DeviceName;
-            device.IsTrusted = true;
-            device.IsBlocked = false;
-            device.LastSeen = now.UtcDateTime;
-            device.LastModifiedAt = now;
-            device.GenerateIntegrityHash();
-        }
-
-        var link = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == userId && ud.DeviceId == _identity.LocalDeviceId, ct);
+        await RemoveLocalDeviceRowsAsync(db, ct);
+        var link = await db.LocalUserDevices.FirstOrDefaultAsync(x => x.UserId == userId, ct);
         if (link is null)
         {
-            await db.UserDevices.AddAsync(new UserDevice
+            await db.LocalUserDevices.AddAsync(new LocalUserDevice
             {
                 UserId = userId,
-                DeviceId = _identity.LocalDeviceId,
-                Name = await BuildUniqueDeviceNameAsync(db, userId, _identity.LocalDeviceId, _identity.DeviceName, ct),
-                IsSyncEnabled = true,
-                IsDeleted = false,
-                LinkedAt = now,
-                LastModifiedAt = now
+                LocalDeviceIdentityId = _identity.LocalDeviceId,
+                IsSyncOn = true,
+                LinkedAt = DateTimeOffset.UtcNow
             }, ct);
+            return;
         }
-        else
-        {
-            link.IsDeleted = false;
-            link.DeletedAt = null;
-            link.IsSyncEnabled = true;
-            link.LastModifiedAt = now;
-        }
+        link.LocalDeviceIdentityId = _identity.LocalDeviceId;
     }
 
 
@@ -2123,37 +2305,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static async Task<string> BuildUniqueDeviceNameAsync(AppDbContext db, Guid userId, Guid deviceId, string requestedName, CancellationToken ct)
-    {
-        var baseName = string.IsNullOrWhiteSpace(requestedName) ? DeviceNameUtil.BuildDefaultDeviceName(deviceId) : requestedName.Trim();
-        if (!await IsNameTakenAsync(db, userId, baseName, deviceId, ct))
-            return baseName;
-
-        for (var i = 2; i < 100; i++)
-        {
-            var suffix = $"-{i}";
-            var prefixLength = Math.Min(baseName.Length, 64 - suffix.Length);
-            var name = baseName[..prefixLength] + suffix;
-
-            if (!await IsNameTakenAsync(db, userId, name, deviceId, ct))
-                return name;
-        }
-
-        return DeviceNameUtil.BuildDefaultDeviceName(deviceId);
-    }
-
-
-    private static Task<bool> IsNameTakenAsync(AppDbContext db, Guid userId, string name, Guid exceptDeviceId, CancellationToken ct)
-    {
-        var normalized = name.Trim().ToUpperInvariant();
-        return db.UserDevices.AsNoTracking().AnyAsync(ud =>
-            ud.UserId == userId &&
-            !ud.IsDeleted &&
-            ud.DeviceId != exceptDeviceId &&
-            ud.Name.ToUpper() == normalized, ct);
-    }
-
-
     private static string NormalizeFingerprint(string fingerprint) =>
         fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
 
@@ -2162,6 +2313,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         lock (_lock)
         {
+            CancelEnrollmentExpirationLocked();
             StopAdvertisingLocked();
             _currentSession = null;
         }

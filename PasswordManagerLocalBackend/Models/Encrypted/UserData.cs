@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
@@ -14,9 +14,8 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
     public string Email { get; set; } = string.Empty;
     public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
     public DateTime LastLoginDate { get; set; } = DateTime.UtcNow;
-
     public SecurePasswords Passwords { get; set; } = new();
-
+    public SecureUserDevices UserDevices { get; set; } = new();
 
     public void Dispose()
     {
@@ -39,12 +38,13 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
         CryptographicOperations.ZeroMemory(IntegrityHash);
 
         if (disposing)
+        {
             Passwords.Dispose();
+            UserDevices.Dispose();
+        }
 
         _disposed = true;
     }
-
-
 
     public override byte[] CalculateIntegrityHash()
     {
@@ -58,8 +58,8 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
         bw.Write(Email);
         bw.Write(RegistrationDate.ToBinary());
         bw.Write(LastLoginDate.ToBinary());
-
         bw.Write(Passwords.IntegrityHash);
+        bw.Write(UserDevices.IntegrityHash);
 
         return Hashing.SHA512Hash(ms.ToArray());
     }

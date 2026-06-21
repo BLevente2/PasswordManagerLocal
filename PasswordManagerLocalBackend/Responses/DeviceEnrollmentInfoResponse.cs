@@ -1,4 +1,5 @@
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models;
 
 namespace PasswordManagerLocalBackend.Responses;
 
@@ -8,6 +9,7 @@ public sealed class DeviceEnrollmentInfoResponse
     public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
     public string? Error { get; set; }
     public Guid DeviceId { get; set; }
+    public DeviceType DeviceType { get; set; }
     public string TlsCertFingerprint { get; set; } = string.Empty;
     public byte[] SignPublicKey { get; set; } = [];
     public byte[] AgreementPublicKey { get; set; } = [];

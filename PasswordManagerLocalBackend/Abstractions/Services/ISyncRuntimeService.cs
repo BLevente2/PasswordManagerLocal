@@ -1,8 +1,10 @@
-﻿namespace PasswordManagerLocalBackend.Abstractions.Services;
+namespace PasswordManagerLocalBackend.Abstractions.Services;
 
 public interface ISyncRuntimeService
 {
-    Task SetSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default);
+    Task RefreshSyncEnabledAsync(CancellationToken ct = default);
+    Task BeginEnrollmentOnlyAsync(CancellationToken ct = default);
+    Task EndEnrollmentOnlyAsync(CancellationToken ct = default);
     Task StartAsync(CancellationToken ct = default);
     Task StopAsync(CancellationToken ct = default);
 }

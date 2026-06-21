@@ -5,7 +5,7 @@ using static PasswordManagerLocalBackend.Constants.SyncConstants;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class SyncNetworkRefreshHostedService : IHostedService, IDisposable
+public sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedService, IDisposable
 {
     private readonly IDeviceIdentityService _identity;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
@@ -33,9 +33,12 @@ public sealed class SyncNetworkRefreshHostedService : IHostedService, IDisposabl
 
 
 
+    public int StartOrder => 50;
+
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        if (_started)
+        if (_started || !_identity.IsSyncOn)
             return Task.CompletedTask;
 
         NetworkChange.NetworkAddressChanged += OnNetworkChanged;

@@ -59,24 +59,6 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
 
 
 
-    public async Task<UserDevice?> GetActiveByNameAsync(Guid userId, string name, Guid? exceptDeviceId = null, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            return null;
-
-        var normalizedName = name.Trim().ToUpper();
-
-        return await _set
-            .Include(ud => ud.Device)
-            .Include(ud => ud.User)
-            .FirstOrDefaultAsync(ud =>
-                ud.UserId == userId &&
-                !ud.IsDeleted &&
-                ud.Name.ToUpper() == normalizedName &&
-                (exceptDeviceId == null || ud.DeviceId != exceptDeviceId.Value), ct);
-    }
-
-
     public async Task<bool> ExistsAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
         await _set.AnyAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct);
 
@@ -86,7 +68,7 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
             ud.UserId == userId &&
             ud.DeviceId == deviceId &&
             !ud.IsDeleted &&
-            ud.IsSyncEnabled, ct);
+            ud.IsSyncOn, ct);
 
 
     public async Task<bool> HasAnyActiveLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
@@ -94,7 +76,7 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
 
 
     public async Task<bool> HasAnyActiveSyncEnabledLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
-        await _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && !ud.IsDeleted && ud.IsSyncEnabled, ct);
+        await _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && !ud.IsDeleted && ud.IsSyncOn, ct);
 
 
     public async Task<bool> HasAnyDeletedLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
@@ -111,7 +93,7 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
     public async Task<bool> SharesActiveUserAsync(Guid sourceDeviceId, Guid targetDeviceId, CancellationToken ct = default)
     {
         var sourceUserIds = await _set.AsNoTracking()
-            .Where(ud => ud.DeviceId == sourceDeviceId && !ud.IsDeleted && ud.IsSyncEnabled)
+            .Where(ud => ud.DeviceId == sourceDeviceId && !ud.IsDeleted && ud.IsSyncOn)
             .Select(ud => ud.UserId)
             .ToListAsync(ct);
 
@@ -125,21 +107,6 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
     }
 
 
-
-
-    public async Task<bool> IsNameTakenAsync(Guid userId, string name, Guid? exceptDeviceId = null, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            return false;
-
-        var normalizedName = name.Trim().ToUpper();
-
-        return await _set.AsNoTracking().AnyAsync(ud =>
-            ud.UserId == userId &&
-            !ud.IsDeleted &&
-            ud.Name.ToUpper() == normalizedName &&
-            (exceptDeviceId == null || ud.DeviceId != exceptDeviceId.Value), ct);
-    }
 
 
     public Task AddAsync(UserDevice userDevice, CancellationToken ct = default) =>

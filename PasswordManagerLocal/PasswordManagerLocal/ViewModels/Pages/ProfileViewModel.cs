@@ -611,6 +611,14 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string DeviceNameLabel => GetTranslation("Profile_Device_Name");
 
+    public string DeviceTypeLabel => GetTranslation("Profile_Device_Type");
+
+    public string WindowsPcDeviceTypeLabel => GetTranslation("Profile_Device_Type_WindowsPc");
+
+    public string AndroidMobileDeviceTypeLabel => GetTranslation("Profile_Device_Type_AndroidMobile");
+
+    public string UnknownDeviceTypeLabel => GetTranslation("Profile_Device_Type_Unknown");
+
     public string DeviceLastSeenLabel => GetTranslation("Profile_Device_LastSeen");
 
     public string DeviceLastSyncLabel => GetTranslation("Profile_Device_LastSync");
@@ -719,6 +727,10 @@ public sealed class ProfileViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(UnblockDeviceLabel));
         this.RaisePropertyChanged(nameof(DisconnectDeviceLabel));
         this.RaisePropertyChanged(nameof(DeviceNameLabel));
+        this.RaisePropertyChanged(nameof(DeviceTypeLabel));
+        this.RaisePropertyChanged(nameof(WindowsPcDeviceTypeLabel));
+        this.RaisePropertyChanged(nameof(AndroidMobileDeviceTypeLabel));
+        this.RaisePropertyChanged(nameof(UnknownDeviceTypeLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
         this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
@@ -1142,6 +1154,9 @@ public sealed class ProfileViewModel : ViewModelBase
             SyncDisabledLabel,
             SyncToggleOnLabel,
             SyncToggleOffLabel,
+            WindowsPcDeviceTypeLabel,
+            AndroidMobileDeviceTypeLabel,
+            UnknownDeviceTypeLabel,
             SaveDeviceNameLabel,
             UnblockDeviceLabel,
             DisconnectDeviceLabel,
@@ -1222,7 +1237,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
         ClearStatusMessage();
 
-        var targetState = !device.IsSyncEnabled;
+        var targetState = !device.IsSyncOn;
 
         if (device.IsCurrentDevice)
         {
@@ -1234,7 +1249,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
         try
         {
-            await _endpoints.SetUserDeviceSyncEnabledAsync(_token, device.DeviceId, targetState);
+            await _endpoints.SetUserDeviceSyncOnAsync(_token, device.DeviceId, targetState);
             device.ApplySyncState(targetState);
             if (!await LoadDevicesAsync())
                 return;
@@ -1349,7 +1364,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
         try
         {
-            await _endpoints.SetLocalDeviceSyncEnabledAsync(targetState);
+            await _endpoints.SetLocalUserSyncOnAsync(_token, targetState);
             PendingLocalSyncDevice.ApplySyncState(targetState);
             CancelLocalSyncToggle();
             if (!await LoadDevicesAsync())
@@ -1374,7 +1389,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
         try
         {
-            var isLocalSyncOn = await _endpoints.GetLocalDeviceSyncEnabledAsync();
+            var isLocalSyncOn = await _endpoints.GetLocalUserSyncOnAsync(_token);
             if (!isLocalSyncOn)
             {
                 ShowErrorMessage(GetTranslation("Profile_Device_AddSyncDisabled"));
@@ -1532,7 +1547,7 @@ public sealed class ProfileViewModel : ViewModelBase
             var searchTerm = DeviceSearchQuery.Trim();
             query = query.Where(item =>
                 item.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
-                || item.DeviceName.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
+                || item.DeviceTypeText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
                 || item.TrustStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
                 || item.SyncStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase));
         }
@@ -1601,6 +1616,9 @@ public sealed class ProfileViewModel : ViewModelBase
                 SyncDisabledLabel,
                 SyncToggleOnLabel,
                 SyncToggleOffLabel,
+                WindowsPcDeviceTypeLabel,
+                AndroidMobileDeviceTypeLabel,
+                UnknownDeviceTypeLabel,
                 SaveDeviceNameLabel,
                 UnblockDeviceLabel,
                 DisconnectDeviceLabel,

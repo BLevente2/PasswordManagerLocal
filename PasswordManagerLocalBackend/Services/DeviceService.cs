@@ -3,6 +3,7 @@ using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Utils;
@@ -17,6 +18,7 @@ public sealed class DeviceService : IDeviceService
     private readonly IDeviceIdentityService _identity;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
+    private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly ISyncQueueService _syncQueue;
     private readonly ISyncQueueRepository _syncQueueItems;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
@@ -29,6 +31,7 @@ public sealed class DeviceService : IDeviceService
         IDeviceIdentityService identity,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
+        ILocalUserDeviceRepository localUserDevices,
         ISyncQueueService syncQueue,
         ISyncQueueRepository syncQueueItems,
         ISyncDeviceIdentityService syncDeviceIdentities,
@@ -40,6 +43,7 @@ public sealed class DeviceService : IDeviceService
         _identity = identity;
         _devices = devices;
         _userDevices = userDevices;
+        _localUserDevices = localUserDevices;
         _syncQueue = syncQueue;
         _syncQueueItems = syncQueueItems;
         _syncDeviceIdentities = syncDeviceIdentities;
@@ -47,153 +51,120 @@ public sealed class DeviceService : IDeviceService
         _uow = uow;
     }
 
-
-
-
-
     public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
         Task.FromResult(new LocalDeviceInfoResponse
         {
             DeviceId = _identity.LocalDeviceId,
-            DeviceName = _identity.DeviceName,
             TlsCertFingerprint = _identity.FingerprintHex,
+            DeviceType = _identity.DeviceType,
             IsSyncOn = _identity.IsSyncOn,
             CreatedAt = _identity.CreatedAt
         });
 
-
-    public Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default) =>
-        Task.FromResult(_identity.IsSyncOn);
-
-
-    public Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default) =>
-        _syncRuntime.SetSyncEnabledAsync(isSyncOn, ct);
-
-
-    public async Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default)
+    public async Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default)
     {
-        var normalizedName = NormalizeUserDeviceName(name);
         var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var userDevice = await EnsureLocalUserDeviceAsync(user.UId, ct);
-
-        if (await _userDevices.IsNameTakenAsync(user.UId, normalizedName, _identity.LocalDeviceId, ct))
-            throw new InvalidInputException();
-
-        if (string.Equals(_identity.DeviceName, normalizedName, StringComparison.Ordinal) &&
-            string.Equals(userDevice.Name, normalizedName, StringComparison.Ordinal))
-            return;
-
-        await _identity.SetDeviceNameAsync(normalizedName, ct);
-
-        var device = await EnsureLocalDeviceAsync(ct);
-        var now = DateTimeOffset.UtcNow;
-
-        device.DeviceName = normalizedName;
-        device.LastSeen = now.UtcDateTime;
-        device.LastModifiedAt = now;
-        device.GenerateIntegrityHash();
-        _devices.Update(device);
-
-        userDevice.Name = normalizedName;
-        userDevice.LastModifiedAt = now;
-        _userDevices.Update(userDevice);
-
-        await _syncQueue.EnqueueAsync(new SyncItem
-        {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Updated
-        }, ct);
+        var link = await EnsureLocalUserDeviceAsync(user.UId, ct);
+        return link.IsSyncOn;
     }
 
+    public async Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default)
+    {
+        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var link = await EnsureLocalUserDeviceAsync(user.UId, ct);
+        if (link.IsSyncOn == isSyncOn)
+            return;
 
+        link.IsSyncOn = isSyncOn;
+        _localUserDevices.Update(link);
+        await _uow.SaveChangesAsync(ct);
+        await _syncRuntime.RefreshSyncEnabledAsync(ct);
 
+        if (isSyncOn)
+        {
+            var remotes = await _userDevices.ListByUserAsync(user.UId, ct);
+            foreach (var deleted in remotes.Where(x => x.IsDeleted))
+            {
+                await _syncQueue.EnqueueForDeviceAsync(new SyncItem
+                {
+                    ModelId = SyncIdentityUtil.BuildUserDeviceModelId(deleted.UserId, deleted.DeviceId),
+                    ModelType = SyncModelType.UserDevice,
+                    ChangeType = SyncChangeType.Deleted,
+                    ChangedAtTs = deleted.LastModifiedAt.ToUnixTimeMilliseconds()
+                }, deleted.DeviceId, ct);
+            }
+
+            foreach (var remote in remotes.Where(x => !x.IsDeleted && x.IsSyncOn))
+                await _syncQueue.EnqueueUserCatchUpAsync(user.UId, remote.DeviceId, ct);
+        }
+    }
+
+    public Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default) =>
+        SetEncryptedDeviceNameAsync(token, _identity.LocalDeviceId, name, ct);
 
     public async Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(Guid token, CancellationToken ct = default)
     {
         var user = await _users.GetAndVerifyUserAsync(token, ct);
-        await EnsureLocalUserDeviceAsync(user.UId, ct);
-        var currentDeviceId = await GetCurrentDeviceIdAsync(ct);
-        var userDevices = await _userDevices.ListByUserAsync(user.UId, ct);
+        var userData = await _users.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        var localLink = await EnsureLocalUserDeviceAsync(user.UId, ct);
+        var links = await _userDevices.ListByUserAsync(user.UId, ct);
 
-        return userDevices
-            .Where(ud => !ud.IsDeleted && ud.Device is not null)
-            .Select(ud => UserDeviceInfoResponse.FromUserDevice(ud, currentDeviceId, _identity.IsSyncOn))
-            .OrderByDescending(d => d.IsCurrentDevice)
-            .ThenByDescending(d => d.LastSeen)
-            .ToList();
+        var changed = EnsureEncryptedDeviceName(userData, _identity.LocalDeviceId);
+        foreach (var link in links.Where(x => !x.IsDeleted))
+            changed |= EnsureEncryptedDeviceName(userData, link.DeviceId);
+        if (changed)
+            await PersistUserDeviceDataAsync(userData, token, ct);
+
+        var names = userData.UserDevices.Devices.ToDictionary(d => d.Id, d => d.Name);
+        var result = new List<UserDeviceInfoResponse>();
+        if (names.TryGetValue(_identity.LocalDeviceId, out var localName))
+            result.Add(BuildLocalResponse(localLink, localName));
+
+        foreach (var link in links.Where(x => !x.IsDeleted && x.Device is not null))
+        {
+            if (names.TryGetValue(link.DeviceId, out var name))
+                result.Add(BuildRemoteResponse(link, link.Device!, name));
+        }
+
+        return result.OrderByDescending(d => d.IsCurrentDevice).ThenByDescending(d => d.LastSeen).ToList();
     }
 
+    public Task SetUserDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct = default) =>
+        SetEncryptedDeviceNameAsync(token, deviceId, name, ct);
 
-
-
-    public async Task SetUserDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct = default)
+    public async Task SetUserDeviceSyncOnAsync(Guid token, Guid deviceId, bool isSyncOn, CancellationToken ct = default)
     {
-        var normalizedName = NormalizeUserDeviceName(name);
-
         if (deviceId == _identity.LocalDeviceId)
         {
-            await SetLocalDeviceNameAsync(token, normalizedName, ct);
+            await SetLocalUserSyncOnAsync(token, isSyncOn, ct);
             return;
         }
 
         var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var userDevice = await GetActiveUserDeviceAsync(user.UId, deviceId, ct);
-
-        if (string.Equals(userDevice.Name, normalizedName, StringComparison.Ordinal))
-            return;
-
-        if (await _userDevices.IsNameTakenAsync(user.UId, normalizedName, deviceId, ct))
-            throw new InvalidInputException();
-
-        userDevice.Name = normalizedName;
-        userDevice.LastModifiedAt = DateTimeOffset.UtcNow;
-        _userDevices.Update(userDevice);
-
-        await _syncQueue.EnqueueAsync(new SyncItem
+        var userDevice = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
+        if (userDevice.IsSyncOn == isSyncOn)
         {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Updated
-        }, ct);
-    }
-
-
-    public async Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default)
-    {
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var userDevice = await GetActiveUserDeviceAsync(user.UId, deviceId, ct);
-
-        if (userDevice.IsSyncEnabled == isSyncEnabled)
-        {
-            if (!isSyncEnabled)
+            if (!isSyncOn)
                 await RemoveCachedDeviceIfNoPendingAsync(userDevice, ct);
-
             return;
         }
 
-        userDevice.IsSyncEnabled = isSyncEnabled;
+        userDevice.IsSyncOn = isSyncOn;
         userDevice.LastModifiedAt = DateTimeOffset.UtcNow;
         _userDevices.Update(userDevice);
+        await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Updated, ct);
 
-        await _syncQueue.EnqueueAsync(new SyncItem
-        {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Updated
-        }, ct);
+        if (isSyncOn)
+            await _syncQueue.EnqueueUserCatchUpAsync(user.UId, deviceId, ct);
+        else
+            await RemoveCachedDeviceIfNoPendingAsync(userDevice, ct);
     }
-
 
     public async Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default)
     {
         var user = await _users.GetAndVerifyUserAsync(token, ct);
-        await GetActiveUserDeviceAsync(user.UId, deviceId, ct);
-
-        var device = await _devices.GetByIdWithUserDevicesAsync(deviceId, ct);
-        if (device is null)
-            throw new InvalidInputException();
-
+        await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
+        var device = await _devices.GetByIdWithUserDevicesAsync(deviceId, ct) ?? throw new InvalidInputException();
         if (!device.IsBlocked && device.InvalidSyncAttemptCount == 0 && device.BlockedReason is null)
             return;
 
@@ -205,100 +176,146 @@ public sealed class DeviceService : IDeviceService
         device.LastModifiedAt = DateTimeOffset.UtcNow;
         device.GenerateIntegrityHash();
         _devices.Update(device);
-
-        await _syncQueue.EnqueueAsync(new SyncItem
-        {
-            ModelId = device.Id,
-            ModelType = SyncModelType.Device,
-            ChangeType = SyncChangeType.Updated
-        }, ct);
+        await _syncQueue.EnqueueAsync(new SyncItem { ModelId = device.Id, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Updated }, ct);
     }
-
 
     public async Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default)
     {
-        if (!IsValidPassword(masterPassword))
+        if (!IsValidPassword(masterPassword) || deviceId == _identity.LocalDeviceId)
             throw new InvalidInputException();
-
         var user = await _users.GetAndVerifyUserAsync(token, ct);
         if (!_auth.IsPasswordValid(token, masterPassword, user.PasswordSalt))
             throw new InvalidInputException();
 
-        var userDevice = await GetActiveUserDeviceAsync(user.UId, deviceId, ct);
+        var userDevice = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
+        var userData = await _users.GetLoadAndVerifyUserDataAsync(token, ct, user);
         var now = DateTimeOffset.UtcNow;
-
         userDevice.IsDeleted = true;
-        userDevice.IsSyncEnabled = false;
+        userDevice.IsSyncOn = false;
         userDevice.DeletedAt = now;
         userDevice.LastModifiedAt = now;
         _userDevices.Update(userDevice);
 
-        await _syncQueue.EnqueueAsync(new SyncItem
+        var encryptedDevice = userData.UserDevices.Devices.FirstOrDefault(d => d.Id == deviceId);
+        if (encryptedDevice is not null)
         {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Deleted
-        }, ct);
+            encryptedDevice.Dispose();
+            userData.UserDevices.Devices.Remove(encryptedDevice);
+            await PersistUserDeviceDataAsync(userData, token, ct);
+        }
+        await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Deleted, ct);
     }
 
-
-
-
-
-
-    private async Task<UserDevice> EnsureLocalUserDeviceAsync(Guid userId, CancellationToken ct)
+    private async Task SetEncryptedDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct)
     {
-        var device = await EnsureLocalDeviceAsync(ct);
-        var userDevice = await _userDevices.GetAsync(userId, device.Id, ct);
-        var now = DateTimeOffset.UtcNow;
+        var normalizedName = NormalizeUserDeviceName(name);
+        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var userData = await _users.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        await EnsureLocalUserDeviceAsync(user.UId, ct);
+        if (deviceId != _identity.LocalDeviceId)
+            await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
 
-        if (userDevice is null)
-        {
-            userDevice = new UserDevice
-            {
-                UserId = userId,
-                DeviceId = device.Id,
-                Device = device,
-                Name = await BuildUniqueLocalUserDeviceNameAsync(userId, device.Id, _identity.DeviceName, ct),
-                IsSyncEnabled = true,
-                IsDeleted = false,
-                LinkedAt = now,
-                LastModifiedAt = now
-            };
+        if (userData.UserDevices.Devices.Any(d => d.Id != deviceId && string.Equals(d.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidInputException();
 
-            await _userDevices.AddAsync(userDevice, ct);
-            await _uow.SaveChangesAsync(ct);
-
-            await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Created, ct);
-            return userDevice;
-        }
-
-        var changed = false;
-        if (userDevice.IsDeleted)
-        {
-            userDevice.IsDeleted = false;
-            userDevice.DeletedAt = null;
-            userDevice.LinkedAt = now;
-            changed = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(userDevice.Name))
-        {
-            userDevice.Name = await BuildUniqueLocalUserDeviceNameAsync(userId, device.Id, _identity.DeviceName, ct);
-            changed = true;
-        }
-
-        if (changed)
-        {
-            userDevice.LastModifiedAt = now;
-            _userDevices.Update(userDevice);
-            await _uow.SaveChangesAsync(ct);
-            await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Updated, ct);
-        }
-
-        return userDevice;
+        var encryptedDevice = userData.UserDevices.Devices.FirstOrDefault(d => d.Id == deviceId);
+        if (encryptedDevice is null)
+            userData.UserDevices.Devices.Add(new UserDeviceData { Id = deviceId, Name = normalizedName });
+        else if (string.Equals(encryptedDevice.Name, normalizedName, StringComparison.Ordinal))
+            return;
+        else
+            encryptedDevice.Name = normalizedName;
+        await PersistUserDeviceDataAsync(userData, token, ct);
     }
 
+    private async Task<LocalUserDevice> EnsureLocalUserDeviceAsync(Guid userId, CancellationToken ct)
+    {
+        var link = await _localUserDevices.GetAsync(userId, ct);
+        if (link is not null)
+            return link;
+        link = new LocalUserDevice
+        {
+            UserId = userId,
+            LocalDeviceIdentityId = _identity.LocalDeviceId,
+            IsSyncOn = true,
+            LinkedAt = DateTimeOffset.UtcNow
+        };
+        await _localUserDevices.AddAsync(link, ct);
+        await _uow.SaveChangesAsync(ct);
+        await _syncRuntime.RefreshSyncEnabledAsync(ct);
+        return link;
+    }
+
+    private bool EnsureEncryptedDeviceName(UserData userData, Guid deviceId)
+    {
+        if (userData.UserDevices.Devices.Any(d => d.Id == deviceId)) return false;
+        var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
+        var deviceData = new UserDeviceData { Id = deviceId, Name = BuildUniqueEncryptedDeviceName(userData, baseName, deviceId) };
+        deviceData.GenerateIntegrityHash();
+        userData.UserDevices.Devices.Add(deviceData);
+        return true;
+    }
+
+    private static string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
+    {
+        var baseName = string.IsNullOrWhiteSpace(requestedName) ? DeviceNameUtil.BuildDefaultDeviceName(deviceId) : requestedName.Trim();
+        if (!IsEncryptedNameTaken(userData, baseName, deviceId)) return baseName;
+        for (var i = 2; i < 100; i++)
+        {
+            var suffix = $"-{i}";
+            var candidate = baseName[..Math.Min(baseName.Length, 64 - suffix.Length)] + suffix;
+            if (!IsEncryptedNameTaken(userData, candidate, deviceId)) return candidate;
+        }
+        throw new InvalidInputException();
+    }
+
+    private static bool IsEncryptedNameTaken(UserData userData, string name, Guid exceptDeviceId) =>
+        userData.UserDevices.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    private async Task PersistUserDeviceDataAsync(UserData userData, Guid token, CancellationToken ct)
+    {
+        foreach (var device in userData.UserDevices.Devices) device.GenerateIntegrityHash();
+        userData.UserDevices.GenerateIntegrityHash();
+        await _users.UpdateUserDataAsync(userData, token, true, ct);
+    }
+
+    private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, string name) => new()
+    {
+        DeviceId = _identity.LocalDeviceId,
+        Name = name,
+        DeviceType = _identity.DeviceType,
+        TlsCertFingerprint = _identity.FingerprintHex,
+        LastSync = _identity.CreatedAt.UtcDateTime,
+        LastSeen = DateTime.UtcNow,
+        IsTrusted = true,
+        IsBlocked = false,
+        InvalidSyncAttemptCount = 0,
+        IsSyncOn = link.IsSyncOn,
+        IsDeleted = false,
+        LinkedAt = link.LinkedAt,
+        DeletedAt = null,
+        IsCurrentDevice = true
+    };
+
+    private static UserDeviceInfoResponse BuildRemoteResponse(UserDevice link, Device device, string name) => new()
+    {
+        DeviceId = link.DeviceId,
+        Name = name,
+        DeviceType = device.DeviceType,
+        TlsCertFingerprint = device.TlsCertFingerprint,
+        LastSync = device.LastSync,
+        LastSeen = device.LastSeen,
+        IsTrusted = device.IsTrusted,
+        IsBlocked = device.IsBlocked,
+        BlockedReason = device.BlockedReason,
+        BlockedAt = device.BlockedAt,
+        InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
+        IsSyncOn = link.IsSyncOn,
+        IsDeleted = link.IsDeleted,
+        LinkedAt = link.LinkedAt,
+        DeletedAt = link.DeletedAt,
+        IsCurrentDevice = false
+    };
 
     private Task EnqueueUserDeviceChangeAsync(UserDevice userDevice, SyncChangeType changeType, CancellationToken ct) =>
         _syncQueue.EnqueueAsync(new SyncItem
@@ -308,151 +325,32 @@ public sealed class DeviceService : IDeviceService
             ChangeType = changeType
         }, ct);
 
-
-    private async Task<Device> EnsureLocalDeviceAsync(CancellationToken ct)
-    {
-        var now = DateTimeOffset.UtcNow;
-        var localSelfDevices = await _devices.ListLocalSelfDevicesAsync(_identity.LocalDeviceId, _identity.SignPublicKey, _identity.FingerprintHex, ct);
-        var duplicateLocalDevices = localSelfDevices
-            .Where(d => d.Id != _identity.LocalDeviceId)
-            .ToList();
-
-        if (duplicateLocalDevices.Count != 0)
-        {
-            foreach (var duplicateDevice in duplicateLocalDevices)
-                _devices.Delete(duplicateDevice);
-
-            await _uow.SaveChangesAsync(ct);
-        }
-
-        var device = localSelfDevices.FirstOrDefault(d => d.Id == _identity.LocalDeviceId)
-            ?? await _devices.GetByIdWithUserDevicesAsync(_identity.LocalDeviceId, ct);
-
-        if (device is null)
-        {
-            device = new Device
-            {
-                Id = _identity.LocalDeviceId,
-                PublicKey = _identity.AgreementPublicKey,
-                SignPublicKey = _identity.SignPublicKey,
-                TlsCertFingerprint = _identity.FingerprintHex,
-                DeviceName = _identity.DeviceName,
-                LastSync = now.UtcDateTime,
-                LastSeen = now.UtcDateTime,
-                IsTrusted = true,
-                IsBlocked = false,
-                LastModifiedAt = now
-            };
-
-            device.GenerateIntegrityHash();
-            await _devices.AddAsync(device, ct);
-            await _uow.SaveChangesAsync(ct);
-            return device;
-        }
-
-        var changed = false;
-        if (!device.PublicKey.SequenceEqual(_identity.AgreementPublicKey))
-        {
-            device.PublicKey = _identity.AgreementPublicKey;
-            changed = true;
-        }
-
-        if (!device.SignPublicKey.SequenceEqual(_identity.SignPublicKey))
-        {
-            device.SignPublicKey = _identity.SignPublicKey;
-            changed = true;
-        }
-
-        if (!string.Equals(device.TlsCertFingerprint, _identity.FingerprintHex, StringComparison.OrdinalIgnoreCase))
-        {
-            device.TlsCertFingerprint = _identity.FingerprintHex;
-            changed = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(device.DeviceName) || !string.Equals(device.DeviceName, _identity.DeviceName, StringComparison.Ordinal))
-        {
-            device.DeviceName = _identity.DeviceName;
-            changed = true;
-        }
-
-        if (!device.IsTrusted || device.IsBlocked)
-        {
-            device.IsTrusted = true;
-            device.IsBlocked = false;
-            device.BlockedReason = null;
-            device.BlockedAt = null;
-            changed = true;
-        }
-
-        if (changed)
-        {
-            device.LastModifiedAt = now;
-            device.GenerateIntegrityHash();
-            _devices.Update(device);
-            await _uow.SaveChangesAsync(ct);
-        }
-
-        return device;
-    }
-
-
-    private async Task<string> BuildUniqueLocalUserDeviceNameAsync(Guid userId, Guid deviceId, string requestedName, CancellationToken ct)
-    {
-        var baseName = string.IsNullOrWhiteSpace(requestedName)
-            ? DeviceNameUtil.BuildDefaultDeviceName(deviceId)
-            : requestedName.Trim();
-
-        if (!await _userDevices.IsNameTakenAsync(userId, baseName, deviceId, ct))
-            return baseName;
-
-        for (var i = 2; i < 100; i++)
-        {
-            var suffix = $"-{i}";
-            var prefixLength = Math.Min(baseName.Length, 64 - suffix.Length);
-            var name = baseName[..prefixLength] + suffix;
-
-            if (!await _userDevices.IsNameTakenAsync(userId, name, deviceId, ct))
-                return name;
-        }
-
-        throw new InvalidInputException();
-    }
-
-
     private async Task RemoveCachedDeviceIfNoPendingAsync(UserDevice userDevice, CancellationToken ct)
     {
-        if (userDevice.Device is null)
+        if (userDevice.Device is null || await _syncQueueItems.HasPendingForDeviceAsync(userDevice.DeviceId, ct))
             return;
 
-        if (await _syncQueueItems.HasPendingForDeviceAsync(userDevice.DeviceId, ct))
-            return;
+        var links = await _userDevices.ListActiveByDeviceAsync(userDevice.DeviceId, ct);
+        foreach (var link in links)
+        {
+            if (link.IsSyncOn && await _localUserDevices.IsSyncOnAsync(link.UserId, ct))
+                return;
+        }
 
         _syncDeviceIdentities.TryRemove(userDevice.Device);
     }
 
-
     private static string NormalizeUserDeviceName(string name)
     {
-        if (!IsValidUserDeviceName(name))
-            throw new InvalidInputException();
-
+        if (!IsValidUserDeviceName(name)) throw new InvalidInputException();
         return name.Trim();
     }
 
-
-    private async Task<UserDevice> GetActiveUserDeviceAsync(Guid userId, Guid deviceId, CancellationToken ct)
+    private async Task<UserDevice> GetActiveRemoteUserDeviceAsync(Guid userId, Guid deviceId, CancellationToken ct)
     {
-        if (deviceId == Guid.Empty)
-            throw new InvalidInputException();
-
+        if (deviceId == Guid.Empty || deviceId == _identity.LocalDeviceId) throw new InvalidInputException();
         var userDevice = await _userDevices.GetAsync(userId, deviceId, ct);
-        if (userDevice is null || userDevice.IsDeleted)
-            throw new InvalidInputException();
-
+        if (userDevice is null || userDevice.IsDeleted || userDevice.Device is null) throw new InvalidInputException();
         return userDevice;
     }
-
-
-    private Task<Guid> GetCurrentDeviceIdAsync(CancellationToken ct) =>
-        Task.FromResult(_identity.LocalDeviceId);
 }

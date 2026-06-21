@@ -18,16 +18,18 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
 {
     private readonly IDeviceIdentityService _identity;
     private readonly SyncPeerProtocolHandler _handler;
+    private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly SemaphoreSlim _connectionSlots = new(SyncConstants.MaxConcurrentSyncConnections, SyncConstants.MaxConcurrentSyncConnections);
     private readonly ConcurrentDictionary<string, int> _connectionsByRemoteIp = new(StringComparer.OrdinalIgnoreCase);
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
 
-    public TcpSyncServerHostedService(IDeviceIdentityService identity, SyncPeerProtocolHandler handler)
+    public TcpSyncServerHostedService(IDeviceIdentityService identity, SyncPeerProtocolHandler handler, IEnrollmentRuntimeState enrollmentState)
     {
         _identity = identity;
         _handler = handler;
+        _enrollmentState = enrollmentState;
     }
 
 
@@ -40,7 +42,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        if (!_identity.IsSyncOn)
+        if (!_identity.IsSyncOn && !_enrollmentState.IsActive)
         {
             PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info("TCP sync server was not started because synchronization is disabled on this device.");
             return Task.CompletedTask;

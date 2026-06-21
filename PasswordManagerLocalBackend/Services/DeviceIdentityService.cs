@@ -7,13 +7,12 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Utils;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
-using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
-using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -24,8 +23,8 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private Key? _sig = null;
     private X509Certificate2? _cert = null;
     private Guid _localDeviceId = Guid.Empty;
-    private string _deviceName = string.Empty;
-    private bool _isSyncOn = true;
+    private bool _isSyncOn;
+    private DeviceType _deviceType;
     private DateTimeOffset _createdAt = DateTimeOffset.MinValue;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
 
@@ -45,8 +44,8 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
         _isSyncOn;
 
 
-    public string DeviceName =>
-        _deviceName;
+    public DeviceType DeviceType =>
+        _deviceType;
 
 
     public DateTimeOffset CreatedAt =>
@@ -286,7 +285,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
                 await CreateIdentity(repo, keyProtector, uow, ct);
             else
             {
-                await UpgradeLegacyIdentityIfNeeded(identity, repo, uow, ct);
+                identity.VerifyIntegrity();
                 LoadIdentity(identity, keyProtector);
             }
         }
@@ -322,77 +321,6 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
         _isSyncOn = isSyncOn;
     }
 
-    public async Task SetDeviceNameAsync(string deviceName, CancellationToken ct = default)
-    {
-        var normalizedName = NormalizeDeviceName(deviceName);
-        await InitializeAsync(ct);
-
-        using var scope = _scopeFactory.CreateScope();
-        var repo = scope.ServiceProvider.GetRequiredService<IDeviceIdentityRepository>();
-        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-        var identity = await repo.Get(ct);
-        if (identity is null)
-            throw new DeviceIdentityNotInitilaizedException();
-
-        identity.VerifyIntegrity();
-
-        if (string.Equals(identity.DeviceName, normalizedName, StringComparison.Ordinal) &&
-            string.Equals(_deviceName, normalizedName, StringComparison.Ordinal))
-            return;
-
-        identity.DeviceName = normalizedName;
-        identity.GenerateIntegrityHash();
-        repo.Update(identity);
-        await uow.SaveChangesAsync(ct);
-
-        _deviceName = normalizedName;
-    }
-
-
-
-
-    private async Task UpgradeLegacyIdentityIfNeeded(LocalDeviceIdentity identity, IDeviceIdentityRepository repo, IUnitOfWork uow, CancellationToken ct = default)
-    {
-        if (identity.IsIntegrityValid())
-        {
-            if (string.IsNullOrWhiteSpace(identity.DeviceName))
-            {
-                identity.DeviceName = DeviceNameUtil.BuildDefaultDeviceName(identity.Id);
-                identity.GenerateIntegrityHash();
-                repo.Update(identity);
-                await uow.SaveChangesAsync(ct);
-            }
-
-            return;
-        }
-
-        var legacyHash = identity.CalculateLegacyIntegrityHashWithoutDeviceName();
-        if (Hashing.Verify(identity.IntegrityHash, legacyHash))
-        {
-            identity.DeviceName = DeviceNameUtil.BuildDefaultDeviceName(identity.Id);
-            identity.GenerateIntegrityHash();
-            repo.Update(identity);
-            await uow.SaveChangesAsync(ct);
-            return;
-        }
-
-        legacyHash = identity.CalculateLegacyIntegrityHashWithoutSyncFlagAndDeviceName();
-        if (!Hashing.Verify(identity.IntegrityHash, legacyHash))
-        {
-            identity.VerifyIntegrity();
-            return;
-        }
-
-        identity.DeviceName = DeviceNameUtil.BuildDefaultDeviceName(identity.Id);
-        identity.IsSyncOn = true;
-        identity.GenerateIntegrityHash();
-        repo.Update(identity);
-        await uow.SaveChangesAsync(ct);
-    }
-
-
-
     private async Task CreateIdentity(IDeviceIdentityRepository repo, IKeyProtector keyProtector, IUnitOfWork uow, CancellationToken ct = default)
     {
         _ka = Key.Create(KeyAgreementAlgorithm.X25519, new KeyCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport });
@@ -409,20 +337,18 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             var protectedKa = keyProtector.Protect(rawKa);
             var protectedSig = keyProtector.Protect(rawSig);
             var protectedCert = keyProtector.Protect(pfxBytes);
-            var newIdentityId = Guid.NewGuid();
-
             var newIdentity = new LocalDeviceIdentity
             {
-                Id = newIdentityId,
+                Id = Guid.NewGuid(),
                 AgreementPrivateKeyBlob = protectedKa,
                 SignPrivateKeyBlob = protectedSig,
                 PFXCertificate = protectedCert,
-                DeviceName = DeviceNameUtil.BuildDefaultDeviceName(newIdentityId),
-                IsSyncOn = true
+                DeviceType = DeviceTypeDetector.Detect(),
+                IsSyncOn = false
             };
             _localDeviceId = newIdentity.Id;
-            _deviceName = newIdentity.DeviceName;
-            _isSyncOn = true;
+            _deviceType = newIdentity.DeviceType;
+            _isSyncOn = false;
             _createdAt = newIdentity.CreatedAt;
             newIdentity.GenerateIntegrityHash();
 
@@ -441,8 +367,11 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private void LoadIdentity(LocalDeviceIdentity identity, IKeyProtector keyProtector)
     {
         identity.VerifyIntegrity();
+        if (!DeviceTypeDetector.IsValid(identity.DeviceType))
+            throw new InvalidDataException("The local device type is invalid.");
+
         _localDeviceId = identity.Id;
-        _deviceName = string.IsNullOrWhiteSpace(identity.DeviceName) ? DeviceNameUtil.BuildDefaultDeviceName(identity.Id) : identity.DeviceName;
+        _deviceType = identity.DeviceType;
         _isSyncOn = identity.IsSyncOn;
         _createdAt = identity.CreatedAt;
 
@@ -462,16 +391,6 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             CryptographicOperations.ZeroMemory(unprotectedSig);
             CryptographicOperations.ZeroMemory(unprotectedCert);
         }
-    }
-
-
-
-    private static string NormalizeDeviceName(string name)
-    {
-        if (!IsValidUserDeviceName(name))
-            throw new InvalidInputException();
-
-        return name.Trim();
     }
 
 

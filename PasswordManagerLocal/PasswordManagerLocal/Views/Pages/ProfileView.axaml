@@ -488,6 +488,9 @@
                                           <TextBlock Text="{Binding TrustStateText}" Classes="subtleText" />
                                         </WrapPanel>
                                         <WrapPanel>
+                                          <Border Padding="8,3" CornerRadius="10" Background="#22808080" Margin="0,0,6,6">
+                                            <TextBlock Text="{Binding DeviceTypeText}" FontSize="12" FontWeight="SemiBold" />
+                                          </Border>
                                           <Border Padding="8,3" CornerRadius="10" Background="#223080FF" IsVisible="{Binding IsCurrentDevice}" Margin="0,0,6,6">
                                             <TextBlock Text="{Binding CurrentDeviceLabel}" FontSize="12" FontWeight="SemiBold" />
                                           </Border>
@@ -502,7 +505,7 @@
                                     </Button>
 
                                     <ToggleSwitch Grid.Column="1"
-                                                  IsChecked="{Binding IsSyncEnabled, Mode=OneWay}"
+                                                  IsChecked="{Binding IsSyncOn, Mode=OneWay}"
                                                   Command="{Binding ToggleSyncCommand}"
                                                   OnContent="{Binding SyncToggleOnLabel}"
                                                   OffContent="{Binding SyncToggleOffLabel}"
@@ -577,6 +580,9 @@
                               </StackPanel>
 
                               <WrapPanel>
+                                <Border Padding="8,3" CornerRadius="10" Background="#22808080" Margin="0,0,6,6">
+                                  <TextBlock Text="{Binding SelectedDevice.DeviceTypeText}" FontSize="12" FontWeight="SemiBold" />
+                                </Border>
                                 <Border Padding="8,3" CornerRadius="10" Background="#223080FF" IsVisible="{Binding SelectedDevice.IsCurrentDevice}" Margin="0,0,6,6">
                                   <TextBlock Text="{Binding CurrentDeviceLabel}" FontSize="12" FontWeight="SemiBold" />
                                 </Border>
@@ -607,6 +613,11 @@
                                         Content="{Binding SaveDeviceNameLabel}" />
                               </Grid>
 
+                              <StackPanel Spacing="4">
+                                <TextBlock Text="{Binding DeviceTypeLabel}" Classes="subtleText" />
+                                <TextBlock Text="{Binding SelectedDevice.DeviceTypeText}" TextWrapping="Wrap" />
+                              </StackPanel>
+
                               <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                                 <StackPanel Spacing="4">
                                   <TextBlock Text="{Binding DeviceLinkedAtLabel}" Classes="subtleText" />
@@ -625,7 +636,7 @@
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Spacing="4">
                                   <TextBlock Text="{Binding SyncEnabledLabel}" Classes="subtleText" />
-                                  <ToggleSwitch IsChecked="{Binding SelectedDevice.IsSyncEnabled, Mode=OneWay}"
+                                  <ToggleSwitch IsChecked="{Binding SelectedDevice.IsSyncOn, Mode=OneWay}"
                                                 Command="{Binding SelectedDevice.ToggleSyncCommand}"
                                                 OnContent="{Binding SelectedDevice.SyncToggleOnLabel}"
                                                 OffContent="{Binding SelectedDevice.SyncToggleOffLabel}" />

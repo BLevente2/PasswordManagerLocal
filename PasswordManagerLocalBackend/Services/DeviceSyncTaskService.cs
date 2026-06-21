@@ -159,6 +159,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
         var queue = scope.ServiceProvider.GetRequiredService<ISyncQueueRepository>();
         var deltaBuilder = scope.ServiceProvider.GetRequiredService<IOutgoingDeltaBuilderService>();
+        var authorization = scope.ServiceProvider.GetRequiredService<ISyncAuthorizationService>();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
         if (!_identity.IsSyncOn)
@@ -176,6 +177,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         }
 
         var syncItem = queueItem.SyncItem;
+        if (!await authorization.CanSendAsync(syncItem, targetDevice.Id, ct))
+        {
+            queue.Delete(queueItem);
+            await uow.SaveChangesAsync(ct);
+            return true;
+        }
+
         if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, syncItem, endpoint, ct))
             return false;
 
@@ -200,6 +208,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (!_identity.IsSyncOn)
             return false;
 
+        if (!await authorization.CanSendAsync(syncItem, targetDevice.Id, ct))
+        {
+            queue.Delete(queueItem);
+            await uow.SaveChangesAsync(ct);
+            return true;
+        }
+
         var sent = await _syncTransport.SendDeltasAsync(endpoint.Host, endpoint.Port, targetDevice.TlsCertFingerprint, [delta], ct);
 
         if (!sent)
@@ -220,8 +235,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     private async Task<bool> RefreshAndValidateTargetDeviceAsync(IServiceProvider services, Device targetDevice, SyncItem syncItem, DiscoveredDeviceEndpoint endpoint, CancellationToken ct)
     {
         var devices = services.GetRequiredService<IDeviceRepository>();
-        var userDevices = services.GetRequiredService<IUserDeviceRepository>();
-
         var freshDevice = await devices.GetByIdWithUserDevicesAsync(targetDevice.Id, ct);
         if (!_identity.IsSyncOn || freshDevice is null || !freshDevice.IsTrusted || freshDevice.IsBlocked || IsLocalDevice(freshDevice))
         {
@@ -238,13 +251,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             return false;
         }
 
-        if (!await userDevices.HasAnyActiveSyncEnabledLinkForDeviceAsync(freshDevice.Id, ct) &&
-            !await IsFinalDisconnectDeltaForTargetAsync(userDevices, syncItem, freshDevice.Id, ct) &&
-            !await IsFinalSyncDisableDeltaForTargetAsync(userDevices, syncItem, freshDevice.Id, ct))
-        {
-            _syncDeviceIdentities.TryRemove(freshDevice);
-            return false;
-        }
 
         targetDevice.PublicKey = freshDevice.PublicKey.ToArray();
         targetDevice.SignPublicKey = freshDevice.SignPublicKey.ToArray();
@@ -265,31 +271,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     }
 
 
-
-
-    private static async Task<bool> IsFinalDisconnectDeltaForTargetAsync(IUserDeviceRepository userDevices, SyncItem syncItem, Guid targetDeviceId, CancellationToken ct)
-    {
-        if (syncItem.ModelType != SyncModelType.UserDevice || syncItem.ChangeType != SyncChangeType.Deleted)
-            return false;
-
-        var userDevice = await userDevices.GetByModelIdAsync(syncItem.ModelId, ct);
-        return userDevice is not null &&
-               userDevice.DeviceId == targetDeviceId &&
-               userDevice.IsDeleted;
-    }
-
-
-    private static async Task<bool> IsFinalSyncDisableDeltaForTargetAsync(IUserDeviceRepository userDevices, SyncItem syncItem, Guid targetDeviceId, CancellationToken ct)
-    {
-        if (syncItem.ModelType != SyncModelType.UserDevice || syncItem.ChangeType == SyncChangeType.Deleted)
-            return false;
-
-        var userDevice = await userDevices.GetByModelIdAsync(syncItem.ModelId, ct);
-        return userDevice is not null &&
-               userDevice.DeviceId == targetDeviceId &&
-               !userDevice.IsDeleted &&
-               !userDevice.IsSyncEnabled;
-    }
 
 
     private async Task CleanupDetachedDeviceIfSyncCompletedAsync(IServiceProvider services, SyncItem syncItem, CancellationToken ct)
@@ -363,6 +344,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             PublicKey = source.PublicKey.ToArray(),
             SignPublicKey = source.SignPublicKey.ToArray(),
             TlsCertFingerprint = source.TlsCertFingerprint,
+            DeviceType = source.DeviceType,
             LastKnownHash = source.LastKnownHash.ToArray(),
             LastSync = source.LastSync,
             LastSeen = source.LastSeen,

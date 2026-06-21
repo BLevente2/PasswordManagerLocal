@@ -1,12 +1,13 @@
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
+using PasswordManagerLocalBackend.Utils;
 using System.Security.Cryptography;
 using System.Text.Json;
-using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -22,6 +23,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly ISyncQueueService _syncQueueService;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDeviceIdentityService _identity;
+    private readonly ISyncAuthorizationService _authorization;
+    private readonly ISyncRuntimeService _syncRuntime;
     private readonly IAuthService _auth;
     private readonly IUnitOfWork _uow;
 
@@ -36,6 +39,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         ISyncQueueService syncQueueService,
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDeviceIdentityService identity,
+        ISyncAuthorizationService authorization,
+        ISyncRuntimeService syncRuntime,
         IAuthService auth,
         IUnitOfWork uow)
     {
@@ -49,6 +54,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _syncQueueService = syncQueueService;
         _syncDeviceIdentities = syncDeviceIdentities;
         _identity = identity;
+        _authorization = authorization;
+        _syncRuntime = syncRuntime;
         _auth = auth;
         _uow = uow;
     }
@@ -63,7 +70,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     public async Task<long> ApplyAsync(NetworkDelta delta, CancellationToken ct = default)
     {
         if (!_identity.IsSyncOn)
-            throw new UnauthorizedAccessException("Local synchronization is disabled.");
+            throw new SyncRouteDisabledException("Local synchronization is disabled.");
 
         SyncCryptoUtil.ValidateEncryptedEnvelope(delta, _identity.LocalDeviceId);
         VerifyDeltaSignature(delta);
@@ -83,6 +90,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         ValidateEnvelope(delta, payload);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);
         await ValidateDeviceIdentityImmutabilityAsync(sourceDevice, payload, ct);
+        if (!await _authorization.CanReceiveAsync(payload, sourceDevice.Id, ct))
+            throw new SyncRouteDisabledException("Synchronization is disabled for this user and device route.");
         await ValidateSourceCanApplyPayloadAsync(sourceDevice, payload, ct);
 
         if (await IsBlockedByNewerTombstoneAsync(payload, delta.Ts, ct))
@@ -104,7 +113,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             SyncModelType.User => await ApplyUserAsync(payload, delta.Ts, ct),
             SyncModelType.Group => await ApplyGroupAsync(payload, delta.Ts, ct),
             SyncModelType.Device => await ApplyDeviceAsync(payload, delta.Ts, ct),
-            SyncModelType.UserDevice => await ApplyUserDeviceAsync(payload, sourceDevice, delta.Ts, ct),
+            SyncModelType.UserDevice => await ApplyUserDeviceAsync(payload, delta.Ts, ct),
             _ => throw new InvalidOperationException("Unknown sync model type.")
         };
 
@@ -113,11 +122,26 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         await _uow.SaveChangesAsync(ct);
 
+        if (DeletesLocalUserProfile(payload) ||
+            (payload.ModelType == SyncModelType.User && payload.ChangeType == SyncChangeType.Deleted))
+        {
+            await _syncRuntime.RefreshSyncEnabledAsync(ct);
+        }
+
         if (applied)
             await RefreshAffectedSessionCachesAsync(payload, ct);
 
         if (applied && ShouldPropagate(payload))
             await PropagateIncomingDeltaAsync(payload, sourceDevice.Id, delta.Ts, ct);
+
+        if (applied &&
+            payload.ModelType == SyncModelType.UserDevice &&
+            payload.ChangeType != SyncChangeType.Deleted &&
+            payload.UserDevice is { IsSyncOn: true, IsDeleted: false } enabledLink &&
+            enabledLink.DeviceId != _identity.LocalDeviceId)
+        {
+            await _syncQueueService.EnqueueUserCatchUpAsync(enabledLink.UserId, enabledLink.DeviceId, ct);
+        }
 
         return delta.Ts;
     }
@@ -251,7 +275,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private async Task<bool> ApplyUserDeviceAsync(SyncDeltaPayload delta, Device sourceDevice, long ts, CancellationToken ct)
+    private async Task<bool> ApplyUserDeviceAsync(SyncDeltaPayload delta, long ts, CancellationToken ct)
     {
         if (delta.UserDevice is null)
             throw new InvalidDataException("User device sync payload is missing.");
@@ -261,59 +285,45 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (DeletesLocalUserProfile(delta))
             return await ApplyLocalUserProfileDisconnectAsync(delta, ts, ct);
 
-        if (IsLocalUserDevicePayload(delta))
-            return await ApplyLocalUserDeviceAsync(delta, ts, ct);
-
-        var existing = await _userDevices.GetAsync(delta.UserDevice.UserId, delta.UserDevice.DeviceId, ct);
-
+        var payload = delta.UserDevice;
+        var existing = await _userDevices.GetAsync(payload.UserId, payload.DeviceId, ct);
         if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
             return false;
 
         var modifiedAt = FromTimestamp(ts);
-
-        if (delta.ChangeType == SyncChangeType.Deleted || delta.UserDevice.IsDeleted)
+        if (delta.ChangeType == SyncChangeType.Deleted || payload.IsDeleted)
         {
             if (existing is not null)
             {
                 existing.IsDeleted = true;
-                existing.IsSyncEnabled = false;
-                existing.DeletedAt = delta.UserDevice.DeletedAt ?? modifiedAt;
+                existing.IsSyncOn = false;
+                existing.DeletedAt = payload.DeletedAt ?? modifiedAt;
                 existing.LastModifiedAt = modifiedAt;
                 _userDevices.Update(existing);
-                await _tombstones.UpsertAsync(delta.ModelId, delta.ModelType, ts, ct);
-            }
-            else
-            {
-                await _tombstones.UpsertAsync(delta.ModelId, delta.ModelType, ts, ct);
             }
 
-            await DeleteDeviceIfDetachedAsync(delta.UserDevice.DeviceId, ct);
+            await _tombstones.UpsertAsync(delta.ModelId, delta.ModelType, ts, ct);
+            if (payload.DeviceId != _identity.LocalDeviceId)
+                await DeleteDeviceIfDetachedAsync(payload.DeviceId, ct);
             return true;
         }
 
-        if (!await ResolveUserDeviceNameConflictAsync(delta.UserDevice, modifiedAt, ct))
-            return false;
+        var remoteDevice = await _devices.GetByIdAsync(payload.DeviceId, ct);
+        if (remoteDevice is null)
+            throw new InvalidDataException("Remote device was not found for the user-device setting.");
 
         var userDevice = existing ?? new UserDevice
         {
-            UserId = delta.UserDevice.UserId,
-            DeviceId = delta.UserDevice.DeviceId
+            UserId = payload.UserId,
+            DeviceId = payload.DeviceId
         };
 
-        userDevice.Name = delta.UserDevice.Name.Trim();
+        userDevice.Device = remoteDevice;
         userDevice.IsDeleted = false;
-        userDevice.IsSyncEnabled = delta.UserDevice.IsSyncEnabled;
-        userDevice.LinkedAt = delta.UserDevice.LinkedAt;
+        userDevice.IsSyncOn = payload.IsSyncOn;
+        userDevice.LinkedAt = payload.LinkedAt == default ? modifiedAt : payload.LinkedAt;
         userDevice.DeletedAt = null;
         userDevice.LastModifiedAt = modifiedAt;
-
-        if (userDevice.DeviceId == sourceDevice.Id && !string.Equals(sourceDevice.DeviceName, userDevice.Name, StringComparison.Ordinal))
-        {
-            sourceDevice.DeviceName = userDevice.Name;
-            sourceDevice.LastModifiedAt = modifiedAt;
-            sourceDevice.GenerateIntegrityHash();
-            _devices.Update(sourceDevice);
-        }
 
         if (existing is null)
             await _userDevices.AddAsync(userDevice, ct);
@@ -323,74 +333,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         await RemoveTombstoneAsync(delta, ct);
         return true;
     }
-
-
-    private async Task<bool> ApplyLocalUserDeviceAsync(SyncDeltaPayload delta, long ts, CancellationToken ct)
-    {
-        if (delta.UserDevice is null)
-            throw new InvalidDataException("User device sync payload is missing.");
-
-        var existing = await _userDevices.GetAsync(delta.UserDevice.UserId, delta.UserDevice.DeviceId, ct);
-        if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
-            return false;
-
-        var modifiedAt = FromTimestamp(ts);
-
-        if (!await ResolveUserDeviceNameConflictAsync(delta.UserDevice, modifiedAt, ct))
-            return false;
-
-        var userDevice = existing ?? new UserDevice
-        {
-            UserId = delta.UserDevice.UserId,
-            DeviceId = delta.UserDevice.DeviceId
-        };
-
-        userDevice.Name = delta.UserDevice.Name.Trim();
-        userDevice.IsDeleted = false;
-        userDevice.IsSyncEnabled = delta.UserDevice.IsSyncEnabled;
-        userDevice.LinkedAt = delta.UserDevice.LinkedAt == default ? modifiedAt : delta.UserDevice.LinkedAt;
-        userDevice.DeletedAt = null;
-        userDevice.LastModifiedAt = modifiedAt;
-
-        var localDevice = await _devices.GetByIdWithUserDevicesAsync(_identity.LocalDeviceId, ct);
-        if (localDevice is not null)
-        {
-            localDevice.DeviceName = userDevice.Name;
-            localDevice.LastModifiedAt = modifiedAt;
-            localDevice.GenerateIntegrityHash();
-            _devices.Update(localDevice);
-        }
-
-        await _identity.SetDeviceNameAsync(userDevice.Name, ct);
-
-        if (existing is null)
-            await _userDevices.AddAsync(userDevice, ct);
-        else
-            _userDevices.Update(userDevice);
-
-        await RemoveTombstoneAsync(delta, ct);
-        return true;
-    }
-
-
-    private async Task<bool> ResolveUserDeviceNameConflictAsync(UserDeviceSyncPayload payload, DateTimeOffset modifiedAt, CancellationToken ct)
-    {
-        var conflict = await _userDevices.GetActiveByNameAsync(payload.UserId, payload.Name, payload.DeviceId, ct);
-        if (conflict is null)
-            return true;
-
-        if (conflict.LastModifiedAt.ToUnixTimeMilliseconds() >= modifiedAt.ToUnixTimeMilliseconds())
-            return false;
-
-        conflict.Name = BuildUniqueFallbackUserDeviceName(conflict.UserId, conflict.DeviceId);
-        conflict.LastModifiedAt = modifiedAt.AddTicks(-1);
-        _userDevices.Update(conflict);
-        return true;
-    }
-
-
-    private static string BuildUniqueFallbackUserDeviceName(Guid userId, Guid deviceId) =>
-        $"Device {deviceId:N}"[..39];
 
 
     private async Task DeleteDeviceIfDetachedAsync(Guid deviceId, CancellationToken ct)
@@ -466,39 +408,41 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private async Task SyncUserDevicesAsync(User user, IEnumerable<Guid> deviceIds, DateTimeOffset modifiedAt, CancellationToken ct)
     {
         var ids = CreateIdSet(deviceIds);
+        ids.Remove(_identity.LocalDeviceId);
 
         foreach (var id in ids)
         {
-            var existingLink = user.UserDevices.FirstOrDefault(ud => ud.DeviceId == id);
+            var remoteDevice = await _devices.GetByIdAsync(id, ct);
+            if (remoteDevice is null)
+                continue;
+
+            var existingLink = user.UserDevices.FirstOrDefault(ud => ud.DeviceId == id)
+                ?? await _userDevices.GetAsync(user.UId, id, ct);
             if (existingLink is not null)
             {
+                existingLink.Device = remoteDevice;
                 if (existingLink.IsDeleted)
                 {
                     existingLink.IsDeleted = false;
                     existingLink.DeletedAt = null;
-                    existingLink.IsSyncEnabled = true;
+                    existingLink.IsSyncOn = false;
                     existingLink.LastModifiedAt = modifiedAt;
                 }
-
+                _userDevices.Update(existingLink);
                 continue;
             }
 
-            var device = await _devices.GetByIdAsync(id, ct);
-            if (device is not null)
+            user.UserDevices.Add(new UserDevice
             {
-                user.UserDevices.Add(new UserDevice
-                {
-                    UserId = user.UId,
-                    DeviceId = device.Id,
-                    User = user,
-                    Device = device,
-                    Name = string.IsNullOrWhiteSpace(device.DeviceName) ? BuildUniqueFallbackUserDeviceName(user.UId, device.Id) : device.DeviceName,
-                    IsSyncEnabled = true,
-                    IsDeleted = false,
-                    LinkedAt = modifiedAt,
-                    LastModifiedAt = modifiedAt
-                });
-            }
+                UserId = user.UId,
+                DeviceId = id,
+                User = user,
+                Device = remoteDevice,
+                IsSyncOn = false,
+                IsDeleted = false,
+                LinkedAt = modifiedAt,
+                LastModifiedAt = modifiedAt
+            });
         }
     }
 
@@ -528,36 +472,36 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         foreach (var id in ids)
         {
-            var existingLink = device.UserDevices.FirstOrDefault(ud => ud.UserId == id);
+            var existingLink = await _userDevices.GetAsync(id, device.Id, ct);
             if (existingLink is not null)
             {
+                existingLink.Device = device;
                 if (existingLink.IsDeleted)
                 {
                     existingLink.IsDeleted = false;
                     existingLink.DeletedAt = null;
-                    existingLink.IsSyncEnabled = true;
+                    existingLink.IsSyncOn = false;
                     existingLink.LastModifiedAt = modifiedAt;
                 }
-
+                _userDevices.Update(existingLink);
                 continue;
             }
 
             var user = await _users.GetByIdAsync(id, ct);
-            if (user is not null)
+            if (user is null)
+                continue;
+
+            await _userDevices.AddAsync(new UserDevice
             {
-                device.UserDevices.Add(new UserDevice
-                {
-                    UserId = user.UId,
-                    DeviceId = device.Id,
-                    User = user,
-                    Device = device,
-                    Name = string.IsNullOrWhiteSpace(device.DeviceName) ? BuildUniqueFallbackUserDeviceName(user.UId, device.Id) : device.DeviceName,
-                    IsSyncEnabled = true,
-                    IsDeleted = false,
-                    LinkedAt = modifiedAt,
-                    LastModifiedAt = modifiedAt
-                });
-            }
+                UserId = user.UId,
+                DeviceId = device.Id,
+                User = user,
+                Device = device,
+                IsSyncOn = false,
+                IsDeleted = false,
+                LinkedAt = modifiedAt,
+                LastModifiedAt = modifiedAt
+            }, ct);
         }
     }
 
@@ -571,9 +515,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (sourceDevice.IsBlocked || !sourceDevice.IsTrusted)
             throw new UnauthorizedAccessException("Sync source device is not allowed.");
 
-        if (!await _userDevices.HasAnyActiveSyncEnabledLinkForDeviceAsync(sourceDevice.Id, ct) &&
+        if (!await _authorization.HasEligibleUserForDeviceAsync(sourceDevice.Id, ct) &&
             !await _userDevices.HasAnyDeletedLinkForDeviceAsync(sourceDevice.Id, ct))
-            throw new UnauthorizedAccessException("Sync source device is not linked to any active sync-enabled user.");
+            throw new SyncRouteDisabledException("Sync source device is not linked to an enabled local user.");
 
         if (!string.Equals(delta.DeviceId, BuildDeviceId(delta.SignPub), StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Sync source device id is invalid.");
@@ -596,6 +540,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (string.IsNullOrWhiteSpace(payload.Device.TlsCertFingerprint))
             throw new InvalidDataException("Device sync TLS fingerprint is missing.");
 
+        if (!DeviceTypeDetector.IsValid(payload.Device.DeviceType))
+            throw new InvalidDataException("Device sync type is invalid.");
+
         if (payload.ModelId == sourceDevice.Id)
         {
             if (!payload.Device.SignPublicKey.SequenceEqual(sourceDevice.SignPublicKey))
@@ -606,6 +553,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
             if (!string.Equals(NormalizeFingerprint(payload.Device.TlsCertFingerprint), NormalizeFingerprint(sourceDevice.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Source device TLS fingerprint cannot be changed by sync.");
+
+            if (payload.Device.DeviceType != sourceDevice.DeviceType)
+                throw new InvalidDataException("Source device type cannot be changed by sync.");
         }
 
         var existing = await _devices.GetByIdAsync(payload.ModelId, ct);
@@ -620,6 +570,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (!string.Equals(NormalizeFingerprint(existing.TlsCertFingerprint), NormalizeFingerprint(payload.Device.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Existing device TLS fingerprint cannot be changed by sync.");
+
+        if (existing.DeviceType != payload.Device.DeviceType)
+            throw new InvalidDataException("Existing device type cannot be changed by sync.");
     }
 
 
@@ -721,12 +674,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         payload.UserDevice.DeviceId == _identity.LocalDeviceId;
 
 
-    private bool IsLocalUserDevicePayload(SyncDeltaPayload payload) =>
-        payload.ModelType == SyncModelType.UserDevice &&
-        payload.UserDevice is not null &&
-        payload.UserDevice.DeviceId == _identity.LocalDeviceId;
-
-
     private UserSyncPayload CreateUserSyncPayloadForHash(User user) =>
         new()
         {
@@ -736,7 +683,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
-            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Distinct().ToList()
+            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Append(_identity.LocalDeviceId).Distinct().ToList()
         };
 
 
@@ -756,7 +703,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             PublicKey = device.PublicKey,
             SignPublicKey = device.SignPublicKey,
             TlsCertFingerprint = device.TlsCertFingerprint,
-            DeviceName = device.DeviceName,
+            DeviceType = device.DeviceType,
             LastKnownHash = device.LastKnownHash,
             LastSync = device.LastSync,
             LastSeen = device.LastSeen,
@@ -768,10 +715,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             LastInvalidSyncAttemptAt = device.LastInvalidSyncAttemptAt,
             UserIds = device.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
         };
-
-
-    private bool IsLocalDeviceId(Guid deviceId) =>
-        deviceId == _identity.LocalDeviceId;
 
 
     private bool IsLocalDevicePayload(SyncDeltaPayload payload) =>
@@ -793,7 +736,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (!device.IsTrusted || device.IsBlocked)
             return;
 
-        if (!await _userDevices.HasAnyActiveSyncEnabledLinkForDeviceAsync(device.Id, ct))
+        if (!await _authorization.HasEligibleUserForDeviceAsync(device.Id, ct))
             return;
 
         if (await _syncQueue.HasPendingForDeviceAsync(device.Id, ct))
@@ -938,7 +881,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         target.PublicKey = source.PublicKey;
         target.SignPublicKey = source.SignPublicKey;
         target.TlsCertFingerprint = source.TlsCertFingerprint;
-        target.DeviceName = source.DeviceName;
+        target.DeviceType = source.DeviceType;
         target.LastKnownHash = source.LastKnownHash;
         target.IntegrityHash = source.IntegrityHash;
 
@@ -1063,14 +1006,11 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (payload.ChangeType == SyncChangeType.Deleted && !payload.UserDevice.IsDeleted)
             throw new InvalidDataException("Deleted user-device delta must contain a deleted link payload.");
 
-        if (payload.ChangeType == SyncChangeType.Deleted && payload.UserDevice.IsSyncEnabled)
+        if (payload.ChangeType == SyncChangeType.Deleted && payload.UserDevice.IsSyncOn)
             throw new InvalidDataException("Deleted user-device delta cannot keep synchronization enabled.");
 
         if (payload.ChangeType == SyncChangeType.Deleted && payload.UserDevice.DeletedAt is null)
             throw new InvalidDataException("Deleted user-device delta must contain deletion time.");
-
-        if (!payload.UserDevice.IsDeleted && !IsValidUserDeviceName(payload.UserDevice.Name))
-            throw new InvalidDataException("User device name is invalid.");
 
         if (payload.UserDevice.IntegrityHash.Length == 0)
             throw new InvalidDataException("User device sync hash is missing.");
@@ -1121,6 +1061,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     [
         "SavedKey",
         "LocalDeviceIdentity",
+        "LocalUserDevice",
+        "LocalUserDevices",
         "DeviceIdentity",
         "AgreementPrivateKeyBlob",
         "SignPrivateKeyBlob",

@@ -40,7 +40,7 @@ public sealed class SyncPeerProtocolHandler
         {
             remoteDevice ??= await TryFindRemoteDeviceForInvalidAttemptAsync(scope.ServiceProvider, context, ct);
 
-            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+            if (remoteDevice is not null && !remoteDevice.IsBlocked && ShouldRecordHelloFailure(ex))
                 await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
             return new HelloReply { Ok = false };
@@ -105,8 +105,13 @@ public sealed class SyncPeerProtocolHandler
             if (remoteDevice is null)
                 remoteDevice = await TryFindRemoteDeviceForInvalidAttemptAsync(scope.ServiceProvider, context, ct);
 
-            if (remoteDevice is not null && !remoteDevice.IsBlocked && IsInvalidIncomingDataStatus(ex.StatusCode))
+            if (remoteDevice is not null &&
+                !remoteDevice.IsBlocked &&
+                IsInvalidIncomingDataStatus(ex.StatusCode) &&
+                ShouldRecordHelloFailure(ex))
+            {
                 await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            }
 
             throw;
         }
@@ -116,6 +121,10 @@ public sealed class SyncPeerProtocolHandler
                 await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
             throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
+        }
+        catch (SyncRouteDisabledException)
+        {
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Synchronization is disabled for this user and device route.");
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -135,7 +144,8 @@ public sealed class SyncPeerProtocolHandler
         {
             DeviceEnrollmentTrace.Info($"Incoming GetDeviceEnrollmentInfo request. Session={request.SessionId}.");
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
-            if (!identity.IsSyncOn)
+            var enrollmentState = scope.ServiceProvider.GetRequiredService<IEnrollmentRuntimeState>();
+            if (!identity.IsSyncOn && !enrollmentState.IsActive)
             {
                 return new GetDeviceEnrollmentInfoReply
                 {
@@ -159,7 +169,8 @@ public sealed class SyncPeerProtocolHandler
                 DeviceId = result.DeviceId == Guid.Empty ? string.Empty : result.DeviceId.ToString("N"),
                 TlsCertFingerprint = result.TlsCertFingerprint,
                 SignPub = ByteString.CopyFrom(result.SignPublicKey),
-                AgreementPub = ByteString.CopyFrom(result.AgreementPublicKey)
+                AgreementPub = ByteString.CopyFrom(result.AgreementPublicKey),
+                DeviceType = (uint)result.DeviceType
             };
         }
         catch (Exception ex)
@@ -178,16 +189,25 @@ public sealed class SyncPeerProtocolHandler
     public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, CancellationToken ct)
     {
         using var scope = _root.CreateScope();
+        var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
 
         try
         {
             DeviceEnrollmentTrace.Info("Incoming streaming CompleteDeviceEnrollment request started.");
-            if (string.IsNullOrWhiteSpace(context.ClientCertificateFingerprint))
-                return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Client certificate is missing.", ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected.ToString() };
 
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
-            if (!identity.IsSyncOn)
+            var enrollmentState = scope.ServiceProvider.GetRequiredService<IEnrollmentRuntimeState>();
+            if (!identity.IsSyncOn && !enrollmentState.IsActive)
                 return new CompleteDeviceEnrollmentReply { Ok = false, Error = "Local synchronization is disabled.", ErrorCode = DeviceEnrollmentErrorCode.SyncDisabled.ToString() };
+
+            if (string.IsNullOrWhiteSpace(context.ClientCertificateFingerprint))
+            {
+                var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(
+                    DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    "Client certificate is missing.",
+                    ct);
+                return new CompleteDeviceEnrollmentReply { Ok = false, Error = error, ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected.ToString() };
+            }
 
             string? sessionId = null;
             byte[]? codeProof = null;
@@ -232,10 +252,14 @@ public sealed class SyncPeerProtocolHandler
 
                 if (totalBytes > SyncConstants.MaxDeviceEnrollmentSnapshotBytes)
                 {
+                    var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(
+                        DeviceEnrollmentErrorCode.ProfileDataTooLarge,
+                        "The profile data is too large to transfer in one enrollment request.",
+                        ct);
                     return new CompleteDeviceEnrollmentReply
                     {
                         Ok = false,
-                        Error = "The profile data is too large to transfer in one enrollment request.",
+                        Error = error,
                         ErrorCode = DeviceEnrollmentErrorCode.ProfileDataTooLarge.ToString()
                     };
                 }
@@ -250,15 +274,17 @@ public sealed class SyncPeerProtocolHandler
                 sourceSignPublicKey is null ||
                 string.IsNullOrWhiteSpace(sourceTlsCertFingerprint))
             {
+                var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(
+                    DeviceEnrollmentErrorCode.ProfileDataInvalid,
+                    "The enrollment transfer metadata is incomplete.",
+                    ct);
                 return new CompleteDeviceEnrollmentReply
                 {
                     Ok = false,
-                    Error = "The enrollment transfer metadata is incomplete.",
+                    Error = error,
                     ErrorCode = DeviceEnrollmentErrorCode.ProfileDataInvalid.ToString()
                 };
             }
-
-            var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
             var result = await enrollment.CompleteIncomingEnrollmentAsync(
                 sessionId,
                 codeProof,
@@ -282,6 +308,20 @@ public sealed class SyncPeerProtocolHandler
                 ErrorCode = result.ErrorCode.ToString()
             };
         }
+        catch (SyncProtocolException ex) when (ex.StatusCode is SyncProtocolStatusCode.InvalidArgument or SyncProtocolStatusCode.ResourceExhausted)
+        {
+            var errorCode = ex.StatusCode == SyncProtocolStatusCode.ResourceExhausted
+                ? DeviceEnrollmentErrorCode.ProfileDataTooLarge
+                : DeviceEnrollmentErrorCode.ProfileDataInvalid;
+            var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(errorCode, ex.Message, ct);
+            DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request was rejected: {error}", ex);
+            return new CompleteDeviceEnrollmentReply
+            {
+                Ok = false,
+                Error = error,
+                ErrorCode = errorCode.ToString()
+            };
+        }
         catch (Exception ex)
         {
             DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request failed: {ex.Message}", ex);
@@ -293,6 +333,16 @@ public sealed class SyncPeerProtocolHandler
             };
         }
     }
+
+
+    private static bool ShouldRecordHelloFailure(Exception exception) =>
+        exception is not SyncProtocolException
+        {
+            StatusCode: SyncProtocolStatusCode.Unavailable
+        } &&
+        !(exception is SyncProtocolException protocolException &&
+          protocolException.StatusCode == SyncProtocolStatusCode.PermissionDenied &&
+          string.Equals(protocolException.Message, "Remote device is not linked to an enabled local user.", StringComparison.Ordinal));
 
 
     private static async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, PeerConnectionContext context, CancellationToken ct)
@@ -348,8 +398,9 @@ public sealed class SyncPeerProtocolHandler
         if (remoteDevice.IsBlocked)
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not allowed to sync.");
 
-        if (!remoteDevice.UserDevices.Any(ud => !ud.IsDeleted && ud.IsSyncEnabled))
-            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not linked to any active user.");
+        var authorization = services.GetRequiredService<ISyncAuthorizationService>();
+        if (!await authorization.HasEligibleUserForDeviceAsync(remoteDevice.Id, ct))
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not linked to an enabled local user.");
 
         if (remoteDevice.SignPublicKey.Length == 0)
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device signing key is missing.");

@@ -66,12 +66,12 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.GetLocalDeviceInfoAsync(ct));
 
 
-    public Task<bool> GetLocalDeviceSyncEnabledAsync(CancellationToken ct = default) =>
-        RunAsync(endpoints => endpoints.GetLocalDeviceSyncEnabledAsync(ct));
+    public Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.GetLocalUserSyncOnAsync(token, ct));
 
 
-    public Task SetLocalDeviceSyncEnabledAsync(bool isSyncOn, CancellationToken ct = default) =>
-        RunAsync(endpoints => endpoints.SetLocalDeviceSyncEnabledAsync(isSyncOn, ct));
+    public Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.SetLocalUserSyncOnAsync(token, isSyncOn, ct));
 
 
     public Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default) =>
@@ -86,8 +86,8 @@ public sealed class ScopedEndpoints : IEndpoints
         RunAsync(endpoints => endpoints.SetUserDeviceNameAsync(token, deviceId, name, ct));
 
 
-    public Task SetUserDeviceSyncEnabledAsync(Guid token, Guid deviceId, bool isSyncEnabled, CancellationToken ct = default) =>
-        RunAsync(endpoints => endpoints.SetUserDeviceSyncEnabledAsync(token, deviceId, isSyncEnabled, ct));
+    public Task SetUserDeviceSyncOnAsync(Guid token, Guid deviceId, bool isSyncOn, CancellationToken ct = default) =>
+        RunAsync(endpoints => endpoints.SetUserDeviceSyncOnAsync(token, deviceId, isSyncOn, ct));
 
 
     public Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default) =>

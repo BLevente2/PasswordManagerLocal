@@ -344,7 +344,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             PublicKey = source.PublicKey.ToArray(),
             SignPublicKey = source.SignPublicKey.ToArray(),
             TlsCertFingerprint = source.TlsCertFingerprint,
-            DeviceName = source.DeviceName,
+            DeviceType = source.DeviceType,
             LastKnownHash = source.LastKnownHash.ToArray(),
             LastSync = source.LastSync,
             LastSeen = source.LastSeen,

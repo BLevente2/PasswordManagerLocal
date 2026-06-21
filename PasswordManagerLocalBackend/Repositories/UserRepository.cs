@@ -18,15 +18,15 @@ public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepositor
     public async Task<User?> GetByIdWithRelationsAsync(Guid id, CancellationToken ct = default) =>
         await Set
             .Include(u => u.Groups)
-            .Include(u => u.Devices)
             .Include(u => u.UserDevices)
+            .Include(u => u.LocalUserDevices)
             .FirstOrDefaultAsync(u => u.UId == id, ct);
 
     public async Task<User?> GetByIdAsNoTrackingWithRelationsAsync(Guid id, CancellationToken ct = default) =>
         await Set.AsNoTracking()
             .Include(u => u.Groups)
-            .Include(u => u.Devices)
             .Include(u => u.UserDevices)
+            .Include(u => u.LocalUserDevices)
             .FirstOrDefaultAsync(u => u.UId == id, ct);
 
     public async Task<IReadOnlyList<User>> GetAllRememberMeEnabledUsersAsync(CancellationToken ct = default) =>

@@ -115,6 +115,7 @@ namespace PasswordManagerLocalBackend
                     services.AddScoped<IUserRepository, UserRepository>();
                     services.AddScoped<IDeviceRepository, DeviceRepository>();
                     services.AddScoped<IUserDeviceRepository, UserDeviceRepository>();
+                    services.AddScoped<ILocalUserDeviceRepository, LocalUserDeviceRepository>();
                     services.AddScoped<IGroupRepository, GroupRepository>();
                     services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
                     services.AddScoped<ISyncItemRepository, SyncItemRepository>();
@@ -143,11 +144,13 @@ namespace PasswordManagerLocalBackend
                     services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
                     services.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
                     services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
+                    services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
                     services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
                     services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
                     services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
                     services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
                     services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
+                    services.AddScoped<ISyncAuthorizationService, SyncAuthorizationService>();
                     services.AddScoped<ISyncQueueService, SyncQueueService>();
                     services.AddScoped<ISyncService, SyncService>();
 
@@ -174,7 +177,16 @@ namespace PasswordManagerLocalBackend
             var deviceKeyStore = host.Services.GetRequiredService<IDeviceIdentityService>();
             await deviceKeyStore.InitializeAsync();
 
+            bool shouldEnableSync;
+            using (var scope = host.Services.CreateScope())
+            {
+                var localUserDevices = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
+                shouldEnableSync = await localUserDevices.AnySyncOnAsync();
+            }
+            await deviceKeyStore.SetSyncOnAsync(shouldEnableSync);
+
             await host.StartAsync();
+            await host.Services.GetRequiredService<ISyncRuntimeService>().RefreshSyncEnabledAsync();
 
             lock (_lock)
             {

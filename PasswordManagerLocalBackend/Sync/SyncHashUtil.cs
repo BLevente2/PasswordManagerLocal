@@ -1,6 +1,5 @@
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
-using System.Text;
 
 namespace PasswordManagerLocalBackend.Sync;
 
@@ -10,8 +9,7 @@ public static class SyncHashUtil
         CalculateUserDeviceHash(
             userDevice.UserId,
             userDevice.DeviceId,
-            userDevice.Name,
-            userDevice.IsSyncEnabled,
+            userDevice.IsSyncOn,
             userDevice.IsDeleted,
             userDevice.LinkedAt,
             userDevice.DeletedAt);
@@ -21,8 +19,7 @@ public static class SyncHashUtil
         CalculateUserDeviceHash(
             payload.UserId,
             payload.DeviceId,
-            payload.Name,
-            payload.IsSyncEnabled,
+            payload.IsSyncOn,
             payload.IsDeleted,
             payload.LinkedAt,
             payload.DeletedAt);
@@ -31,8 +28,7 @@ public static class SyncHashUtil
     private static byte[] CalculateUserDeviceHash(
         Guid userId,
         Guid deviceId,
-        string name,
-        bool isSyncEnabled,
+        bool isSyncOn,
         bool isDeleted,
         DateTimeOffset linkedAt,
         DateTimeOffset? deletedAt)
@@ -42,8 +38,7 @@ public static class SyncHashUtil
 
         bw.Write(userId.ToByteArray());
         bw.Write(deviceId.ToByteArray());
-        bw.Write(Encoding.UTF8.GetBytes((name ?? string.Empty).Trim()));
-        bw.Write(isSyncEnabled ? (byte)1 : (byte)0);
+        bw.Write(isSyncOn ? (byte)1 : (byte)0);
         bw.Write(isDeleted ? (byte)1 : (byte)0);
         bw.Write(linkedAt.ToUnixTimeMilliseconds());
         bw.Write(deletedAt?.ToUnixTimeMilliseconds() ?? 0);

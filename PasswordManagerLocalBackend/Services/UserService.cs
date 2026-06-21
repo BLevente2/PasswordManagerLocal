@@ -8,6 +8,7 @@ using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
+using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -18,8 +19,7 @@ public sealed class UserService : IUserService
     private readonly IKeyVaultService _keys;
     private readonly ITokenService _tokens;
     private readonly ISyncQueueService _syncQueue;
-    private readonly IUserDeviceRepository _userDevices;
-    private readonly IDeviceIdentityService _identity;
+    private readonly ISyncRuntimeService _syncRuntime;
     private readonly IUnitOfWork _uow;
 
     public UserService(
@@ -28,8 +28,7 @@ public sealed class UserService : IUserService
         IKeyVaultService keys,
         ITokenService tokens,
         ISyncQueueService syncQueue,
-        IUserDeviceRepository userDevices,
-        IDeviceIdentityService identity,
+        ISyncRuntimeService syncRuntime,
         IUnitOfWork uow)
     {
         _users = users;
@@ -37,8 +36,7 @@ public sealed class UserService : IUserService
         _keys = keys;
         _tokens = tokens;
         _syncQueue = syncQueue;
-        _userDevices = userDevices;
-        _identity = identity;
+        _syncRuntime = syncRuntime;
         _uow = uow;
     }
 
@@ -121,7 +119,7 @@ public sealed class UserService : IUserService
         if (userData is null)
             throw new UnauthorizedAccessException();
 
-        userData.VerifyIntegrity();
+        VerifyUserDataIntegrity(userData);
         return userData;
     }
 
@@ -137,7 +135,7 @@ public sealed class UserService : IUserService
     {
         if (_cache.TryGetUserData(token, out var foundUserData) && foundUserData is not null)
         {
-            foundUserData.VerifyIntegrity();
+            VerifyUserDataIntegrity(foundUserData);
             userData = foundUserData;
             return true;
         }
@@ -197,8 +195,6 @@ public sealed class UserService : IUserService
 
         if (enqueueSync)
         {
-            await EnqueueLocalUserDeviceStateAsync(user.UId, ct);
-
             await _syncQueue.EnqueueAsync(new SyncItem
             {
                 ModelId = user.UId,
@@ -249,31 +245,40 @@ public sealed class UserService : IUserService
     }
 
 
-    private async Task EnqueueLocalUserDeviceStateAsync(Guid userId, CancellationToken ct)
-    {
-        if (!_identity.IsInitialized || _identity.LocalDeviceId == Guid.Empty)
-            return;
-
-        var userDevice = await _userDevices.GetAsync(userId, _identity.LocalDeviceId, ct);
-        if (userDevice is null || userDevice.IsDeleted)
-            return;
-
-        await _syncQueue.EnqueueAsync(new SyncItem
-        {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Updated
-        }, ct);
-    }
-
-
     private static void EnsureUserDataCanBePersisted(UserData userData, User user)
     {
         if (userData.UId == Guid.Empty || userData.UId != user.UId)
             throw new InvalidOperationException("Refusing to persist invalid user data.");
 
-        if (userData.Passwords.PasswordKey.Length == 0)
+        if (userData.Passwords.PasswordKey.Length == 0 || userData.UserDevices is null)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
+
+        if (userData.UserDevices.Devices.Any(device =>
+                device.Id == Guid.Empty ||
+                !IsValidUserDeviceName(device.Name)))
+            throw new InvalidOperationException("Refusing to persist invalid device data.");
+
+        if (userData.UserDevices.Devices
+            .GroupBy(device => device.Id)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate device data.");
+
+        if (userData.UserDevices.Devices
+            .GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate device names.");
+    }
+
+    private static void VerifyUserDataIntegrity(UserData userData)
+    {
+        userData.VerifyIntegrity();
+        userData.Passwords.VerifyIntegrity();
+        foreach (var password in userData.Passwords.Passwords)
+            password.VerifyIntegrity();
+
+        userData.UserDevices.VerifyIntegrity();
+        foreach (var device in userData.UserDevices.Devices)
+            device.VerifyIntegrity();
     }
 
 
@@ -302,6 +307,7 @@ public sealed class UserService : IUserService
 
         _users.Delete(user);
         await _uow.SaveChangesAsync(ct);
+        await _syncRuntime.RefreshSyncEnabledAsync(ct);
     }
 
 
