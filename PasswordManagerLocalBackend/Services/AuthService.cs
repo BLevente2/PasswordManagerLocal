@@ -277,6 +277,12 @@ public sealed class AuthService : IAuthService
             _rememberMe.SetRememberMe(user, true, newKey);
 
         await _userService.UpdateUserDataAsync(userData, user, newKey, true, ct);
+
+        foreach (var otherToken in _tokens.ListTokensByUid(user.UId))
+        {
+            if (otherToken != request.Token)
+                InvalidateToken(otherToken, AuthSessionInvalidationReason.ProfilePasswordChanged);
+        }
     }
 
 

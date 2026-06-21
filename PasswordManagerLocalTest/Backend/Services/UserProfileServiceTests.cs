@@ -1,8 +1,9 @@
-﻿using global::PasswordManagerLocalTest.TestInfrastructure;
+using global::PasswordManagerLocalTest.TestInfrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Requests;
 using System.Text;
 
@@ -49,6 +50,7 @@ public sealed class UserProfileServiceTests
 
         var auth = host.Services.GetRequiredService<IAuthService>();
         var profile = host.Services.GetRequiredService<IUserProfileService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("bob"));
 
@@ -60,6 +62,7 @@ public sealed class UserProfileServiceTests
             NewLastName = "Tables"
         });
 
+        cache.InvalidateToken(token);
         var info = await profile.GetUserProfileInfoAsync(token);
 
         MSTestAssert.AreEqual("bob", info.Username);
@@ -97,7 +100,32 @@ public sealed class UserProfileServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
-    public async Task DeleteUserAccount_CorrectPassword_DeletesUser_AndInvalidatesToken()
+    public async Task ChangeUsername_DuplicateUsername_ThrowsAndKeepsOriginalUsername()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var profile = host.Services.GetRequiredService<IUserProfileService>();
+
+        var aliceToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("alice_duplicate_test"));
+        await auth.RegisterAsync(host.CreateValidRegistrationRequest("bob_duplicate_test"));
+
+        await ExpectThrowsAsync<InvalidInputException>(async () =>
+        {
+            await profile.ChangeUsernameAsync(aliceToken, "bob_duplicate_test");
+        });
+
+        var info = await profile.GetUserProfileInfoAsync(aliceToken);
+        MSTestAssert.AreEqual("alice_duplicate_test", info.Username);
+
+        var loginToken = await auth.LoginAsync(host.CreateValidLoginRequest("alice_duplicate_test"));
+        MSTestAssert.AreNotEqual(Guid.Empty, loginToken);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task DeleteUserAccount_CorrectPassword_DeletesUser_AndInvalidatesAllSessions()
     {
         using var host = new BackendTestHost();
 
@@ -108,6 +136,7 @@ public sealed class UserProfileServiceTests
         var keys = host.Services.GetRequiredService<IKeyVaultService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("dave"));
+        var secondToken = await auth.LoginAsync(host.CreateValidLoginRequest("dave"));
         var uid = users.GetUidFromToken(token);
 
         await profile.DeleteUserAccountAsync(token, Encoding.UTF8.GetBytes("P@ssw0rd12345678"));
@@ -117,6 +146,10 @@ public sealed class UserProfileServiceTests
 
         MSTestAssert.IsFalse(tokens.Validate(token));
         MSTestAssert.IsFalse(keys.HasUserKey(token));
+        MSTestAssert.IsFalse(tokens.Validate(secondToken));
+        MSTestAssert.IsFalse(keys.HasUserKey(secondToken));
+        MSTestAssert.IsTrue(tokens.TryGetInvalidationReason(secondToken, out var reason));
+        MSTestAssert.AreEqual(AuthSessionInvalidationReason.ProfileRemoved, reason);
 
         await ExpectThrowsAsync<InvalidTokenException>(async () =>
         {

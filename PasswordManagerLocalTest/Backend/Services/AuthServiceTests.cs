@@ -1,8 +1,9 @@
-﻿using global::PasswordManagerLocalTest.TestInfrastructure;
+using global::PasswordManagerLocalTest.TestInfrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Requests;
 using System.Text;
 
@@ -138,6 +139,37 @@ public sealed class AuthServiceTests
 
         MSTestAssert.AreNotEqual(Guid.Empty, newToken);
         MSTestAssert.AreNotEqual(token, newToken);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task ChangeMasterPassword_InvalidatesOtherSessions()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var keys = host.Services.GetRequiredService<IKeyVaultService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var currentToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("multi_session"));
+        var otherToken = await auth.LoginAsync(host.CreateValidLoginRequest("multi_session"));
+
+        await auth.ChangeMasterPasswordAsync(new MasterPasswordChangeRequest
+        {
+            Token = currentToken,
+            Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
+            NewPassword = Encoding.UTF8.GetBytes("N3wP@ssw0rd_123456")
+        });
+
+        MSTestAssert.IsTrue(tokens.Validate(currentToken));
+        MSTestAssert.IsTrue(keys.HasUserKey(currentToken));
+        MSTestAssert.IsFalse(tokens.Validate(otherToken));
+        MSTestAssert.IsFalse(keys.HasUserKey(otherToken));
+        MSTestAssert.IsFalse(cache.TryGetUserData(otherToken, out _));
+        MSTestAssert.IsTrue(tokens.TryGetInvalidationReason(otherToken, out var reason));
+        MSTestAssert.AreEqual(AuthSessionInvalidationReason.ProfilePasswordChanged, reason);
     }
 
     [TestMethod]

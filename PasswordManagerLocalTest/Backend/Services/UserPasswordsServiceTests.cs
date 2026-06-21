@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
@@ -18,8 +18,9 @@ public sealed class UserPasswordsServiceTests
     {
         using var host = new BackendTestHost();
 
-        var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
-        var svc = (IUserPasswordsService)host.Services.GetRequiredService(typeof(IUserPasswordsService));
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var svc = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("steve"));
 
@@ -29,6 +30,7 @@ public sealed class UserPasswordsServiceTests
             Password = Encoding.UTF8.GetBytes("secret")
         });
 
+        cache.InvalidateToken(token);
         var list = await svc.GetSavedPasswordsAsync(token);
 
         MSTestAssert.HasCount(1, list);
@@ -70,8 +72,9 @@ public sealed class UserPasswordsServiceTests
     {
         using var host = new BackendTestHost();
 
-        var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
-        var svc = (IUserPasswordsService)host.Services.GetRequiredService(typeof(IUserPasswordsService));
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var svc = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("bob"));
 
@@ -86,6 +89,7 @@ public sealed class UserPasswordsServiceTests
 
         await svc.RemovePasswordAsync(token, id);
 
+        cache.InvalidateToken(token);
         var after = await svc.GetSavedPasswordsAsync(token);
         MSTestAssert.IsEmpty(after);
     }
@@ -119,8 +123,9 @@ public sealed class UserPasswordsServiceTests
     {
         using var host = new BackendTestHost();
 
-        var auth = (IAuthService)host.Services.GetRequiredService(typeof(IAuthService));
-        var svc = (IUserPasswordsService)host.Services.GetRequiredService(typeof(IUserPasswordsService));
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var svc = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("dave"));
 
@@ -140,6 +145,7 @@ public sealed class UserPasswordsServiceTests
             Password = Encoding.UTF8.GetBytes("newpw")
         });
 
+        cache.InvalidateToken(token);
         var updated = await svc.GetSavedPasswordsAsync(token);
         var decrypted = await svc.GetUnsecurePasswordAsync(token, id);
 

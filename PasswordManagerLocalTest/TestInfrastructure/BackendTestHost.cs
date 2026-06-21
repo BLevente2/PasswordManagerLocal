@@ -1,6 +1,4 @@
-﻿using Microsoft.Extensions.Caching.Memory;
-using PasswordManagerLocalBackend;
-using PasswordManagerLocalBackend.Abstractions;
+using Microsoft.Extensions.Caching.Memory;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
@@ -38,8 +36,10 @@ public sealed class BackendTestHost : IDisposable
 
         sc.AddSingleton<IUserRepository, InMemoryUserRepository>();
         sc.AddSingleton<IUserDeviceRepository, FakeUserDeviceRepository>();
+        sc.AddSingleton<ILocalUserDeviceRepository, FakeLocalUserDeviceRepository>();
         sc.AddSingleton<IDeviceIdentityService, FakeDeviceIdentityService>();
         sc.AddSingleton<ISyncQueueService, FakeSyncQueueService>();
+        sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
         sc.AddSingleton<IUserService, UserService>();
@@ -48,11 +48,12 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IAuthService, AuthService>();
         sc.AddSingleton<IPasswordService, PasswordService>();
         sc.AddSingleton<IUserPasswordsService, UserPasswordsService>();
-        sc.AddSingleton<IGroupService, GroupService>();
-        sc.AddSingleton<IGroupPasswordsService, GroupPasswordsService>();
-        sc.AddSingleton<IEndpoints, Endpoints>();
 
-        _sp = sc.BuildServiceProvider();
+        _sp = sc.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
     }
 
     public IServiceProvider Services => _sp;

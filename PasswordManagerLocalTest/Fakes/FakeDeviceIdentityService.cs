@@ -1,17 +1,18 @@
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Models;
 using System.Security.Cryptography.X509Certificates;
 
 namespace PasswordManagerLocalTest.Fakes;
 
 public sealed class FakeDeviceIdentityService : IDeviceIdentityService
 {
-    public bool IsInitialized { get; set; }
+    public bool IsInitialized { get; set; } = true;
     public bool IsSyncOn { get; private set; } = true;
-    public string DeviceName { get; private set; } = "Test device";
+    public DeviceType DeviceType { get; set; } = PasswordManagerLocalBackend.Models.DeviceType.WindowsPc;
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     public byte[] AgreementPublicKey { get; } = [];
     public byte[] SignPublicKey { get; } = [];
-    public Guid LocalDeviceId { get; set; } = Guid.Empty;
+    public Guid LocalDeviceId { get; set; } = Guid.Parse("A46D349F-8C54-4424-B974-2E51D113EBE8");
     public string DeviceIdHex => LocalDeviceId.ToString("N").ToUpperInvariant();
     public X509Certificate2 Certificate => throw new NotSupportedException("The fake device identity has no certificate.");
     public string FingerprintHex { get; set; } = string.Empty;
@@ -25,12 +26,6 @@ public sealed class FakeDeviceIdentityService : IDeviceIdentityService
     public Task SetSyncOnAsync(bool isSyncOn, CancellationToken ct = default)
     {
         IsSyncOn = isSyncOn;
-        return Task.CompletedTask;
-    }
-
-    public Task SetDeviceNameAsync(string deviceName, CancellationToken ct = default)
-    {
-        DeviceName = deviceName;
         return Task.CompletedTask;
     }
 

@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Repositories;
+using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Models;
 using System.Collections.Concurrent;
 
@@ -81,7 +81,7 @@ public sealed class InMemoryUserRepository : IUserRepository
             LastModifiedAt = u.LastModifiedAt,
             IntegrityHash = u.IntegrityHash.ToArray(),
             Groups = u.Groups.ToList(),
-            Devices = u.Devices.ToList(),
+            LocalUserDevices = u.LocalUserDevices.ToList(),
             UserDevices = u.UserDevices.ToList()
         };
     }
