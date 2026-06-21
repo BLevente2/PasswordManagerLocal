@@ -201,7 +201,8 @@ namespace PasswordManagerLocalBackend
                     services.AddHostedService<LocalDeviceCleanupHostedService>();
                     services.AddHostedService<SyncDeviceIdentityWarmupHostedService>();
                     services.AddSingleton<SyncPeerProtocolHandler>();
-                    services.AddHostedService<TcpSyncServerHostedService>();
+                    services.AddSingleton<TcpSyncServerHostedService>();
+                    services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<TcpSyncServerHostedService>());
                     services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MdnsPublisherHostedService>());
                     services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MdnsBrowserHostedService>());
                     services.AddHostedService<SyncNetworkRefreshHostedService>();

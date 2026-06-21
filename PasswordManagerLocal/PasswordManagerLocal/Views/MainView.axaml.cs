@@ -48,6 +48,7 @@ public partial class MainView : UserControl
         var topLevel = TopLevel.GetTopLevel(this);
         ClipboardService.SetActiveTopLevel(topLevel);
         QrImagePickerService.SetActiveTopLevel(topLevel);
+        FirewallPermissionStartupPrompt.SetActiveTopLevel(topLevel);
 
         if (ReferenceEquals(_inputTopLevel, topLevel))
         {
@@ -75,6 +76,7 @@ public partial class MainView : UserControl
     private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
         DetachTopLevelInputHandlers();
+        FirewallPermissionStartupPrompt.SetActiveTopLevel(null);
         DetachObservedViewModel();
     }
 

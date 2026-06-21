@@ -29,15 +29,7 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
 
         var appExePath = GetApplicationPath();
         if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
-        {
-            return new FirewallPermissionCheckResult
-            {
-                IsSupported = true,
-                IsConfigured = false,
-                CanRequestPermission = true,
-                Details = "The application executable path could not be determined, but the port based firewall rules can still be configured."
-            };
-        }
+            appExePath = string.Empty;
 
         var script = CreateCheckScript();
         var result = await RunPowerShellScriptAsync(script, appExePath, elevated: false, ct);
@@ -85,12 +77,37 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
             };
         }
 
+        FirewallPermissionCheckResult? verification = null;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            if (attempt > 0)
+                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+
+            verification = await CheckAsync(ct);
+            if (verification.IsConfigured)
+            {
+                return new FirewallPermissionCheckResult
+                {
+                    IsSupported = true,
+                    IsConfigured = true,
+                    CanRequestPermission = true,
+                    Details = GetBestProcessDetails(applyResult)
+                };
+            }
+        }
+
+        var applyDetails = GetBestProcessDetails(applyResult);
+        var verificationDetails = verification?.Details;
+        var details = string.IsNullOrWhiteSpace(verificationDetails)
+            ? $"{applyDetails} The firewall rules could not be verified after the elevated process finished."
+            : $"{applyDetails} Verification failed: {verificationDetails}";
+
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,
-            IsConfigured = true,
+            IsConfigured = false,
             CanRequestPermission = true,
-            Details = GetBestProcessDetails(applyResult)
+            Details = details
         };
     }
 

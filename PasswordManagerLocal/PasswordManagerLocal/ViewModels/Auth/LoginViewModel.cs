@@ -424,6 +424,12 @@ public sealed class LoginViewModel : ViewModelBase
         try
         {
             IsBusy = true;
+            if (!await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                DeviceTransferStatus.ShowError(GetTranslation("Firewall_RequiredForLocalNetwork"));
+                return;
+            }
+
             var response = await _endpoints.StartDeviceEnrollmentAsync();
             DeviceTransferCode = response.Code;
             DeviceTransferStatus.ShowInformation(GetTranslation("Login_DeviceTransfer_CodeReady"), autoDismiss: true);

@@ -78,6 +78,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
     private CancellationTokenSource? _enrollmentExpirationCancellation;
+    private CancellationTokenSource? _enrollmentNetworkRefreshCancellation;
+    private bool _enrollmentNetworkMonitoringStarted;
 
     public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache, ISyncTransportClientService syncTransport, ISyncRuntimeService syncRuntime)
     {
@@ -94,15 +96,20 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     public async Task<DeviceEnrollmentCodeResponse> StartEnrollmentAsync(CancellationToken ct = default)
     {
         await _syncRuntime.BeginEnrollmentOnlyAsync(ct);
+        EnrollmentSession? session = null;
+
         try
         {
+            DeviceEnrollmentDirectEndpointInfo directEndpointInfo;
+
             lock (_lock)
             {
                 CancelEnrollmentExpirationLocked();
+                StopEnrollmentNetworkMonitoringLocked();
                 StopAdvertisingLocked();
-                var directEndpointInfo = BuildDirectEndpointInfo();
+                directEndpointInfo = BuildDirectEndpointInfo();
                 var generated = DeviceEnrollmentCode.Create(directEndpointInfo);
-                var session = new EnrollmentSession
+                session = new EnrollmentSession
                 {
                     SessionId = generated.SessionId,
                     Secret = generated.Secret,
@@ -110,17 +117,90 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
                     State = DeviceEnrollmentState.Waiting
                 };
-                StartAdvertisingLocked(session, directEndpointInfo.Hosts);
                 _currentSession = session;
+                StartEnrollmentNetworkMonitoringLocked();
+                StartAdvertisingLocked(session, directEndpointInfo.Hosts);
                 StartEnrollmentExpirationCountdownLocked(session);
-                return new DeviceEnrollmentCodeResponse { Code = session.Code, ExpiresAt = session.ExpiresAt };
             }
+
+            await VerifyLocalEnrollmentListenerAsync(session, directEndpointInfo, ct);
+            return new DeviceEnrollmentCodeResponse { Code = session.Code, ExpiresAt = session.ExpiresAt };
         }
         catch
         {
+            lock (_lock)
+            {
+                if (session is not null && ReferenceEquals(_currentSession, session))
+                {
+                    CancelEnrollmentExpirationLocked();
+                    StopEnrollmentNetworkMonitoringLocked();
+                    StopAdvertisingLocked();
+                    _currentSession = null;
+                }
+            }
+
             await _syncRuntime.EndEnrollmentOnlyAsync(CancellationToken.None);
             throw;
         }
+    }
+
+
+    private async Task VerifyLocalEnrollmentListenerAsync(EnrollmentSession session, DeviceEnrollmentDirectEndpointInfo endpointInfo, CancellationToken ct)
+    {
+        var hosts = endpointInfo.Hosts
+            .Where(host => !string.IsNullOrWhiteSpace(host) && IPAddress.TryParse(host, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (hosts.Count == 0)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, "No usable local network address was available for device enrollment.");
+
+        var failures = new List<string>();
+        var request = new GetDeviceEnrollmentInfoRequest
+        {
+            SessionId = session.SessionId,
+            CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(session.SessionId, session.Secret))
+        };
+
+        foreach (var host in hosts)
+        {
+            try
+            {
+                DeviceEnrollmentTrace.Info($"Local enrollment listener self-test started for {host}:{endpointInfo.Port}.");
+                var reply = await _syncTransport.GetDeviceEnrollmentInfoAsync(
+                    host,
+                    endpointInfo.Port,
+                    endpointInfo.TlsCertFingerprint,
+                    request,
+                    ct);
+
+                if (reply.Ok &&
+                    Guid.TryParse(reply.DeviceId, out var deviceId) &&
+                    deviceId == _identity.LocalDeviceId &&
+                    NormalizeFingerprint(reply.TlsCertFingerprint) == NormalizeFingerprint(_identity.FingerprintHex))
+                {
+                    DeviceEnrollmentTrace.Info($"Local enrollment listener self-test succeeded for {host}:{endpointInfo.Port}.");
+                    return;
+                }
+
+                var error = string.IsNullOrWhiteSpace(reply.Error) ? "The listener returned an invalid local identity." : reply.Error;
+                failures.Add($"{host}:{endpointInfo.Port} -> {error}");
+                DeviceEnrollmentTrace.Error($"Local enrollment listener self-test failed for {host}:{endpointInfo.Port}: {error}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
+            {
+                failures.Add($"{host}:{endpointInfo.Port} -> {ex.Message}");
+                DeviceEnrollmentTrace.Error($"Local enrollment listener self-test failed for {host}:{endpointInfo.Port}: {ex.Message}", ex);
+            }
+        }
+
+        throw new DeviceEnrollmentException(
+            DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+            $"The local TCP enrollment listener could not complete its own authenticated self-test. {string.Join("; ", failures)}");
     }
 
 
@@ -153,6 +233,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         lock (_lock)
         {
             CancelEnrollmentExpirationLocked();
+            StopEnrollmentNetworkMonitoringLocked();
             StopAdvertisingLocked();
             _currentSession = null;
         }
@@ -199,6 +280,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var hasAuthoritativeSameSubnetDirectEndpoint = directEndpointCandidates.Any(candidate => candidate.Priority >= 2000);
         var directFailures = new List<string>();
         var mdnsFailures = new List<string>();
+        var attemptedEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         DeviceEnrollmentTrace.Info($"AddDeviceByCode started. Session={parsed.SessionId}, directEndpointCount={directEndpoints.Count}, authoritativeDirect={hasAuthoritativeSameSubnetDirectEndpoint}, directEndpointCandidates={string.Join(", ", directEndpointCandidates.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
 
@@ -206,6 +288,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             try
             {
+                attemptedEndpoints.Add($"{endpoint.Host}:{endpoint.Port}");
                 DeviceEnrollmentTrace.Info($"Trying direct enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
                 await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
                 DeviceEnrollmentTrace.Info($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
@@ -245,6 +328,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         foreach (var endpoint in mdnsEndpoints)
         {
+            var endpointKey = $"{endpoint.Host}:{endpoint.Port}";
+            if (!attemptedEndpoints.Add(endpointKey))
+            {
+                DeviceEnrollmentTrace.Info($"Skipping duplicate mDNS enrollment endpoint {endpointKey} because the same address was already tried directly.");
+                continue;
+            }
+
             try
             {
                 DeviceEnrollmentTrace.Info($"Trying mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
@@ -285,7 +375,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         if (hadSameSubnetDirectEndpoint)
         {
-            return "The enrollment code contained a same-subnet address for the new device, but the app could not connect to it by direct TCP or mDNS. If general LAN traffic works between the devices, the most likely cause is that this app or TCP port 26688 is blocked by Windows Firewall on the target device, or the sync TCP listener is not running on that device.";
+            return "The enrollment code contained a same-subnet address for the new device, but no advertised address completed the authenticated TCP enrollment connection. The failure happened before device identity verification or profile transfer. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that inbound traffic reaches that process.";
         }
 
         return "The new device was discovered, but none of the reachable network addresses accepted the enrollment transfer.";
@@ -296,7 +386,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         if (hadSameSubnetDirectEndpoint)
         {
-            return "The enrollment code contained a same-subnet address for the new device, but the app could not connect to it directly and mDNS discovery also failed. If general LAN traffic works between the devices, the most likely cause is that this app or TCP port 26688 is blocked by Windows Firewall on the target device, or the sync TCP listener is not running on that device.";
+            return "The enrollment code contained a same-subnet address for the new device, but the authenticated TCP enrollment connection could not be completed and mDNS discovery also failed. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that inbound traffic reaches that process.";
         }
 
         return "The new device was included in the enrollment code, but it could not be reached directly and mDNS discovery also failed.";
@@ -305,9 +395,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private async Task CompleteEnrollmentWithEndpointAsync(Guid token, DeviceEnrollmentParsedCode parsed, EnrollmentEndpoint endpoint, CancellationToken ct)
     {
-        DeviceEnrollmentTrace.Info($"Enrollment endpoint check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
-        await EnsureEndpointTcpReachableAsync(endpoint, ct);
-        DeviceEnrollmentTrace.Info($"TCP connection check succeeded for {endpoint.Host}:{endpoint.Port}.");
+        DeviceEnrollmentTrace.Info($"Enrollment connection and identity check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
         endpoint = await ResolveEndpointIdentityAsync(endpoint, parsed, ct);
         DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, TlsFingerprintPrefix={NormalizeFingerprint(endpoint.TlsCertFingerprint)[..Math.Min(16, NormalizeFingerprint(endpoint.TlsCertFingerprint).Length)]}.");
 
@@ -375,22 +463,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             });
             _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.Unknown, ex.Message, ex);
-        }
-    }
-
-
-    private static async Task EnsureEndpointTcpReachableAsync(EnrollmentEndpoint endpoint, CancellationToken ct)
-    {
-        try
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(DeviceEnrollmentConnectTimeoutSeconds));
-            using var client = new TcpClient();
-            await client.ConnectAsync(endpoint.Host, endpoint.Port, timeout.Token);
-        }
-        catch (Exception ex) when (ex is SocketException or IOException or OperationCanceledException or ArgumentException)
-        {
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, $"The new device could not be reached at {endpoint.Host}:{endpoint.Port}.", ex);
         }
     }
 
@@ -634,6 +706,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 _currentSession.ErrorCode = DeviceEnrollmentErrorCode.Unknown;
                 _currentSession.ErrorMessage = null;
                 CancelEnrollmentExpirationLocked();
+                StopEnrollmentNetworkMonitoringLocked();
                 StopAdvertisingLocked();
             }
         }
@@ -663,6 +736,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             session.ErrorCode = errorCode;
             session.ErrorMessage = "Enrollment was stopped after three failed validation attempts. Generate a new enrollment code before trying again.";
             CancelEnrollmentExpirationLocked();
+            StopEnrollmentNetworkMonitoringLocked();
             StopAdvertisingLocked();
             return (true, session.ErrorMessage);
         }
@@ -1068,19 +1142,29 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             _identity.FingerprintHex,
             _identity.SignPublicKey);
 
-        session.Discovery = new ServiceDiscovery();
-        session.Profile = new ServiceProfile($"pml-enroll-{session.SessionId.ToLowerInvariant()}", MdnsServiceType, (ushort)SyncPort);
-        session.Profile.AddProperty("deviceid", _identity.DeviceIdHex);
-        session.Profile.AddProperty("deviceguid", _identity.LocalDeviceId.ToString("N"));
-        session.Profile.AddProperty("signpub", Convert.ToHexString(_identity.SignPublicKey));
-        session.Profile.AddProperty("agreepub", Convert.ToHexString(_identity.AgreementPublicKey));
-        session.Profile.AddProperty("tlsfp", _identity.FingerprintHex);
-        session.Profile.AddProperty("enrollid", session.SessionId);
-        session.Profile.AddProperty("enrollhash", advertiseHash);
-        session.Profile.AddProperty("hosts", string.Join(",", directHosts.Where(host => IPAddress.TryParse(host, out _)).Distinct(StringComparer.OrdinalIgnoreCase)));
+        var discovery = new ServiceDiscovery();
+        var profile = new ServiceProfile($"pml-enroll-{session.SessionId.ToLowerInvariant()}", MdnsServiceType, (ushort)SyncPort);
+        profile.AddProperty("deviceid", _identity.DeviceIdHex);
+        profile.AddProperty("deviceguid", _identity.LocalDeviceId.ToString("N"));
+        profile.AddProperty("signpub", Convert.ToHexString(_identity.SignPublicKey));
+        profile.AddProperty("agreepub", Convert.ToHexString(_identity.AgreementPublicKey));
+        profile.AddProperty("tlsfp", _identity.FingerprintHex);
+        profile.AddProperty("enrollid", session.SessionId);
+        profile.AddProperty("enrollhash", advertiseHash);
+        profile.AddProperty("hosts", string.Join(",", directHosts.Where(host => IPAddress.TryParse(host, out _)).Distinct(StringComparer.OrdinalIgnoreCase)));
 
-        session.Discovery.Advertise(session.Profile);
-        session.Discovery.Announce(session.Profile);
+        try
+        {
+            discovery.Advertise(profile);
+            discovery.Announce(profile);
+            session.Discovery = discovery;
+            session.Profile = profile;
+        }
+        catch
+        {
+            discovery.Dispose();
+            throw;
+        }
     }
 
 
@@ -1114,6 +1198,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
                     _currentSession.ErrorMessage = "The enrollment code expired.";
                     _enrollmentExpirationCancellation = null;
+                    StopEnrollmentNetworkMonitoringLocked();
                     StopAdvertisingLocked();
                     expired = true;
                 }
@@ -1153,16 +1238,147 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
+    private void StartEnrollmentNetworkMonitoringLocked()
+    {
+        if (_enrollmentNetworkMonitoringStarted)
+            return;
+
+        NetworkChange.NetworkAddressChanged += OnEnrollmentNetworkChanged;
+        NetworkChange.NetworkAvailabilityChanged += OnEnrollmentNetworkAvailabilityChanged;
+        _enrollmentNetworkMonitoringStarted = true;
+        DeviceEnrollmentTrace.Info("Network-change monitoring started for the active enrollment session.");
+    }
+
+
+    private void StopEnrollmentNetworkMonitoringLocked()
+    {
+        if (_enrollmentNetworkMonitoringStarted)
+        {
+            NetworkChange.NetworkAddressChanged -= OnEnrollmentNetworkChanged;
+            NetworkChange.NetworkAvailabilityChanged -= OnEnrollmentNetworkAvailabilityChanged;
+            _enrollmentNetworkMonitoringStarted = false;
+            DeviceEnrollmentTrace.Info("Network-change monitoring stopped for the enrollment session.");
+        }
+
+        var cancellation = _enrollmentNetworkRefreshCancellation;
+        _enrollmentNetworkRefreshCancellation = null;
+        cancellation?.Cancel();
+    }
+
+
+    private void OnEnrollmentNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e) =>
+        ScheduleEnrollmentNetworkRefresh();
+
+
+    private void OnEnrollmentNetworkChanged(object? sender, EventArgs e) =>
+        ScheduleEnrollmentNetworkRefresh();
+
+
+    private void ScheduleEnrollmentNetworkRefresh()
+    {
+        CancellationTokenSource cancellation;
+
+        lock (_lock)
+        {
+            if (!_enrollmentNetworkMonitoringStarted ||
+                _currentSession is null ||
+                _currentSession.State != DeviceEnrollmentState.Waiting)
+                return;
+
+            _enrollmentNetworkRefreshCancellation?.Cancel();
+            cancellation = new CancellationTokenSource();
+            _enrollmentNetworkRefreshCancellation = cancellation;
+        }
+
+        _ = Task.Run(() => RefreshEnrollmentAdvertisementAfterNetworkChangeAsync(cancellation), CancellationToken.None);
+    }
+
+
+    private async Task RefreshEnrollmentAdvertisementAfterNetworkChangeAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(NetworkRefreshDebounceSeconds), cancellation.Token);
+
+            EnrollmentSession? session;
+            lock (_lock)
+            {
+                if (!ReferenceEquals(_enrollmentNetworkRefreshCancellation, cancellation))
+                    return;
+
+                _enrollmentNetworkRefreshCancellation = null;
+                session = _currentSession;
+
+                if (session is null || session.State != DeviceEnrollmentState.Waiting)
+                    return;
+            }
+
+            var hosts = GetLocalEnrollmentHosts();
+            if (hosts.Count == 0)
+            {
+                DeviceEnrollmentTrace.Info("The network changed during enrollment, but no usable local address is available yet. The enrollment advertisement will be refreshed after the next network change.");
+                return;
+            }
+
+            lock (_lock)
+            {
+                if (!ReferenceEquals(_currentSession, session) ||
+                    session.State != DeviceEnrollmentState.Waiting ||
+                    !_enrollmentNetworkMonitoringStarted)
+                    return;
+
+                StopAdvertisingLocked();
+                StartAdvertisingLocked(session, hosts);
+            }
+
+            DeviceEnrollmentTrace.Info($"Enrollment advertisement refreshed after the network change. Hosts={string.Join(", ", hosts)}.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Could not refresh the enrollment advertisement after the network change: {ex.Message}", ex);
+        }
+        finally
+        {
+            cancellation.Dispose();
+        }
+    }
+
+
     private void StopAdvertisingLocked()
     {
-        if (_currentSession?.Discovery is not null)
-        {
-            if (_currentSession.Profile is not null)
-                _currentSession.Discovery.Unadvertise(_currentSession.Profile);
+        var session = _currentSession;
+        var discovery = session?.Discovery;
+        var profile = session?.Profile;
 
-            _currentSession.Discovery.Dispose();
-            _currentSession.Discovery = null;
-            _currentSession.Profile = null;
+        if (session is null || discovery is null)
+            return;
+
+        session.Discovery = null;
+        session.Profile = null;
+
+        try
+        {
+            if (profile is not null)
+                discovery.Unadvertise(profile);
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Could not unadvertise the enrollment service cleanly: {ex.Message}", ex);
+        }
+
+        try
+        {
+            discovery.Dispose();
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Could not dispose the enrollment discovery service cleanly: {ex.Message}", ex);
         }
     }
 
@@ -1179,6 +1395,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
         _currentSession.ErrorMessage = "The enrollment code expired.";
         CancelEnrollmentExpirationLocked();
+        StopEnrollmentNetworkMonitoringLocked();
         StopAdvertisingLocked();
     }
 
@@ -1846,7 +2063,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 AgreementPublicKey = reply.AgreementPub.ToByteArray()
             };
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
         {
             return new DeviceEnrollmentInfoResponse
             {
@@ -1909,7 +2130,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             return result;
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
         {
             DeviceEnrollmentTrace.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {ex.Message}", ex);
             return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, ex.Message);
@@ -2362,6 +2587,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         lock (_lock)
         {
             CancelEnrollmentExpirationLocked();
+            StopEnrollmentNetworkMonitoringLocked();
             StopAdvertisingLocked();
             _currentSession = null;
         }

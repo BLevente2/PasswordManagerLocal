@@ -1364,6 +1364,12 @@ public sealed class ProfileViewModel : ViewModelBase
 
         try
         {
+            if (targetState && !await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                ShowErrorMessage(GetTranslation("Firewall_RequiredForLocalNetwork"));
+                return;
+            }
+
             await _endpoints.SetLocalUserSyncOnAsync(_token, targetState);
             PendingLocalSyncDevice.ApplySyncState(targetState);
             CancelLocalSyncToggle();
@@ -1393,6 +1399,12 @@ public sealed class ProfileViewModel : ViewModelBase
             if (!isLocalSyncOn)
             {
                 ShowErrorMessage(GetTranslation("Profile_Device_AddSyncDisabled"));
+                return;
+            }
+
+            if (!await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                ShowErrorMessage(GetTranslation("Firewall_RequiredForLocalNetwork"));
                 return;
             }
 
@@ -1519,6 +1531,12 @@ public sealed class ProfileViewModel : ViewModelBase
         try
         {
             IsAddingDevice = true;
+            if (!await FirewallPermissionStartupPrompt.EnsureConfiguredAsync(CurrentLanguage))
+            {
+                ShowErrorMessage(GetTranslation("Firewall_RequiredForLocalNetwork"));
+                return;
+            }
+
             await _endpoints.AddDeviceByCodeAsync(_token, code);
             CancelAddDevice();
             CurrentDevicePane = DeviceListPane;
