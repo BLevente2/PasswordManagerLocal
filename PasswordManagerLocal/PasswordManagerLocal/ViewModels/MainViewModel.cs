@@ -82,7 +82,7 @@ public sealed class MainViewModel : ViewModelBase
         ShowChangeProfileCommand = ReactiveCommand.CreateFromTask(ShowChangeProfileAsync);
         LogoutCommand = ReactiveCommand.CreateFromTask(LogoutAsync);
         RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAuthenticatedStateAsync);
-        RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshVisiblePageAsync);
+        RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshAllLoadedDataAsync);
         ConfirmSessionRenewalCommand = ReactiveCommand.CreateFromTask(ConfirmSessionRenewalAsync);
         DeclineSessionRenewalCommand = ReactiveCommand.Create(DeclineSessionRenewal);
         SensitiveDataVisibilityService.HideVisibleSecretsRequested += HandleHideVisibleSecretsRequested;
@@ -620,6 +620,8 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        PasswordsViewModel.ShowMainPage();
+        ProfileViewModel.DiscardTransientNavigationState();
         CurrentPageViewModel = PasswordsViewModel;
         CurrentAnimatedPageViewModel = new MainPageContentViewModel(PasswordsViewModel);
         RaiseNavigationStateProperties();
@@ -632,6 +634,7 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowProfileMainPage();
         CurrentPageViewModel = ProfileViewModel;
         CurrentAnimatedPageViewModel = new MainPageContentViewModel(ProfileViewModel);
@@ -645,6 +648,7 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowDevicesMainPage();
         CurrentPageViewModel = ProfileViewModel;
         CurrentAnimatedPageViewModel = new MainPageContentViewModel(ProfileViewModel);
@@ -859,6 +863,37 @@ public sealed class MainViewModel : ViewModelBase
         await RefreshAuthenticatedStateAsync();
     }
 
+    private async Task RefreshAllLoadedDataAsync()
+    {
+        var token = _authSessionRegistry.CurrentUserToken;
+        if (token == Guid.Empty || !IsAuthenticated)
+        {
+            return;
+        }
+
+        try
+        {
+            var profile = await _endpoints.GetUserProfileInfoAsync(token);
+
+            CurrentUserDisplayName = BuildDisplayName(profile);
+            CurrentUserSubtitle = BuildSubtitle(profile);
+            ApplyRememberMeFromSession(profile.IsRememberMeEnabled);
+            SetSessionProfile(token, profile);
+
+            PasswordsViewModel.SetSessionToken(token);
+            ProfileViewModel.SetSessionToken(token);
+
+            await PasswordsViewModel.RefreshCurrentDataAsync();
+            await ProfileViewModel.LoadAsync(token, profile);
+
+            StatusMessage = GetTranslation("Shell_DataRefreshed");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = GetSafeErrorMessage(ex);
+        }
+    }
+
     private async Task RefreshProfileDataAsync()
     {
         var token = _authSessionRegistry.CurrentUserToken;
@@ -879,13 +914,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task RefreshAuthenticatedStateAsync()
     {
-        var token = _authSessionRegistry.CurrentUserToken;
-        if (token == Guid.Empty)
-        {
-            return;
-        }
-
-        await LoadAuthenticatedStateAsync(token, GetTranslation("Shell_DataRefreshed"));
+        await RefreshAllLoadedDataAsync();
     }
 
     private async Task LogoutAsync()

@@ -109,7 +109,6 @@
                 <MenuItem Header="{Binding ThemeLightLabel}" Command="{Binding SetLightThemeCommand}" />
                 <MenuItem Header="{Binding ThemeDarkLabel}" Command="{Binding SetDarkThemeCommand}" />
               </MenuItem>
-              <MenuItem Header="{Binding RefreshVisiblePageLabel}" Command="{Binding RefreshVisiblePageCommand}" IsVisible="{Binding IsAuthenticated}" />
             </MenuFlyout>
           </Button.Flyout>
         </Button>

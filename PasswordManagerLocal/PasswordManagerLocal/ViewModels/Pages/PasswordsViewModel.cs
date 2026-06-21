@@ -698,6 +698,19 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public async Task RefreshCurrentDataAsync() => await RefreshAsync();
 
+    public void ShowMainPage()
+    {
+        IsDeleteConfirmationOpen = false;
+        PasswordPendingDeletion = null;
+        SelectedPassword = null;
+        RevealedPassword = null;
+        StatusMessage = null;
+        SearchQuery = string.Empty;
+        IsCreateMode = true;
+        CurrentPane = ListPane;
+        ResetEditorFields();
+    }
+
     public void Reset()
     {
         _token = Guid.Empty;

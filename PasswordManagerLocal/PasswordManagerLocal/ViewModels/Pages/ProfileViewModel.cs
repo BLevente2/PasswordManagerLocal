@@ -759,13 +759,50 @@ public sealed class ProfileViewModel : ViewModelBase
     
     public void ShowProfileMainPage()
     {
+        DiscardTransientNavigationState();
         CurrentMainPage = MainProfilePage;
-        CurrentProfilePane = ProfileTabsPane;
     }
 
     public void ShowDevicesMainPage()
     {
+        DiscardTransientNavigationState();
         CurrentMainPage = MainDevicesPage;
+    }
+
+    public void DiscardTransientNavigationState()
+    {
+        StatusMessage = null;
+        DeviceSearchQuery = string.Empty;
+        ResetProfileEditFields();
+        ResetDeviceNavigationState();
+        CurrentProfilePane = ProfileTabsPane;
+    }
+
+    private void ResetProfileEditFields()
+    {
+        EditUsername = Username;
+        EditFirstName = FirstName;
+        EditLastName = LastName;
+        EditEmail = Email;
+        CurrentPassword = string.Empty;
+        NewPassword = string.Empty;
+        ConfirmNewPassword = string.Empty;
+        DeleteAccountPassword = string.Empty;
+    }
+
+    private void ResetDeviceNavigationState()
+    {
+        SelectedDevice = null;
+        DeviceToDisconnect = null;
+        PendingLocalSyncDevice = null;
+        PendingLocalSyncEnabled = false;
+        IsDeviceDisconnectDialogOpen = false;
+        IsLocalSyncDialogOpen = false;
+        IsAddDeviceDialogOpen = false;
+        IsAddingDevice = false;
+        DisconnectDevicePassword = string.Empty;
+        DeviceEnrollmentCodeInput = string.Empty;
+        CurrentDevicePane = DeviceListPane;
     }
 
     public bool TryNavigateBack()
