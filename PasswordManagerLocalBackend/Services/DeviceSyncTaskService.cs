@@ -4,7 +4,8 @@ using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Sync;
-using System.Collections.Concurrent;
+using System.Collections.Concurrent;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -245,7 +246,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (freshDevice.PublicKey.Length == 0 ||
             freshDevice.SignPublicKey.Length == 0 ||
             string.IsNullOrWhiteSpace(freshDevice.TlsCertFingerprint) ||
-            !string.Equals(NormalizeFingerprint(freshDevice.TlsCertFingerprint), NormalizeFingerprint(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+            !string.Equals(FingerprintUtil.NormalizeOrEmpty(freshDevice.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
         {
             _syncDeviceIdentities.TryRemove(freshDevice);
             return false;
@@ -324,20 +325,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (device.SignPublicKey.SequenceEqual(_identity.SignPublicKey))
             return true;
 
-        return string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
+        return string.Equals(FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
     }
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        return fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
-    }
 
 
-    private static Device CloneDevice(Device source) =>
+    private Device CloneDevice(Device source) =>
         new()
         {
             Id = source.Id,

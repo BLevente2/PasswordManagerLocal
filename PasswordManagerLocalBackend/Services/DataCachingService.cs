@@ -32,8 +32,8 @@ public sealed class DataCachingService : IDataCachingService
         _groupTtl = groupTtl;
     }
 
-    private static string UserKey(Guid token) => $"t:{token:N}:user";
-    private static string GroupKey(Guid token, Guid groupId) => $"t:{token:N}:g:{groupId:N}";
+    private string UserKey(Guid token) => $"t:{token:N}:user";
+    private string GroupKey(Guid token, Guid groupId) => $"t:{token:N}:g:{groupId:N}";
 
     private void DisposeCurrentIfAny(string key)
     {

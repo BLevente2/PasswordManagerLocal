@@ -175,7 +175,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 if (reply.Ok &&
                     Guid.TryParse(reply.DeviceId, out var deviceId) &&
                     deviceId == _identity.LocalDeviceId &&
-                    NormalizeFingerprint(reply.TlsCertFingerprint) == NormalizeFingerprint(_identity.FingerprintHex))
+                    FingerprintUtil.Normalize(reply.TlsCertFingerprint) == FingerprintUtil.Normalize(_identity.FingerprintHex))
                 {
                     DeviceEnrollmentTrace.Info($"Local enrollment listener self-test succeeded for {host}:{endpointInfo.Port}.");
                     return;
@@ -355,7 +355,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static string BuildEndpointFailureMessage(string message, IEnumerable<string> endpointFailures)
+    private string BuildEndpointFailureMessage(string message, IEnumerable<string> endpointFailures)
     {
         var failures = endpointFailures
             .Where(failure => !string.IsNullOrWhiteSpace(failure))
@@ -369,7 +369,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint)
+    private string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint)
     {
         if (hadSameSubnetDirectEndpoint)
         {
@@ -380,7 +380,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static string BuildMdnsDiscoveryFailedMessage(bool hadSameSubnetDirectEndpoint)
+    private string BuildMdnsDiscoveryFailedMessage(bool hadSameSubnetDirectEndpoint)
     {
         if (hadSameSubnetDirectEndpoint)
         {
@@ -395,7 +395,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         DeviceEnrollmentTrace.Info($"Enrollment connection and identity check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
         endpoint = await ResolveEndpointIdentityAsync(endpoint, parsed, ct);
-        DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, TlsFingerprintPrefix={NormalizeFingerprint(endpoint.TlsCertFingerprint)[..Math.Min(16, NormalizeFingerprint(endpoint.TlsCertFingerprint).Length)]}.");
+        DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, TlsFingerprintPrefix={FingerprintUtil.Normalize(endpoint.TlsCertFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(endpoint.TlsCertFingerprint).Length)]}.");
 
         using var scope = _scopeFactory.CreateScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
@@ -621,9 +621,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var activeSession = session!;
 
-        if (!string.Equals(NormalizeFingerprint(sourceTlsCertFingerprint), NormalizeFingerprint(actualClientTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(FingerprintUtil.Normalize(sourceTlsCertFingerprint), FingerprintUtil.Normalize(actualClientTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
         {
-            DeviceEnrollmentTrace.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={NormalizeFingerprint(sourceTlsCertFingerprint)}, Actual={NormalizeFingerprint(actualClientTlsCertFingerprint)}.");
+            DeviceEnrollmentTrace.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={FingerprintUtil.Normalize(sourceTlsCertFingerprint)}, Actual={FingerprintUtil.Normalize(actualClientTlsCertFingerprint)}.");
             return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.NewDeviceRejected, "The source device TLS certificate does not match the enrollment request.");
         }
 
@@ -759,7 +759,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         };
 
 
-    private static IReadOnlyList<string> GetLocalEnrollmentHosts()
+    private IReadOnlyList<string> GetLocalEnrollmentHosts()
     {
         var candidates = new List<LocalEnrollmentHostCandidate>();
 
@@ -890,7 +890,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool IsUsableUnicastAddress(IPAddress address)
+    private bool IsUsableUnicastAddress(IPAddress address)
     {
         if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) || address.Equals(IPAddress.IPv6Any))
             return false;
@@ -905,7 +905,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool IsApipaIpv4(IPAddress address)
+    private bool IsApipaIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -915,7 +915,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
+    private int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
         interfaceType switch
         {
             NetworkInterfaceType.Wireless80211 => 3000,
@@ -928,7 +928,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         };
 
 
-    private static bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
+    private bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
     {
         var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
 
@@ -955,7 +955,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
+    private bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
     {
         if (!isVirtualAdapter || address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -971,7 +971,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static int GetPrivateAddressPriority(IPAddress address)
+    private int GetPrivateAddressPriority(IPAddress address)
     {
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
@@ -995,7 +995,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool IsPrivateIpv4(IPAddress address)
+    private bool IsPrivateIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -1008,7 +1008,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool IsPrivateIpv6(IPAddress address)
+    private bool IsPrivateIpv6(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetworkV6)
             return false;
@@ -1018,7 +1018,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static int GetDirectEndpointPriorityForThisDevice(EnrollmentEndpoint endpoint)
+    private int GetDirectEndpointPriorityForThisDevice(EnrollmentEndpoint endpoint)
     {
         if (!IPAddress.TryParse(endpoint.Host, out var remoteAddress))
             return 0;
@@ -1051,7 +1051,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static List<LocalIpv4Network> GetLocalIpv4Networks()
+    private List<LocalIpv4Network> GetLocalIpv4Networks()
     {
         var networks = new List<LocalIpv4Network>();
 
@@ -1093,7 +1093,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
+    private bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
     {
         if (remoteAddress.AddressFamily != AddressFamily.InterNetwork ||
             localAddress.AddressFamily != AddressFamily.InterNetwork ||
@@ -1525,7 +1525,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static async Task<IReadOnlyDictionary<string, string>?> ResolveTxtAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
+    private async Task<IReadOnlyDictionary<string, string>?> ResolveTxtAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
     {
         var query = new Message();
         query.Questions.Add(new Question { Name = instance, Type = DnsType.TXT });
@@ -1547,7 +1547,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static async Task<SRVRecord?> ResolveSrvAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
+    private async Task<SRVRecord?> ResolveSrvAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
     {
         var query = new Message();
         query.Questions.Add(new Question { Name = instance, Type = DnsType.SRV });
@@ -1557,7 +1557,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static IReadOnlyList<string> ParseAdvertisedHosts(string advertisedHosts) =>
+    private IReadOnlyList<string> ParseAdvertisedHosts(string advertisedHosts) =>
         advertisedHosts
             .Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(host => IPAddress.TryParse(host, out _))
@@ -1565,7 +1565,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             .ToList();
 
 
-    private static async Task<IReadOnlyList<string>> ResolveHostsAsync(MulticastService mdns, DomainName target, CancellationToken ct)
+    private async Task<IReadOnlyList<string>> ResolveHostsAsync(MulticastService mdns, DomainName target, CancellationToken ct)
     {
         var hosts = new List<string>();
 
@@ -1588,7 +1588,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static bool TryReadEndpointIdentity(IReadOnlyDictionary<string, string> txt, out Guid deviceId, out string tlsFp, out byte[] signPub, out byte[] agreePub)
+    private bool TryReadEndpointIdentity(IReadOnlyDictionary<string, string> txt, out Guid deviceId, out string tlsFp, out byte[] signPub, out byte[] agreePub)
     {
         deviceId = Guid.Empty;
         tlsFp = string.Empty;
@@ -1647,7 +1647,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 Id = endpoint.DeviceId,
                 PublicKey = endpoint.AgreementPublicKey,
                 SignPublicKey = endpoint.SignPublicKey,
-                TlsCertFingerprint = NormalizeFingerprint(endpoint.TlsCertFingerprint),
+                TlsCertFingerprint = FingerprintUtil.Normalize(endpoint.TlsCertFingerprint),
                 DeviceType = endpoint.DeviceType,
                 LastSync = now.UtcDateTime,
                 LastSeen = now.UtcDateTime,
@@ -1662,7 +1662,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             if (!device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
                 !device.PublicKey.SequenceEqual(endpoint.AgreementPublicKey) ||
-                !string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(FingerprintUtil.Normalize(device.TlsCertFingerprint), FingerprintUtil.Normalize(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
                 device.DeviceType != endpoint.DeviceType)
                 throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different device already uses this device identity.");
 
@@ -1672,7 +1672,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             device.BlockedAt = null;
             device.LastSeen = now.UtcDateTime;
             device.LastModifiedAt = now;
-            device.TlsCertFingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
+            device.TlsCertFingerprint = FingerprintUtil.Normalize(device.TlsCertFingerprint);
             device.GenerateIntegrityHash();
             devices.Update(device);
         }
@@ -1742,7 +1742,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (device is null || !device.IsTrusted || device.IsBlocked)
             return;
 
-        if (!string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(sourceTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(FingerprintUtil.Normalize(device.TlsCertFingerprint), FingerprintUtil.Normalize(sourceTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
             return;
 
         var endpoint = new DiscoveredDeviceEndpoint
@@ -1921,7 +1921,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
+    private string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
     {
         var baseName = string.IsNullOrWhiteSpace(requestedName)
             ? DeviceNameUtil.BuildDefaultDeviceName(deviceId)
@@ -1976,8 +1976,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (endpoint.AgreementPublicKey.Length > 0 && !endpoint.AgreementPublicKey.SequenceEqual(info.AgreementPublicKey))
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code agreement key does not match the responding device.");
 
-        var expectedFingerprint = NormalizeFingerprint(endpoint.TlsCertFingerprint);
-        var actualFingerprint = NormalizeFingerprint(info.TlsCertFingerprint);
+        var expectedFingerprint = FingerprintUtil.Normalize(endpoint.TlsCertFingerprint);
+        var actualFingerprint = FingerprintUtil.Normalize(info.TlsCertFingerprint);
         if (expectedFingerprint.Length > 0 && !actualFingerprint.StartsWith(expectedFingerprint, StringComparison.OrdinalIgnoreCase))
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code TLS fingerprint does not match the responding device.");
 
@@ -2192,7 +2192,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error) ParseEnrollmentReply(CompleteDeviceEnrollmentReply reply)
+    private (bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error) ParseEnrollmentReply(CompleteDeviceEnrollmentReply reply)
     {
         if (reply.Ok)
             return (true, DeviceEnrollmentErrorCode.Unknown, null);
@@ -2205,7 +2205,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static (byte[] Ciphertext, byte[] Nonce, byte[] Tag) EncryptEnrollmentSnapshot(
+    private (byte[] Ciphertext, byte[] Nonce, byte[] Tag) EncryptEnrollmentSnapshot(
         string sessionId,
         byte[] secret,
         byte[] plaintext,
@@ -2227,7 +2227,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static byte[] DecryptEnrollmentSnapshot(
+    private byte[] DecryptEnrollmentSnapshot(
         string sessionId,
         byte[] secret,
         byte[] ciphertext,
@@ -2269,7 +2269,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static void RejectSensitiveLocalOnlySnapshotPayload(byte[] payload)
+    private void RejectSensitiveLocalOnlySnapshotPayload(byte[] payload)
     {
         try
         {
@@ -2302,7 +2302,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     ];
 
 
-    private static bool ContainsProperty(JsonElement element, string propertyName)
+    private bool ContainsProperty(JsonElement element, string propertyName)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -2349,7 +2349,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             var isLocalDevice = deviceSnapshot.Id == _identity.LocalDeviceId ||
                 deviceSnapshot.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
-                string.Equals(NormalizeFingerprint(deviceSnapshot.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
+                string.Equals(FingerprintUtil.Normalize(deviceSnapshot.TlsCertFingerprint), FingerprintUtil.Normalize(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
 
             if (isLocalDevice)
                 continue;
@@ -2363,7 +2363,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             device.PublicKey = deviceSnapshot.PublicKey;
             device.SignPublicKey = deviceSnapshot.SignPublicKey;
-            device.TlsCertFingerprint = NormalizeFingerprint(deviceSnapshot.TlsCertFingerprint);
+            device.TlsCertFingerprint = FingerprintUtil.Normalize(deviceSnapshot.TlsCertFingerprint);
             device.DeviceType = deviceSnapshot.DeviceType;
             device.LastKnownHash = deviceSnapshot.LastKnownHash;
             device.LastSync = deviceSnapshot.LastSync;
@@ -2487,7 +2487,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static async Task<UserDevice> GetOrCreateUserDeviceAsync(
+    private async Task<UserDevice> GetOrCreateUserDeviceAsync(
         IUserDeviceRepository userDevices,
         Guid userId,
         Guid deviceId,
@@ -2568,8 +2568,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static string NormalizeFingerprint(string fingerprint) =>
-        fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
 
 
     public void Dispose()

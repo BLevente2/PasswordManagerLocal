@@ -9,7 +9,8 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.X509Certificates;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -155,7 +156,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                 ? string.Empty
                 : _identity.GetFingerprintHex(new X509Certificate2(stream.RemoteCertificate));
 
-            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={NormalizeFingerprint(serverFingerprint)[..Math.Min(16, NormalizeFingerprint(serverFingerprint).Length)]}.");
+            PasswordManagerLocalBackend.Utils.DeviceEnrollmentTrace.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={FingerprintUtil.Normalize(serverFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(serverFingerprint).Length)]}.");
             return new TcpSyncClientConnection(client, stream);
         }
         catch
@@ -166,7 +167,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static async Task<TcpClient> ConnectTcpAsync(string host, int port, IPAddress? preferredSourceAddress, CancellationToken ct)
+    private async Task<TcpClient> ConnectTcpAsync(string host, int port, IPAddress? preferredSourceAddress, CancellationToken ct)
     {
         var attempts = preferredSourceAddress is null
             ? new IPAddress?[] { null }
@@ -213,7 +214,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static TcpClient CreateTcpClient(string host, IPAddress? sourceAddress)
+    private TcpClient CreateTcpClient(string host, IPAddress? sourceAddress)
     {
         if (sourceAddress is not null)
             return new TcpClient(sourceAddress.AddressFamily);
@@ -225,7 +226,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static IPAddress? FindPreferredSourceAddress(string host)
+    private IPAddress? FindPreferredSourceAddress(string host)
     {
         if (!IPAddress.TryParse(host, out var remoteAddress) || remoteAddress.AddressFamily != AddressFamily.InterNetwork)
             return null;
@@ -266,7 +267,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
+    private bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
     {
         var remoteBytes = remoteAddress.GetAddressBytes();
         var localBytes = localAddress.GetAddressBytes();
@@ -285,7 +286,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static bool IsUsableIpv4(IPAddress address)
+    private bool IsUsableIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast))
             return false;
@@ -295,7 +296,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static bool IsVirtualAdapter(NetworkInterface networkInterface)
+    private bool IsVirtualAdapter(NetworkInterface networkInterface)
     {
         var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
         return text.Contains("virtual") ||
@@ -311,7 +312,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static int GetInterfacePriority(NetworkInterfaceType interfaceType) =>
+    private int GetInterfacePriority(NetworkInterfaceType interfaceType) =>
         interfaceType switch
         {
             NetworkInterfaceType.Ethernet => 2500,
@@ -341,7 +342,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, CancellationToken ct)
+    private async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpWriteTimeoutSeconds));
@@ -349,7 +350,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, IMessage message, CancellationToken ct)
+    private async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, IMessage message, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpWriteTimeoutSeconds));
@@ -362,8 +363,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         if (cert is null)
             return false;
 
-        var fingerprint = NormalizeFingerprint(_identity.GetFingerprintHex(new X509Certificate2(cert)));
-        var expected = NormalizeFingerprint(serverFingerprintHex);
+        var fingerprint = FingerprintUtil.Normalize(_identity.GetFingerprintHex(new X509Certificate2(cert)));
+        var expected = FingerprintUtil.Normalize(serverFingerprintHex);
         if (expected.Length == 0)
             return false;
 
@@ -402,8 +403,6 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private static string NormalizeFingerprint(string fingerprint) =>
-        fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
 
 
     private sealed class TcpSyncClientConnection : IAsyncDisposable

@@ -110,10 +110,10 @@ public sealed class PasswordService : IPasswordService
     }
 
 
-    private static string NormalizePasswordName(string name) => name.Trim();
+    private string NormalizePasswordName(string name) => name.Trim();
 
 
-    private static void ThrowIfPasswordNameExists(string name, SecurePasswords passwords, Guid? ignoredPasswordId = null)
+    private void ThrowIfPasswordNameExists(string name, SecurePasswords passwords, Guid? ignoredPasswordId = null)
     {
         var exists = passwords.Passwords.Any(password =>
             (!ignoredPasswordId.HasValue || password.Id != ignoredPasswordId.Value)

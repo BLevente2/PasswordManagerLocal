@@ -171,7 +171,7 @@ public sealed class TokenService : ITokenService
         return removed;
     }
 
-    private static Guid GenerateToken()
+    private Guid GenerateToken()
     {
         Span<byte> bytes = stackalloc byte[16];
         RandomNumberGenerator.Fill(bytes);

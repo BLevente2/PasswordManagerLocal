@@ -73,7 +73,7 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
     }
 
 
-    private static string NormalizeReason(string reason)
+    private string NormalizeReason(string reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
             return "Invalid incoming sync data.";

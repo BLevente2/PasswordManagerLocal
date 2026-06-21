@@ -559,7 +559,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (!payload.Device.PublicKey.SequenceEqual(sourceDevice.PublicKey))
                 throw new InvalidDataException("Source device agreement key cannot be changed by sync.");
 
-            if (!string.Equals(NormalizeFingerprint(payload.Device.TlsCertFingerprint), NormalizeFingerprint(sourceDevice.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(FingerprintUtil.NormalizeOrEmpty(payload.Device.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(sourceDevice.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Source device TLS fingerprint cannot be changed by sync.");
 
             if (payload.Device.DeviceType != sourceDevice.DeviceType)
@@ -576,7 +576,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (!existing.PublicKey.SequenceEqual(payload.Device.PublicKey))
             throw new InvalidDataException("Existing device agreement key cannot be changed by sync.");
 
-        if (!string.Equals(NormalizeFingerprint(existing.TlsCertFingerprint), NormalizeFingerprint(payload.Device.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(FingerprintUtil.NormalizeOrEmpty(existing.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(payload.Device.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Existing device TLS fingerprint cannot be changed by sync.");
 
         if (existing.DeviceType != payload.Device.DeviceType)
@@ -663,7 +663,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool DeletesSourceDevice(SyncDeltaPayload payload, Device sourceDevice) =>
+    private bool DeletesSourceDevice(SyncDeltaPayload payload, Device sourceDevice) =>
         payload.ModelType == SyncModelType.Device &&
         payload.ChangeType == SyncChangeType.Deleted &&
         payload.ModelId == sourceDevice.Id;
@@ -695,7 +695,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         };
 
 
-    private static GroupSyncPayload CreateGroupSyncPayloadForHash(Group group) =>
+    private GroupSyncPayload CreateGroupSyncPayloadForHash(Group group) =>
         new()
         {
             Id = group.Id,
@@ -704,7 +704,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         };
 
 
-    private static DeviceSyncPayload CreateDeviceSyncPayloadForHash(Device device) =>
+    private DeviceSyncPayload CreateDeviceSyncPayloadForHash(Device device) =>
         new()
         {
             Id = device.Id,
@@ -734,7 +734,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         device is not null &&
         (device.Id == _identity.LocalDeviceId ||
          device.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
-         string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase));
+         string.Equals(FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase));
 
 
     private async Task RefreshCachedDeviceAsync(Device device, CancellationToken ct)
@@ -844,28 +844,28 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static User CreateUser(UserSyncPayload payload) =>
+    private User CreateUser(UserSyncPayload payload) =>
         new()
         {
             UId = payload.UId
         };
 
 
-    private static Group CreateGroup(GroupSyncPayload payload) =>
+    private Group CreateGroup(GroupSyncPayload payload) =>
         new()
         {
             Id = payload.Id
         };
 
 
-    private static Device CreateDevice(DeviceSyncPayload payload) =>
+    private Device CreateDevice(DeviceSyncPayload payload) =>
         new()
         {
             Id = payload.Id
         };
 
 
-    private static void CopyUserData(UserSyncPayload source, User target)
+    private void CopyUserData(UserSyncPayload source, User target)
     {
         target.UId = source.UId;
         target.UsernameHash = source.UsernameHash;
@@ -876,7 +876,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void CopyGroupData(GroupSyncPayload source, Group target)
+    private void CopyGroupData(GroupSyncPayload source, Group target)
     {
         target.Id = source.Id;
         target.EncryptedPayload = source.EncryptedPayload;
@@ -884,7 +884,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void CopyDeviceData(DeviceSyncPayload source, Device target, bool isNew)
+    private void CopyDeviceData(DeviceSyncPayload source, Device target, bool isNew)
     {
         target.Id = source.Id;
         target.PublicKey = source.PublicKey;
@@ -946,7 +946,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static SyncDeltaPayload DeserializePayload(byte[] plaintextPayload)
+    private SyncDeltaPayload DeserializePayload(byte[] plaintextPayload)
     {
         if (plaintextPayload.Length == 0)
             throw new InvalidDataException("Network delta payload is empty.");
@@ -961,7 +961,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void ValidateEnvelope(NetworkDelta delta, SyncDeltaPayload payload)
+    private void ValidateEnvelope(NetworkDelta delta, SyncDeltaPayload payload)
     {
         if (delta.Ts <= 0)
             throw new InvalidDataException("Network delta timestamp is invalid.");
@@ -1000,7 +1000,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void ValidateUserDevicePayload(SyncDeltaPayload payload)
+    private void ValidateUserDevicePayload(SyncDeltaPayload payload)
     {
         if (payload.UserDevice is null)
             throw new InvalidDataException("User device sync payload is missing.");
@@ -1026,7 +1026,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void VerifyDeltaSignature(NetworkDelta delta)
+    private void VerifyDeltaSignature(NetworkDelta delta)
     {
         if (delta.SignPub.Length != PasswordManagerLocalBackend.Constants.SyncConstants.SyncDeltaEd25519PublicKeyBytes ||
             delta.Sig.Length != PasswordManagerLocalBackend.Constants.SyncConstants.SyncDeltaEd25519SignatureBytes)
@@ -1048,7 +1048,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void RejectSensitiveLocalOnlyPayload(byte[] payload)
+    private void RejectSensitiveLocalOnlyPayload(byte[] payload)
     {
         try
         {
@@ -1081,7 +1081,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     ];
 
 
-    private static bool ContainsProperty(JsonElement element, string propertyName)
+    private bool ContainsProperty(JsonElement element, string propertyName)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -1107,27 +1107,20 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static string BuildDeviceId(byte[] signPublicKey) =>
+    private string BuildDeviceId(byte[] signPublicKey) =>
         Convert.ToHexString(Hashing.SHA256Hash(signPublicKey));
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        return fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
-    }
 
 
-    private static DateTimeOffset FromTimestamp(long ts) =>
+    private DateTimeOffset FromTimestamp(long ts) =>
         DateTimeOffset.FromUnixTimeMilliseconds(ts);
 
 
-    private static bool IsIncomingOlderOrSame(DateTimeOffset local, long incomingTs) =>
+    private bool IsIncomingOlderOrSame(DateTimeOffset local, long incomingTs) =>
         local.ToUnixTimeMilliseconds() >= incomingTs;
 
 
-    private static HashSet<Guid> CreateIdSet(IEnumerable<Guid>? ids) =>
+    private HashSet<Guid> CreateIdSet(IEnumerable<Guid>? ids) =>
         ids?.Where(id => id != Guid.Empty).Distinct().ToHashSet() ?? [];
 }

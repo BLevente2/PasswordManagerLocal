@@ -1,6 +1,7 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
-using System.Threading;
+using System.Threading;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -28,7 +29,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             return false;
 
         var id = device.Id;
-        var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
+        var fingerprint = FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint);
 
         _rwLock.EnterWriteLock();
         try
@@ -69,7 +70,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
                     continue;
 
                 var id = device.Id;
-                var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
+                var fingerprint = FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint);
 
                 if (!CanStore(device, fingerprint))
                 {
@@ -96,7 +97,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             return false;
 
         var id = device.Id;
-        var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
+        var fingerprint = FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint);
 
         _rwLock.EnterWriteLock();
         try
@@ -130,7 +131,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             return false;
 
         var id = device.Id;
-        var fingerprint = NormalizeFingerprint(device.TlsCertFingerprint);
+        var fingerprint = FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint);
 
         _rwLock.EnterReadLock();
         try
@@ -149,7 +150,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
 
     public bool ContainsFingerprint(string fingerprint)
     {
-        var normalized = NormalizeFingerprint(fingerprint);
+        var normalized = FingerprintUtil.NormalizeOrEmpty(fingerprint);
         if (normalized.Length == 0)
             return false;
 
@@ -167,7 +168,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
 
     public bool TryGetByFingerprint(string fingerprint, out Device? device)
     {
-        var normalized = NormalizeFingerprint(fingerprint);
+        var normalized = FingerprintUtil.NormalizeOrEmpty(fingerprint);
 
         _rwLock.EnterReadLock();
         try
@@ -286,7 +287,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         if (device.Id == _identity.LocalDeviceId)
             return true;
 
-        if (fingerprint.Length != 0 && string.Equals(fingerprint, NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
+        if (fingerprint.Length != 0 && string.Equals(fingerprint, FingerprintUtil.NormalizeOrEmpty(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
             return true;
 
         return device.SignPublicKey.SequenceEqual(_identity.SignPublicKey);
@@ -300,7 +301,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
 
         if (_devicesById.TryGetValue(device.Id, out var existingDevice))
         {
-            var oldFingerprint = NormalizeFingerprint(existingDevice.TlsCertFingerprint);
+            var oldFingerprint = FingerprintUtil.NormalizeOrEmpty(existingDevice.TlsCertFingerprint);
             if (oldFingerprint.Length != 0 && !string.Equals(oldFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
                 _deviceIdByFingerprint.Remove(oldFingerprint);
         }
@@ -326,7 +327,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
 
         _devicesById.Remove(idToRemove);
 
-        var existingFingerprint = NormalizeFingerprint(existing.TlsCertFingerprint);
+        var existingFingerprint = FingerprintUtil.NormalizeOrEmpty(existing.TlsCertFingerprint);
         if (existingFingerprint.Length != 0)
             _deviceIdByFingerprint.Remove(existingFingerprint);
 
@@ -337,7 +338,7 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
     }
 
 
-    private static Device CloneDevice(Device source) =>
+    private Device CloneDevice(Device source) =>
         new()
         {
             Id = source.Id,
@@ -359,14 +360,4 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
         };
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        var s = fingerprint.Trim();
-        s = s.Replace(":", string.Empty);
-        s = s.Replace(" ", string.Empty);
-        return s.ToUpperInvariant();
-    }
 }

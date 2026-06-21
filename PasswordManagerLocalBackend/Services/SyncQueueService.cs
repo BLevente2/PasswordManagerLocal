@@ -3,6 +3,7 @@ using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Sync;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -414,7 +415,7 @@ public sealed class SyncQueueService : ISyncQueueService
     }
 
 
-    private static IReadOnlyList<Device> SelectDistinctDevices(IEnumerable<UserDevice> links) =>
+    private IReadOnlyList<Device> SelectDistinctDevices(IEnumerable<UserDevice> links) =>
         links
             .Where(link => link.Device is not null)
             .Select(link => link.Device!)
@@ -486,24 +487,17 @@ public sealed class SyncQueueService : ISyncQueueService
         if (device.SignPublicKey.SequenceEqual(_identity.SignPublicKey))
             return true;
 
-        return string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
+        return string.Equals(FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
     }
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        return fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
-    }
 
 
-    private static long ToSyncTimestamp(DateTimeOffset modifiedAt) =>
+    private long ToSyncTimestamp(DateTimeOffset modifiedAt) =>
         (modifiedAt == default ? DateTimeOffset.UtcNow : modifiedAt).ToUnixTimeMilliseconds();
 
 
-    private static SyncChangeType MergeChangeType(SyncChangeType current, SyncChangeType incoming)
+    private SyncChangeType MergeChangeType(SyncChangeType current, SyncChangeType incoming)
     {
         if (current == incoming)
             return current;

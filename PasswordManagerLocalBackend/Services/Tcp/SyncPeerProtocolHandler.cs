@@ -335,7 +335,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    private static bool ShouldRecordHelloFailure(Exception exception) =>
+    private bool ShouldRecordHelloFailure(Exception exception) =>
         exception is not SyncProtocolException
         {
             StatusCode: SyncProtocolStatusCode.Unavailable
@@ -345,7 +345,7 @@ public sealed class SyncPeerProtocolHandler
           string.Equals(protocolException.Message, "Remote device is not linked to an enabled local user.", StringComparison.Ordinal));
 
 
-    private static async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, PeerConnectionContext context, CancellationToken ct)
+    private async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, PeerConnectionContext context, CancellationToken ct)
     {
         try
         {
@@ -356,7 +356,7 @@ public sealed class SyncPeerProtocolHandler
             var devices = services.GetRequiredService<IDeviceRepository>();
             var fingerprint = context.ClientCertificateFingerprint;
 
-            if (string.Equals(NormalizeFingerprint(fingerprint), NormalizeFingerprint(identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(FingerprintUtil.Normalize(fingerprint), FingerprintUtil.Normalize(identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
                 return null;
 
             return await devices.GetByTlsCertFingerprintWithUserDevicesAsync(fingerprint, ct);
@@ -368,7 +368,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    private static async Task<Device> ValidateRemoteDeviceAsync(
+    private async Task<Device> ValidateRemoteDeviceAsync(
         IServiceProvider services,
         PeerConnectionContext context,
         string? claimedDeviceId,
@@ -385,7 +385,7 @@ public sealed class SyncPeerProtocolHandler
         var devices = services.GetRequiredService<IDeviceRepository>();
 
         var fingerprint = context.ClientCertificateFingerprint;
-        if (string.Equals(NormalizeFingerprint(fingerprint), NormalizeFingerprint(identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(FingerprintUtil.Normalize(fingerprint), FingerprintUtil.Normalize(identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Local device cannot sync with itself.");
 
         var remoteDevice = await devices.GetByTlsCertFingerprintWithUserDevicesAsync(fingerprint, ct);
@@ -430,7 +430,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    private static void ValidateDeltaTransport(NetworkDelta delta, Device remoteDevice, Guid localDeviceId)
+    private void ValidateDeltaTransport(NetworkDelta delta, Device remoteDevice, Guid localDeviceId)
     {
         if (string.IsNullOrWhiteSpace(delta.Entity) || delta.Entity.Length > 256)
             throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, "Delta entity is invalid.");
@@ -479,7 +479,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    private static async Task RecordInvalidAttemptAsync(IServiceProvider services, Device remoteDevice, string reason, CancellationToken ct)
+    private async Task RecordInvalidAttemptAsync(IServiceProvider services, Device remoteDevice, string reason, CancellationToken ct)
     {
         try
         {
@@ -492,7 +492,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    private static bool IsInvalidIncomingDataStatus(SyncProtocolStatusCode statusCode) =>
+    private bool IsInvalidIncomingDataStatus(SyncProtocolStatusCode statusCode) =>
         statusCode == SyncProtocolStatusCode.InvalidArgument ||
         statusCode == SyncProtocolStatusCode.PermissionDenied ||
         statusCode == SyncProtocolStatusCode.ResourceExhausted ||
@@ -535,14 +535,12 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    private static string BuildDeltaReplayId(NetworkDelta delta) =>
+    private string BuildDeltaReplayId(NetworkDelta delta) =>
         $"{delta.DeviceId}:{delta.Ts}:{Convert.ToHexString(delta.Sig)}";
 
 
-    private static string BuildDeviceId(byte[] signPublicKey) =>
+    private string BuildDeviceId(byte[] signPublicKey) =>
         Convert.ToHexString(Hashing.SHA256Hash(signPublicKey));
 
 
-    private static string NormalizeFingerprint(string fingerprint) =>
-        fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
 }

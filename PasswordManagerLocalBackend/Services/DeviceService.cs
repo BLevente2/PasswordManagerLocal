@@ -275,7 +275,7 @@ public sealed class DeviceService : IDeviceService
         return true;
     }
 
-    private static string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
+    private string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
     {
         var baseName = string.IsNullOrWhiteSpace(requestedName) ? DeviceNameUtil.BuildDefaultDeviceName(deviceId) : requestedName.Trim();
         if (!IsEncryptedNameTaken(userData, baseName, deviceId)) return baseName;
@@ -288,7 +288,7 @@ public sealed class DeviceService : IDeviceService
         throw new InvalidInputException();
     }
 
-    private static bool IsEncryptedNameTaken(UserData userData, string name, Guid exceptDeviceId) =>
+    private bool IsEncryptedNameTaken(UserData userData, string name, Guid exceptDeviceId) =>
         userData.UserDevices.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
 
     private async Task PersistUserDeviceDataAsync(UserData userData, Guid token, CancellationToken ct)
@@ -316,7 +316,7 @@ public sealed class DeviceService : IDeviceService
         IsCurrentDevice = true
     };
 
-    private static UserDeviceInfoResponse BuildRemoteResponse(UserDevice link, Device device, UserDeviceData deviceData) => new()
+    private UserDeviceInfoResponse BuildRemoteResponse(UserDevice link, Device device, UserDeviceData deviceData) => new()
     {
         DeviceId = link.DeviceId,
         Name = deviceData.Name,
@@ -359,7 +359,7 @@ public sealed class DeviceService : IDeviceService
         _syncDeviceIdentities.TryRemove(userDevice.Device);
     }
 
-    private static string NormalizeUserDeviceName(string name)
+    private string NormalizeUserDeviceName(string name)
     {
         if (!IsValidUserDeviceName(name)) throw new InvalidInputException();
         return name.Trim();

@@ -245,7 +245,7 @@ public sealed class UserService : IUserService
     }
 
 
-    private static void EnsureUserDataCanBePersisted(UserData userData, User user)
+    private void EnsureUserDataCanBePersisted(UserData userData, User user)
     {
         if (userData.UId == Guid.Empty || userData.UId != user.UId)
             throw new InvalidOperationException("Refusing to persist invalid user data.");
@@ -270,7 +270,7 @@ public sealed class UserService : IUserService
             throw new InvalidOperationException("Refusing to persist duplicate device names.");
     }
 
-    private static void VerifyUserDataIntegrity(UserData userData)
+    private void VerifyUserDataIntegrity(UserData userData)
     {
         userData.VerifyIntegrity();
         userData.Passwords.VerifyIntegrity();

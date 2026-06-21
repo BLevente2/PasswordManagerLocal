@@ -4,7 +4,8 @@ using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
-using System.Text.Json;
+using System.Text.Json;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -179,7 +180,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private static GroupSyncPayload CreateGroupPayload(Group group, long timestamp)
+    private GroupSyncPayload CreateGroupPayload(Group group, long timestamp)
     {
         var payload = new GroupSyncPayload
         {
@@ -236,7 +237,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private static UserDeviceSyncPayload CreateUserDevicePayload(UserDevice userDevice)
+    private UserDeviceSyncPayload CreateUserDevicePayload(UserDevice userDevice)
     {
         userDevice.VerifyIntegrity();
         return new UserDeviceSyncPayload
@@ -254,18 +255,11 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     private bool IsLocalDevice(Device device) =>
         device.Id == _identity.LocalDeviceId ||
         device.SignPublicKey.SequenceEqual(_identity.SignPublicKey) ||
-        string.Equals(NormalizeFingerprint(device.TlsCertFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
+        string.Equals(FingerprintUtil.NormalizeOrEmpty(device.TlsCertFingerprint), FingerprintUtil.NormalizeOrEmpty(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase);
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        return fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
-    }
 
 
-    private static string BuildEntityName(SyncDeltaPayload payload) =>
+    private string BuildEntityName(SyncDeltaPayload payload) =>
         $"{payload.ModelType}:{payload.ChangeType}:{payload.ModelId:N}";
 }

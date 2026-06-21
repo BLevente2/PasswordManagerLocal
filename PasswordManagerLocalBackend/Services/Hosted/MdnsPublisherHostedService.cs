@@ -78,7 +78,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static IReadOnlyList<string> GetLocalSyncHosts()
+    private IReadOnlyList<string> GetLocalSyncHosts()
     {
         var candidates = new List<LocalSyncHostCandidate>();
 
@@ -192,7 +192,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static string BuildHostsProperty(IReadOnlyList<string> hosts)
+    private string BuildHostsProperty(IReadOnlyList<string> hosts)
     {
         var selected = new List<string>();
         var totalLength = 0;
@@ -214,7 +214,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsUsableUnicastAddress(IPAddress address)
+    private bool IsUsableUnicastAddress(IPAddress address)
     {
         if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) || address.Equals(IPAddress.IPv6Any))
             return false;
@@ -229,7 +229,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsApipaIpv4(IPAddress address)
+    private bool IsApipaIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -239,7 +239,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
+    private int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
         interfaceType switch
         {
             NetworkInterfaceType.Wireless80211 => 3000,
@@ -252,7 +252,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
         };
 
 
-    private static bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
+    private bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
     {
         var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
 
@@ -279,7 +279,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
+    private bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
     {
         if (!isVirtualAdapter || address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -295,7 +295,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static int GetPrivateAddressPriority(IPAddress address)
+    private int GetPrivateAddressPriority(IPAddress address)
     {
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
@@ -319,7 +319,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsPrivateIpv4(IPAddress address)
+    private bool IsPrivateIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -332,7 +332,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsPrivateIpv6(IPAddress address)
+    private bool IsPrivateIpv6(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetworkV6)
             return false;

@@ -352,7 +352,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     }
 
 
-    private static async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, CancellationToken ct)
+    private async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpWriteTimeoutSeconds));
@@ -360,7 +360,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     }
 
 
-    private static async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, IMessage message, CancellationToken ct)
+    private async Task WriteFrameAsync(Stream stream, SyncTcpMessageType type, IMessage message, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpWriteTimeoutSeconds));

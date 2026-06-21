@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Persistence;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Repositories;
 
@@ -55,7 +56,7 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
         if (string.IsNullOrWhiteSpace(tlsCertFingerprint))
             return Task.FromResult<Device?>(null);
 
-        var normalized = NormalizeFingerprint(tlsCertFingerprint);
+        var normalized = FingerprintUtil.Normalize(tlsCertFingerprint);
         return Set.FirstOrDefaultAsync(d => d.TlsCertFingerprint == normalized, ct);
     }
 
@@ -64,7 +65,7 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
         if (string.IsNullOrWhiteSpace(tlsCertFingerprint))
             return Task.FromResult<Device?>(null);
 
-        var normalized = NormalizeFingerprint(tlsCertFingerprint);
+        var normalized = FingerprintUtil.Normalize(tlsCertFingerprint);
         return Set
             .Include(d => d.UserDevices)
             .FirstOrDefaultAsync(d => d.TlsCertFingerprint == normalized, ct);
@@ -76,7 +77,7 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
         string tlsCertFingerprint,
         CancellationToken ct = default)
     {
-        var normalizedFingerprint = NormalizeFingerprint(tlsCertFingerprint);
+        var normalizedFingerprint = FingerprintUtil.Normalize(tlsCertFingerprint);
         var devices = await Set.Include(d => d.UserDevices).ToListAsync(ct);
         return devices.Where(d =>
                 d.Id == localDeviceId ||
@@ -104,6 +105,4 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
             .Where(d => d.IsTrusted && !d.IsBlocked)
             .ToListAsync(ct);
 
-    private static string NormalizeFingerprint(string fingerprint) =>
-        fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
 }

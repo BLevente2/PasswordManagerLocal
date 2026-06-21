@@ -1,6 +1,7 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Sync;
 using System.Collections.Concurrent;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -16,7 +17,7 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
         if (endpoint is null)
             return;
 
-        var fingerprint = NormalizeFingerprint(endpoint.TlsCertFingerprint);
+        var fingerprint = FingerprintUtil.NormalizeOrEmpty(endpoint.TlsCertFingerprint);
         if (fingerprint.Length == 0 || string.IsNullOrWhiteSpace(endpoint.Host) || endpoint.Port <= 0)
             return;
 
@@ -26,7 +27,7 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
 
     public bool TryGetByFingerprint(string tlsFingerprint, out DiscoveredDeviceEndpoint? endpoint)
     {
-        var fingerprint = NormalizeFingerprint(tlsFingerprint);
+        var fingerprint = FingerprintUtil.NormalizeOrEmpty(tlsFingerprint);
         if (fingerprint.Length == 0 || !_endpointsByFingerprint.TryGetValue(fingerprint, out var cachedEndpoint))
         {
             endpoint = null;
@@ -40,7 +41,7 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
 
     public bool TryRemove(string tlsFingerprint)
     {
-        var fingerprint = NormalizeFingerprint(tlsFingerprint);
+        var fingerprint = FingerprintUtil.NormalizeOrEmpty(tlsFingerprint);
         return fingerprint.Length != 0 && _endpointsByFingerprint.TryRemove(fingerprint, out _);
     }
 
@@ -49,7 +50,7 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
         _endpointsByFingerprint.Clear();
 
 
-    private static DiscoveredDeviceEndpoint Clone(DiscoveredDeviceEndpoint endpoint) =>
+    private DiscoveredDeviceEndpoint Clone(DiscoveredDeviceEndpoint endpoint) =>
         new()
         {
             Host = endpoint.Host,
@@ -58,14 +59,4 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
         };
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        var s = fingerprint.Trim();
-        s = s.Replace(":", string.Empty);
-        s = s.Replace(" ", string.Empty);
-        return s.ToUpperInvariant();
-    }
 }

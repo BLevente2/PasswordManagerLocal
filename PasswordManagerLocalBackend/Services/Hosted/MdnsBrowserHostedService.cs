@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
@@ -164,7 +165,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
             if (!txt.TryGetValue("tlsfp", out var tlsFingerprint))
                 return;
 
-            if (string.Equals(NormalizeFingerprint(tlsFingerprint), NormalizeFingerprint(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(FingerprintUtil.NormalizeOrEmpty(tlsFingerprint), FingerprintUtil.NormalizeOrEmpty(_identity.FingerprintHex), StringComparison.OrdinalIgnoreCase))
                 return;
 
             if (txt.TryGetValue("signpub", out var signPublicKeyHex))
@@ -265,7 +266,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static IReadOnlyList<string> ParseAdvertisedHosts(string advertisedHosts) =>
+    private IReadOnlyList<string> ParseAdvertisedHosts(string advertisedHosts) =>
         advertisedHosts
             .Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(host => IPAddress.TryParse(host, out _))
@@ -273,7 +274,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
             .ToList();
 
 
-    private static async Task<IReadOnlyList<string>> ResolveHostsAsync(MulticastService mdns, DomainName target, CancellationToken ct)
+    private async Task<IReadOnlyList<string>> ResolveHostsAsync(MulticastService mdns, DomainName target, CancellationToken ct)
     {
         var hosts = new List<string>();
 
@@ -296,7 +297,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static int GetEndpointPriorityForThisDevice(string host)
+    private int GetEndpointPriorityForThisDevice(string host)
     {
         if (!IPAddress.TryParse(host, out var remoteAddress))
             return 0;
@@ -326,7 +327,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static List<LocalIpv4Network> GetLocalIpv4Networks()
+    private List<LocalIpv4Network> GetLocalIpv4Networks()
     {
         var networks = new List<LocalIpv4Network>();
 
@@ -366,7 +367,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
+    private bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
     {
         if (remoteAddress.AddressFamily != AddressFamily.InterNetwork ||
             localAddress.AddressFamily != AddressFamily.InterNetwork ||
@@ -390,7 +391,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsUsableUnicastAddress(IPAddress address)
+    private bool IsUsableUnicastAddress(IPAddress address)
     {
         if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) || address.Equals(IPAddress.IPv6Any))
             return false;
@@ -405,7 +406,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsApipaIpv4(IPAddress address)
+    private bool IsApipaIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -415,7 +416,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
+    private bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
     {
         var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
 
@@ -442,7 +443,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static int GetPrivateAddressPriority(IPAddress address)
+    private int GetPrivateAddressPriority(IPAddress address)
     {
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
@@ -466,7 +467,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsPrivateIpv4(IPAddress address)
+    private bool IsPrivateIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -479,7 +480,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool IsPrivateIpv6(IPAddress address)
+    private bool IsPrivateIpv6(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetworkV6)
             return false;
@@ -501,13 +502,6 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
     }
 
 
-    private static string NormalizeFingerprint(string fingerprint)
-    {
-        if (string.IsNullOrWhiteSpace(fingerprint))
-            return string.Empty;
-
-        return fingerprint.Replace(":", string.Empty).Replace(" ", string.Empty).Trim().ToUpperInvariant();
-    }
 
 
     private sealed class LocalIpv4Network

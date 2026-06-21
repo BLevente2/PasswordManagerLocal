@@ -179,7 +179,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     }
 
 
-    private static byte[] DeriveSyncAesKey(SharedSecret sharedSecret, byte[] firstPublicKey, byte[] secondPublicKey, byte[] associatedData)
+    private byte[] DeriveSyncAesKey(SharedSecret sharedSecret, byte[] firstPublicKey, byte[] secondPublicKey, byte[] associatedData)
     {
         var rawSharedSecret = sharedSecret.Export(SharedSecretBlobFormat.RawSharedSecret);
         try
@@ -195,7 +195,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     }
 
 
-    private static byte[] BuildKdfSalt(byte[] firstPublicKey, byte[] secondPublicKey)
+    private byte[] BuildKdfSalt(byte[] firstPublicKey, byte[] secondPublicKey)
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
@@ -210,7 +210,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     }
 
 
-    private static byte[] BuildKdfInfo(byte[] firstPublicKey, byte[] secondPublicKey, byte[] associatedData)
+    private byte[] BuildKdfInfo(byte[] firstPublicKey, byte[] secondPublicKey, byte[] associatedData)
     {
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms);
@@ -395,7 +395,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
 
 
 
-    private static X509KeyStorageFlags GetCertificateKeyStorageFlags() =>
+    private X509KeyStorageFlags GetCertificateKeyStorageFlags() =>
         OperatingSystem.IsWindows()
             ? X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.Exportable
             : X509KeyStorageFlags.EphemeralKeySet;
