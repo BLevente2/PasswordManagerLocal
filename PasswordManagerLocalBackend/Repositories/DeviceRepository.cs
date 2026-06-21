@@ -27,54 +27,113 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
 
     public async Task<IReadOnlyList<Device>> ListUserDevicesAsync(Guid uid, CancellationToken ct = default)
     {
-        if (!await _context.LocalUserDevices.AsNoTracking().AnyAsync(x => x.UserId == uid && x.IsSyncOn, ct))
+        var localLink = await _context.LocalUserDevices.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == uid, ct);
+        if (localLink is null)
             return [];
-        return await Set.AsNoTracking()
-            .Where(d => d.UserDevices.Any(ud => ud.UserId == uid && !ud.IsDeleted && ud.IsSyncOn))
+        localLink.VerifyIntegrity();
+        if (!localLink.IsSyncOn)
+            return [];
+
+        var links = await _context.UserDevices.AsNoTracking()
+            .Include(ud => ud.Device)
+            .Where(ud => ud.UserId == uid)
             .ToListAsync(ct);
+        VerifyUserDeviceLinks(links);
+        return links.Where(ud => !ud.IsDeleted && ud.IsSyncOn && ud.Device is not null)
+            .Select(ud => ud.Device!)
+            .DistinctBy(d => d.Id)
+            .ToList();
     }
 
-    public async Task<IReadOnlyList<Device>> ListGroupDevicesAsync(Guid groupId, CancellationToken ct = default) =>
-        await Set.AsNoTracking()
-            .Where(d => d.UserDevices.Any(ud =>
-                !ud.IsDeleted && ud.IsSyncOn &&
-                _context.LocalUserDevices.Any(l => l.UserId == ud.UserId && l.IsSyncOn) &&
-                ud.User!.Groups.Any(g => g.Id == groupId)))
+    public async Task<IReadOnlyList<Device>> ListGroupDevicesAsync(Guid groupId, CancellationToken ct = default)
+    {
+        var groupUserIds = await _context.Users.AsNoTracking()
+            .Where(u => u.Groups.Any(g => g.Id == groupId))
+            .Select(u => u.UId)
             .ToListAsync(ct);
+        var enabledUserIds = await GetSyncEnabledLocalUserIdsAsync(groupUserIds, ct);
+        if (enabledUserIds.Count == 0)
+            return [];
+
+        var links = await _context.UserDevices.AsNoTracking()
+            .Include(ud => ud.Device)
+            .Where(ud => enabledUserIds.Contains(ud.UserId))
+            .ToListAsync(ct);
+        VerifyUserDeviceLinks(links);
+        return links.Where(ud => !ud.IsDeleted && ud.IsSyncOn && ud.Device is not null)
+            .Select(ud => ud.Device!)
+            .DistinctBy(d => d.Id)
+            .ToList();
+    }
 
     public async Task<IReadOnlyList<Device>> ListDevicesLinkedToDeviceUsersAsync(Guid deviceId, CancellationToken ct = default)
     {
-        var userIds = await _context.UserDevices.AsNoTracking()
-            .Where(ud => ud.DeviceId == deviceId && !ud.IsDeleted && _context.LocalUserDevices.Any(l => l.UserId == ud.UserId && l.IsSyncOn))
-            .Select(ud => ud.UserId)
+        var sourceLinks = await _context.UserDevices.AsNoTracking()
+            .Where(ud => ud.DeviceId == deviceId)
             .ToListAsync(ct);
-        if (userIds.Count == 0)
+        VerifyUserDeviceLinks(sourceLinks);
+        var sourceUserIds = sourceLinks.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList();
+        var enabledUserIds = await GetSyncEnabledLocalUserIdsAsync(sourceUserIds, ct);
+        if (enabledUserIds.Count == 0)
             return [];
-        return await Set.AsNoTracking()
-            .Where(d => d.Id != deviceId && d.UserDevices.Any(ud => userIds.Contains(ud.UserId) && !ud.IsDeleted && ud.IsSyncOn))
+
+        var targetLinks = await _context.UserDevices.AsNoTracking()
+            .Include(ud => ud.Device)
+            .Where(ud => ud.DeviceId != deviceId && enabledUserIds.Contains(ud.UserId))
             .ToListAsync(ct);
+        VerifyUserDeviceLinks(targetLinks);
+        return targetLinks.Where(ud => !ud.IsDeleted && ud.IsSyncOn && ud.Device is not null)
+            .Select(ud => ud.Device!)
+            .DistinctBy(d => d.Id)
+            .ToList();
     }
 
     public async Task<IReadOnlyList<Device>> ListUserDeviceChangeTargetDevicesAsync(Guid userId, Guid changedDeviceId, bool includeChangedDevice, CancellationToken ct = default)
     {
-        if (!await _context.LocalUserDevices.AsNoTracking().AnyAsync(x => x.UserId == userId && x.IsSyncOn, ct))
+        var localLink = await _context.LocalUserDevices.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == userId, ct);
+        if (localLink is null)
             return [];
-        return await Set.AsNoTracking()
-            .Where(d => d.UserDevices.Any(ud =>
-                ud.UserId == userId &&
-                !ud.IsDeleted &&
-                ((d.Id != changedDeviceId && ud.IsSyncOn) || (includeChangedDevice && d.Id == changedDeviceId))))
+        localLink.VerifyIntegrity();
+        if (!localLink.IsSyncOn)
+            return [];
+
+        var links = await _context.UserDevices.AsNoTracking()
+            .Include(ud => ud.Device)
+            .Where(ud => ud.UserId == userId)
             .ToListAsync(ct);
+        VerifyUserDeviceLinks(links);
+        return links.Where(ud =>
+                !ud.IsDeleted &&
+                ud.Device is not null &&
+                ((ud.DeviceId != changedDeviceId && ud.IsSyncOn) || (includeChangedDevice && ud.DeviceId == changedDeviceId)))
+            .Select(ud => ud.Device!)
+            .DistinctBy(d => d.Id)
+            .ToList();
     }
 
-    public Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        Set.Include(d => d.UserDevices).ThenInclude(ud => ud.User).FirstOrDefaultAsync(d => d.Id == id, ct);
+    public async Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default)
+    {
+        var device = await Set.Include(d => d.UserDevices).ThenInclude(ud => ud.User).FirstOrDefaultAsync(d => d.Id == id, ct);
+        if (device is not null)
+            VerifyUserDeviceLinks(device.UserDevices);
+        return device;
+    }
 
-    public Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        Set.AsNoTracking().Include(d => d.UserDevices).ThenInclude(ud => ud.User).FirstOrDefaultAsync(d => d.Id == id, ct);
+    public async Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default)
+    {
+        var device = await Set.AsNoTracking().Include(d => d.UserDevices).ThenInclude(ud => ud.User).FirstOrDefaultAsync(d => d.Id == id, ct);
+        if (device is not null)
+            VerifyUserDeviceLinks(device.UserDevices);
+        return device;
+    }
 
-    public Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default) =>
-        Set.Include(d => d.UserDevices).FirstOrDefaultAsync(d => d.Id == id, ct);
+    public async Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default)
+    {
+        var device = await Set.Include(d => d.UserDevices).FirstOrDefaultAsync(d => d.Id == id, ct);
+        if (device is not null)
+            VerifyUserDeviceLinks(device.UserDevices);
+        return device;
+    }
 
     public async Task<Device?> GetBySignPublicKeyAsync(byte[] signPublicKey, CancellationToken ct = default)
     {
@@ -96,6 +155,8 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
         if (string.IsNullOrWhiteSpace(tlsCertFingerprint)) return null;
         var normalized = NormalizeFingerprint(tlsCertFingerprint);
         var devices = await Set.Include(d => d.UserDevices).ToListAsync(ct);
+        foreach (var device in devices)
+            VerifyUserDeviceLinks(device.UserDevices);
         return devices.FirstOrDefault(d => NormalizeFingerprint(d.TlsCertFingerprint) == normalized);
     }
 
@@ -103,9 +164,32 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
     {
         var normalizedFingerprint = NormalizeFingerprint(tlsCertFingerprint);
         var devices = await Set.Include(d => d.UserDevices).ToListAsync(ct);
+        foreach (var device in devices)
+            VerifyUserDeviceLinks(device.UserDevices);
         return devices.Where(d => d.Id == localDeviceId ||
             (signPublicKey.Length != 0 && d.SignPublicKey.SequenceEqual(signPublicKey)) ||
             (normalizedFingerprint.Length != 0 && NormalizeFingerprint(d.TlsCertFingerprint) == normalizedFingerprint)).ToList();
+    }
+
+
+    private async Task<HashSet<Guid>> GetSyncEnabledLocalUserIdsAsync(IEnumerable<Guid> userIds, CancellationToken ct)
+    {
+        var ids = userIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        if (ids.Count == 0)
+            return [];
+
+        var links = await _context.LocalUserDevices.AsNoTracking()
+            .Where(link => ids.Contains(link.UserId))
+            .ToListAsync(ct);
+        foreach (var link in links)
+            link.VerifyIntegrity();
+        return links.Where(link => link.IsSyncOn).Select(link => link.UserId).ToHashSet();
+    }
+
+    private static void VerifyUserDeviceLinks(IEnumerable<UserDevice> links)
+    {
+        foreach (var link in links)
+            link.VerifyIntegrity();
     }
 
     private static string NormalizeFingerprint(string fingerprint) =>

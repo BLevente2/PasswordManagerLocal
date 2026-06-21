@@ -156,7 +156,7 @@ public static class SyncCryptoUtil
             if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length == 0)
                 throw new InvalidDataException("User device sync hash is missing.");
 
-            if (!Hashing.Verify(payload.UserDevice.IntegrityHash, SyncHashUtil.CalculateUserDeviceHash(payload.UserDevice)))
+            if (!Hashing.Verify(payload.UserDevice.IntegrityHash, SyncHashUtil.CalculateUserDeviceHash(payload.UserDevice, timestamp)))
                 throw new InvalidDataException("User device sync hash is invalid.");
         }
     }

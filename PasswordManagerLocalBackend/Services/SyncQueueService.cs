@@ -294,7 +294,9 @@ public sealed class SyncQueueService : ISyncQueueService
             if (userDevice is null)
                 return;
 
+            userDevice.VerifyIntegrity();
             userDevice.LastModifiedAt = modifiedAt;
+            userDevice.GenerateIntegrityHash();
             _userDevices.Update(userDevice);
         }
     }

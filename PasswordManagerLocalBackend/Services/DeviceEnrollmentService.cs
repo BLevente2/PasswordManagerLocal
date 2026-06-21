@@ -324,7 +324,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         try
         {
             await RegisterRemoteDeviceAsync(scope.ServiceProvider, user.UId, endpoint, ct);
-            await EnsureEncryptedDeviceNameAsync(users, user, token, endpoint.DeviceId, ct);
+            await EnsureEncryptedDeviceDataAsync(users, user, token, endpoint.DeviceId, ct);
             var snapshot = await BuildSnapshotAsync(scope.ServiceProvider, user.UId, ct);
 
             var proof = DeviceEnrollmentCode.BuildCompletionProof(
@@ -1417,6 +1417,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             .Include(d => d.UserDevices)
             .FirstOrDefaultAsync(d => d.Id == endpoint.DeviceId, ct);
 
+        if (device is not null)
+        {
+            foreach (var existingLink in device.UserDevices)
+                existingLink.VerifyIntegrity();
+        }
+
         if (device is null)
         {
             device = new Device
@@ -1462,13 +1468,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 Device = device,
                 IsSyncOn = true,
                 IsDeleted = false,
-                LinkedAt = now,
                 LastModifiedAt = now
             };
             await db.UserDevices.AddAsync(link, ct);
         }
         else
         {
+            link.VerifyIntegrity();
             link.Device = device;
             link.IsDeleted = false;
             link.DeletedAt = null;
@@ -1476,6 +1482,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             link.LastModifiedAt = now;
         }
 
+        link.GenerateIntegrityHash();
         await EnsureLocalUserDeviceAsync(db, userId, ct);
         await db.SaveChangesAsync(ct);
     }
@@ -1545,11 +1552,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (user is null)
             throw new UserNotFoundException();
 
-        var userDeviceIds = await db.UserDevices.AsNoTracking()
-            .Where(ud => ud.UserId == userId && !ud.IsDeleted)
-            .Select(ud => ud.DeviceId)
-            .Distinct()
+        var allUserDevices = await db.UserDevices.AsNoTracking()
+            .Where(ud => ud.UserId == userId)
             .ToListAsync(ct);
+        foreach (var userDevice in allUserDevices)
+            userDevice.VerifyIntegrity();
+
+        var userDevices = allUserDevices.Where(ud => !ud.IsDeleted).ToList();
+        var userDeviceIds = userDevices.Select(ud => ud.DeviceId).Distinct().ToList();
 
         var groups = await db.Groups.AsNoTracking()
             .Include(g => g.Users)
@@ -1561,12 +1571,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             .Where(d => d.Id != _identity.LocalDeviceId && userDeviceIds.Contains(d.Id))
             .ToListAsync(ct);
 
-        var userDevices = await db.UserDevices.AsNoTracking()
-            .Where(ud => ud.UserId == userId && !ud.IsDeleted)
-            .ToListAsync(ct);
-
         foreach (var device in devices)
+        {
+            foreach (var link in device.UserDevices)
+                link.VerifyIntegrity();
             device.GenerateIntegrityHash();
+        }
         foreach (var group in groups)
             group.GenerateIntegrityHash();
         user.GenerateIntegrityHash();
@@ -1607,6 +1617,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             LastModifiedAt = now
         };
         localDevice.GenerateIntegrityHash();
+        var localUserDeviceSnapshotSource = new UserDevice
+        {
+            UserId = userId,
+            DeviceId = _identity.LocalDeviceId,
+            IsSyncOn = true,
+            IsDeleted = false,
+            LastModifiedAt = now
+        };
+        localUserDeviceSnapshotSource.GenerateIntegrityHash();
+
         deviceSnapshots.Add(new DeviceEnrollmentDeviceSnapshot
         {
             Id = localDevice.Id,
@@ -1656,23 +1676,24 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 DeviceId = ud.DeviceId,
                 IsSyncOn = ud.IsSyncOn,
                 IsDeleted = ud.IsDeleted,
-                LinkedAt = ud.LinkedAt,
                 DeletedAt = ud.DeletedAt,
-                LastModifiedAt = ud.LastModifiedAt
+                LastModifiedAt = ud.LastModifiedAt,
+                IntegrityHash = ud.IntegrityHash.ToArray()
             }).Append(new DeviceEnrollmentUserDeviceSnapshot
             {
-                UserId = userId,
-                DeviceId = _identity.LocalDeviceId,
-                IsSyncOn = true,
-                IsDeleted = false,
-                LinkedAt = now,
-                LastModifiedAt = now
+                UserId = localUserDeviceSnapshotSource.UserId,
+                DeviceId = localUserDeviceSnapshotSource.DeviceId,
+                IsSyncOn = localUserDeviceSnapshotSource.IsSyncOn,
+                IsDeleted = localUserDeviceSnapshotSource.IsDeleted,
+                DeletedAt = localUserDeviceSnapshotSource.DeletedAt,
+                LastModifiedAt = localUserDeviceSnapshotSource.LastModifiedAt,
+                IntegrityHash = localUserDeviceSnapshotSource.IntegrityHash.ToArray()
             }).ToList()
         };
     }
 
 
-    private async Task EnsureEncryptedDeviceNameAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct)
+    private async Task EnsureEncryptedDeviceDataAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct)
     {
         using var userData = await users.GetAndVerifyUserDataAsync(user, token);
         if (userData.UserDevices.Devices.Any(device => device.Id == deviceId))
@@ -1680,7 +1701,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
         var name = BuildUniqueEncryptedDeviceName(userData, baseName, deviceId);
-        var deviceData = new UserDeviceData { Id = deviceId, Name = name };
+        var deviceData = new UserDeviceData
+        {
+            Id = deviceId,
+            Name = name,
+            LinkedAt = DateTimeOffset.UtcNow
+        };
         deviceData.GenerateIntegrityHash();
         userData.UserDevices.Devices.Add(deviceData);
         userData.UserDevices.GenerateIntegrityHash();
@@ -2195,6 +2221,22 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         foreach (var linkSnapshot in linkSnapshots)
         {
+            if (linkSnapshot.LastModifiedAt == default || linkSnapshot.IntegrityHash.Length == 0)
+                throw new InvalidDataException("The enrollment snapshot contains an incomplete user-device relationship.");
+
+            var verifiedSnapshotLink = new UserDevice
+            {
+                UserId = linkSnapshot.UserId,
+                DeviceId = linkSnapshot.DeviceId,
+                IsSyncOn = linkSnapshot.IsSyncOn,
+                IsDeleted = linkSnapshot.IsDeleted,
+                DeletedAt = linkSnapshot.DeletedAt,
+                LastModifiedAt = linkSnapshot.LastModifiedAt
+            };
+            verifiedSnapshotLink.GenerateIntegrityHash();
+            if (!Hashing.Verify(linkSnapshot.IntegrityHash, verifiedSnapshotLink.IntegrityHash))
+                throw new InvalidDataException("The enrollment snapshot contains an invalid user-device relationship hash.");
+
             if (linkSnapshot.DeviceId == _identity.LocalDeviceId)
                 continue;
 
@@ -2206,9 +2248,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             link.Device = remoteDevice;
             link.IsSyncOn = linkSnapshot.IsSyncOn;
             link.IsDeleted = linkSnapshot.IsDeleted;
-            link.LinkedAt = linkSnapshot.LinkedAt == default ? now : linkSnapshot.LinkedAt;
             link.DeletedAt = linkSnapshot.DeletedAt;
-            link.LastModifiedAt = linkSnapshot.LastModifiedAt == default ? now : linkSnapshot.LastModifiedAt;
+            link.LastModifiedAt = linkSnapshot.LastModifiedAt;
+            link.IntegrityHash = verifiedSnapshotLink.IntegrityHash.ToArray();
         }
 
         await EnsureLocalUserDeviceAsync(db, snapshot.PrimaryUserId, ct);
@@ -2239,7 +2281,10 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var existing = await db.UserDevices.FirstOrDefaultAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct);
         if (existing is not null)
+        {
+            existing.VerifyIntegrity();
             return existing;
+        }
 
         var created = new UserDevice
         {
@@ -2272,16 +2317,19 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var link = await db.LocalUserDevices.FirstOrDefaultAsync(x => x.UserId == userId, ct);
         if (link is null)
         {
-            await db.LocalUserDevices.AddAsync(new LocalUserDevice
+            var localUserDevice = new LocalUserDevice
             {
                 UserId = userId,
                 LocalDeviceIdentityId = _identity.LocalDeviceId,
-                IsSyncOn = true,
-                LinkedAt = DateTimeOffset.UtcNow
-            }, ct);
+                IsSyncOn = true
+            };
+            localUserDevice.GenerateIntegrityHash();
+            await db.LocalUserDevices.AddAsync(localUserDevice, ct);
             return;
         }
+        link.VerifyIntegrity();
         link.LocalDeviceIdentityId = _identity.LocalDeviceId;
+        link.GenerateIntegrityHash();
     }
 
 

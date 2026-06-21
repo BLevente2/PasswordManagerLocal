@@ -59,7 +59,6 @@ public sealed class UserDeviceSyncPayload
     public Guid DeviceId { get; set; }
     public bool IsSyncOn { get; set; }
     public bool IsDeleted { get; set; }
-    public DateTimeOffset LinkedAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
     public byte[] IntegrityHash { get; set; } = [];
 }

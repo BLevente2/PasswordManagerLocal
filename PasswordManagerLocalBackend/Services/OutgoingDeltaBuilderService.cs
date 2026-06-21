@@ -160,6 +160,9 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
     private UserSyncPayload CreateUserPayload(User user, long timestamp)
     {
+        foreach (var link in user.UserDevices)
+            link.VerifyIntegrity();
+
         var payload = new UserSyncPayload
         {
             UId = user.UId,
@@ -192,6 +195,9 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
     private async Task<DeviceSyncPayload> CreateDevicePayloadAsync(Device device, Guid targetDeviceId, long timestamp, CancellationToken ct)
     {
+        foreach (var link in device.UserDevices)
+            link.VerifyIntegrity();
+
         var userIds = new List<Guid>();
         foreach (var userId in device.UserDevices
                      .Where(ud => !ud.IsDeleted && ud.IsSyncOn)
@@ -230,17 +236,19 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private static UserDeviceSyncPayload CreateUserDevicePayload(UserDevice userDevice) =>
-        new()
+    private static UserDeviceSyncPayload CreateUserDevicePayload(UserDevice userDevice)
+    {
+        userDevice.VerifyIntegrity();
+        return new UserDeviceSyncPayload
         {
             UserId = userDevice.UserId,
             DeviceId = userDevice.DeviceId,
             IsSyncOn = userDevice.IsSyncOn,
             IsDeleted = userDevice.IsDeleted,
-            LinkedAt = userDevice.LinkedAt,
             DeletedAt = userDevice.DeletedAt,
-            IntegrityHash = SyncHashUtil.CalculateUserDeviceHash(userDevice)
+            IntegrityHash = userDevice.IntegrityHash.ToArray()
         };
+    }
 
 
     private bool IsLocalDevice(Device device) =>

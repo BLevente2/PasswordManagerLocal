@@ -255,6 +255,7 @@ public sealed class UserService : IUserService
 
         if (userData.UserDevices.Devices.Any(device =>
                 device.Id == Guid.Empty ||
+                device.LinkedAt == default ||
                 !IsValidUserDeviceName(device.Name)))
             throw new InvalidOperationException("Refusing to persist invalid device data.");
 

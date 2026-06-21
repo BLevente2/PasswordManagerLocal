@@ -287,6 +287,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         var payload = delta.UserDevice;
         var existing = await _userDevices.GetAsync(payload.UserId, payload.DeviceId, ct);
+        existing?.VerifyIntegrity();
         if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
             return false;
 
@@ -299,6 +300,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                 existing.IsSyncOn = false;
                 existing.DeletedAt = payload.DeletedAt ?? modifiedAt;
                 existing.LastModifiedAt = modifiedAt;
+                existing.GenerateIntegrityHash();
                 _userDevices.Update(existing);
             }
 
@@ -321,9 +323,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         userDevice.Device = remoteDevice;
         userDevice.IsDeleted = false;
         userDevice.IsSyncOn = payload.IsSyncOn;
-        userDevice.LinkedAt = payload.LinkedAt == default ? modifiedAt : payload.LinkedAt;
         userDevice.DeletedAt = null;
         userDevice.LastModifiedAt = modifiedAt;
+        userDevice.GenerateIntegrityHash();
 
         if (existing is null)
             await _userDevices.AddAsync(userDevice, ct);
@@ -421,18 +423,20 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (existingLink is not null)
             {
                 existingLink.Device = remoteDevice;
+                existingLink.VerifyIntegrity();
                 if (existingLink.IsDeleted)
                 {
                     existingLink.IsDeleted = false;
                     existingLink.DeletedAt = null;
                     existingLink.IsSyncOn = false;
                     existingLink.LastModifiedAt = modifiedAt;
+                    existingLink.GenerateIntegrityHash();
                 }
                 _userDevices.Update(existingLink);
                 continue;
             }
 
-            user.UserDevices.Add(new UserDevice
+            var newLink = new UserDevice
             {
                 UserId = user.UId,
                 DeviceId = id,
@@ -440,9 +444,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                 Device = remoteDevice,
                 IsSyncOn = false,
                 IsDeleted = false,
-                LinkedAt = modifiedAt,
                 LastModifiedAt = modifiedAt
-            });
+            };
+            newLink.GenerateIntegrityHash();
+            user.UserDevices.Add(newLink);
         }
     }
 
@@ -476,12 +481,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (existingLink is not null)
             {
                 existingLink.Device = device;
+                existingLink.VerifyIntegrity();
                 if (existingLink.IsDeleted)
                 {
                     existingLink.IsDeleted = false;
                     existingLink.DeletedAt = null;
                     existingLink.IsSyncOn = false;
                     existingLink.LastModifiedAt = modifiedAt;
+                    existingLink.GenerateIntegrityHash();
                 }
                 _userDevices.Update(existingLink);
                 continue;
@@ -491,7 +498,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (user is null)
                 continue;
 
-            await _userDevices.AddAsync(new UserDevice
+            var newLink = new UserDevice
             {
                 UserId = user.UId,
                 DeviceId = device.Id,
@@ -499,9 +506,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                 Device = device,
                 IsSyncOn = false,
                 IsDeleted = false,
-                LinkedAt = modifiedAt,
                 LastModifiedAt = modifiedAt
-            }, ct);
+            };
+            newLink.GenerateIntegrityHash();
+            await _userDevices.AddAsync(newLink, ct);
         }
     }
 
@@ -803,7 +811,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (existing is null)
                 return false;
 
-            return SyncHashUtil.CalculateUserDeviceHash(existing).SequenceEqual(payload.UserDevice.IntegrityHash);
+            existing.VerifyIntegrity();
+            return existing.IntegrityHash.SequenceEqual(payload.UserDevice.IntegrityHash);
         }
 
         return false;

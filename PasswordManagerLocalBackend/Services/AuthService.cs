@@ -75,10 +75,12 @@ public sealed class AuthService : IAuthService
         userData.Passwords.PasswordKey = passwordsKey.ExportCopy();
         userData.Passwords.GenerateIntegrityHash();
 
+        var linkedAt = DateTimeOffset.UtcNow;
         var localDeviceData = new UserDeviceData
         {
             Id = _identity.LocalDeviceId,
-            Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId)
+            Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
+            LinkedAt = linkedAt
         };
         localDeviceData.GenerateIntegrityHash();
         userData.UserDevices.Devices.Add(localDeviceData);
@@ -108,8 +110,7 @@ public sealed class AuthService : IAuthService
         {
             UserId = user.UId,
             LocalDeviceIdentityId = _identity.LocalDeviceId,
-            IsSyncOn = true,
-            LinkedAt = DateTimeOffset.UtcNow
+            IsSyncOn = true
         }, ct);
         await _uow.SaveChangesAsync(ct);
         await _syncRuntime.RefreshSyncEnabledAsync(ct);

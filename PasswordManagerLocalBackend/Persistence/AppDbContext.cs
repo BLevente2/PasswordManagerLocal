@@ -17,6 +17,41 @@ public class AppDbContext : DbContext
     public DbSet<LocalDeviceIdentity> LocalDeviceIdentities => Set<LocalDeviceIdentity>();
     public DbSet<LocalUserDevice> LocalUserDevices => Set<LocalUserDevice>();
 
+    public override int SaveChanges()
+    {
+        GenerateRelationshipIntegrityHashes();
+        return base.SaveChanges(true);
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        GenerateRelationshipIntegrityHashes();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        GenerateRelationshipIntegrityHashes();
+        return base.SaveChangesAsync(true, cancellationToken);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        GenerateRelationshipIntegrityHashes();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void GenerateRelationshipIntegrityHashes()
+    {
+        foreach (var entry in ChangeTracker.Entries<UserDevice>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.GenerateIntegrityHash();
+
+        foreach (var entry in ChangeTracker.Entries<LocalUserDevice>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            entry.Entity.GenerateIntegrityHash();
+    }
+
     protected override void OnModelCreating(ModelBuilder model)
     {
         base.OnModelCreating(model);
@@ -71,8 +106,8 @@ public class AppDbContext : DbContext
             .WithMany(d => d.UserDevices)
             .HasForeignKey(ud => ud.DeviceId)
             .OnDelete(DeleteBehavior.Cascade);
-        userDevice.Property(ud => ud.LinkedAt).IsRequired();
         userDevice.Property(ud => ud.LastModifiedAt).IsRequired();
+        userDevice.Property(ud => ud.IntegrityHash).IsRequired();
         userDevice.Property(ud => ud.IsSyncOn).IsRequired();
         userDevice.Property(ud => ud.IsDeleted).IsRequired();
         userDevice.HasIndex(ud => ud.DeviceId);
@@ -91,7 +126,7 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.LocalDeviceIdentityId)
             .OnDelete(DeleteBehavior.Cascade);
         localUserDevice.Property(x => x.IsSyncOn).IsRequired().HasDefaultValue(true);
-        localUserDevice.Property(x => x.LinkedAt).IsRequired();
+        localUserDevice.Property(x => x.IntegrityHash).IsRequired();
         localUserDevice.HasIndex(x => x.UserId).IsUnique();
         localUserDevice.HasIndex(x => x.IsSyncOn);
 
