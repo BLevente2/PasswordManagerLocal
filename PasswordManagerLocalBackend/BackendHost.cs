@@ -24,6 +24,7 @@ namespace PasswordManagerLocalBackend
         private static IHost? _host;
         private static Task? _initTask;
         private static readonly object _lock = new();
+        private static IKeyProtector? _platformKeyProtector;
 
         public static IServiceProvider Services
             => _host?.Services ?? throw new InvalidOperationException("BackendHost is not initialized.");
@@ -46,11 +47,14 @@ namespace PasswordManagerLocalBackend
                 if (_host is not null)
                     return Task.CompletedTask;
 
+                if (platformKeyProtector is not null)
+                    _platformKeyProtector = platformKeyProtector;
+
                 if (_initTask is not null)
                     return _initTask;
 
                 Batteries_V2.Init();
-                _initTask = InitializeInternal(platformKeyProtector);
+                _initTask = InitializeInternal(_platformKeyProtector);
                 return _initTask;
             }
         }
@@ -66,9 +70,45 @@ namespace PasswordManagerLocalBackend
             await initTask.WaitAsync(ct);
         }
 
+        public static async Task ResetDatabaseAndReinitializeAsync(CancellationToken ct = default)
+        {
+            IKeyProtector? platformKeyProtector;
+
+            lock (_lock)
+            {
+                if (_host is not null)
+                    throw new InvalidOperationException("The database can only be reset after backend startup has failed.");
+
+                platformKeyProtector = _platformKeyProtector;
+                _initTask = null;
+            }
+
+            DeleteDatabaseFiles();
+
+            try
+            {
+                await StartInitializationAsync(platformKeyProtector).WaitAsync(ct);
+            }
+            catch
+            {
+                lock (_lock)
+                {
+                    if (_host is null)
+                        _initTask = null;
+                }
+
+                DeleteDatabaseFiles();
+                throw;
+            }
+        }
+
         private static async Task InitializeInternal(IKeyProtector? platformKeyProtector)
         {
-            var host = Host.CreateDefaultBuilder(Array.Empty<string>())
+            IHost? host = null;
+
+            try
+            {
+                host = Host.CreateDefaultBuilder(Array.Empty<string>())
                 .ConfigureServices((context, services) =>
                 {
                     var dbFolder = PathConstants.AppRootFolder;
@@ -96,7 +136,7 @@ namespace PasswordManagerLocalBackend
                     services.AddDbContext<AppDbContext>((sp, opts) =>
                     {
                         var protector = sp.GetRequiredService<IKeyProtector>();
-                        var dbPassword = DbKeyManager.GetOrCreateSqlCipherPassword(protector);
+                        var dbPassword = DbConfigManager.GetOrCreateSqlCipherPassword(protector);
 
                         var connStr = new SqliteConnectionStringBuilder
                         {
@@ -188,10 +228,47 @@ namespace PasswordManagerLocalBackend
             await host.StartAsync();
             await host.Services.GetRequiredService<ISyncRuntimeService>().RefreshSyncEnabledAsync();
 
-            lock (_lock)
-            {
-                _host = host;
+                lock (_lock)
+                {
+                    _host = host;
+                }
             }
+            catch
+            {
+                try
+                {
+                    host?.Dispose();
+                }
+                catch
+                {
+                }
+
+                throw;
+            }
+        }
+
+        private static void DeleteDatabaseFiles()
+        {
+            var root = PathConstants.AppRootFolder;
+            var databasePath = Path.Combine(root, PathConstants.DbFileName);
+            var configPath = Path.Combine(root, PathConstants.DbConfigFileName);
+            var legacyKeyPath = Path.Combine(root, PathConstants.LegacyDbKeyFileName);
+
+            DeleteFileIfExists(databasePath);
+            DeleteFileIfExists($"{databasePath}-wal");
+            DeleteFileIfExists($"{databasePath}-shm");
+            DeleteFileIfExists($"{databasePath}-journal");
+            DeleteFileIfExists(configPath);
+            DeleteFileIfExists(legacyKeyPath);
+
+            foreach (var temporaryConfigPath in Directory.EnumerateFiles(root, $"{PathConstants.DbConfigFileName}.*.tmp"))
+                DeleteFileIfExists(temporaryConfigPath);
+        }
+
+        private static void DeleteFileIfExists(string path)
+        {
+            if (File.Exists(path))
+                File.Delete(path);
         }
     }
 }

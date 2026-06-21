@@ -330,5 +330,18 @@
   "Profile_Device_Add_QrNotFound": "Nem található olvasható QR-kód a kiválasztott képen.",
   "Profile_Device_Add_QrDecodeFailed": "A QR-kódot tartalmazó képet nem sikerült beolvasni. Próbálj meg egy élesebb képet, vagy írd be kézzel a kódot.",
   "Profile_Device_Add_QrScanner_Title": "Enrollment QR-kód beolvasása",
-  "Profile_Device_Add_QrScanner_Description": "Irányítsd a kamerát az új eszközön látható QR-kódra. Csak a PasswordManagerLocal enrollment QR-kódjait fogadja el az alkalmazás."
+  "Profile_Device_Add_QrScanner_Description": "Irányítsd a kamerát az új eszközön látható QR-kódra. Csak a PasswordManagerLocal enrollment QR-kódjait fogadja el az alkalmazás.",
+  "DatabaseVersion_Error_Title": "Nem támogatott adatbázis-verzió",
+  "DatabaseVersion_Error_Message": "A mentett adatbázis verziója {0}, ez az alkalmazás azonban csak a(z) {1} és {2} közötti verziókat támogatja. Az adatbázis nem nyitható meg, ezért az alkalmazás nem használható. A folytatáshoz alaphelyzetbe állíthatod az adatbázist, de ezzel véglegesen törlődik minden helyben mentett profil, jelszó, eszközkapcsolat, szinkronizációs adat és beállítás. Szeretnéd most alaphelyzetbe állítani az adatbázist?",
+  "DatabaseVersion_InvalidHeader_Message": "Az adatbázis konfigurációs fejléce hiányzik, sérült vagy nem támogatott formátumú. Az adatbázis nem nyitható meg, ezért az alkalmazás nem használható. A folytatáshoz alaphelyzetbe állíthatod az adatbázist, de ezzel véglegesen törlődik minden helyben mentett profil, jelszó, eszközkapcsolat, szinkronizációs adat és beállítás. Szeretnéd most alaphelyzetbe állítani az adatbázist?",
+  "DatabaseVersion_Reset_Button": "Adatbázis alaphelyzetbe állítása",
+  "DatabaseVersion_DoNotReset_Button": "Ne legyen alaphelyzetbe állítva",
+  "DatabaseVersion_ResetConfirm_Title": "Véglegesen törlöd az összes helyi adatot?",
+  "DatabaseVersion_ResetConfirm_Message": "Utolsó figyelmeztetés: ez a művelet nem vonható vissza. A jelenlegi titkosított adatbázis, annak védett kulcsa, az összes profil, mentett jelszó, kapcsolt eszköz adatai, szinkronizációs állapota és minden más helyben tárolt adat véglegesen törlődik. Egy teljesen új, üres adatbázis, új adatbáziskulcs és új DbConfig fájl jön létre. Biztosan folytatod?",
+  "DatabaseVersion_ResetConfirm_Button": "Minden adat törlése és alaphelyzetbe állítás",
+  "DatabaseVersion_Blocked_Title": "Az alkalmazás zárolva van",
+  "DatabaseVersion_ResetDeclined_Message": "Az adatbázis nem lett alaphelyzetbe állítva. A Password Manager Local nem tudja megnyitni vagy használni ezt a nem támogatott adatbázist, ezért az alkalmazás zárolva marad. Zárd be az alkalmazást, vagy válaszd az Adatbázis alaphelyzetbe állítása lehetőséget egy új, üres adatbázis létrehozásához.",
+  "DatabaseVersion_Resetting_Message": "A nem kompatibilis adatbázis törlése és egy új, üres adatbázis létrehozása új védett kulccsal folyamatban van. A művelet közben ne zárd be az alkalmazást.",
+  "DatabaseVersion_ResetFailed_Title": "Az adatbázis alaphelyzetbe állítása sikertelen",
+  "DatabaseVersion_ResetFailed_Message": "A nem kompatibilis adatbázist nem sikerült teljesen eltávolítani, vagy az új adatbázist nem sikerült létrehozni. Az alkalmazás zárolva marad. Ellenőrizd, hogy az alkalmazás írhat-e a helyi adatmappájába, majd lépj vissza, és próbáld újra."
 }

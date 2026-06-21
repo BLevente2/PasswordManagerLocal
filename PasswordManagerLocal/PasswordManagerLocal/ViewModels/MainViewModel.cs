@@ -5,7 +5,9 @@ using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels.Auth;
 using PasswordManagerLocal.ViewModels.Pages;
+using PasswordManagerLocalBackend;
 using PasswordManagerLocalBackend.Abstractions;
+using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Responses;
 using ReactiveUI;
@@ -42,6 +44,9 @@ public sealed class MainViewModel : ViewModelBase
     private Guid _sessionRenewalPromptShownForToken = Guid.Empty;
     private string _sessionRenewalDialogProfileName = string.Empty;
     private readonly HashSet<Guid> _autoRenewingSessionTokens = new();
+    private DatabaseRecoveryStage _databaseRecoveryStage;
+    private DatabaseVersionNotSupportedException? _databaseVersionException;
+    private bool _isResettingDatabase;
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -84,6 +89,8 @@ public sealed class MainViewModel : ViewModelBase
         RefreshVisiblePageCommand = ReactiveCommand.CreateFromTask(RefreshAllLoadedDataAsync);
         ConfirmSessionRenewalCommand = ReactiveCommand.CreateFromTask(ConfirmSessionRenewalAsync);
         DeclineSessionRenewalCommand = ReactiveCommand.Create(DeclineSessionRenewal);
+        DatabaseRecoveryPrimaryCommand = ReactiveCommand.CreateFromTask(HandleDatabaseRecoveryPrimaryActionAsync);
+        DatabaseRecoverySecondaryCommand = ReactiveCommand.Create(HandleDatabaseRecoverySecondaryAction);
         SensitiveDataVisibilityService.HideVisibleSecretsRequested += HandleHideVisibleSecretsRequested;
     }
 
@@ -261,6 +268,57 @@ public sealed class MainViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> DeclineSessionRenewalCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> DatabaseRecoveryPrimaryCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> DatabaseRecoverySecondaryCommand { get; }
+
+    public bool IsDatabaseRecoveryDialogOpen => _databaseRecoveryStage != DatabaseRecoveryStage.None;
+
+    public bool IsApplicationInteractionEnabled => !IsDatabaseRecoveryDialogOpen;
+
+    public bool IsDatabaseResetInProgress => _isResettingDatabase;
+
+    public bool IsDatabaseRecoverySecondaryButtonVisible =>
+        !_isResettingDatabase && _databaseRecoveryStage != DatabaseRecoveryStage.Declined;
+
+    public bool IsDatabaseRecoveryPrimaryButtonVisible => !_isResettingDatabase;
+
+    public string DatabaseRecoveryTitle => _databaseRecoveryStage switch
+    {
+        DatabaseRecoveryStage.FinalConfirmation => GetTranslation("DatabaseVersion_ResetConfirm_Title"),
+        DatabaseRecoveryStage.Declined => GetTranslation("DatabaseVersion_Blocked_Title"),
+        DatabaseRecoveryStage.ResetFailed => GetTranslation("DatabaseVersion_ResetFailed_Title"),
+        _ => GetTranslation("DatabaseVersion_Error_Title")
+    };
+
+    public string DatabaseRecoveryMessage
+    {
+        get
+        {
+            if (_isResettingDatabase)
+                return GetTranslation("DatabaseVersion_Resetting_Message");
+
+            return _databaseRecoveryStage switch
+            {
+                DatabaseRecoveryStage.FinalConfirmation => GetTranslation("DatabaseVersion_ResetConfirm_Message"),
+                DatabaseRecoveryStage.Declined => GetTranslation("DatabaseVersion_ResetDeclined_Message"),
+                DatabaseRecoveryStage.ResetFailed => GetTranslation("DatabaseVersion_ResetFailed_Message"),
+                _ => BuildDatabaseVersionErrorMessage()
+            };
+        }
+    }
+
+    public string DatabaseRecoveryPrimaryButtonLabel =>
+        _databaseRecoveryStage == DatabaseRecoveryStage.FinalConfirmation
+            ? GetTranslation("DatabaseVersion_ResetConfirm_Button")
+            : GetTranslation("DatabaseVersion_Reset_Button");
+
+    public string DatabaseRecoverySecondaryButtonLabel =>
+        _databaseRecoveryStage == DatabaseRecoveryStage.FinalConfirmation ||
+        _databaseRecoveryStage == DatabaseRecoveryStage.ResetFailed
+            ? GetTranslation("Common_Back")
+            : GetTranslation("DatabaseVersion_DoNotReset_Button");
+
     public string AppTitle => GetTranslation("AppTitle");
 
     public string SettingsLabel => GetTranslation("Settings");
@@ -367,6 +425,11 @@ public sealed class MainViewModel : ViewModelBase
             if (!IsAuthenticated)
                 ClearStatusMessage();
         }
+        catch (DatabaseVersionNotSupportedException exception)
+        {
+            if (!IsAuthenticated)
+                ShowDatabaseRecoveryDialog(exception);
+        }
         catch
         {
             if (!IsAuthenticated)
@@ -376,6 +439,14 @@ public sealed class MainViewModel : ViewModelBase
 
     public async Task<bool> TryNavigateBackAsync()
     {
+        if (IsDatabaseRecoveryDialogOpen)
+        {
+            if (!_isResettingDatabase)
+                HandleDatabaseRecoverySecondaryAction();
+
+            return true;
+        }
+
         if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
         {
             return PasswordsViewModel.TryNavigateBack();
@@ -442,6 +513,92 @@ public sealed class MainViewModel : ViewModelBase
     }
 
 
+    private void ShowDatabaseRecoveryDialog(DatabaseVersionNotSupportedException exception)
+    {
+        _databaseVersionException = exception;
+        _databaseRecoveryStage = DatabaseRecoveryStage.CompatibilityError;
+        _isResettingDatabase = false;
+        ClearStatusMessage();
+        RaiseDatabaseRecoveryProperties();
+    }
+
+    private async Task HandleDatabaseRecoveryPrimaryActionAsync()
+    {
+        if (_isResettingDatabase || !IsDatabaseRecoveryDialogOpen)
+            return;
+
+        if (_databaseRecoveryStage != DatabaseRecoveryStage.FinalConfirmation)
+        {
+            _databaseRecoveryStage = DatabaseRecoveryStage.FinalConfirmation;
+            RaiseDatabaseRecoveryProperties();
+            return;
+        }
+
+        _isResettingDatabase = true;
+        RaiseDatabaseRecoveryProperties();
+
+        try
+        {
+            await BackendHost.ResetDatabaseAndReinitializeAsync();
+            _databaseVersionException = null;
+            _databaseRecoveryStage = DatabaseRecoveryStage.None;
+            ClearStatusMessage();
+            RaiseDatabaseRecoveryProperties();
+        }
+        catch
+        {
+            _databaseRecoveryStage = DatabaseRecoveryStage.ResetFailed;
+        }
+        finally
+        {
+            _isResettingDatabase = false;
+            RaiseDatabaseRecoveryProperties();
+        }
+    }
+
+    private void HandleDatabaseRecoverySecondaryAction()
+    {
+        if (_isResettingDatabase || !IsDatabaseRecoveryDialogOpen)
+            return;
+
+        _databaseRecoveryStage = _databaseRecoveryStage switch
+        {
+            DatabaseRecoveryStage.FinalConfirmation => DatabaseRecoveryStage.CompatibilityError,
+            DatabaseRecoveryStage.ResetFailed => DatabaseRecoveryStage.CompatibilityError,
+            DatabaseRecoveryStage.CompatibilityError => DatabaseRecoveryStage.Declined,
+            _ => _databaseRecoveryStage
+        };
+
+        RaiseDatabaseRecoveryProperties();
+    }
+
+    private string BuildDatabaseVersionErrorMessage()
+    {
+        if (_databaseVersionException?.DetectedVersion is int detectedVersion)
+        {
+            return string.Format(
+                GetTranslation("DatabaseVersion_Error_Message"),
+                detectedVersion,
+                _databaseVersionException.OldestSupportedVersion,
+                _databaseVersionException.CurrentVersion);
+        }
+
+        return GetTranslation("DatabaseVersion_InvalidHeader_Message");
+    }
+
+    private void RaiseDatabaseRecoveryProperties()
+    {
+        this.RaisePropertyChanged(nameof(IsDatabaseRecoveryDialogOpen));
+        this.RaisePropertyChanged(nameof(IsApplicationInteractionEnabled));
+        this.RaisePropertyChanged(nameof(IsDatabaseResetInProgress));
+        this.RaisePropertyChanged(nameof(IsDatabaseRecoverySecondaryButtonVisible));
+        this.RaisePropertyChanged(nameof(IsDatabaseRecoveryPrimaryButtonVisible));
+        this.RaisePropertyChanged(nameof(DatabaseRecoveryTitle));
+        this.RaisePropertyChanged(nameof(DatabaseRecoveryMessage));
+        this.RaisePropertyChanged(nameof(DatabaseRecoveryPrimaryButtonLabel));
+        this.RaisePropertyChanged(nameof(DatabaseRecoverySecondaryButtonLabel));
+    }
+
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(AppTitle));
@@ -473,6 +630,7 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(SessionRenewalWarningTitle));
         this.RaisePropertyChanged(nameof(SessionRenewalWarningMessage));
         this.RaisePropertyChanged(nameof(SessionRenewalYesButtonLabel));
+        RaiseDatabaseRecoveryProperties();
         RaiseHeaderSubtitleProperties();
         this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
     }
@@ -1463,4 +1621,14 @@ public sealed class MainViewModel : ViewModelBase
 
         return profile.Email;
     }
+
+    private enum DatabaseRecoveryStage
+    {
+        None,
+        CompatibilityError,
+        FinalConfirmation,
+        Declined,
+        ResetFailed
+    }
+
 }
