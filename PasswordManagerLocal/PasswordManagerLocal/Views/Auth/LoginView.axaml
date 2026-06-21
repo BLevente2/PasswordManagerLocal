@@ -53,7 +53,7 @@
 
             <CheckBox IsChecked="{Binding RememberMe}" Content="{Binding RememberMeLabel}" />
 
-            <TextBlock Text="{Binding ErrorMessage}" Classes="errorText" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding StatusMessage}" Classes="errorText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
 
             <Button Classes="primary"
                     Command="{Binding LoginCommand}"
@@ -119,7 +119,16 @@
                       Content="{Binding DeviceTransferCopyCodeLabel}" />
             </Grid>
             <TextBlock Text="{Binding DeviceTransferCodeReadabilityHint}" Classes="subtleText" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding DeviceTransferMessage}" Classes="subtleText" IsVisible="{Binding HasDeviceTransferMessage}" TextWrapping="Wrap" />
+            <Grid>
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="subtleText"
+                         IsVisible="{Binding DeviceTransferStatus.HasNonErrorMessage}"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="errorText"
+                         IsVisible="{Binding DeviceTransferStatus.IsError}"
+                         TextWrapping="Wrap" />
+            </Grid>
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
               <Button Classes="ghost"
                       Command="{Binding CancelDeviceTransferCommand}"
@@ -133,7 +142,16 @@
 
           <StackPanel Spacing="14" IsVisible="{Binding IsDeviceTransferFinished}">
             <TextBlock Text="{Binding DeviceTransferFinishTitle}" Classes="sectionTitle" TextWrapping="Wrap" />
-            <TextBlock Text="{Binding DeviceTransferMessage}" Classes="subtleText" IsVisible="{Binding HasDeviceTransferMessage}" TextWrapping="Wrap" />
+            <Grid>
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="subtleText"
+                         IsVisible="{Binding DeviceTransferStatus.HasNonErrorMessage}"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding DeviceTransferStatus.Message}"
+                         Classes="errorText"
+                         IsVisible="{Binding DeviceTransferStatus.IsError}"
+                         TextWrapping="Wrap" />
+            </Grid>
             <Button Classes="primary"
                     Command="{Binding FinishDeviceTransferCommand}"
                     Content="{Binding DeviceTransferFinishLabel}" />

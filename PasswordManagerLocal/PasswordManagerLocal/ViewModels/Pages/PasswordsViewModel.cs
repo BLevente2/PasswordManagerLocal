@@ -27,7 +27,6 @@ public sealed class PasswordsViewModel : ViewModelBase
     private PasswordItemViewModel? _selectedPassword;
     private PasswordItemViewModel? _passwordPendingDeletion;
     private string? _revealedPassword;
-    private string? _statusMessage;
     private string _currentPane = ListPane;
     private bool _isCreateMode;
     private bool _isDeleteConfirmationOpen;
@@ -58,7 +57,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         PresetColors = new ObservableCollection<PasswordColorOptionViewModel>();
         SortOptions = new ObservableCollection<PasswordSortOptionViewModel>();
 
-        RefreshCommand = ReactiveCommand.CreateFromTask(RefreshAsync);
+        RefreshCommand = ReactiveCommand.CreateFromTask(async () => { await RefreshAsync(true); });
         ExecutePrimaryActionCommand = ReactiveCommand.CreateFromTask(ExecutePrimaryActionAsync);
         SearchCommand = ReactiveCommand.Create(ApplyCurrentSearch);
         SelectSortOptionCommand = ReactiveCommand.Create<string>(SelectSortOptionByKey);
@@ -148,18 +147,6 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool IsPasswordHidden => HasSelection && !HasRevealedPassword;
 
-    public string? StatusMessage
-    {
-        get => _statusMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _statusMessage, value);
-            this.RaisePropertyChanged(nameof(HasStatusMessage));
-        }
-    }
-
-    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
-
     public bool HasPasswords => Passwords.Count > 0;
 
     public bool IsEmpty => Passwords.Count == 0;
@@ -180,6 +167,7 @@ public sealed class PasswordsViewModel : ViewModelBase
                 return;
             }
 
+            ClearStatusMessage();
             this.RaiseAndSetIfChanged(ref _currentPane, value);
             this.RaisePropertyChanged(nameof(IsListPaneVisible));
             this.RaisePropertyChanged(nameof(IsEditorPaneVisible));
@@ -688,15 +676,15 @@ public sealed class PasswordsViewModel : ViewModelBase
         RaiseSortMenuLabelProperties();
     }
 
-    public async Task LoadAsync(Guid token)
+    public async Task<bool> LoadAsync(Guid token)
     {
         _token = token;
-        await RefreshAsync();
+        return await RefreshAsync(false);
     }
 
     public void SetSessionToken(Guid token) => _token = token;
 
-    public async Task RefreshCurrentDataAsync() => await RefreshAsync();
+    public async Task<bool> RefreshCurrentDataAsync(bool showSuccessMessage = true) => await RefreshAsync(showSuccessMessage);
 
     public void ShowMainPage()
     {
@@ -704,7 +692,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         PasswordPendingDeletion = null;
         SelectedPassword = null;
         RevealedPassword = null;
-        StatusMessage = null;
+        ClearStatusMessage();
         SearchQuery = string.Empty;
         IsCreateMode = true;
         CurrentPane = ListPane;
@@ -720,7 +708,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         SelectedPassword = null;
         PasswordPendingDeletion = null;
         RevealedPassword = null;
-        StatusMessage = null;
+        ClearStatusMessage();
         IsCreateMode = true;
         IsDeleteConfirmationOpen = false;
         SearchQuery = string.Empty;
@@ -801,13 +789,14 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
 
-    private async Task RefreshAsync()
+    private async Task<bool> RefreshAsync(bool showSuccessMessage)
     {
         if (_token == Guid.Empty)
         {
-            return;
+            return false;
         }
 
+        ClearStatusMessage();
         var selectedId = SelectedPassword?.Id;
 
         try
@@ -821,11 +810,15 @@ public sealed class PasswordsViewModel : ViewModelBase
             }
 
             ApplyFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
-            StatusMessage = GetTranslation("Passwords_Refreshed");
+            if (showSuccessMessage)
+                ShowSuccessMessage(GetTranslation("Passwords_Refreshed"));
+
+            return true;
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
+            return false;
         }
     }
 
@@ -835,7 +828,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         SelectedPassword = password;
         HidePassword();
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentPane = DetailsPane;
         return Task.CompletedTask;
     }
@@ -843,7 +836,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void BeginCreatePassword()
     {
         IsCreateMode = true;
-        StatusMessage = null;
+        ClearStatusMessage();
         SelectedPassword = null;
         HidePassword();
         ResetEditorFields();
@@ -864,7 +857,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         SelectedPassword = password;
         IsCreateMode = false;
-        StatusMessage = null;
+        ClearStatusMessage();
         EditorName = password.Name;
         EditorDescription = password.Description;
         EditorPassword = string.Empty;
@@ -893,12 +886,14 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private void BeginDeletePassword(PasswordItemViewModel password)
     {
+        ClearStatusMessage();
         PasswordPendingDeletion = password;
         IsDeleteConfirmationOpen = true;
     }
 
     private void CancelDeletePassword()
     {
+        ClearStatusMessage();
         IsDeleteConfirmationOpen = false;
         PasswordPendingDeletion = null;
     }
@@ -910,6 +905,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
         var password = PasswordPendingDeletion;
 
         try
@@ -925,12 +921,14 @@ public sealed class PasswordsViewModel : ViewModelBase
                 CurrentPane = ListPane;
             }
 
-            await RefreshAsync();
-            StatusMessage = GetTranslation("Passwords_Delete_Success");
+            if (!await RefreshAsync(false))
+                return;
+
+            ShowSuccessMessage(GetTranslation("Passwords_Delete_Success"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -944,6 +942,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             return;
         }
+
+        ClearStatusMessage();
 
         try
         {
@@ -959,7 +959,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -975,15 +975,18 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         try
         {
-            StatusMessage = await TryCopyTextToClipboardAsync(RevealedPassword)
-                ? GetTranslation("Passwords_Copy_Success")
-                : GetTranslation("Error_ClipboardUnavailable");
+            if (await TryCopyTextToClipboardAsync(RevealedPassword))
+                ShowSuccessMessage(GetTranslation("Passwords_Copy_Success"));
+            else
+                ShowErrorMessage(GetTranslation("Error_ClipboardUnavailable"));
         }
         catch
         {
-            StatusMessage = GetTranslation("Error_ClipboardUnavailable");
+            ShowErrorMessage(GetTranslation("Error_ClipboardUnavailable"));
         }
     }
 
@@ -994,6 +997,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             return;
         }
+
+        ClearStatusMessage();
 
         try
         {
@@ -1011,7 +1016,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
@@ -1022,9 +1027,11 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         if (string.IsNullOrWhiteSpace(EditorName))
         {
-            StatusMessage = GetTranslation("Validation_PasswordName_Required");
+            ShowErrorMessage(GetTranslation("Validation_PasswordName_Required"));
             return;
         }
 
@@ -1037,7 +1044,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             {
                 if (string.IsNullOrWhiteSpace(EditorPassword))
                 {
-                    StatusMessage = GetTranslation("Validation_RegisterPassword_Required");
+                    ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Required"));
                     return;
                 }
 
@@ -1096,12 +1103,14 @@ public sealed class PasswordsViewModel : ViewModelBase
             HidePassword();
             ResetEditorFields();
             CurrentPane = ListPane;
-            await RefreshAsync();
-            StatusMessage = successMessage;
+            if (!await RefreshAsync(false))
+                return;
+
+            ShowSuccessMessage(successMessage);
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -1113,7 +1122,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         ResetEditorFields();
         HidePassword();
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentPane = ListPane;
     }
 
@@ -1124,7 +1133,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         SelectedPassword = null;
         HidePassword();
         ResetEditorFields();
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentPane = ListPane;
     }
 
@@ -1247,26 +1256,28 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void OpenCustomColorPicker()
     {
         SyncColorFieldsFromEditorColor();
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentPane = ColorPane;
     }
 
     private void BackToPasswordEditor()
     {
-        StatusMessage = null;
+        ClearStatusMessage();
         CurrentPane = EditorPane;
     }
 
     private void ApplyManualColorCode()
     {
+        ClearStatusMessage();
+
         if (!TryNormalizeHexColor(CustomColorCode, out var normalizedColor))
         {
-            StatusMessage = GetTranslation("Passwords_ColorPicker_InvalidCode");
+            ShowErrorMessage(GetTranslation("Passwords_ColorPicker_InvalidCode"));
             return;
         }
 
         ApplyEditorColor(normalizedColor);
-        StatusMessage = null;
+        ClearStatusMessage();
     }
 
     private void ApplyColorFromSliders()

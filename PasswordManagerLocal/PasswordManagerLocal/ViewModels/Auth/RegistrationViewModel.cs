@@ -23,7 +23,6 @@ public sealed class RegistrationViewModel : ViewModelBase
     private bool _rememberMe;
     private bool _isPasswordVisible;
     private bool _isConfirmPasswordVisible;
-    private string? _errorMessage;
     private bool _isBusy;
     private bool _isBackButtonVisible;
 
@@ -108,14 +107,6 @@ public sealed class RegistrationViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(ConfirmPasswordVisibilityToggleText));
         }
     }
-
-    public string? ErrorMessage
-    {
-        get => _errorMessage;
-        private set => this.RaiseAndSetIfChanged(ref _errorMessage, value);
-    }
-
-    public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
 
     public bool IsBusy
     {
@@ -224,8 +215,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         RememberMe = false;
         IsPasswordVisible = false;
         IsConfirmPasswordVisible = false;
-        ErrorMessage = null;
-        this.RaisePropertyChanged(nameof(HasError));
+        ClearStatusMessage();
     }
 
 
@@ -249,48 +239,41 @@ public sealed class RegistrationViewModel : ViewModelBase
         if (IsBusy)
             return;
 
-        ErrorMessage = null;
-        this.RaisePropertyChanged(nameof(HasError));
+        ClearStatusMessage();
 
         if (string.IsNullOrWhiteSpace(Username))
         {
-            ErrorMessage = GetTranslation("Validation_Username_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_Username_Required"));
             return;
         }
 
         if (string.IsNullOrWhiteSpace(FirstName))
         {
-            ErrorMessage = GetTranslation("Validation_FirstName_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_FirstName_Required"));
             return;
         }
 
         if (string.IsNullOrWhiteSpace(LastName))
         {
-            ErrorMessage = GetTranslation("Validation_LastName_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_LastName_Required"));
             return;
         }
 
         if (string.IsNullOrWhiteSpace(Email))
         {
-            ErrorMessage = GetTranslation("Validation_Email_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_Email_Required"));
             return;
         }
 
         if (string.IsNullOrWhiteSpace(Password))
         {
-            ErrorMessage = GetTranslation("Validation_RegisterPassword_Required");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Required"));
             return;
         }
 
         if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
         {
-            ErrorMessage = GetTranslation("Validation_RegisterPassword_Mismatch");
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Mismatch"));
             return;
         }
 
@@ -316,8 +299,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ErrorMessage = GetSafeErrorMessage(ex);
-            this.RaisePropertyChanged(nameof(HasError));
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {

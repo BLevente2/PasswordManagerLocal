@@ -27,7 +27,7 @@
             <TextBlock Text="{Binding BusyText}" Classes="subtleText" TextWrapping="Wrap" />
           </StackPanel>
 
-          <TextBlock Text="{Binding ErrorMessage}" Classes="errorText" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding StatusMessage}" Classes="errorText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
 
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
             <TextBlock Text="{Binding LoggedInProfilesLabel}" Classes="sectionTitle" VerticalAlignment="Center" TextWrapping="Wrap" />

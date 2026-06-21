@@ -83,7 +83,7 @@
 
           <CheckBox IsChecked="{Binding RememberMe}" Content="{Binding RememberMeLabel}" />
 
-          <TextBlock Text="{Binding ErrorMessage}" Classes="errorText" IsVisible="{Binding HasError}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding StatusMessage}" Classes="errorText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
 
           <Button Classes="primary"
                   Command="{Binding RegisterCommand}"

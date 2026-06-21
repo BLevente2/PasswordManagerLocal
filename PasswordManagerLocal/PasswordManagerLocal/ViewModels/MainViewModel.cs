@@ -28,7 +28,6 @@ public sealed class MainViewModel : ViewModelBase
     private bool _isAuthenticated;
     private string _currentUserDisplayName = string.Empty;
     private string _currentUserSubtitle = string.Empty;
-    private string? _statusMessage;
     private DispatcherTimer? _sessionMonitorTimer;
     private bool _isCheckingSession;
     private bool _isSessionRenewalDialogOpen;
@@ -108,6 +107,8 @@ public sealed class MainViewModel : ViewModelBase
                 return;
             }
 
+            _currentPageViewModel.OnNavigatedFrom();
+            ClearStatusMessage();
             this.RaiseAndSetIfChanged(ref _currentPageViewModel, value);
             CurrentAnimatedPageViewModel = new MainPageContentViewModel(value);
             RaiseNavigationStateProperties();
@@ -121,8 +122,7 @@ public sealed class MainViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _isAuthenticated, value);
             this.RaisePropertyChanged(nameof(IsAnonymous));
-            this.RaisePropertyChanged(nameof(HeaderSubtitle));
-            this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
+            RaiseHeaderSubtitleProperties();
             this.RaisePropertyChanged(nameof(IsDesktopContentVisible));
             this.RaisePropertyChanged(nameof(IsDesktopNavigationVisible));
             this.RaisePropertyChanged(nameof(IsMobilePageIndicatorVisible));
@@ -199,8 +199,7 @@ public sealed class MainViewModel : ViewModelBase
         private set
         {
             this.RaiseAndSetIfChanged(ref _currentUserSubtitle, value);
-            this.RaisePropertyChanged(nameof(HeaderSubtitle));
-            this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
+            RaiseHeaderSubtitleProperties();
         }
     }
 
@@ -231,20 +230,6 @@ public sealed class MainViewModel : ViewModelBase
     }
 
     public bool CanChangeRememberMe => IsAuthenticated && !IsSettingRememberMe;
-
-    public string? StatusMessage
-    {
-        get => _statusMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _statusMessage, value);
-            this.RaisePropertyChanged(nameof(HasStatusMessage));
-            this.RaisePropertyChanged(nameof(HeaderSubtitle));
-            this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
-        }
-    }
-
-    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
 
     public ReactiveCommand<Unit, Unit> SetHungarianLanguageCommand { get; }
 
@@ -338,16 +323,22 @@ public sealed class MainViewModel : ViewModelBase
         ? GetTranslation("Common_Loading")
         : YesLabel;
 
-    public string HeaderSubtitle => IsAuthenticated ? CurrentUserSubtitle : StatusMessage ?? string.Empty;
+    public string HeaderSubtitle => !string.IsNullOrWhiteSpace(StatusMessage)
+        ? StatusMessage
+        : IsAuthenticated ? CurrentUserSubtitle : string.Empty;
 
     public bool HasHeaderSubtitle => !string.IsNullOrWhiteSpace(HeaderSubtitle);
+
+    public bool IsHeaderSubtitleError => IsStatusMessageError;
+
+    public bool HasNonErrorHeaderSubtitle => HasHeaderSubtitle && !IsHeaderSubtitleError;
 
     public async Task InitializeAsync()
     {
         if (IsAuthenticated)
             return;
 
-        StatusMessage = GetTranslation("Shell_BackendStarting");
+        ShowInformationMessage(GetTranslation("Shell_BackendStarting"));
 
         try
         {
@@ -374,12 +365,12 @@ public sealed class MainViewModel : ViewModelBase
             }
 
             if (!IsAuthenticated)
-                StatusMessage = null;
+                ClearStatusMessage();
         }
         catch
         {
             if (!IsAuthenticated)
-                StatusMessage = GetTranslation("Shell_BackendStartupFailed");
+                ShowErrorMessage(GetTranslation("Shell_BackendStartupFailed"));
         }
     }
 
@@ -482,23 +473,57 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(SessionRenewalWarningTitle));
         this.RaisePropertyChanged(nameof(SessionRenewalWarningMessage));
         this.RaisePropertyChanged(nameof(SessionRenewalYesButtonLabel));
+        RaiseHeaderSubtitleProperties();
+        this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
+    }
+
+    protected override void OnStatusMessageChanged()
+    {
+        RaiseHeaderSubtitleProperties();
+    }
+
+    private void RaiseHeaderSubtitleProperties()
+    {
         this.RaisePropertyChanged(nameof(HeaderSubtitle));
         this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
-        this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
+        this.RaisePropertyChanged(nameof(IsHeaderSubtitleError));
+        this.RaisePropertyChanged(nameof(HasNonErrorHeaderSubtitle));
+    }
+
+    private void ShowShellMessage(string? message, OperationMessageKind kind = OperationMessageKind.Success)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            ClearStatusMessage();
+            return;
+        }
+
+        switch (kind)
+        {
+            case OperationMessageKind.Error:
+                ShowErrorMessage(message);
+                break;
+            case OperationMessageKind.Information:
+                ShowInformationMessage(message);
+                break;
+            default:
+                ShowSuccessMessage(message);
+                break;
+        }
     }
 
     private void NavigateToLogin()
     {
         ConfigureAuthBackNavigation();
         CurrentPageViewModel = LoginViewModel;
-        StatusMessage = null;
+        ClearStatusMessage();
     }
 
     private void NavigateToRegistration()
     {
         ConfigureAuthBackNavigation();
         CurrentPageViewModel = RegistrationViewModel;
-        StatusMessage = null;
+        ClearStatusMessage();
     }
 
     private async Task ShowStartupProfileSelectionAsync(string? message = null)
@@ -517,7 +542,7 @@ public sealed class MainViewModel : ViewModelBase
         ConfigureAuthBackNavigation();
         await ChangeProfileViewModel.LoadAsync();
         CurrentPageViewModel = ChangeProfileViewModel;
-        StatusMessage = message;
+        ShowShellMessage(message, OperationMessageKind.Information);
     }
 
     private async Task ShowChangeProfileAsync()
@@ -534,7 +559,7 @@ public sealed class MainViewModel : ViewModelBase
         ConfigureAuthBackNavigation();
         await ChangeProfileViewModel.LoadAsync();
         CurrentPageViewModel = ChangeProfileViewModel;
-        StatusMessage = null;
+        ClearStatusMessage();
     }
 
     private void NavigateToLoginAnotherProfile()
@@ -547,7 +572,7 @@ public sealed class MainViewModel : ViewModelBase
         RegistrationViewModel.Reset();
         ConfigureAuthBackNavigation();
         CurrentPageViewModel = LoginViewModel;
-        StatusMessage = null;
+        ClearStatusMessage();
     }
 
     private void ConfigureAuthBackNavigation()
@@ -591,10 +616,15 @@ public sealed class MainViewModel : ViewModelBase
     {
         var wasStartupSelection = _isStartupProfileSelection;
         _isStartupProfileSelection = false;
-        await LoadAuthenticatedStateAsync(token, wasStartupSelection ? GetTranslation("Shell_RememberedSessionLoaded") : GetTranslation("Shell_ProfileChanged"));
+        if (!await LoadAuthenticatedStateAsync(token))
+            return;
 
         if (!wasStartupSelection)
             RestoreProfileChangeReturnPage();
+
+        ShowSuccessMessage(wasStartupSelection
+            ? GetTranslation("Shell_RememberedSessionLoaded")
+            : GetTranslation("Shell_ProfileChanged"));
     }
 
     private void RestoreProfileChangeReturnPage()
@@ -620,6 +650,7 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.DiscardTransientNavigationState();
         CurrentPageViewModel = PasswordsViewModel;
@@ -634,6 +665,7 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowProfileMainPage();
         CurrentPageViewModel = ProfileViewModel;
@@ -648,6 +680,7 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowDevicesMainPage();
         CurrentPageViewModel = ProfileViewModel;
@@ -761,19 +794,21 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         try
         {
             IsSettingRememberMe = true;
             await _endpoints.SetRememberMeAsync(token, isEnabled);
             _authSessionRegistry.TrySetRememberMe(token, isEnabled);
-            StatusMessage = isEnabled
+            ShowSuccessMessage(isEnabled
                 ? GetTranslation("Shell_RememberMeEnabled")
-                : GetTranslation("Shell_RememberMeDisabled");
+                : GetTranslation("Shell_RememberMeDisabled"));
         }
         catch
         {
             ApplyRememberMeFromSession(previousValue);
-            StatusMessage = GetTranslation("Shell_RememberMeUpdateFailed");
+            ShowErrorMessage(GetTranslation("Shell_RememberMeUpdateFailed"));
         }
         finally
         {
@@ -799,19 +834,29 @@ public sealed class MainViewModel : ViewModelBase
         _isAddingProfile = false;
         _isStartupProfileSelection = false;
         ConfigureAuthBackNavigation();
-        await LoadAuthenticatedStateAsync(token, profile, GetTranslation("Shell_SignedIn"));
+        if (!await LoadAuthenticatedStateAsync(token, profile))
+            return;
 
         if (wasAddingProfile && !wasStartupProfileSelection)
             RestoreProfileChangeReturnPage();
+
+        ShowSuccessMessage(GetTranslation("Shell_SignedIn"));
     }
 
-    private async Task LoadAuthenticatedStateAsync(Guid token, string? message = null)
+    private async Task<bool> LoadAuthenticatedStateAsync(
+        Guid token,
+        string? message = null,
+        OperationMessageKind messageKind = OperationMessageKind.Success)
     {
         var profile = await _endpoints.GetUserProfileInfoAsync(token);
-        await LoadAuthenticatedStateAsync(token, profile, message);
+        return await LoadAuthenticatedStateAsync(token, profile, message, messageKind);
     }
 
-    private async Task LoadAuthenticatedStateAsync(Guid token, UserProfileInfoResponse profile, string? message = null)
+    private async Task<bool> LoadAuthenticatedStateAsync(
+        Guid token,
+        UserProfileInfoResponse profile,
+        string? message = null,
+        OperationMessageKind messageKind = OperationMessageKind.Success)
     {
         _authSessionRegistry.CurrentUserToken = token;
         SetSessionProfile(token, profile);
@@ -822,41 +867,53 @@ public sealed class MainViewModel : ViewModelBase
 
         PasswordsViewModel.Reset();
         ProfileViewModel.Reset();
-        await PasswordsViewModel.LoadAsync(token);
-        await ProfileViewModel.LoadAsync(token, profile);
+        var passwordsLoaded = await PasswordsViewModel.LoadAsync(token);
+        var profileLoaded = await ProfileViewModel.LoadAsync(token, profile);
 
         CurrentPageViewModel = PasswordsViewModel;
-        StatusMessage = message;
+
+        if (!passwordsLoaded)
+        {
+            var errorMessage = PasswordsViewModel.StatusMessage ?? GetTranslation("Error_Generic");
+            PasswordsViewModel.ClearStatusMessage();
+            ShowErrorMessage(errorMessage);
+        }
+        else if (!profileLoaded)
+        {
+            var errorMessage = ProfileViewModel.StatusMessage ?? GetTranslation("Error_Generic");
+            ProfileViewModel.ClearStatusMessage();
+            ShowErrorMessage(errorMessage);
+        }
+        else
+        {
+            ShowShellMessage(message, messageKind);
+        }
+
         EnsureSessionMonitor();
+        return passwordsLoaded && profileLoaded;
     }
 
     private async Task RefreshVisiblePageAsync()
     {
         var token = _authSessionRegistry.CurrentUserToken;
         if (token == Guid.Empty || !IsAuthenticated)
-        {
             return;
-        }
+
+        ClearStatusMessage();
 
         if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
         {
             await PasswordsViewModel.RefreshCurrentDataAsync();
-            StatusMessage = GetTranslation("Shell_DataRefreshed");
             return;
         }
 
         if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
         {
             if (ProfileViewModel.IsDevicesMainPage)
-            {
                 await ProfileViewModel.RefreshDevicesOnlyAsync();
-            }
             else
-            {
-                await RefreshProfileDataAsync();
-            }
+                await ProfileViewModel.RefreshCurrentDataAsync();
 
-            StatusMessage = GetTranslation("Shell_DataRefreshed");
             return;
         }
 
@@ -867,9 +924,9 @@ public sealed class MainViewModel : ViewModelBase
     {
         var token = _authSessionRegistry.CurrentUserToken;
         if (token == Guid.Empty || !IsAuthenticated)
-        {
             return;
-        }
+
+        ClearStatusMessage();
 
         try
         {
@@ -883,24 +940,38 @@ public sealed class MainViewModel : ViewModelBase
             PasswordsViewModel.SetSessionToken(token);
             ProfileViewModel.SetSessionToken(token);
 
-            await PasswordsViewModel.RefreshCurrentDataAsync();
-            await ProfileViewModel.LoadAsync(token, profile);
+            var passwordsLoaded = await PasswordsViewModel.RefreshCurrentDataAsync(false);
+            var profileLoaded = await ProfileViewModel.LoadAsync(token, profile);
 
-            StatusMessage = GetTranslation("Shell_DataRefreshed");
+            if (!passwordsLoaded)
+            {
+                var errorMessage = PasswordsViewModel.StatusMessage ?? GetTranslation("Error_Generic");
+                PasswordsViewModel.ClearStatusMessage();
+                ShowErrorMessage(errorMessage);
+                return;
+            }
+
+            if (!profileLoaded)
+            {
+                var errorMessage = ProfileViewModel.StatusMessage ?? GetTranslation("Error_Generic");
+                ProfileViewModel.ClearStatusMessage();
+                ShowErrorMessage(errorMessage);
+                return;
+            }
+
+            ShowSuccessMessage(GetTranslation("Shell_DataRefreshed"));
         }
         catch (Exception ex)
         {
-            StatusMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
 
-    private async Task RefreshProfileDataAsync()
+    private async Task<bool> RefreshProfileDataAsync()
     {
         var token = _authSessionRegistry.CurrentUserToken;
         if (token == Guid.Empty)
-        {
-            return;
-        }
+            return false;
 
         var profile = await _endpoints.GetUserProfileInfoAsync(token);
 
@@ -909,7 +980,7 @@ public sealed class MainViewModel : ViewModelBase
         ApplyRememberMeFromSession(profile.IsRememberMeEnabled);
         SetSessionProfile(token, profile);
 
-        await ProfileViewModel.LoadAsync(token, profile);
+        return await ProfileViewModel.LoadAsync(token, profile);
     }
 
     private async Task RefreshAuthenticatedStateAsync()
@@ -949,7 +1020,7 @@ public sealed class MainViewModel : ViewModelBase
         await LoadNextAvailableSessionOrLoginAsync(GetTranslation("Profile_Delete_Success"));
     }
 
-    private Task HandleLoggedOutStateAsync(string? message = null)
+    private Task HandleLoggedOutStateAsync(string? message = null, OperationMessageKind messageKind = OperationMessageKind.Success)
     {
         StopSessionMonitor();
         IsSessionRenewalDialogOpen = false;
@@ -969,7 +1040,7 @@ public sealed class MainViewModel : ViewModelBase
         LoginViewModel.Reset();
         RegistrationViewModel.Reset();
         CurrentPageViewModel = LoginViewModel;
-        StatusMessage = message ?? GetTranslation("Shell_LoggedOut");
+        ShowShellMessage(message ?? GetTranslation("Shell_LoggedOut"), messageKind);
         return Task.CompletedTask;
     }
 
@@ -1110,18 +1181,20 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        ClearStatusMessage();
+
         try
         {
             IsRenewingSession = true;
             await RenewSessionTokenAsync(oldToken);
             CloseSessionRenewalDialog(true);
-            StatusMessage = GetTranslation("Shell_SessionRenewed");
+            ShowSuccessMessage(GetTranslation("Shell_SessionRenewed"));
             EnsureSessionMonitor();
         }
         catch
         {
             CloseSessionRenewalDialog();
-            StatusMessage = GetTranslation("Shell_SessionRenewalFailed");
+            ShowErrorMessage(GetTranslation("Shell_SessionRenewalFailed"));
         }
         finally
         {
@@ -1162,7 +1235,7 @@ public sealed class MainViewModel : ViewModelBase
             return;
 
         CloseSessionRenewalDialog();
-        StatusMessage = GetTranslation("Shell_SessionRenewalDeclined");
+        ShowInformationMessage(GetTranslation("Shell_SessionRenewalDeclined"), true);
     }
 
 
@@ -1185,13 +1258,13 @@ public sealed class MainViewModel : ViewModelBase
 
         if (wasCurrent)
         {
-            await LoadNextAvailableSessionOrLoginAsync(message);
+            await LoadNextAvailableSessionOrLoginAsync(message, OperationMessageKind.Error);
             return;
         }
 
         if (_authSessionRegistry.ListTokens().Count == 0)
         {
-            await HandleLoggedOutStateAsync(message);
+            await HandleLoggedOutStateAsync(message, OperationMessageKind.Error);
             return;
         }
 
@@ -1240,16 +1313,16 @@ public sealed class MainViewModel : ViewModelBase
 
 
 
-    private async Task LoadNextAvailableSessionOrLoginAsync(string? message = null)
+    private async Task LoadNextAvailableSessionOrLoginAsync(string? message = null, OperationMessageKind messageKind = OperationMessageKind.Success)
     {
         var nextToken = _authSessionRegistry.CurrentUserToken;
         if (nextToken == Guid.Empty)
         {
-            await HandleLoggedOutStateAsync(message);
+            await HandleLoggedOutStateAsync(message, messageKind);
             return;
         }
 
-        await LoadAuthenticatedStateAsync(nextToken, message);
+        await LoadAuthenticatedStateAsync(nextToken, message, messageKind);
     }
 
 

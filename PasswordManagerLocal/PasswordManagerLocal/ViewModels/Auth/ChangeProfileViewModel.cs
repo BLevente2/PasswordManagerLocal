@@ -19,7 +19,6 @@ public sealed class ChangeProfileViewModel : ViewModelBase
 
     private bool _isBusy;
     private bool _isStartupSelection;
-    private string? _errorMessage;
 
     public ChangeProfileViewModel(
         UiPreferencesService uiPreferences,
@@ -65,18 +64,6 @@ public sealed class ChangeProfileViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(EmptyProfilesDescription));
         }
     }
-
-    public string? ErrorMessage
-    {
-        get => _errorMessage;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _errorMessage, value);
-            this.RaisePropertyChanged(nameof(HasError));
-        }
-    }
-
-    public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
 
     public bool HasProfiles => Profiles.Count > 0;
 
@@ -141,7 +128,7 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         if (IsBusy)
             return;
 
-        ErrorMessage = null;
+        ClearStatusMessage();
         IsBusy = true;
         Profiles.Clear();
         RaiseProfilesChanged();
@@ -207,7 +194,7 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ErrorMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {
@@ -231,13 +218,13 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         try
         {
             IsBusy = true;
-            ErrorMessage = null;
+            ClearStatusMessage();
             await _selectProfileAsync(token);
             RefreshCurrentSelection();
         }
         catch (Exception ex)
         {
-            ErrorMessage = GetSafeErrorMessage(ex);
+            ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally
         {

@@ -10,7 +10,16 @@
     <ScrollViewer>
       <StackPanel Margin="16,4,16,16" Spacing="12">
         <Border Classes="card" IsVisible="{Binding HasStatusMessage}">
-          <TextBlock Text="{Binding StatusMessage}" Classes="subtleText" TextWrapping="Wrap" />
+          <Grid>
+            <TextBlock Text="{Binding StatusMessage}"
+                       Classes="subtleText"
+                       IsVisible="{Binding HasNonErrorStatusMessage}"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="{Binding StatusMessage}"
+                       Classes="errorText"
+                       IsVisible="{Binding IsStatusMessageError}"
+                       TextWrapping="Wrap" />
+          </Grid>
         </Border>
 
         <StackPanel IsVisible="{Binding IsProfileMainPage}" Spacing="12" HorizontalAlignment="Stretch">

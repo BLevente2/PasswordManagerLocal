@@ -37,7 +37,16 @@
       <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
         <StackPanel Spacing="4">
           <TextBlock Text="{Binding AppTitle}" Classes="sectionTitle" />
-          <TextBlock Text="{Binding HeaderSubtitle}" IsVisible="{Binding HasHeaderSubtitle}" Classes="subtleText" TextWrapping="Wrap" />
+          <Grid>
+            <TextBlock Text="{Binding HeaderSubtitle}"
+                       IsVisible="{Binding HasNonErrorHeaderSubtitle}"
+                       Classes="subtleText"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="{Binding HeaderSubtitle}"
+                       IsVisible="{Binding IsHeaderSubtitleError}"
+                       Classes="errorText"
+                       TextWrapping="Wrap" />
+          </Grid>
         </StackPanel>
 
         <Button Grid.Column="1"

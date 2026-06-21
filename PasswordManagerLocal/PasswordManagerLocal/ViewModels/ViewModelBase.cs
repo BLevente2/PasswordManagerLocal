@@ -3,6 +3,7 @@ using PasswordManagerLocal.Localization;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using ReactiveUI;
+using System.ComponentModel;
 
 namespace PasswordManagerLocal.ViewModels;
 
@@ -12,16 +13,41 @@ public abstract class ViewModelBase : ReactiveObject
     {
         UiPreferences = uiPreferences;
         UiPreferences.PreferencesChanged += HandlePreferencesChanged;
+        OperationMessage.PropertyChanged += HandleOperationMessageChanged;
     }
 
     protected UiPreferencesService UiPreferences { get; }
+
+    protected OperationMessageState OperationMessage { get; } = new();
 
     public AppLanguage CurrentLanguage => UiPreferences.CurrentLanguage;
 
     public AppThemeMode CurrentThemeMode => UiPreferences.CurrentThemeMode;
 
+    public string? StatusMessage => OperationMessage.Message;
+
+    public bool HasStatusMessage => OperationMessage.HasMessage;
+
+    public bool IsStatusMessageError => OperationMessage.IsError;
+
+    public bool IsStatusMessageSuccess => OperationMessage.IsSuccess;
+
+    public bool HasNonErrorStatusMessage => OperationMessage.HasNonErrorMessage;
+
     protected string GetTranslation(string key) => UiPreferences.GetString(key);
 
+    protected void ShowInformationMessage(string message, bool autoDismiss = false) =>
+        OperationMessage.ShowInformation(message, autoDismiss);
+
+    protected void ShowSuccessMessage(string message) =>
+        OperationMessage.ShowSuccess(message);
+
+    protected void ShowErrorMessage(string message) =>
+        OperationMessage.ShowError(message);
+
+    public void ClearStatusMessage() => OperationMessage.Clear();
+
+    public virtual void OnNavigatedFrom() => ClearStatusMessage();
 
     protected string GetSafeErrorMessage(Exception exception) =>
         exception switch
@@ -41,7 +67,6 @@ public abstract class ViewModelBase : ReactiveObject
             _ => GetTranslation("Error_Generic")
         };
 
-
     protected string GetDeviceEnrollmentErrorMessage(DeviceEnrollmentException exception)
     {
         var message = GetDeviceEnrollmentErrorMessage(exception.ErrorCode);
@@ -56,7 +81,6 @@ public abstract class ViewModelBase : ReactiveObject
 
         return $"{message}\n\n{GetTranslation("Error_TechnicalDetails")}: {detail}";
     }
-
 
     protected string GetDeviceEnrollmentErrorMessage(DeviceEnrollmentErrorCode errorCode) =>
         errorCode switch
@@ -74,8 +98,6 @@ public abstract class ViewModelBase : ReactiveObject
             _ => GetTranslation("Error_DeviceEnrollment_Generic")
         };
 
-
-
     protected static Task<bool> TryCopyTextToClipboardAsync(string? text) =>
         ClipboardService.TrySetTextAsync(text);
 
@@ -87,16 +109,40 @@ public abstract class ViewModelBase : ReactiveObject
     {
     }
 
+    protected virtual void OnStatusMessageChanged()
+    {
+    }
+
+    private void HandleOperationMessageChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(OperationMessageState.Message):
+                this.RaisePropertyChanged(nameof(StatusMessage));
+                break;
+            case nameof(OperationMessageState.HasMessage):
+                this.RaisePropertyChanged(nameof(HasStatusMessage));
+                break;
+            case nameof(OperationMessageState.IsError):
+                this.RaisePropertyChanged(nameof(IsStatusMessageError));
+                break;
+            case nameof(OperationMessageState.IsSuccess):
+                this.RaisePropertyChanged(nameof(IsStatusMessageSuccess));
+                break;
+            case nameof(OperationMessageState.HasNonErrorMessage):
+                this.RaisePropertyChanged(nameof(HasNonErrorStatusMessage));
+                break;
+        }
+
+        OnStatusMessageChanged();
+    }
+
     private void HandlePreferencesChanged(object? sender, UiPreferencesChangedEventArgs e)
     {
         if (e.LanguageChanged)
-        {
             OnLanguageChanged();
-        }
 
         if (e.ThemeChanged)
-        {
             OnThemeChanged();
-        }
     }
 }
