@@ -150,8 +150,7 @@ namespace PasswordManagerLocalBackend
                         opts.AddInterceptors(sp.GetRequiredService<RelationshipIntegrityMaterializationInterceptor>());
                     });
 
-                    services.AddScoped<Endpoints>();
-                    services.AddSingleton<IEndpoints, ScopedEndpoints>();
+                    services.AddSingleton<IEndpoints, Endpoints>();
 
                     services.AddScoped<IUnitOfWork, AppUnitOfWork>();
 
