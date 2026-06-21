@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Security;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
@@ -8,19 +8,7 @@ namespace PasswordManagerLocalBackend.Services;
 
 public sealed class KeyVaultService : IKeyVaultService
 {
-    private sealed class Entry
-    {
-        public EncryptionKey Key;
-        public DateTimeOffset ExpiresAt;
-
-        public Entry(EncryptionKey key, DateTimeOffset exp)
-        {
-            Key = key;
-            ExpiresAt = exp;
-        }
-    }
-
-    private readonly ConcurrentDictionary<Guid, Entry> _map = new();
+    private readonly ConcurrentDictionary<Guid, KeyVaultEntry> _map = new();
 
     public void SetUserKey(Guid token, EncryptionKey key, DateTimeOffset? expiresAt = null)
     {
@@ -37,7 +25,7 @@ public sealed class KeyVaultService : IKeyVaultService
             {
                 if (_map.TryGetValue(token, out var old))
                 {
-                    var replacement = new Entry(owned, exp);
+                    var replacement = new KeyVaultEntry(owned, exp);
                     if (_map.TryUpdate(token, replacement, old))
                     {
                         old.Key.Dispose();
@@ -47,7 +35,7 @@ public sealed class KeyVaultService : IKeyVaultService
                     continue;
                 }
 
-                if (_map.TryAdd(token, new Entry(owned, exp)))
+                if (_map.TryAdd(token, new KeyVaultEntry(owned, exp)))
                     return;
             }
         }
@@ -70,7 +58,7 @@ public sealed class KeyVaultService : IKeyVaultService
         {
             var owned = EncryptionKey.FromRaw(raw);
             var exp = newExpiresAt ?? entry.ExpiresAt;
-            var replacement = new Entry(owned, exp);
+            var replacement = new KeyVaultEntry(owned, exp);
 
             if (_map.TryUpdate(token, replacement, entry))
             {

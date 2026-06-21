@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using System.Collections.Concurrent;
@@ -178,27 +178,4 @@ public sealed class TokenService : ITokenService
         return new Guid(bytes);
     }
 
-    private readonly struct TokenEntry
-    {
-        public readonly Guid Uid;
-        public readonly long ExpiresTicksUtc;
-
-        public TokenEntry(Guid uid, long expiresTicksUtc)
-        {
-            Uid = uid;
-            ExpiresTicksUtc = expiresTicksUtc;
-        }
     }
-
-    private readonly struct InvalidationEntry
-    {
-        public readonly AuthSessionInvalidationReason Reason;
-        public readonly long ExpiresTicksUtc;
-
-        public InvalidationEntry(AuthSessionInvalidationReason reason, long expiresTicksUtc)
-        {
-            Reason = reason;
-            ExpiresTicksUtc = expiresTicksUtc;
-        }
-    }
-}

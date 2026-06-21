@@ -23,51 +23,6 @@ namespace PasswordManagerLocalBackend.Services;
 
 public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposable
 {
-    private sealed class EnrollmentSession
-    {
-        public string SessionId { get; set; } = string.Empty;
-        public byte[] Secret { get; set; } = [];
-        public string Code { get; set; } = string.Empty;
-        public DateTimeOffset ExpiresAt { get; set; }
-        public DeviceEnrollmentState State { get; set; } = DeviceEnrollmentState.Waiting;
-        public string? ErrorMessage { get; set; }
-        public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
-        public int FailedValidationAttempts { get; set; }
-        public ServiceDiscovery? Discovery { get; set; }
-        public ServiceProfile? Profile { get; set; }
-    }
-
-    private sealed class EnrollmentEndpoint
-    {
-        public string Host { get; set; } = string.Empty;
-        public int Port { get; set; }
-        public Guid DeviceId { get; set; }
-        public string TlsCertFingerprint { get; set; } = string.Empty;
-        public byte[] SignPublicKey { get; set; } = [];
-        public byte[] AgreementPublicKey { get; set; } = [];
-        public DeviceType DeviceType { get; set; }
-    }
-
-
-    private sealed class LocalEnrollmentHostCandidate
-    {
-        public IPAddress Address { get; set; } = IPAddress.None;
-        public int Priority { get; set; }
-        public string InterfaceName { get; set; } = string.Empty;
-        public string InterfaceDescription { get; set; } = string.Empty;
-        public bool IsVirtualAdapter { get; set; }
-        public bool HasGateway { get; set; }
-    }
-
-
-    private sealed class LocalIpv4Network
-    {
-        public IPAddress Address { get; set; } = IPAddress.None;
-        public IPAddress Mask { get; set; } = IPAddress.None;
-        public string InterfaceName { get; set; } = string.Empty;
-        public bool IsVirtualAdapter { get; set; }
-    }
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;

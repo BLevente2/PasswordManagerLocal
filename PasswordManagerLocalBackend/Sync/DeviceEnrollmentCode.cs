@@ -5,33 +5,6 @@ using System.Text;
 
 namespace PasswordManagerLocalBackend.Sync;
 
-public sealed class DeviceEnrollmentDirectEndpointInfo
-{
-    public Guid DeviceId { get; set; }
-    public string TlsCertFingerprint { get; set; } = string.Empty;
-    public byte[] SignPublicKey { get; set; } = [];
-    public byte[] AgreementPublicKey { get; set; } = [];
-    public int Port { get; set; }
-    public IReadOnlyList<string> Hosts { get; set; } = [];
-}
-
-public sealed class DeviceEnrollmentParsedDirectEndpoint
-{
-    public string Host { get; set; } = string.Empty;
-    public int Port { get; set; }
-    public Guid DeviceId { get; set; }
-    public string TlsCertFingerprint { get; set; } = string.Empty;
-    public byte[] SignPublicKey { get; set; } = [];
-    public byte[] AgreementPublicKey { get; set; } = [];
-}
-
-public sealed class DeviceEnrollmentParsedCode
-{
-    public string SessionId { get; set; } = string.Empty;
-    public byte[] Secret { get; set; } = [];
-    public List<DeviceEnrollmentParsedDirectEndpoint> DirectEndpoints { get; set; } = [];
-}
-
 public static class DeviceEnrollmentCode
 {
     private const string Prefix = "PML";

@@ -1,4 +1,4 @@
-﻿using Makaretu.Dns;
+using Makaretu.Dns;
 using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Sync;
@@ -504,10 +504,4 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
 
 
 
-    private sealed class LocalIpv4Network
-    {
-        public IPAddress Address { get; set; } = IPAddress.None;
-        public IPAddress Mask { get; set; } = IPAddress.None;
-        public bool IsVirtualAdapter { get; set; }
     }
-}

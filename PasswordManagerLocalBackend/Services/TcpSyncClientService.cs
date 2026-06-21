@@ -405,22 +405,4 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
 
 
-    private sealed class TcpSyncClientConnection : IAsyncDisposable
-    {
-        private readonly System.Net.Sockets.TcpClient _client;
-
-        public TcpSyncClientConnection(System.Net.Sockets.TcpClient client, SslStream stream)
-        {
-            _client = client;
-            Stream = stream;
-        }
-
-        public SslStream Stream { get; }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Stream.DisposeAsync();
-            _client.Dispose();
-        }
     }
-}

@@ -2,15 +2,6 @@ using PasswordManagerLocalBackend.Exceptions;
 
 namespace PasswordManagerLocalBackend.Responses;
 
-public enum DeviceEnrollmentState
-{
-    None,
-    Waiting,
-    Completed,
-    Failed,
-    Expired
-}
-
 public sealed class DeviceEnrollmentStatusResponse
 {
     public DeviceEnrollmentState State { get; set; }
