@@ -282,30 +282,34 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         foreach (var endpoint in mdnsEndpoints)
         {
             var endpointKey = $"{endpoint.Host}:{endpoint.Port}";
-            if (!attemptedEndpoints.Add(endpointKey))
+            var isAuthenticatedRediscoveryRetry = !attemptedEndpoints.Add(endpointKey);
+
+            if (isAuthenticatedRediscoveryRetry)
             {
-                DeviceEnrollmentTrace.Info($"Skipping duplicate mDNS enrollment endpoint {endpointKey} because the same address was already tried directly.");
-                continue;
+                DeviceEnrollmentTrace.Info($"Retrying enrollment endpoint {endpointKey} because a fresh authenticated mDNS advertisement confirmed that the same enrollment session is still active there.");
+                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
             }
 
             try
             {
-                DeviceEnrollmentTrace.Info($"Trying mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
+                var attemptKind = isAuthenticatedRediscoveryRetry ? "mDNS-confirmed retry" : "mDNS enrollment endpoint";
+                DeviceEnrollmentTrace.Info($"Trying {attemptKind} {endpoint.Host}:{endpoint.Port}.");
                 await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
-                DeviceEnrollmentTrace.Info($"mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
+                DeviceEnrollmentTrace.Info($"{attemptKind} {endpoint.Host}:{endpoint.Port} completed successfully.");
                 return;
             }
             catch (DeviceEnrollmentException ex) when (ex.ErrorCode == DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
             {
-                mdnsFailures.Add($"{endpoint.Host}:{endpoint.Port} -> {ex.Message}");
-                DeviceEnrollmentTrace.Error($"mDNS enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
+                var attemptKind = isAuthenticatedRediscoveryRetry ? "mDNS-confirmed retry" : "mDNS";
+                mdnsFailures.Add($"{endpoint.Host}:{endpoint.Port} ({attemptKind}) -> {ex.Message}");
+                DeviceEnrollmentTrace.Error($"{attemptKind} enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
             }
         }
 
         throw new DeviceEnrollmentException(
             DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
             BuildEndpointFailureMessage(
-                BuildNoEndpointAcceptedMessage(hasAuthoritativeSameSubnetDirectEndpoint),
+                BuildNoEndpointAcceptedMessage(hasAuthoritativeSameSubnetDirectEndpoint, mdnsEndpoints.Count > 0),
                 directFailures.Concat(mdnsFailures)));
     }
 
@@ -324,11 +328,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint)
+    private string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint, bool authenticatedMdnsAdvertisementReceived)
     {
+        if (hadSameSubnetDirectEndpoint && authenticatedMdnsAdvertisementReceived)
+        {
+            return "The enrollment code contained a same-subnet address and the old device received a fresh authenticated mDNS advertisement from that enrollment session, but TCP port 26688 still did not complete a connection. The app retried the mDNS-confirmed address. The failure happened before device identity verification or profile transfer, so the remaining problem is in the TCP-specific path between the two Windows devices, such as effective OS filtering, adapter routing, a transient Wi-Fi/ARP state, or a duplicate IP address.";
+        }
+
         if (hadSameSubnetDirectEndpoint)
         {
-            return "The enrollment code contained a same-subnet address for the new device, but no advertised address completed the authenticated TCP enrollment connection. The failure happened before device identity verification or profile transfer. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that inbound traffic reaches that process.";
+            return "The enrollment code contained a same-subnet address for the new device, but no advertised address completed the authenticated TCP enrollment connection. The failure happened before device identity verification or profile transfer. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that TCP traffic reaches that process.";
         }
 
         return "The new device was discovered, but none of the reachable network addresses accepted the enrollment transfer.";
@@ -1466,7 +1475,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     return;
 
                 var bestPriority = endpoints[0].Priority;
-                if (bestPriority > 0)
+                if (bestPriority >= 2000)
+                    endpoints = endpoints.Where(candidate => candidate.Priority >= 2000).ToList();
+                else if (bestPriority > 0)
                     endpoints = endpoints.Where(candidate => candidate.Priority > 0).ToList();
 
                 DeviceEnrollmentTrace.Info($"mDNS enrollment endpoints resolved: {string.Join(", ", endpoints.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");

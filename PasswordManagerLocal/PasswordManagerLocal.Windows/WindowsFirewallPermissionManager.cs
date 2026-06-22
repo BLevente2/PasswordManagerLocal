@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Constants;
-
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocal.Windows;
 
@@ -16,6 +16,9 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
     private const string TcpPortRuleName = "PasswordManagerLocal Sync TCP Port";
     private const string MdnsAppRuleName = "PasswordManagerLocal mDNS UDP App";
     private const string MdnsPortRuleName = "PasswordManagerLocal mDNS UDP Port";
+    private const string TcpOutboundAppRuleName = "PasswordManagerLocal Sync TCP Outbound App";
+    private const string MdnsOutboundAppRuleName = "PasswordManagerLocal mDNS UDP Outbound App";
+
     private static readonly string[] LegacyRuleNames =
     [
         "PasswordManagerLocal Sync TCP",
@@ -31,29 +34,30 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
         if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
             appExePath = string.Empty;
 
-        var script = CreateCheckScript();
-        var result = await RunPowerShellScriptAsync(script, appExePath, elevated: false, ct);
+        var result = await RunPowerShellScriptAsync(CreateCheckScript(), appExePath, elevated: false, ct);
+        var details = GetBestProcessDetails(result);
 
         if (result.ExitCode == 0)
         {
+            DeviceEnrollmentTrace.Info($"Windows Firewall effective-policy check succeeded. {details}");
             return new FirewallPermissionCheckResult
             {
                 IsSupported = true,
                 IsConfigured = true,
-                CanRequestPermission = true
+                CanRequestPermission = true,
+                Details = details
             };
         }
 
+        DeviceEnrollmentTrace.Error($"Windows Firewall effective-policy check failed. {details}");
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,
             IsConfigured = false,
             CanRequestPermission = true,
-            Details = string.IsNullOrWhiteSpace(result.Error) ? result.Output : result.Error
+            Details = details
         };
     }
-
-
 
     public async Task<FirewallPermissionCheckResult> RequestPermissionAsync(CancellationToken ct = default)
     {
@@ -64,16 +68,17 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
         if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
             appExePath = string.Empty;
 
-        var script = CreateApplyScript();
-        var applyResult = await RunPowerShellScriptAsync(script, appExePath, elevated: true, ct);
+        var applyResult = await RunPowerShellScriptAsync(CreateApplyScript(), appExePath, elevated: true, ct);
         if (applyResult.ExitCode != 0)
         {
+            var details = GetBestProcessDetails(applyResult);
+            DeviceEnrollmentTrace.Error($"Windows Firewall configuration failed. {details}");
             return new FirewallPermissionCheckResult
             {
                 IsSupported = true,
                 IsConfigured = false,
                 CanRequestPermission = true,
-                Details = GetBestProcessDetails(applyResult)
+                Details = details
             };
         }
 
@@ -86,32 +91,33 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
             verification = await CheckAsync(ct);
             if (verification.IsConfigured)
             {
+                var details = GetBestProcessDetails(applyResult);
+                DeviceEnrollmentTrace.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
                 return new FirewallPermissionCheckResult
                 {
                     IsSupported = true,
                     IsConfigured = true,
                     CanRequestPermission = true,
-                    Details = GetBestProcessDetails(applyResult)
+                    Details = details
                 };
             }
         }
 
         var applyDetails = GetBestProcessDetails(applyResult);
         var verificationDetails = verification?.Details;
-        var details = string.IsNullOrWhiteSpace(verificationDetails)
-            ? $"{applyDetails} The firewall rules could not be verified after the elevated process finished."
-            : $"{applyDetails} Verification failed: {verificationDetails}";
+        var combinedDetails = string.IsNullOrWhiteSpace(verificationDetails)
+            ? $"{applyDetails} The firewall rules were created, but they are not present in the effective Windows Firewall policy."
+            : $"{applyDetails} Effective-policy verification failed: {verificationDetails}";
 
+        DeviceEnrollmentTrace.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,
             IsConfigured = false,
             CanRequestPermission = true,
-            Details = details
+            Details = combinedDetails
         };
     }
-
-
 
     private static string? GetApplicationPath()
     {
@@ -125,13 +131,12 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
         }
     }
 
-
-
     private static string CreateCheckScript() =>
         $$"""
 param([string]$AppExe)
 $ErrorActionPreference = 'Stop'
 Import-Module NetSecurity -ErrorAction Stop
+Import-Module NetConnection -ErrorAction SilentlyContinue
 
 function Normalize-PmlPath {
     param([string]$Path)
@@ -159,14 +164,153 @@ function Test-PmlProgramMatch {
 
     $program = Normalize-PmlPath $RuleProgram
     $app = Normalize-PmlPath $AppExe
-
     return [string]::Equals($program, $app, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Get-PmlAppRules {
+function Get-PmlActiveProfiles {
+    $profiles = @()
+
+    try {
+        $connections = @(Get-NetConnectionProfile -ErrorAction Stop)
+        foreach ($connection in $connections) {
+            $category = [string]$connection.NetworkCategory
+            if ($category -ieq 'DomainAuthenticated') {
+                $category = 'Domain'
+            }
+
+            if ($category -in @('Domain', 'Private', 'Public')) {
+                $profiles += $category
+            }
+        }
+    } catch {
+    }
+
+    if ($profiles.Count -eq 0) {
+        $profiles = @(Get-NetFirewallProfile -ErrorAction Stop | Where-Object {
+            ([string]$_.Enabled) -ieq 'True'
+        } | ForEach-Object { [string]$_.Name })
+    }
+
+    return @($profiles | Select-Object -Unique)
+}
+
+function Test-PmlRuleProfileMatch {
+    param(
+        $Rule,
+        [string[]]$ActiveProfiles
+    )
+
+    $profileText = [string]$Rule.Profile
+    if ($profileText -ieq 'Any') {
+        return $true
+    }
+
+    foreach ($profile in $ActiveProfiles) {
+        $pattern = '(^|,|\s){0}($|,|\s)' -f [regex]::Escape($profile)
+        if ($profileText -match $pattern) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-PmlProtocolMatch {
+    param(
+        [string]$Actual,
+        [string]$Expected
+    )
+
+    if ($Actual -ieq 'Any' -or $Actual -eq '256') {
+        return $true
+    }
+
+    if ($Expected -ieq 'TCP') {
+        return $Actual -ieq 'TCP' -or $Actual -eq '6'
+    }
+
+    if ($Expected -ieq 'UDP') {
+        return $Actual -ieq 'UDP' -or $Actual -eq '17'
+    }
+
+    return $false
+}
+
+function Test-PmlPortMatch {
+    param(
+        $PortValue,
+        [string]$ExpectedPort
+    )
+
+    $ports = @($PortValue | ForEach-Object { [string]$_ })
+    return $ports -contains $ExpectedPort -or $ports -contains 'Any'
+}
+
+function Test-PmlEffectiveAllowRule {
+    param(
+        [string]$DisplayName,
+        [string]$Direction,
+        [string]$Protocol,
+        [string]$Port,
+        [string]$PortSide,
+        [bool]$RequireProgram,
+        [string]$AppExe,
+        [string[]]$ActiveProfiles
+    )
+
+    $rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -DisplayName $DisplayName -ErrorAction SilentlyContinue | Where-Object {
+        ([string]$_.Enabled) -ieq 'True' -and
+        ([string]$_.Direction) -ieq $Direction -and
+        ([string]$_.Action) -ieq 'Allow'
+    })
+
+    foreach ($rule in $rules) {
+        if (-not (Test-PmlRuleProfileMatch -Rule $rule -ActiveProfiles $ActiveProfiles)) {
+            continue
+        }
+
+        $portFilters = @($rule | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue)
+        $portMatched = $false
+        foreach ($portFilter in $portFilters) {
+            $actualProtocol = [string]$portFilter.Protocol
+            $actualPort = if ($PortSide -ieq 'Remote') { $portFilter.RemotePort } else { $portFilter.LocalPort }
+
+            if ((Test-PmlProtocolMatch -Actual $actualProtocol -Expected $Protocol) -and
+                (Test-PmlPortMatch -PortValue $actualPort -ExpectedPort $Port)) {
+                $portMatched = $true
+                break
+            }
+        }
+
+        if (-not $portMatched) {
+            continue
+        }
+
+        if ($RequireProgram) {
+            $programMatched = $false
+            $applicationFilters = @($rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue)
+            foreach ($applicationFilter in $applicationFilters) {
+                if (Test-PmlProgramMatch -RuleProgram ([string]$applicationFilter.Program) -AppExe $AppExe) {
+                    $programMatched = $true
+                    break
+                }
+            }
+
+            if (-not $programMatched) {
+                continue
+            }
+        }
+
+        return $true
+    }
+
+    return $false
+}
+
+function Get-PmlConflictingAppBlockRules {
     param(
         [string]$AppExe,
-        [string]$Action
+        [string[]]$ActiveProfiles
     )
 
     if ([string]::IsNullOrWhiteSpace($AppExe) -or -not (Test-Path -LiteralPath $AppExe)) {
@@ -174,13 +318,16 @@ function Get-PmlAppRules {
     }
 
     $matched = @()
-    $rules = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {
+    $rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {
         ([string]$_.Enabled) -ieq 'True' -and
-        ([string]$_.Direction) -ieq 'Inbound' -and
-        ([string]$_.Action) -ieq $Action
+        ([string]$_.Action) -ieq 'Block'
     })
 
     foreach ($rule in $rules) {
+        if (-not (Test-PmlRuleProfileMatch -Rule $rule -ActiveProfiles $ActiveProfiles)) {
+            continue
+        }
+
         $filters = @($rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue)
         foreach ($filter in $filters) {
             if (Test-PmlProgramMatch -RuleProgram ([string]$filter.Program) -AppExe $AppExe) {
@@ -193,61 +340,68 @@ function Get-PmlAppRules {
     return $matched
 }
 
-function Test-PmlFirewallPortRule {
-    param(
-        [string]$DisplayName,
-        [string]$Protocol,
-        [string]$Port
-    )
+$activeProfiles = @(Get-PmlActiveProfiles)
+if ($activeProfiles.Count -eq 0) {
+    Write-Error 'No active Windows network/firewall profile could be determined.'
+    exit 10
+}
 
-    $rules = @(Get-NetFirewallRule -DisplayName $DisplayName -ErrorAction SilentlyContinue | Where-Object {
-        ([string]$_.Enabled) -ieq 'True' -and
-        ([string]$_.Direction) -ieq 'Inbound' -and
-        ([string]$_.Action) -ieq 'Allow'
-    })
-
-    foreach ($rule in $rules) {
-        $portFilter = $rule | Get-NetFirewallPortFilter
-        $protocolValue = [string]$portFilter.Protocol
-        $localPorts = @($portFilter.LocalPort | ForEach-Object { [string]$_ })
-        $profileText = [string]$rule.Profile
-
-        $protocolOk =
-            $protocolValue -ieq $Protocol -or
-            ($Protocol -ieq 'TCP' -and $protocolValue -eq '6') -or
-            ($Protocol -ieq 'UDP' -and $protocolValue -eq '17')
-
-        $portOk = $localPorts -contains $Port -or $localPorts -contains 'Any'
-        $profileOk =
-            $profileText -ieq 'Any' -or
-            $profileText.Contains('Private') -or
-            $profileText.Contains('Domain') -or
-            $profileText.Contains('Public')
-
-        if ($protocolOk -and $portOk -and $profileOk) {
-            return $true
-        }
+$enabledProfiles = @()
+foreach ($profileName in $activeProfiles) {
+    $profile = Get-NetFirewallProfile -PolicyStore ActiveStore -Name $profileName -ErrorAction SilentlyContinue
+    if ($null -eq $profile -or ([string]$profile.Enabled) -ine 'True') {
+        continue
     }
 
-    return $false
+    $enabledProfiles += $profileName
+
+    if (([string]$profile.AllowInboundRules) -ieq 'False') {
+        Write-Error "Windows Firewall profile '$profileName' has Block all incoming connections enabled, so inbound allow rules are ignored."
+        exit 11
+    }
+
+    if (([string]$profile.AllowLocalFirewallRules) -ieq 'False') {
+        Write-Error "Windows Firewall profile '$profileName' is managed so local firewall rules are ignored. The app cannot make its local allow rules effective on this profile."
+        exit 15
+    }
 }
 
-$appBlockRules = @(Get-PmlAppRules -AppExe $AppExe -Action 'Block')
-if ($appBlockRules.Count -gt 0) {
-    Write-Error "A Windows Firewall inbound block rule is active for this executable: $($appBlockRules[0].DisplayName). Click Allow again so PasswordManagerLocal can replace the blocked app rule with an allow rule."
-    exit 3
-}
-$tcpOk = Test-PmlFirewallPortRule -DisplayName '{{TcpPortRuleName}}' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}'
-$udpOk = Test-PmlFirewallPortRule -DisplayName '{{MdnsPortRuleName}}' -Protocol 'UDP' -Port '5353'
-
-if ($tcpOk -and $udpOk) {
+if ($enabledProfiles.Count -eq 0) {
+    Write-Output "OK: Windows Firewall is disabled for the active profile(s): $($activeProfiles -join ', ')."
     exit 0
 }
 
-exit 2
+$appBlockRules = @(Get-PmlConflictingAppBlockRules -AppExe $AppExe -ActiveProfiles $enabledProfiles)
+if ($appBlockRules.Count -gt 0) {
+    $ruleNames = ($appBlockRules | ForEach-Object { $_.DisplayName } | Select-Object -Unique) -join ', '
+    Write-Error "An effective Windows Firewall block rule targets this executable: $ruleNames."
+    exit 12
+}
+
+$tcpInboundOk =
+    (Test-PmlEffectiveAllowRule -DisplayName '{{TcpPortRuleName}}' -Direction 'Inbound' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}' -PortSide 'Local' -RequireProgram $false -AppExe $AppExe -ActiveProfiles $enabledProfiles) -or
+    (Test-PmlEffectiveAllowRule -DisplayName '{{TcpAppRuleName}}' -Direction 'Inbound' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}' -PortSide 'Local' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles)
+
+$udpInboundOk =
+    (Test-PmlEffectiveAllowRule -DisplayName '{{MdnsPortRuleName}}' -Direction 'Inbound' -Protocol 'UDP' -Port '5353' -PortSide 'Local' -RequireProgram $false -AppExe $AppExe -ActiveProfiles $enabledProfiles) -or
+    (Test-PmlEffectiveAllowRule -DisplayName '{{MdnsAppRuleName}}' -Direction 'Inbound' -Protocol 'UDP' -Port '5353' -PortSide 'Local' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles)
+
+if ([string]::IsNullOrWhiteSpace($AppExe) -or -not (Test-Path -LiteralPath $AppExe)) {
+    Write-Error 'The running application executable could not be resolved, so outbound firewall permission cannot be verified.'
+    exit 13
+}
+
+$tcpOutboundOk = Test-PmlEffectiveAllowRule -DisplayName '{{TcpOutboundAppRuleName}}' -Direction 'Outbound' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}' -PortSide 'Remote' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles
+$udpOutboundOk = Test-PmlEffectiveAllowRule -DisplayName '{{MdnsOutboundAppRuleName}}' -Direction 'Outbound' -Protocol 'UDP' -Port '5353' -PortSide 'Remote' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles
+
+if (-not $tcpInboundOk -or -not $udpInboundOk -or -not $tcpOutboundOk -or -not $udpOutboundOk) {
+    Write-Error "Required rules are not effective. TCP inbound=$tcpInboundOk, mDNS inbound=$udpInboundOk, TCP outbound=$tcpOutboundOk, mDNS outbound=$udpOutboundOk, active profiles=$($enabledProfiles -join ', ')."
+    exit 14
+}
+
+Write-Output "OK: effective inbound and outbound local-network rules are active for profile(s): $($enabledProfiles -join ', ')."
+exit 0
 """;
-
-
 
     private static string CreateApplyScript()
     {
@@ -256,7 +410,9 @@ exit 2
             TcpAppRuleName,
             TcpPortRuleName,
             MdnsAppRuleName,
-            MdnsPortRuleName
+            MdnsPortRuleName,
+            TcpOutboundAppRuleName,
+            MdnsOutboundAppRuleName
         }.Concat(LegacyRuleNames);
 
         var deleteLines = string.Join(Environment.NewLine, allRuleNames.Select(name => $"Remove-PmlFirewallRuleByDisplayName -DisplayName '{EscapePowerShellSingleQuotedString(name)}'"));
@@ -298,7 +454,6 @@ function Test-PmlProgramMatch {
 
     $program = Normalize-PmlPath $RuleProgram
     $app = Normalize-PmlPath $AppExe
-
     return [string]::Equals($program, $app, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
@@ -316,7 +471,6 @@ function Remove-PmlConflictingAppBlockRules {
     }
 
     $rules = @(Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {
-        ([string]$_.Direction) -ieq 'Inbound' -and
         ([string]$_.Action) -ieq 'Block'
     })
 
@@ -333,16 +487,21 @@ function Remove-PmlConflictingAppBlockRules {
 
 {{deleteLines}}
 Remove-PmlConflictingAppBlockRules -AppExe $AppExe
+
 New-NetFirewallRule -DisplayName '{{TcpPortRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP -LocalPort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 New-NetFirewallRule -DisplayName '{{MdnsPortRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($AppExe) -and (Test-Path -LiteralPath $AppExe)) {
     New-NetFirewallRule -DisplayName '{{TcpAppRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -LocalPort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
     New-NetFirewallRule -DisplayName '{{MdnsAppRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '{{TcpOutboundAppRuleName}}' -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -RemotePort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '{{MdnsOutboundAppRuleName}}' -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -RemotePort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+} else {
+    throw 'The running application executable could not be resolved.'
 }
 
 if (-not [string]::IsNullOrWhiteSpace($StatusFile)) {
-    Set-Content -LiteralPath $StatusFile -Value 'OK: Windows Firewall rules were added successfully.' -Encoding UTF8
+    Set-Content -LiteralPath $StatusFile -Value 'OK: Windows Firewall inbound and outbound rules were added successfully.' -Encoding UTF8
 }
 
 exit 0
@@ -357,8 +516,6 @@ exit 0
 }
 """;
     }
-
-
 
     private static async Task<(int ExitCode, string Output, string Error)> RunPowerShellScriptAsync(string script, string appExePath, bool elevated, CancellationToken ct)
     {
@@ -426,8 +583,6 @@ exit 0
         }
     }
 
-
-
     private static string GetBestProcessDetails((int ExitCode, string Output, string Error) result)
     {
         if (!string.IsNullOrWhiteSpace(result.Error))
@@ -439,17 +594,11 @@ exit 0
         return $"PowerShell exited with code {result.ExitCode}.";
     }
 
-
-
     private static string QuoteArgument(string value) =>
         $"\"{value.Replace("\"", "\\\"")}\"";
 
-
-
     private static string EscapePowerShellSingleQuotedString(string value) =>
         value.Replace("'", "''");
-
-
 
     private static void TryDeleteFile(string path)
     {
