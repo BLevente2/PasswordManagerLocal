@@ -53,4 +53,27 @@ public sealed class RememberMeServiceTests
         MSTestAssert.IsTrue(tokens.TryGetUid(issuedToken, out var uid2));
         MSTestAssert.AreEqual(uid, uid2);
     }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task DisableRememberMe_ClearsSavedKeyAndPreventsStartupSession()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var remember = host.Services.GetRequiredService<IRememberMeService>();
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var repo = host.Services.GetRequiredService<IUserRepository>();
+        var registration = host.CreateValidRegistrationRequest("remember_disable_user");
+        registration.RememberMe = true;
+        var token = await auth.RegisterAsync(registration);
+        MSTestAssert.IsTrue(tokens.TryGetUid(token, out var userId));
+
+        await remember.SetRememberMeAsync(token, false);
+
+        var user = (await repo.ListAllAsync()).Single(item => item.UId == userId);
+        MSTestAssert.IsNull(user.SavedKey);
+        var initialized = await remember.InicializeAllRememberMeAsync();
+        MSTestAssert.HasCount(0, initialized);
+    }
 }

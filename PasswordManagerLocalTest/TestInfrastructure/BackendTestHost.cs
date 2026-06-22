@@ -36,10 +36,13 @@ public sealed class BackendTestHost : IDisposable
 
         sc.AddSingleton<IUserRepository, InMemoryUserRepository>();
         sc.AddSingleton<IUserDeviceRepository, FakeUserDeviceRepository>();
+        sc.AddSingleton<IDeviceRepository, FakeDeviceRepository>();
+        sc.AddSingleton<ISyncQueueRepository, FakeSyncQueueRepository>();
         sc.AddSingleton<ILocalUserDeviceRepository, FakeLocalUserDeviceRepository>();
         sc.AddSingleton<IDeviceIdentityService, FakeDeviceIdentityService>();
         sc.AddSingleton<ISyncQueueService, FakeSyncQueueService>();
         sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
+        sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
         sc.AddSingleton<IUserService, UserService>();
@@ -48,6 +51,7 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IAuthService, AuthService>();
         sc.AddSingleton<IPasswordService, PasswordService>();
         sc.AddSingleton<IUserPasswordsService, UserPasswordsService>();
+        sc.AddSingleton<IDeviceService, DeviceService>();
 
         _sp = sc.BuildServiceProvider(new ServiceProviderOptions
         {

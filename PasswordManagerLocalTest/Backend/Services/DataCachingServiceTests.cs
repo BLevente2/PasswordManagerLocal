@@ -1,4 +1,4 @@
-﻿using global::PasswordManagerLocalTest.TestInfrastructure;
+using global::PasswordManagerLocalTest.TestInfrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
@@ -17,46 +17,29 @@ public sealed class DataCachingServiceTests
     public async Task InvalidateToken_ForcesReload()
     {
         using var host = new BackendTestHost();
-
-        var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
-        var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
-
-        var uid = Guid.NewGuid();
-        var token = tokens.Issue(uid);
-
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+        var token = tokens.Issue(Guid.NewGuid());
         var calls = 0;
 
         Task<UserData?> Loader()
         {
             calls++;
-
-            var ud = new UserData
-            {
-                UId = Guid.NewGuid(),
-                Username = "u",
-                FirstName = "f",
-                LastName = "l",
-                Email = "e@e.com",
-                RegistrationDate = DateTime.UtcNow,
-                LastLoginDate = DateTime.UtcNow
-            };
-            ud.GenerateIntegrityHash();
-
-            return Task.FromResult<UserData?>(ud);
+            var data = CreateUserData("reload");
+            return Task.FromResult<UserData?>(data);
         }
 
-        var a = await cache.GetOrLoadUserDataAsync(token, Loader);
-        var b = await cache.GetOrLoadUserDataAsync(token, Loader);
+        var first = await cache.GetOrLoadUserDataAsync(token, Loader);
+        var second = await cache.GetOrLoadUserDataAsync(token, Loader);
 
-        MSTestAssert.IsNotNull(a);
-        MSTestAssert.IsNotNull(b);
+        MSTestAssert.IsNotNull(first);
+        MSTestAssert.IsNotNull(second);
         MSTestAssert.AreEqual(1, calls);
 
         cache.InvalidateToken(token);
+        var afterInvalidation = await cache.GetOrLoadUserDataAsync(token, Loader);
 
-        var c = await cache.GetOrLoadUserDataAsync(token, Loader);
-
-        MSTestAssert.IsNotNull(c);
+        MSTestAssert.IsNotNull(afterInvalidation);
         MSTestAssert.AreEqual(2, calls);
     }
 
@@ -66,14 +49,11 @@ public sealed class DataCachingServiceTests
     public void InvalidateGroup_RemovesGroupDataFromCache()
     {
         using var host = new BackendTestHost();
-
-        var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
-        var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
-
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
         var token = tokens.Issue(Guid.NewGuid());
         var groupId = Guid.NewGuid();
-
-        var gd = new GroupData
+        var group = new GroupData
         {
             Id = groupId,
             Name = "g",
@@ -81,20 +61,95 @@ public sealed class DataCachingServiceTests
             CreatedAt = DateTime.UtcNow,
             LastUpdatedAt = DateTime.UtcNow
         };
-        gd.Passwords.GenerateIntegrityHash();
-        gd.GenerateIntegrityHash();
+        group.Passwords.GenerateIntegrityHash();
+        group.GenerateIntegrityHash();
 
-        cache.SetGroupData(token, groupId, gd);
-
+        cache.SetGroupData(token, groupId, group);
         MSTestAssert.IsTrue(cache.TryGetGroupData(token, groupId, out var before));
-        MSTestAssert.AreSame(gd, before);
+        MSTestAssert.AreSame(group, before);
 
         cache.InvalidateGroup(token, groupId);
 
         MSTestAssert.IsFalse(cache.TryGetGroupData(token, groupId, out var after));
         MSTestAssert.IsNull(after);
+        MSTestAssert.AreEqual(groupId, group.Id);
+        MSTestAssert.AreEqual("g", group.Name);
+    }
 
-        MSTestAssert.AreEqual(groupId, gd.Id);
-        MSTestAssert.AreEqual("g", gd.Name);
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task ConcurrentLoads_ForSameToken_InvokeLoaderOnlyOnce()
+    {
+        using var host = new BackendTestHost();
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+        var token = tokens.Issue(Guid.NewGuid());
+        var gate = new TaskCompletionSource<UserData?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var expected = CreateUserData("concurrent");
+
+        Task<UserData?> Loader(CancellationToken _)
+        {
+            Interlocked.Increment(ref calls);
+            return gate.Task;
+        }
+
+        var loads = Enumerable.Range(0, 20)
+            .Select(_ => cache.GetOrLoadUserDataAsync(token, Loader))
+            .ToArray();
+        await WaitUntilAsync(() => Volatile.Read(ref calls) == 1);
+        gate.SetResult(expected);
+        var results = await Task.WhenAll(loads);
+
+        MSTestAssert.AreEqual(1, calls);
+        MSTestAssert.IsTrue(results.All(result => ReferenceEquals(expected, result)));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task InvalidToken_DoesNotInvokeLoaderOrCacheData()
+    {
+        using var host = new BackendTestHost();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+        var calls = 0;
+
+        var result = await cache.GetOrLoadUserDataAsync(Guid.NewGuid(), _ =>
+        {
+            calls++;
+            return Task.FromResult<UserData?>(CreateUserData("invalid"));
+        });
+
+        MSTestAssert.IsNull(result);
+        MSTestAssert.AreEqual(0, calls);
+    }
+
+    private static UserData CreateUserData(string username)
+    {
+        var data = new UserData
+        {
+            UId = Guid.NewGuid(),
+            Username = username,
+            FirstName = "First",
+            LastName = "Last",
+            Email = $"{username}@example.com",
+            RegistrationDate = DateTime.UtcNow,
+            LastLoginDate = DateTime.UtcNow
+        };
+        data.GenerateIntegrityHash();
+        return data;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var timeoutAt = DateTime.UtcNow.AddSeconds(3);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= timeoutAt)
+                MSTestAssert.Fail("Timed out waiting for concurrent cache loading.");
+
+            await Task.Delay(10);
+        }
     }
 }

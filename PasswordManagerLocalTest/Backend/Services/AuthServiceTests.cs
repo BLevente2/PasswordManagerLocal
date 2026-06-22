@@ -217,6 +217,36 @@ public sealed class AuthServiceTests
         MSTestAssert.IsNotEmpty(user.SavedKey);
     }
 
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task RenewSession_MigratesKeyAndCache_AndRevokesOldToken()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var keys = host.Services.GetRequiredService<IKeyVaultService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+        var oldToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("renew_user"));
+        MSTestAssert.IsTrue(cache.TryGetUserData(oldToken, out var oldUserData));
+
+        var newToken = await auth.RenewSessionAsync(oldToken);
+
+        MSTestAssert.AreNotEqual(oldToken, newToken);
+        MSTestAssert.IsFalse(tokens.Validate(oldToken));
+        MSTestAssert.IsFalse(keys.HasUserKey(oldToken));
+        MSTestAssert.IsFalse(cache.TryGetUserData(oldToken, out _));
+        MSTestAssert.IsTrue(tokens.TryGetInvalidationReason(oldToken, out var oldReason));
+        MSTestAssert.AreEqual(AuthSessionInvalidationReason.LoggedOut, oldReason);
+        MSTestAssert.IsTrue(tokens.Validate(newToken));
+        MSTestAssert.IsTrue(keys.HasUserKey(newToken));
+        MSTestAssert.IsTrue(cache.TryGetUserData(newToken, out var newUserData));
+        MSTestAssert.AreSame(oldUserData, newUserData);
+        MSTestAssert.IsTrue(auth.GetSessionStatus(newToken).IsAuthenticated);
+        MSTestAssert.IsFalse(auth.GetSessionStatus(oldToken).IsAuthenticated);
+    }
+
     private static void ExpectThrows<TException>(Action action) where TException : Exception
     {
         try

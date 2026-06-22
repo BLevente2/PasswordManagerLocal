@@ -1,4 +1,4 @@
-﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
@@ -54,5 +54,45 @@ public sealed class KeyVaultServiceTests
 
         MSTestAssert.IsFalse(vault.HasUserKey(token));
         MSTestAssert.IsFalse(vault.TryGetEncryptionKey(token, out _));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void RotateUserKey_ReplacesKeyAndPreservesEntry()
+    {
+        IKeyVaultService vault = new KeyVaultService();
+        var token = NewValidToken();
+        var firstRaw = Enumerable.Repeat((byte)1, 32).ToArray();
+        var secondRaw = Enumerable.Repeat((byte)2, 32).ToArray();
+        using var first = EncryptionKey.FromRaw(firstRaw);
+        using var second = EncryptionKey.FromRaw(secondRaw);
+        vault.SetUserKey(token, first, DateTimeOffset.UtcNow.AddMinutes(5));
+
+        MSTestAssert.IsTrue(vault.RotateUserKey(token, second));
+        MSTestAssert.IsTrue(vault.TryGetEncryptionKey(token, out var loaded));
+        using (loaded)
+        {
+            CollectionAssert.AreEqual(secondRaw, loaded.AsSpan().ToArray());
+        }
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void PurgeExpired_RemovesOnlyExpiredEntriesAndReturnsCount()
+    {
+        IKeyVaultService vault = new KeyVaultService();
+        var expiredToken = NewValidToken();
+        var activeToken = NewValidToken();
+        using var key = EncryptionKey.FromRaw(Enumerable.Repeat((byte)7, 32).ToArray());
+        vault.SetUserKey(expiredToken, key, DateTimeOffset.UtcNow.AddSeconds(-1));
+        vault.SetUserKey(activeToken, key, DateTimeOffset.UtcNow.AddMinutes(5));
+
+        var removed = vault.PurgeExpired();
+
+        MSTestAssert.AreEqual(1, removed);
+        MSTestAssert.IsFalse(vault.HasUserKey(expiredToken));
+        MSTestAssert.IsTrue(vault.HasUserKey(activeToken));
     }
 }
