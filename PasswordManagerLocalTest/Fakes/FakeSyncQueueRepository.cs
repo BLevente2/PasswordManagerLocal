@@ -46,6 +46,18 @@ public sealed class FakeSyncQueueRepository : ISyncQueueRepository
         }
     }
 
+    public Task<IReadOnlyList<SyncQueueItem>> GetNextPendingBatchForDeviceAsync(Guid deviceId, int limit, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult((IReadOnlyList<SyncQueueItem>)_items
+                .Where(item => item.DeviceId == deviceId && item.ProcessedAt is null)
+                .OrderBy(item => item.QueueId)
+                .Take(Math.Max(0, limit))
+                .ToList());
+        }
+    }
+
     public Task<IReadOnlyList<Guid>> ListQueuedDeviceIdsAsync(Guid syncItemId, IReadOnlyList<Guid> deviceIds, CancellationToken ct = default)
     {
         lock (_gate)

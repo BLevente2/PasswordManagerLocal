@@ -92,7 +92,7 @@ public sealed class AuthService : IAuthService
 
         var passwordSalt = Hashing.GenerateSalt();
         using var key = EncryptionKey.FromPassword(request.Password, passwordSalt);
-        var encryptedUserdata = await SerializeCompressEncryptAsync<UserData>(userData, key);
+        var encryptedUserdata = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData);
 
         var user = new User
         {

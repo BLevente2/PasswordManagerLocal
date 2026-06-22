@@ -19,33 +19,45 @@ public class AppDbContext : DbContext
 
     public override int SaveChanges()
     {
-        GenerateRelationshipIntegrityHashes();
+        GenerateDerivedValuesAndRelationshipIntegrityHashes();
         return base.SaveChanges(true);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        GenerateRelationshipIntegrityHashes();
+        GenerateDerivedValuesAndRelationshipIntegrityHashes();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        GenerateRelationshipIntegrityHashes();
+        GenerateDerivedValuesAndRelationshipIntegrityHashes();
         return base.SaveChangesAsync(true, cancellationToken);
     }
 
     public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
-        GenerateRelationshipIntegrityHashes();
+        GenerateDerivedValuesAndRelationshipIntegrityHashes();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
-    private void GenerateRelationshipIntegrityHashes()
+    private void GenerateDerivedValuesAndRelationshipIntegrityHashes()
     {
+        foreach (var entry in ChangeTracker.Entries<Device>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+        {
+            entry.Entity.SignPublicKeyHash = entry.Entity.SignPublicKey.Length == 0
+                ? []
+                : Security.Hashing.SHA256Hash(entry.Entity.SignPublicKey);
+            entry.Entity.GenerateIntegrityHash();
+        }
+
         foreach (var entry in ChangeTracker.Entries<UserDevice>()
                      .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+        {
+            entry.Entity.ModelId = Sync.SyncIdentityUtil.BuildUserDeviceModelId(entry.Entity.UserId, entry.Entity.DeviceId);
             entry.Entity.GenerateIntegrityHash();
+        }
 
         foreach (var entry in ChangeTracker.Entries<LocalUserDevice>()
                      .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
@@ -63,10 +75,12 @@ public class AppDbContext : DbContext
         device.HasKey(d => d.Id);
         device.Property(d => d.PublicKey).IsRequired();
         device.Property(d => d.SignPublicKey).IsRequired();
+        device.Property(d => d.SignPublicKeyHash).IsRequired();
         device.Property(d => d.TlsCertFingerprint).IsRequired().HasMaxLength(128);
         device.Property(d => d.DeviceType).HasConversion<byte>().IsRequired();
         device.Property(d => d.BlockedReason).HasMaxLength(512);
         device.HasIndex(d => d.TlsCertFingerprint).IsUnique();
+        device.HasIndex(d => d.SignPublicKeyHash);
 
         var syncItem = model.Entity<SyncItem>();
         syncItem.HasKey(si => si.Id);
@@ -106,10 +120,12 @@ public class AppDbContext : DbContext
             .WithMany(d => d.UserDevices)
             .HasForeignKey(ud => ud.DeviceId)
             .OnDelete(DeleteBehavior.Cascade);
+        userDevice.Property(ud => ud.ModelId).IsRequired();
         userDevice.Property(ud => ud.LastModifiedAt).IsRequired();
         userDevice.Property(ud => ud.IntegrityHash).IsRequired();
         userDevice.Property(ud => ud.IsSyncOn).IsRequired();
         userDevice.Property(ud => ud.IsDeleted).IsRequired();
+        userDevice.HasIndex(ud => ud.ModelId).IsUnique();
         userDevice.HasIndex(ud => ud.DeviceId);
         userDevice.HasIndex(ud => new { ud.UserId, ud.IsDeleted, ud.IsSyncOn });
         userDevice.HasIndex(ud => new { ud.DeviceId, ud.IsDeleted });

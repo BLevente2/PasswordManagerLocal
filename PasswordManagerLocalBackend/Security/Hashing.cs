@@ -6,30 +6,12 @@ public static class Hashing
 {
     public static byte[] SHA256Hash(ReadOnlySpan<byte> data)
     {
-        var buffer = data.ToArray();
-        try
-        {
-            using var sha = SHA256.Create();
-            return sha.ComputeHash(buffer);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(buffer);
-        }
+        return SHA256.HashData(data);
     }
 
     public static byte[] SHA512Hash(ReadOnlySpan<byte> data)
     {
-        var buffer = data.ToArray();
-        try
-        {
-            using var sha = SHA512.Create();
-            return sha.ComputeHash(buffer);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(buffer);
-        }
+        return SHA512.HashData(data);
     }
 
     public static byte[] SHA256Hash(ReadOnlySpan<byte> data, ReadOnlySpan<byte> salt)
@@ -39,8 +21,7 @@ public static class Hashing
         salt.CopyTo(buf.AsSpan(data.Length));
         try
         {
-            using var sha = SHA256.Create();
-            return sha.ComputeHash(buf);
+            return SHA256.HashData(buf);
         }
         finally
         {
@@ -55,8 +36,7 @@ public static class Hashing
         salt.CopyTo(buf.AsSpan(data.Length));
         try
         {
-            using var sha = SHA512.Create();
-            return sha.ComputeHash(buf);
+            return SHA512.HashData(buf);
         }
         finally
         {
@@ -70,8 +50,7 @@ public static class Hashing
         var dataBuffer = data.ToArray();
         try
         {
-            using var h = new HMACSHA256(keyBuffer);
-            return h.ComputeHash(dataBuffer);
+            return System.Security.Cryptography.HMACSHA256.HashData(keyBuffer, dataBuffer);
         }
         finally
         {
@@ -86,8 +65,7 @@ public static class Hashing
         var dataBuffer = data.ToArray();
         try
         {
-            using var h = new HMACSHA512(keyBuffer);
-            return h.ComputeHash(dataBuffer);
+            return System.Security.Cryptography.HMACSHA512.HashData(keyBuffer, dataBuffer);
         }
         finally
         {

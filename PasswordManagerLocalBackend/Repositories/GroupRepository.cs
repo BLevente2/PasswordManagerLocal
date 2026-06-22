@@ -9,8 +9,19 @@ public sealed class GroupRepository : GenericRepositoryBase<Group>, IGroupReposi
 {
     public GroupRepository(AppDbContext context) : base(context.Groups) { }
 
+    public override Task<bool> ExistsAsync(Guid id, CancellationToken ct = default) =>
+        Set.AsNoTracking().AnyAsync(g => g.Id == id, ct);
+
     public override async Task<Group?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         await Set.FirstOrDefaultAsync(g => g.Id == id, ct);
+
+    public async Task<IReadOnlyList<Group>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default)
+    {
+        if (ids.Count == 0)
+            return [];
+
+        return await Set.Where(g => ids.Contains(g.Id)).ToListAsync(ct);
+    }
 
     public async Task<Group?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
         await Set

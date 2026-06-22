@@ -10,8 +10,19 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
 {
     public DeviceRepository(AppDbContext context) : base(context.Devices) { }
 
+    public override Task<bool> ExistsAsync(Guid id, CancellationToken ct = default) =>
+        Set.AsNoTracking().AnyAsync(d => d.Id == id, ct);
+
     public override Task<Device?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         Set.FirstOrDefaultAsync(d => d.Id == id, ct);
+
+    public async Task<IReadOnlyList<Device>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default)
+    {
+        if (ids.Count == 0)
+            return [];
+
+        return await Set.Where(d => ids.Contains(d.Id)).ToListAsync(ct);
+    }
 
     public async Task<IReadOnlyList<Device>> ListDevicesNeedingSyncAsync(CancellationToken ct = default)
     {
@@ -47,8 +58,9 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
         if (signPublicKey.Length == 0)
             return null;
 
-        var devices = await Set.ToListAsync(ct);
-        return devices.FirstOrDefault(d => d.SignPublicKey.SequenceEqual(signPublicKey));
+        var hash = Security.Hashing.SHA256Hash(signPublicKey);
+        var candidates = await Set.Where(d => d.SignPublicKeyHash == hash).ToListAsync(ct);
+        return candidates.FirstOrDefault(d => Security.Hashing.Verify(d.SignPublicKey, signPublicKey));
     }
 
     public Task<Device?> GetByTlsCertFingerprintAsync(string tlsCertFingerprint, CancellationToken ct = default)
@@ -78,10 +90,16 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
         CancellationToken ct = default)
     {
         var normalizedFingerprint = FingerprintUtil.Normalize(tlsCertFingerprint);
-        var devices = await Set.Include(d => d.UserDevices).ToListAsync(ct);
-        return devices.Where(d =>
+        var signPublicKeyHash = signPublicKey.Length == 0 ? [] : Security.Hashing.SHA256Hash(signPublicKey);
+        var candidates = await Set.Include(d => d.UserDevices)
+            .Where(d => d.Id == localDeviceId ||
+                        (signPublicKeyHash.Length != 0 && d.SignPublicKeyHash == signPublicKeyHash) ||
+                        (normalizedFingerprint.Length != 0 && d.TlsCertFingerprint == normalizedFingerprint))
+            .ToListAsync(ct);
+
+        return candidates.Where(d =>
                 d.Id == localDeviceId ||
-                (signPublicKey.Length != 0 && d.SignPublicKey.SequenceEqual(signPublicKey)) ||
+                (signPublicKey.Length != 0 && Security.Hashing.Verify(d.SignPublicKey, signPublicKey)) ||
                 (normalizedFingerprint.Length != 0 && d.TlsCertFingerprint == normalizedFingerprint))
             .ToList();
     }

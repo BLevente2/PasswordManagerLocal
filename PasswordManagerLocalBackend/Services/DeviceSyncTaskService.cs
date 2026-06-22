@@ -3,8 +3,10 @@ using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Sync;
-using System.Collections.Concurrent;
+using System.Collections.Concurrent;
+
 using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
@@ -156,6 +158,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
     private async Task<bool> TrySendNextAsync(DiscoveredDeviceEndpoint endpoint, Device targetDevice, CancellationToken ct)
     {
+        const int batchLimit = 32;
         using var scope = _scopeFactory.CreateScope();
 
         var queue = scope.ServiceProvider.GetRequiredService<ISyncQueueRepository>();
@@ -166,42 +169,56 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (!_identity.IsSyncOn)
             return false;
 
-        var queueItem = await queue.GetNextPendingForDeviceAsync(targetDevice.Id, ct);
-        if (queueItem is null)
+        var queueItems = await queue.GetNextPendingBatchForDeviceAsync(targetDevice.Id, batchLimit, ct);
+        if (queueItems.Count == 0)
             return false;
 
-        if (queueItem.SyncItem is null)
+        var validItems = new List<(SyncQueueItem QueueItem, SyncItem SyncItem)>();
+        foreach (var queueItem in queueItems)
         {
-            queue.Delete(queueItem);
+            if (queueItem.SyncItem is null || !await authorization.CanSendAsync(queueItem.SyncItem, targetDevice.Id, ct))
+            {
+                queue.Delete(queueItem);
+                continue;
+            }
+
+            validItems.Add((queueItem, queueItem.SyncItem));
+        }
+
+        if (validItems.Count == 0)
+        {
             await uow.SaveChangesAsync(ct);
             return true;
         }
 
-        var syncItem = queueItem.SyncItem;
-        if (!await authorization.CanSendAsync(syncItem, targetDevice.Id, ct))
-        {
-            queue.Delete(queueItem);
-            await uow.SaveChangesAsync(ct);
-            return true;
-        }
-
-        if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, syncItem, endpoint, ct))
+        if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, validItems[0].SyncItem, endpoint, ct))
             return false;
 
-        NetworkDelta delta;
-        try
+        var sendItems = new List<(SyncQueueItem QueueItem, SyncItem SyncItem, NetworkDelta Delta)>();
+        long totalPayloadBytes = 0;
+        foreach (var item in validItems)
         {
-            delta = await deltaBuilder.BuildAsync(syncItem, targetDevice, ct);
+            try
+            {
+                var delta = await deltaBuilder.BuildAsync(item.SyncItem, targetDevice, ct);
+                if (totalPayloadBytes + delta.Payload.Length > SyncConstants.MaxIncomingDeltaTotalBytesPerCall)
+                    break;
+
+                totalPayloadBytes += delta.Payload.Length;
+                sendItems.Add((item.QueueItem, item.SyncItem, delta));
+            }
+            catch (InvalidOperationException)
+            {
+                queue.Delete(item.QueueItem);
+            }
+            catch (InvalidDataException)
+            {
+                queue.Delete(item.QueueItem);
+            }
         }
-        catch (InvalidOperationException)
+
+        if (sendItems.Count == 0)
         {
-            queue.Delete(queueItem);
-            await uow.SaveChangesAsync(ct);
-            return true;
-        }
-        catch (InvalidDataException)
-        {
-            queue.Delete(queueItem);
             await uow.SaveChangesAsync(ct);
             return true;
         }
@@ -209,14 +226,28 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (!_identity.IsSyncOn)
             return false;
 
-        if (!await authorization.CanSendAsync(syncItem, targetDevice.Id, ct))
+        for (var i = sendItems.Count - 1; i >= 0; i--)
         {
-            queue.Delete(queueItem);
+            var item = sendItems[i];
+            if (await authorization.CanSendAsync(item.SyncItem, targetDevice.Id, ct))
+                continue;
+
+            queue.Delete(item.QueueItem);
+            sendItems.RemoveAt(i);
+        }
+
+        if (sendItems.Count == 0)
+        {
             await uow.SaveChangesAsync(ct);
             return true;
         }
 
-        var sent = await _syncTransport.SendDeltasAsync(endpoint.Host, endpoint.Port, targetDevice.TlsCertFingerprint, [delta], ct);
+        var sent = await _syncTransport.SendDeltasAsync(
+            endpoint.Host,
+            endpoint.Port,
+            targetDevice.TlsCertFingerprint,
+            sendItems.Select(x => x.Delta).ToArray(),
+            ct);
 
         if (!sent)
         {
@@ -224,10 +255,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             return false;
         }
 
-        queue.Delete(queueItem);
+        foreach (var item in sendItems)
+            queue.Delete(item.QueueItem);
+
         await uow.SaveChangesAsync(ct);
 
-        await CleanupDetachedDeviceIfSyncCompletedAsync(scope.ServiceProvider, syncItem, ct);
+        foreach (var item in sendItems)
+            await CleanupDetachedDeviceIfSyncCompletedAsync(scope.ServiceProvider, item.SyncItem, ct);
 
         return true;
     }

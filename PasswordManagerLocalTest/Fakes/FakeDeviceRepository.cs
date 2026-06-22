@@ -20,6 +20,9 @@ public sealed class FakeDeviceRepository : IDeviceRepository
     public Task<IReadOnlyList<Device>> ListAllAsync(CancellationToken ct = default) =>
         Task.FromResult((IReadOnlyList<Device>)_items.Values.ToList());
 
+    public Task<IReadOnlyList<Device>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default) =>
+        Task.FromResult((IReadOnlyList<Device>)_items.Values.Where(device => ids.Contains(device.Id)).ToList());
+
     public Task<IReadOnlyList<Device>> ListDevicesNeedingSyncAsync(CancellationToken ct = default) =>
         Task.FromResult((IReadOnlyList<Device>)_items.Values
             .Where(device => device.ItemsNeedingSync.Any(item => item.ProcessedAt is null))

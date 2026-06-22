@@ -27,6 +27,10 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private bool _isSyncOn;
     private DeviceType _deviceType;
     private DateTimeOffset _createdAt = DateTimeOffset.MinValue;
+    private byte[]? _agreementPublicKey;
+    private byte[]? _signPublicKey;
+    private string? _deviceIdHex;
+    private string? _fingerprintHex;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
 
 
@@ -61,7 +65,8 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             if (_ka is null)
                 throw new DeviceIdentityNotInitilaizedException();
 
-            return _ka.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+            _agreementPublicKey ??= _ka.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+            return _agreementPublicKey.ToArray();
         }
     }
 
@@ -72,7 +77,8 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             if (_sig is null)
                 throw new DeviceIdentityNotInitilaizedException();
 
-            return _sig.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+            _signPublicKey ??= _sig.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+            return _signPublicKey.ToArray();
         }
     }
 
@@ -92,8 +98,16 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     {
         get
         {
-            var hash = Hashing.SHA256Hash(SignPublicKey);
-            return Convert.ToHexString(hash);
+            if (_sig is null)
+                throw new DeviceIdentityNotInitilaizedException();
+
+            if (_deviceIdHex is null)
+            {
+                _signPublicKey ??= _sig.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+                _deviceIdHex = Convert.ToHexString(Hashing.SHA256Hash(_signPublicKey));
+            }
+
+            return _deviceIdHex;
         }
     }
 
@@ -166,7 +180,8 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             new SharedSecretCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport })
             ?? throw new CryptographicException("Key agreement failed.");
 
-        var key = DeriveSyncAesKey(sharedSecret, senderEphemeralPublicKey, AgreementPublicKey, associatedData);
+        _agreementPublicKey ??= _ka.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+        var key = DeriveSyncAesKey(sharedSecret, senderEphemeralPublicKey, _agreementPublicKey, associatedData);
         try
         {
             var plaintext = new byte[ciphertext.Length];
@@ -248,7 +263,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             if (_cert is null)
                 throw new DeviceIdentityNotInitilaizedException();
 
-            return GetFingerprintHex(_cert);
+            return _fingerprintHex ??= GetFingerprintHex(_cert);
         }
     }
 
@@ -334,6 +349,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
 
         var (cert, pfxBytes) = CreateCertificateAndPfx();
         _cert = cert;
+        ResetCachedPublicIdentity();
 
         var rawKa = _ka.Export(KeyBlobFormat.RawPrivateKey);
         var rawSig = _sig.Export(KeyBlobFormat.RawPrivateKey);
@@ -390,6 +406,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             _ka = Key.Import(KeyAgreementAlgorithm.X25519, unprotectedKa, KeyBlobFormat.RawPrivateKey);
             _sig = Key.Import(SignatureAlgorithm.Ed25519, unprotectedSig, KeyBlobFormat.RawPrivateKey);
             _cert = X509CertificateLoader.LoadPkcs12(unprotectedCert, PFXPassword, GetCertificateKeyStorageFlags(), Pkcs12LoaderLimits.Defaults);
+            ResetCachedPublicIdentity();
         }
         finally
         {
@@ -400,6 +417,15 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     }
 
 
+
+
+    private void ResetCachedPublicIdentity()
+    {
+        _agreementPublicKey = null;
+        _signPublicKey = null;
+        _deviceIdHex = null;
+        _fingerprintHex = null;
+    }
 
     private X509KeyStorageFlags GetCertificateKeyStorageFlags() =>
         OperatingSystem.IsWindows()

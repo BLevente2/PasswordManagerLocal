@@ -16,6 +16,9 @@ public sealed class FakeGroupRepository : IGroupRepository
     public Task<IReadOnlyList<Group>> ListAllAsync(CancellationToken ct = default) =>
         Task.FromResult((IReadOnlyList<Group>)_items.Values.ToList());
 
+    public Task<IReadOnlyList<Group>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default) =>
+        Task.FromResult((IReadOnlyList<Group>)_items.Values.Where(group => ids.Contains(group.Id)).ToList());
+
     public Task<Group?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(_items.GetValueOrDefault(id));
 

@@ -37,6 +37,20 @@ public sealed class SyncQueueRepository : ISyncQueueRepository
             .FirstOrDefaultAsync(ct);
 
 
+    public async Task<IReadOnlyList<SyncQueueItem>> GetNextPendingBatchForDeviceAsync(Guid deviceId, int limit, CancellationToken ct = default)
+    {
+        if (limit <= 0)
+            return [];
+
+        return await _queue
+            .Include(x => x.SyncItem)
+            .Where(x => x.DeviceId == deviceId && x.ProcessedAt == null)
+            .OrderBy(x => x.QueueId)
+            .Take(limit)
+            .ToListAsync(ct);
+    }
+
+
     public async Task<IReadOnlyList<Guid>> ListQueuedDeviceIdsAsync(Guid syncItemId, IReadOnlyList<Guid> deviceIds, CancellationToken ct = default)
     {
         if (deviceIds.Count == 0)

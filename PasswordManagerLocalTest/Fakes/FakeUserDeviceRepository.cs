@@ -19,6 +19,12 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
     public Task<IReadOnlyList<UserDevice>> ListActiveByDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
         Task.FromResult((IReadOnlyList<UserDevice>)_items.Where(x => x.DeviceId == deviceId && !x.IsDeleted).Select(Clone).ToList());
 
+    public Task<IReadOnlyList<UserDevice>> ListByUserIdsAndDeviceAsync(IReadOnlyCollection<Guid> userIds, Guid deviceId, CancellationToken ct = default) =>
+        Task.FromResult((IReadOnlyList<UserDevice>)_items
+            .Where(x => userIds.Contains(x.UserId) && x.DeviceId == deviceId)
+            .Select(Clone)
+            .ToList());
+
     public Task<UserDevice?> GetAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
         Task.FromResult(_items.Where(x => x.UserId == userId && x.DeviceId == deviceId).Select(Clone).FirstOrDefault());
 
@@ -80,6 +86,7 @@ public sealed class FakeUserDeviceRepository : IUserDeviceRepository
     private static UserDevice Clone(UserDevice item) =>
         new()
         {
+            ModelId = item.ModelId,
             UserId = item.UserId,
             User = item.User,
             DeviceId = item.DeviceId,

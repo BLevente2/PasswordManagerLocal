@@ -6,6 +6,7 @@ using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
+using PasswordManagerLocalBackend.Utils;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
@@ -115,7 +116,7 @@ public sealed class UserService : IUserService
 
     public async Task<UserData> GetAndVerifyUserDataAsync(User user, EncryptionKey key)
     {
-        var userData = await DecryptDecompressDeserializeAsync<UserData>(user.EncryptedPayload, key);
+        var userData = await DecryptDecompressDeserializeAsync(user.EncryptedPayload, key, BackendJsonSerializerContext.Default.UserData);
         if (userData is null)
             throw new UnauthorizedAccessException();
 
@@ -216,7 +217,7 @@ public sealed class UserService : IUserService
     {
         EnsureUserDataCanBePersisted(userData, user);
         userData.GenerateIntegrityHash();
-        var newEncryptedPayload = await SerializeCompressEncryptAsync<UserData>(userData, key);
+        var newEncryptedPayload = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData);
         CryptographicOperations.ZeroMemory(user.EncryptedPayload);
         user.EncryptedPayload = newEncryptedPayload;
         await UpdateUserAsync(user, enqueueSync, ct);

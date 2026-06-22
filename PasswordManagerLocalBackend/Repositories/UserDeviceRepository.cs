@@ -42,9 +42,20 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
     {
         var links = await _set.AsNoTracking()
             .Include(ud => ud.User)
-            .Where(ud => ud.DeviceId == deviceId)
+            .Where(ud => ud.DeviceId == deviceId && !ud.IsDeleted)
             .ToListAsync(ct);
-        return links.Where(ud => !ud.IsDeleted).ToList();
+        return links;
+    }
+
+    public async Task<IReadOnlyList<UserDevice>> ListByUserIdsAndDeviceAsync(IReadOnlyCollection<Guid> userIds, Guid deviceId, CancellationToken ct = default)
+    {
+        if (userIds.Count == 0)
+            return [];
+
+        return await _set
+            .Include(ud => ud.User)
+            .Where(ud => ud.DeviceId == deviceId && userIds.Contains(ud.UserId))
+            .ToListAsync(ct);
     }
 
     public Task<UserDevice?> GetAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
@@ -53,50 +64,33 @@ public sealed class UserDeviceRepository : IUserDeviceRepository
             .Include(ud => ud.User)
             .FirstOrDefaultAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct);
 
-    public async Task<UserDevice?> GetByModelIdAsync(Guid modelId, CancellationToken ct = default)
-    {
-        var userDevices = await _set
-            .Include(ud => ud.Device)
+    public Task<UserDevice?> GetByModelIdAsync(Guid modelId, CancellationToken ct = default) =>
+        _set.Include(ud => ud.Device)
             .Include(ud => ud.User)
-            .ToListAsync(ct);
-        return userDevices.FirstOrDefault(ud => SyncIdentityUtil.BuildUserDeviceModelId(ud.UserId, ud.DeviceId) == modelId);
-    }
+            .FirstOrDefaultAsync(ud => ud.ModelId == modelId, ct);
 
-    public async Task<bool> ExistsAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
-        (await GetLinksAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct)).Count != 0;
+    public Task<bool> ExistsAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct);
 
-    public async Task<bool> HasActiveLinkAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
-        (await GetLinksAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId, ct))
-        .Any(ud => !ud.IsDeleted && ud.IsSyncOn);
+    public Task<bool> HasActiveLinkAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(ud => ud.UserId == userId && ud.DeviceId == deviceId && !ud.IsDeleted && ud.IsSyncOn, ct);
 
-    public async Task<bool> HasAnyActiveLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
-        (await GetLinksAsync(ud => ud.DeviceId == deviceId, ct)).Any(ud => !ud.IsDeleted);
+    public Task<bool> HasAnyActiveLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && !ud.IsDeleted, ct);
 
-    public async Task<bool> HasAnyActiveSyncEnabledLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
-        (await GetLinksAsync(ud => ud.DeviceId == deviceId, ct)).Any(ud => !ud.IsDeleted && ud.IsSyncOn);
+    public Task<bool> HasAnyActiveSyncEnabledLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && !ud.IsDeleted && ud.IsSyncOn, ct);
 
-    public async Task<bool> HasAnyDeletedLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
-        (await GetLinksAsync(ud => ud.DeviceId == deviceId, ct)).Any(ud => ud.IsDeleted);
+    public Task<bool> HasAnyDeletedLinkForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && ud.IsDeleted, ct);
 
-    public async Task<bool> HasAnyActiveLinkForDeviceExceptUserAsync(Guid deviceId, Guid userId, CancellationToken ct = default) =>
-        (await GetLinksAsync(ud => ud.DeviceId == deviceId && ud.UserId != userId, ct)).Any(ud => !ud.IsDeleted);
+    public Task<bool> HasAnyActiveLinkForDeviceExceptUserAsync(Guid deviceId, Guid userId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(ud => ud.DeviceId == deviceId && ud.UserId != userId && !ud.IsDeleted, ct);
 
-    public async Task<bool> SharesActiveUserAsync(Guid sourceDeviceId, Guid targetDeviceId, CancellationToken ct = default)
-    {
-        var links = await GetLinksAsync(
-            ud => ud.DeviceId == sourceDeviceId || ud.DeviceId == targetDeviceId,
-            ct);
-
-        var sourceUserIds = links
-            .Where(ud => ud.DeviceId == sourceDeviceId && !ud.IsDeleted && ud.IsSyncOn)
-            .Select(ud => ud.UserId)
-            .ToHashSet();
-
-        return sourceUserIds.Count != 0 && links.Any(ud =>
-            ud.DeviceId == targetDeviceId &&
-            !ud.IsDeleted &&
-            sourceUserIds.Contains(ud.UserId));
-    }
+    public Task<bool> SharesActiveUserAsync(Guid sourceDeviceId, Guid targetDeviceId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(target =>
+            target.DeviceId == targetDeviceId && !target.IsDeleted &&
+            _set.Any(source => source.DeviceId == sourceDeviceId && source.UserId == target.UserId && !source.IsDeleted && source.IsSyncOn), ct);
 
     public Task AddAsync(UserDevice userDevice, CancellationToken ct = default) =>
         _set.AddAsync(userDevice, ct).AsTask();

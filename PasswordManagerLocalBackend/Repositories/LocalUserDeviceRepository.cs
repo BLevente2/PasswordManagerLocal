@@ -17,23 +17,18 @@ public sealed class LocalUserDeviceRepository : ILocalUserDeviceRepository
     public Task<LocalUserDevice?> GetAsync(Guid userId, CancellationToken ct = default) =>
         _set.Include(x => x.LocalDeviceIdentity).FirstOrDefaultAsync(x => x.UserId == userId, ct);
 
-    public async Task<bool> IsSyncOnAsync(Guid userId, CancellationToken ct = default)
-    {
-        var link = await _set.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == userId, ct);
-        return link?.IsSyncOn == true;
-    }
+    public Task<bool> IsSyncOnAsync(Guid userId, CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(x => x.UserId == userId && x.IsSyncOn, ct);
 
-    public async Task<bool> AnySyncOnAsync(CancellationToken ct = default)
-    {
-        var links = await _set.AsNoTracking().ToListAsync(ct);
-        return links.Any(x => x.IsSyncOn);
-    }
+    public Task<bool> AnySyncOnAsync(CancellationToken ct = default) =>
+        _set.AsNoTracking().AnyAsync(x => x.IsSyncOn, ct);
 
-    public async Task<IReadOnlyList<Guid>> ListSyncOnUserIdsAsync(CancellationToken ct = default)
-    {
-        var links = await _set.AsNoTracking().ToListAsync(ct);
-        return links.Where(x => x.IsSyncOn).Select(x => x.UserId).Distinct().ToList();
-    }
+    public async Task<IReadOnlyList<Guid>> ListSyncOnUserIdsAsync(CancellationToken ct = default) =>
+        await _set.AsNoTracking()
+            .Where(x => x.IsSyncOn)
+            .Select(x => x.UserId)
+            .Distinct()
+            .ToListAsync(ct);
 
     public Task AddAsync(LocalUserDevice localUserDevice, CancellationToken ct = default) =>
         _set.AddAsync(localUserDevice, ct).AsTask();

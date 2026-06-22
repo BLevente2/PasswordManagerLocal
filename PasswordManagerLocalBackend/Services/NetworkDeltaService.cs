@@ -395,15 +395,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         foreach (var group in user.Groups.Where(g => !ids.Contains(g.Id)).ToList())
             user.Groups.Remove(group);
 
-        foreach (var id in ids)
-        {
-            if (user.Groups.Any(g => g.Id == id))
-                continue;
-
-            var group = await _groups.GetByIdAsync(id, ct);
-            if (group is not null)
-                user.Groups.Add(group);
-        }
+        var missingIds = ids.Where(id => user.Groups.All(g => g.Id != id)).ToArray();
+        var groups = await _groups.ListByIdsAsync(missingIds, ct);
+        foreach (var group in groups)
+            user.Groups.Add(group);
     }
 
 
@@ -412,15 +407,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         var ids = CreateIdSet(deviceIds);
         ids.Remove(_identity.LocalDeviceId);
 
+        var devices = (await _devices.ListByIdsAsync(ids, ct)).ToDictionary(device => device.Id);
+        var knownLinks = user.UserDevices.ToDictionary(link => link.DeviceId);
         foreach (var id in ids)
         {
-            var remoteDevice = await _devices.GetByIdAsync(id, ct);
-            if (remoteDevice is null)
+            if (!devices.TryGetValue(id, out var remoteDevice))
                 continue;
 
-            var existingLink = user.UserDevices.FirstOrDefault(ud => ud.DeviceId == id)
-                ?? await _userDevices.GetAsync(user.UId, id, ct);
-            if (existingLink is not null)
+            if (knownLinks.TryGetValue(id, out var existingLink))
             {
                 existingLink.Device = remoteDevice;
                 existingLink.VerifyIntegrity();
@@ -459,15 +453,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         foreach (var user in group.Users.Where(u => !ids.Contains(u.UId)).ToList())
             group.Users.Remove(user);
 
-        foreach (var id in ids)
-        {
-            if (group.Users.Any(u => u.UId == id))
-                continue;
-
-            var user = await _users.GetByIdAsync(id, ct);
-            if (user is not null)
-                group.Users.Add(user);
-        }
+        var missingIds = ids.Where(id => group.Users.All(u => u.UId != id)).ToArray();
+        var users = await _users.ListByIdsAsync(missingIds, ct);
+        foreach (var user in users)
+            group.Users.Add(user);
     }
 
 
@@ -475,10 +464,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     {
         var ids = CreateIdSet(userIds);
 
+        var existingLinks = (await _userDevices.ListByUserIdsAndDeviceAsync(ids, device.Id, ct))
+            .ToDictionary(link => link.UserId);
+        var missingUserIds = ids.Where(id => !existingLinks.ContainsKey(id)).ToArray();
+        var users = (await _users.ListByIdsAsync(missingUserIds, ct)).ToDictionary(user => user.UId);
+
         foreach (var id in ids)
         {
-            var existingLink = await _userDevices.GetAsync(id, device.Id, ct);
-            if (existingLink is not null)
+            if (existingLinks.TryGetValue(id, out var existingLink))
             {
                 existingLink.Device = device;
                 existingLink.VerifyIntegrity();
@@ -494,8 +487,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                 continue;
             }
 
-            var user = await _users.GetByIdAsync(id, ct);
-            if (user is null)
+            if (!users.TryGetValue(id, out var user))
                 continue;
 
             var newLink = new UserDevice

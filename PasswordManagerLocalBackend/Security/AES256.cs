@@ -23,16 +23,17 @@ internal static class AES256
 
     internal static async Task<byte[]> EncryptAsync(byte[] data, EncryptionKey key, byte[]? associatedData = null, int frameSize = DefaultFrameSize)
     {
+        var effectiveFrameSize = data.Length == 0 ? 1 : Math.Min(frameSize, data.Length);
         using var input = new MemoryStream(data, writable: false);
-        using var output = new MemoryStream();
-        await EncryptToStreamAsync(input, output, key, associatedData, frameSize);
+        using var output = new MemoryStream(data.Length + 64);
+        await EncryptToStreamAsync(input, output, key, associatedData, effectiveFrameSize);
         return output.ToArray();
     }
 
     internal static async Task<byte[]> DecryptAsync(byte[] blob, EncryptionKey key, byte[]? associatedData = null)
     {
         using var input = new MemoryStream(blob, writable: false);
-        using var output = new MemoryStream();
+        using var output = new MemoryStream(Math.Max(0, blob.Length - 37));
         await DecryptToStreamAsync(input, output, key, associatedData);
         return output.ToArray();
     }
@@ -68,8 +69,8 @@ internal static class AES256
 
         await output.WriteAsync(header, 0, header.Length);
 
-        var buffer = new byte[frameSize];
-        var cipher = new byte[frameSize];
+        var buffer = ArrayPool<byte>.Shared.Rent(frameSize);
+        var cipher = ArrayPool<byte>.Shared.Rent(frameSize);
         var tag = new byte[TagSizeInBytes];
         var nonce = new byte[NonceSizeInBytes];
         Buffer.BlockCopy(noncePrefix, 0, nonce, 0, 8);
@@ -120,8 +121,8 @@ internal static class AES256
             CryptographicOperations.ZeroMemory(keyBytes);
             CryptographicOperations.ZeroMemory(nonce);
             CryptographicOperations.ZeroMemory(tag);
-            CryptographicOperations.ZeroMemory(cipher);
-            CryptographicOperations.ZeroMemory(buffer);
+            ArrayPool<byte>.Shared.Return(cipher, clearArray: true);
+            ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
         }
     }
 
@@ -140,8 +141,8 @@ internal static class AES256
         var frameSize = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(13, 4));
         if (frameSize <= 0) throw new CryptographicException("Invalid frame size.");
 
-        var cipher = new byte[frameSize];
-        var plain = new byte[frameSize];
+        var cipher = ArrayPool<byte>.Shared.Rent(frameSize);
+        var plain = ArrayPool<byte>.Shared.Rent(frameSize);
         var tag = new byte[TagSizeInBytes];
         var nonce = new byte[NonceSizeInBytes];
         Buffer.BlockCopy(noncePrefix, 0, nonce, 0, 8);
@@ -195,8 +196,8 @@ internal static class AES256
             CryptographicOperations.ZeroMemory(keyBytes);
             CryptographicOperations.ZeroMemory(nonce);
             CryptographicOperations.ZeroMemory(tag);
-            CryptographicOperations.ZeroMemory(plain);
-            CryptographicOperations.ZeroMemory(cipher);
+            ArrayPool<byte>.Shared.Return(plain, clearArray: true);
+            ArrayPool<byte>.Shared.Return(cipher, clearArray: true);
         }
     }
 

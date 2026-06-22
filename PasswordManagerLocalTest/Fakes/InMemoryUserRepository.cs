@@ -32,6 +32,12 @@ public sealed class InMemoryUserRepository : IUserRepository
         return Task.FromResult((IReadOnlyList<User>)list);
     }
 
+    public Task<IReadOnlyList<User>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default)
+    {
+        var users = ids.Where(_store.ContainsKey).Select(id => Clone(_store[id])).ToList();
+        return Task.FromResult((IReadOnlyList<User>)users);
+    }
+
     public Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         if (_store.TryGetValue(id, out var u))

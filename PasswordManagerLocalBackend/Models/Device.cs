@@ -8,6 +8,7 @@ public sealed class Device : IntegrityCheckableBase
     public Guid Id { get; set; } = Guid.NewGuid();
     public byte[] PublicKey { get; set; } = [];
     public byte[] SignPublicKey { get; set; } = [];
+    public byte[] SignPublicKeyHash { get; set; } = [];
     public string TlsCertFingerprint { get; set; } = string.Empty;
     public DeviceType DeviceType { get; set; }
     public byte[] LastKnownHash { get; set; } = [];
@@ -26,6 +27,19 @@ public sealed class Device : IntegrityCheckableBase
     public ICollection<UserDevice> UserDevices { get; set; } = [];
     public ICollection<SyncQueueItem> ItemsNeedingSync { get; set; } = [];
 
+
+    public override void GenerateIntegrityHash()
+    {
+        SignPublicKeyHash = SignPublicKey.Length == 0 ? [] : Hashing.SHA256Hash(SignPublicKey);
+        base.GenerateIntegrityHash();
+    }
+
+    public override bool IsIntegrityValid()
+    {
+        var expectedHash = SignPublicKey.Length == 0 ? [] : Hashing.SHA256Hash(SignPublicKey);
+        return Hashing.Verify(SignPublicKeyHash, expectedHash) && base.IsIntegrityValid();
+    }
+
     public override byte[] CalculateIntegrityHash()
     {
         using var ms = new MemoryStream();
@@ -34,6 +48,7 @@ public sealed class Device : IntegrityCheckableBase
         bw.Write(Id.ToByteArray());
         bw.Write(PublicKey);
         bw.Write(SignPublicKey);
+        bw.Write(SignPublicKeyHash);
         bw.Write(Encoding.UTF8.GetBytes(TlsCertFingerprint));
         bw.Write((byte)DeviceType);
         bw.Write(LastKnownHash);
