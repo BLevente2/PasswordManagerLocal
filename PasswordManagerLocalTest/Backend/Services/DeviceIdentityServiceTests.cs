@@ -3,7 +3,9 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalTest.Fakes;
 using PasswordManagerLocalTest.TestInfrastructure;
@@ -47,6 +49,8 @@ public sealed class DeviceIdentityServiceTests
         MSTestAssert.AreEqual(32, first.AgreementPublicKey.Length);
         MSTestAssert.AreEqual(32, first.SignPublicKey.Length);
         MSTestAssert.IsFalse(string.IsNullOrWhiteSpace(first.FingerprintHex));
+        MSTestAssert.AreEqual(DeviceType.WindowsPc, first.DeviceType);
+        MSTestAssert.AreEqual(DeviceType.WindowsPc, repository.Snapshot()!.DeviceType);
         MSTestAssert.AreEqual(1, repository.CreateCalls);
         MSTestAssert.AreEqual(1, unitOfWork.SaveCalls);
 
@@ -57,6 +61,7 @@ public sealed class DeviceIdentityServiceTests
         CollectionAssert.AreEqual(first.AgreementPublicKey, second.AgreementPublicKey);
         CollectionAssert.AreEqual(first.SignPublicKey, second.SignPublicKey);
         MSTestAssert.AreEqual(first.FingerprintHex, second.FingerprintHex);
+        MSTestAssert.AreEqual(DeviceType.WindowsPc, second.DeviceType);
         MSTestAssert.AreEqual(1, repository.CreateCalls);
         MSTestAssert.AreEqual(1, unitOfWork.SaveCalls);
     }
@@ -94,6 +99,23 @@ public sealed class DeviceIdentityServiceTests
 
     [TestMethod]
     [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task Initialize_UnsupportedDeviceType_DoesNotPersistInvalidIdentity()
+    {
+        var repository = new FakeDeviceIdentityRepository();
+        var unitOfWork = new FakeUnitOfWork();
+        using var provider = CreateProvider(repository, unitOfWork, DeviceType.Unknown);
+        var service = CreateService(provider);
+
+        await ExpectThrowsAsync<PlatformNotSupportedException>(() => service.InitializeAsync());
+
+        MSTestAssert.IsFalse(service.IsInitialized);
+        MSTestAssert.AreEqual(0, repository.CreateCalls);
+        MSTestAssert.AreEqual(0, unitOfWork.SaveCalls);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
     [TestCategory("Integration")]
     public async Task SetSyncOn_PersistsOnlyWhenValueChanges()
     {
@@ -112,12 +134,16 @@ public sealed class DeviceIdentityServiceTests
         MSTestAssert.IsTrue(repository.Snapshot()?.IsSyncOn ?? false);
     }
 
-    private static ServiceProvider CreateProvider(FakeDeviceIdentityRepository repository, FakeUnitOfWork unitOfWork)
+    private static ServiceProvider CreateProvider(
+        FakeDeviceIdentityRepository repository,
+        FakeUnitOfWork unitOfWork,
+        DeviceType deviceType = DeviceType.WindowsPc)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IDeviceIdentityRepository>(repository);
         services.AddSingleton<IUnitOfWork>(unitOfWork);
         services.AddSingleton<IKeyProtector, TestKeyProtector>();
+        services.AddSingleton<ILocalDeviceTypeProvider>(new FakeLocalDeviceTypeProvider { DeviceType = deviceType });
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
             ValidateOnBuild = true,
@@ -126,13 +152,27 @@ public sealed class DeviceIdentityServiceTests
     }
 
     private static DeviceIdentityService CreateService(IServiceProvider provider) =>
-        new(provider.GetRequiredService<IServiceScopeFactory>());
+        new(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ILocalDeviceTypeProvider>());
 
     private static void ExpectThrows<TException>(Action action) where TException : Exception
     {
         try
         {
             action();
+            MSTestAssert.Fail($"Expected exception: {typeof(TException).Name}");
+        }
+        catch (TException)
+        {
+        }
+    }
+
+    private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
             MSTestAssert.Fail($"Expected exception: {typeof(TException).Name}");
         }
         catch (TException)

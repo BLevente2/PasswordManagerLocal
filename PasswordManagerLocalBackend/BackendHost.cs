@@ -181,6 +181,7 @@ namespace PasswordManagerLocalBackend
                     services.AddSingleton<IDataCachingService, DataCachingService>();
                     services.AddSingleton<ITokenService, TokenService>();
 
+                    services.AddSingleton<ILocalDeviceTypeProvider, LocalDeviceTypeProvider>();
                     services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
                     services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
                     services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();

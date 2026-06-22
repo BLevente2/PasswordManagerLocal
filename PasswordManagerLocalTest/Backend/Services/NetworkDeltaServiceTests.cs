@@ -85,8 +85,8 @@ public sealed class NetworkDeltaServiceTests
     {
         var senderProvider = CreateIdentityProvider();
         var recipientProvider = CreateIdentityProvider();
-        var sender = new DeviceIdentityService(senderProvider.GetRequiredService<IServiceScopeFactory>());
-        var recipient = new DeviceIdentityService(recipientProvider.GetRequiredService<IServiceScopeFactory>());
+        var sender = CreateIdentity(senderProvider);
+        var recipient = CreateIdentity(recipientProvider);
         await sender.InitializeAsync();
         await sender.SetSyncOnAsync(true);
         await recipient.InitializeAsync();
@@ -124,8 +124,14 @@ public sealed class NetworkDeltaServiceTests
         services.AddSingleton<IDeviceIdentityRepository, FakeDeviceIdentityRepository>();
         services.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         services.AddSingleton<IKeyProtector, TestKeyProtector>();
+        services.AddSingleton<ILocalDeviceTypeProvider, FakeLocalDeviceTypeProvider>();
         return services.BuildServiceProvider();
     }
+
+    private static DeviceIdentityService CreateIdentity(IServiceProvider provider) =>
+        new(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ILocalDeviceTypeProvider>());
 
     private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {

@@ -19,6 +19,7 @@ namespace PasswordManagerLocalBackend.Services;
 public sealed class DeviceIdentityService : IDeviceIdentityService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILocalDeviceTypeProvider _deviceTypeProvider;
     private Key? _ka = null;
     private Key? _sig = null;
     private X509Certificate2? _cert = null;
@@ -29,9 +30,10 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
 
 
-    public DeviceIdentityService(IServiceScopeFactory scopeFactory)
+    public DeviceIdentityService(IServiceScopeFactory scopeFactory, ILocalDeviceTypeProvider deviceTypeProvider)
     {
         _scopeFactory = scopeFactory;
+        _deviceTypeProvider = deviceTypeProvider;
     }
 
 
@@ -323,6 +325,10 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
 
     private async Task CreateIdentity(IDeviceIdentityRepository repo, IKeyProtector keyProtector, IUnitOfWork uow, CancellationToken ct = default)
     {
+        var deviceType = _deviceTypeProvider.GetDeviceType();
+        if (!DeviceTypeDetector.IsValid(deviceType))
+            throw new PlatformNotSupportedException("The current platform does not have a supported local device type.");
+
         _ka = Key.Create(KeyAgreementAlgorithm.X25519, new KeyCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport });
         _sig = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters { ExportPolicy = KeyExportPolicies.AllowPlaintextExport });
 
@@ -343,7 +349,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
                 AgreementPrivateKeyBlob = protectedKa,
                 SignPrivateKeyBlob = protectedSig,
                 PFXCertificate = protectedCert,
-                DeviceType = DeviceTypeDetector.Detect(),
+                DeviceType = deviceType,
                 IsSyncOn = false
             };
             _localDeviceId = newIdentity.Id;

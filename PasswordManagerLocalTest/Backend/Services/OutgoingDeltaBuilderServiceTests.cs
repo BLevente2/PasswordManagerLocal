@@ -3,6 +3,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
@@ -187,6 +188,7 @@ public sealed class OutgoingDeltaBuilderServiceTests
         services.AddSingleton<IDeviceIdentityRepository, FakeDeviceIdentityRepository>();
         services.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         services.AddSingleton<IKeyProtector, TestKeyProtector>();
+        services.AddSingleton<ILocalDeviceTypeProvider, FakeLocalDeviceTypeProvider>();
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
             ValidateOnBuild = true,
@@ -195,7 +197,9 @@ public sealed class OutgoingDeltaBuilderServiceTests
     }
 
     private static DeviceIdentityService CreateIdentity(IServiceProvider provider) =>
-        new(provider.GetRequiredService<IServiceScopeFactory>());
+        new(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ILocalDeviceTypeProvider>());
 
     private static Device CreateTargetDevice(DeviceIdentityService recipient) =>
         new()
