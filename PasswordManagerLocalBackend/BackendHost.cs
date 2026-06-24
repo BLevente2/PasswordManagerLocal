@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
@@ -15,6 +16,7 @@ using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalBackend.Services.Hosted;
 using PasswordManagerLocalBackend.Services.Tcp;
+using PasswordManagerLocalBackend.Utils;
 using SQLitePCL;
 
 namespace PasswordManagerLocalBackend
@@ -104,11 +106,18 @@ namespace PasswordManagerLocalBackend
 
         private static async Task InitializeInternal(IKeyProtector? platformKeyProtector)
         {
+            DeviceEnrollmentTrace.InitializeForCurrentBuild();
             IHost? host = null;
 
             try
             {
                 host = Host.CreateDefaultBuilder(Array.Empty<string>())
+                .ConfigureLogging(logging =>
+                {
+#if !DEBUG
+                    logging.ClearProviders();
+#endif
+                })
                 .ConfigureServices((context, services) =>
                 {
                     var dbFolder = PathConstants.AppRootFolder;

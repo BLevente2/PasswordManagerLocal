@@ -8,11 +8,14 @@ public sealed class UiPreferencesService
 {
     public event EventHandler<UiPreferencesChangedEventArgs>? PreferencesChanged;
 
-    private AppLanguage _currentLanguage = AppLanguage.Hungarian;
-    private AppThemeMode _currentThemeMode = AppThemeMode.Dark;
+    private AppLanguage _currentLanguage;
+    private AppThemeMode _currentThemeMode;
 
     public UiPreferencesService()
     {
+        var preferences = AppConfigurationManager.GetUiPreferences();
+        _currentLanguage = preferences.Language;
+        _currentThemeMode = preferences.Theme;
         ApplyTheme(_currentThemeMode);
     }
 
@@ -26,9 +29,9 @@ public sealed class UiPreferencesService
                 return;
             }
 
-            var previousTheme = _currentThemeMode;
             _currentLanguage = value;
-            PreferencesChanged?.Invoke(this, new UiPreferencesChangedEventArgs(true, false, value, previousTheme));
+            AppConfigurationManager.SaveUiPreferences(_currentLanguage, _currentThemeMode);
+            PreferencesChanged?.Invoke(this, new UiPreferencesChangedEventArgs(true, false, value, _currentThemeMode));
         }
     }
 
@@ -44,6 +47,7 @@ public sealed class UiPreferencesService
 
             _currentThemeMode = value;
             ApplyTheme(value);
+            AppConfigurationManager.SaveUiPreferences(_currentLanguage, _currentThemeMode);
             PreferencesChanged?.Invoke(this, new UiPreferencesChangedEventArgs(false, true, _currentLanguage, value));
         }
     }

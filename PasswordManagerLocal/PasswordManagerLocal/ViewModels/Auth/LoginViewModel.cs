@@ -440,6 +440,9 @@ public sealed class LoginViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            await FirewallPermissionStartupPrompt.RevalidateAfterLikelyFirewallFailureAsync(
+                ex,
+                CurrentLanguage);
             DeviceTransferStatus.ShowError(GetSafeErrorMessage(ex));
             IsDeviceTransferSuccess = false;
             IsDeviceTransferIntroVisible = false;

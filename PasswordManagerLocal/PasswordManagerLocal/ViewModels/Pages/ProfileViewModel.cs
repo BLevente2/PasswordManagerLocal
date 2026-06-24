@@ -1407,6 +1407,9 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            await FirewallPermissionStartupPrompt.RevalidateAfterLikelyFirewallFailureAsync(
+                ex,
+                CurrentLanguage);
             ShowErrorMessage(GetSafeErrorMessage(ex));
         }
     }
@@ -1572,6 +1575,9 @@ public sealed class ProfileViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            await FirewallPermissionStartupPrompt.RevalidateAfterLikelyFirewallFailureAsync(
+                ex,
+                CurrentLanguage);
             ShowErrorMessage(GetSafeErrorMessage(ex));
         }
         finally

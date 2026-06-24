@@ -24,42 +24,67 @@ public static class FirewallPermissionStartupPrompt
 
     public static async Task TryShowAsync(Window owner, AppLanguage language, CancellationToken ct = default)
     {
-        await EnsureConfiguredAsync(owner, language, ct);
+        await EnsureConfiguredAsync(owner, language, false, ct);
     }
 
 
 
     public static Task<bool> EnsureConfiguredAsync(AppLanguage language, CancellationToken ct = default) =>
-        EnsureConfiguredAsync(ResolveOwner(), language, ct);
+        EnsureConfiguredAsync(ResolveOwner(), language, false, ct);
 
 
 
-    private static async Task<bool> EnsureConfiguredAsync(Window? owner, AppLanguage language, CancellationToken ct)
+    public static async Task RevalidateAfterLikelyFirewallFailureAsync(
+        Exception exception,
+        AppLanguage language,
+        CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows() ||
+            !FirewallFailureDetector.IsLikelyFirewallRelated(exception))
+        {
+            return;
+        }
+
+        try
+        {
+            await EnsureConfiguredAsync(ResolveOwner(), language, true, ct);
+        }
+        catch
+        {
+        }
+    }
+
+
+
+    private static async Task<bool> EnsureConfiguredAsync(
+        Window? owner,
+        AppLanguage language,
+        bool forceVerification,
+        CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows())
+            return true;
+
+        if (!forceVerification && AppConfigurationManager.IsWindowsFirewallConfigured())
             return true;
 
         await PromptLock.WaitAsync(ct);
         try
         {
-            FirewallPermissionCheckResult check;
-            try
+            if (!forceVerification && AppConfigurationManager.IsWindowsFirewallConfigured())
+                return true;
+
+            var check = await CheckFirewallAsync(ct);
+            if (!check.IsSupported)
+                return true;
+
+            if (check.IsConfigured)
             {
-                check = await FirewallPermissionService.CheckAsync(ct);
-            }
-            catch (Exception ex)
-            {
-                check = new FirewallPermissionCheckResult
-                {
-                    IsSupported = true,
-                    IsConfigured = false,
-                    CanRequestPermission = true,
-                    Details = ex.Message
-                };
+                AppConfigurationManager.SetWindowsFirewallConfigured(true);
+                return true;
             }
 
-            if (!check.IsSupported || check.IsConfigured)
-                return true;
+            AppConfigurationManager.SetWindowsFirewallConfigured(false);
 
             if (!check.CanRequestPermission || owner is null)
                 return false;
@@ -68,21 +93,8 @@ public static class FirewallPermissionStartupPrompt
             if (!approved)
                 return false;
 
-            FirewallPermissionCheckResult result;
-            try
-            {
-                result = await FirewallPermissionService.RequestPermissionAsync(ct);
-            }
-            catch (Exception ex)
-            {
-                result = new FirewallPermissionCheckResult
-                {
-                    IsSupported = true,
-                    IsConfigured = false,
-                    CanRequestPermission = true,
-                    Details = ex.Message
-                };
-            }
+            var result = await RequestFirewallPermissionAsync(ct);
+            AppConfigurationManager.SetWindowsFirewallConfigured(result.IsConfigured);
 
             if (!result.IsConfigured)
                 await RunOnUiThreadAsync(() => ShowErrorDialogAsync(owner, language, result.Details));
@@ -94,6 +106,46 @@ public static class FirewallPermissionStartupPrompt
             PromptLock.Release();
         }
     }
+
+
+
+    private static async Task<FirewallPermissionCheckResult> CheckFirewallAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await FirewallPermissionService.CheckAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            return CreateFailedCheckResult(ex);
+        }
+    }
+
+
+
+    private static async Task<FirewallPermissionCheckResult> RequestFirewallPermissionAsync(
+        CancellationToken ct)
+    {
+        try
+        {
+            return await FirewallPermissionService.RequestPermissionAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            return CreateFailedCheckResult(ex);
+        }
+    }
+
+
+
+    private static FirewallPermissionCheckResult CreateFailedCheckResult(Exception exception) =>
+        new()
+        {
+            IsSupported = true,
+            IsConfigured = false,
+            CanRequestPermission = true,
+            Details = exception.Message
+        };
 
 
 
