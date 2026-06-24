@@ -23,7 +23,9 @@
         </StackPanel>
         <StackPanel Spacing="6">
           <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
-          <TextBox Text="{Binding EditFirstName}">
+          <TextBox Text="{Binding EditFirstName}"
+                   TextInputOptions.ContentType="Name"
+                   TextInputOptions.AutoCapitalization="True">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
             </TextBox.KeyBindings>
@@ -31,7 +33,9 @@
         </StackPanel>
         <StackPanel Spacing="6">
           <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
-          <TextBox Text="{Binding EditLastName}">
+          <TextBox Text="{Binding EditLastName}"
+                   TextInputOptions.ContentType="Name"
+                   TextInputOptions.AutoCapitalization="True">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
             </TextBox.KeyBindings>
@@ -39,7 +43,11 @@
         </StackPanel>
         <StackPanel Spacing="6">
           <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
-          <TextBox Text="{Binding EditEmail}">
+          <TextBox Text="{Binding EditEmail}"
+                   TextInputOptions.ContentType="Email"
+                   TextInputOptions.AutoCapitalization="False"
+                   TextInputOptions.ShowSuggestions="False"
+                   TextInputOptions.ReturnKeyType="Done">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
             </TextBox.KeyBindings>

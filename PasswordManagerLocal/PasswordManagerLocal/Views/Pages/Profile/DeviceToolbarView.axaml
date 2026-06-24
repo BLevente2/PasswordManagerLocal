@@ -15,7 +15,10 @@
               Grid.Column="1"
               Text="{Binding DeviceSearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
               Watermark="{Binding DeviceSearchPlaceholder}"
-              MinWidth="0">
+              MinWidth="0"
+              TextInputOptions.ContentType="Search"
+              TextInputOptions.AutoCapitalization="False"
+              TextInputOptions.ReturnKeyType="Search">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding SearchDevicesCommand}" />
             </TextBox.KeyBindings>

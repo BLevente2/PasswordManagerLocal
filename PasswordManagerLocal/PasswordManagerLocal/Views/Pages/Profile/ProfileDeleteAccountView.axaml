@@ -35,7 +35,12 @@
           <TextBox
               Text="{Binding DeleteAccountPassword}"
               PasswordChar="●"
-              Watermark="{Binding DeleteAccountPasswordPlaceholder}">
+              Watermark="{Binding DeleteAccountPasswordPlaceholder}"
+              TextInputOptions.ContentType="Password"
+              TextInputOptions.IsSensitive="True"
+              TextInputOptions.AutoCapitalization="False"
+              TextInputOptions.ShowSuggestions="False"
+              TextInputOptions.ReturnKeyType="Done">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding DeleteAccountCommand}" />
             </TextBox.KeyBindings>

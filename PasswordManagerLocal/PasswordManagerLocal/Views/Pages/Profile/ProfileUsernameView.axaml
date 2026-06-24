@@ -23,7 +23,11 @@
         </StackPanel>
         <StackPanel Spacing="6">
           <TextBlock Text="{Binding UsernameLabel}" Classes="subtleText" />
-          <TextBox Text="{Binding EditUsername}" Watermark="{Binding EditUsernamePlaceholder}">
+          <TextBox Text="{Binding EditUsername}"
+                   Watermark="{Binding EditUsernamePlaceholder}"
+                   TextInputOptions.AutoCapitalization="False"
+                   TextInputOptions.ShowSuggestions="False"
+                   TextInputOptions.ReturnKeyType="Done">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding ChangeUsernameCommand}" />
             </TextBox.KeyBindings>

@@ -43,7 +43,11 @@
           <TextBox
               Text="{Binding DeviceEnrollmentCodeInput}"
               Watermark="{Binding AddDeviceCodePlaceholder}"
-              Classes="readableCode">
+              Classes="readableCode"
+              TextInputOptions.IsSensitive="True"
+              TextInputOptions.AutoCapitalization="False"
+              TextInputOptions.ShowSuggestions="False"
+              TextInputOptions.ReturnKeyType="Done">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding ConfirmAddDeviceCommand}" />
             </TextBox.KeyBindings>

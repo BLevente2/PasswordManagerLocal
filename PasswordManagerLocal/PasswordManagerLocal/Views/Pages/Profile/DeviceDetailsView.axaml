@@ -51,7 +51,8 @@
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
           <StackPanel Spacing="5">
             <TextBlock Text="{Binding DeviceNameLabel}" Classes="subtleText" />
-            <TextBox Text="{Binding SelectedDevice.EditableName}">
+            <TextBox Text="{Binding SelectedDevice.EditableName}"
+                     TextInputOptions.ReturnKeyType="Done">
               <TextBox.KeyBindings>
                 <KeyBinding Gesture="Enter" Command="{Binding SelectedDevice.SaveNameCommand}" />
               </TextBox.KeyBindings>

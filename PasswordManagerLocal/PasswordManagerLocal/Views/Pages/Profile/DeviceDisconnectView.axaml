@@ -30,7 +30,12 @@
           <TextBox
               Text="{Binding DisconnectDevicePassword}"
               PasswordChar="●"
-              Watermark="{Binding DisconnectDialogPasswordPlaceholder}">
+              Watermark="{Binding DisconnectDialogPasswordPlaceholder}"
+              TextInputOptions.ContentType="Password"
+              TextInputOptions.IsSensitive="True"
+              TextInputOptions.AutoCapitalization="False"
+              TextInputOptions.ShowSuggestions="False"
+              TextInputOptions.ReturnKeyType="Done">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding ConfirmDisconnectDeviceCommand}" />
             </TextBox.KeyBindings>

@@ -34,7 +34,11 @@
           <StackPanel Spacing="16" IsVisible="{Binding IsLoginFormVisible}">
             <StackPanel Spacing="6">
               <TextBlock Text="{Binding UsernameLabel}" />
-              <TextBox Text="{Binding Username}" Watermark="{Binding UsernamePlaceholder}" />
+              <TextBox Text="{Binding Username}"
+                       Watermark="{Binding UsernamePlaceholder}"
+                       TextInputOptions.ContentType="Email"
+                       TextInputOptions.AutoCapitalization="False"
+                       TextInputOptions.ShowSuggestions="False" />
             </StackPanel>
 
             <StackPanel Spacing="6">
@@ -43,7 +47,12 @@
                 <TextBox Grid.Column="0"
                          Text="{Binding Password}"
                          PasswordChar="{Binding PasswordMaskCharacter}"
-                         Watermark="{Binding PasswordPlaceholder}" />
+                         Watermark="{Binding PasswordPlaceholder}"
+                         TextInputOptions.ContentType="Password"
+                         TextInputOptions.IsSensitive="True"
+                         TextInputOptions.AutoCapitalization="False"
+                         TextInputOptions.ShowSuggestions="False"
+                         TextInputOptions.ReturnKeyType="Go" />
                 <Button Grid.Column="1"
                         Classes="ghost"
                         Command="{Binding TogglePasswordVisibilityCommand}"
