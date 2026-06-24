@@ -30,7 +30,7 @@ public class MainActivity : AvaloniaMainActivity<App>
         global::PasswordManagerLocal.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(new AndroidQrCodeCameraScanner(this));
         AcquireMulticastLock();
-        _ = BackendHost.StartInitializationAsync(new AndroidKeyProtector());
+        BackendHost.ConfigurePlatformKeyProtector(new AndroidKeyProtector());
 
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()

@@ -288,7 +288,7 @@
   "Firewall_Failed": "Windows Firewall could not be configured or the new rules are not effective for the active network profile. Try allowing it again. You can also run ConfigureWindowsFirewall.bat as administrator from the application folder. Check that Block all incoming connections is disabled for the active Windows Firewall profile and that no effective inbound or outbound Block rule targets PasswordManagerLocal.Windows.exe, TCP 26688, or UDP 5353.",
   "Firewall_RequiredForLocalNetwork": "Windows Firewall access is required before device enrollment or local synchronization can start. Choose Allow and approve the administrator prompt, then try again.",
   "Error_TechnicalDetails": "Technical details",
-  "Shell_BackendStarting": "The background service is starting. The interface is already usable; actions will wait for startup when needed.",
+  "Shell_BackendStarting": "Initializing services...",
   "Shell_BackendStartupFailed": "The background service could not start. Please restart the application.",
   "Common_Loading": "Loading, please wait...",
   "Common_On": "On",

@@ -43,7 +43,7 @@ public partial class App : Application
             {
                 await mainViewModel.InitializeAsync();
                 await TryShowFirewallPermissionPromptAsync(mainWindow, mainViewModel);
-            });
+            }, DispatcherPriority.Background);
         }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
         {
@@ -52,7 +52,9 @@ public partial class App : Application
                 DataContext = mainViewModel
             };
 
-            Dispatcher.UIThread.Post(async () => await mainViewModel.InitializeAsync());
+            Dispatcher.UIThread.Post(
+                async () => await mainViewModel.InitializeAsync(),
+                DispatcherPriority.Background);
         }
 
         base.OnFrameworkInitializationCompleted();

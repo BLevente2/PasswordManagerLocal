@@ -13,7 +13,7 @@ internal sealed class Program
     {
         ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
         FirewallPermissionService.SetPlatformFirewallPermissionManager(new WindowsFirewallPermissionManager());
-        _ = BackendHost.StartInitializationAsync(new DpapiKeyProtector());
+        BackendHost.ConfigurePlatformKeyProtector(new DpapiKeyProtector());
 
         BuildAvaloniaApp()
             .StartWithClassicDesktopLifetime(args);

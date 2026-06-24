@@ -42,6 +42,19 @@ namespace PasswordManagerLocalBackend
             }
         }
 
+        public static void ConfigurePlatformKeyProtector(IKeyProtector platformKeyProtector)
+        {
+            ArgumentNullException.ThrowIfNull(platformKeyProtector);
+
+            lock (_lock)
+            {
+                if (_host is not null || _initTask is not null)
+                    return;
+
+                _platformKeyProtector = platformKeyProtector;
+            }
+        }
+
         public static Task StartInitializationAsync(IKeyProtector? platformKeyProtector = null)
         {
             lock (_lock)
@@ -55,8 +68,10 @@ namespace PasswordManagerLocalBackend
                 if (_initTask is not null)
                     return _initTask;
 
-                Batteries_V2.Init();
-                _initTask = InitializeInternal(_platformKeyProtector);
+                var keyProtector = _platformKeyProtector;
+                _initTask = Task.Run(
+                    () => InitializeInternal(keyProtector),
+                    CancellationToken.None);
                 return _initTask;
             }
         }
@@ -106,6 +121,7 @@ namespace PasswordManagerLocalBackend
 
         private static async Task InitializeInternal(IKeyProtector? platformKeyProtector)
         {
+            Batteries_V2.Init();
             DeviceEnrollmentTrace.InitializeForCurrentBuild();
             IHost? host = null;
 
@@ -236,7 +252,8 @@ namespace PasswordManagerLocalBackend
                 var localUserDevices = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
                 shouldEnableSync = await localUserDevices.AnySyncOnAsync();
             }
-            await deviceKeyStore.SetSyncOnAsync(shouldEnableSync);
+            if (deviceKeyStore.IsSyncOn != shouldEnableSync)
+                await deviceKeyStore.SetSyncOnAsync(shouldEnableSync);
 
             await host.StartAsync();
             await host.Services.GetRequiredService<ISyncRuntimeService>().RefreshSyncEnabledAsync();

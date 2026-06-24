@@ -50,6 +50,10 @@ public sealed class MainViewModel : ViewModelBase
     private DatabaseRecoveryStage _databaseRecoveryStage;
     private DatabaseVersionNotSupportedException? _databaseVersionException;
     private bool _isResettingDatabase;
+    private RegistrationViewModel? _registrationViewModel;
+    private PasswordsViewModel? _passwordsViewModel;
+    private ProfileViewModel? _profileViewModel;
+    private ChangeProfileViewModel? _changeProfileViewModel;
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -63,16 +67,6 @@ public sealed class MainViewModel : ViewModelBase
         _authSessionRegistry = authSessionRegistry;
 
         LoginViewModel = new LoginViewModel(uiPreferences, _endpoints, NavigateToRegistration, OnAuthenticationSucceededAsync);
-        RegistrationViewModel = new RegistrationViewModel(uiPreferences, _endpoints, NavigateToLogin, OnAuthenticationSucceededAsync);
-        PasswordsViewModel = new PasswordsViewModel(uiPreferences, _endpoints);
-        ProfileViewModel = new ProfileViewModel(uiPreferences, _endpoints, RefreshProfileDataAsync, HandleAccountDeletedAsync);
-        ChangeProfileViewModel = new ChangeProfileViewModel(
-            uiPreferences,
-            _endpoints,
-            _authSessionRegistry,
-            NavigateBackFromChangeProfileAsync,
-            NavigateToLoginAnotherProfile,
-            SwitchToProfileAsync);
 
         _currentPageViewModel = LoginViewModel;
         _currentAnimatedPageViewModel = new MainPageContentViewModel(LoginViewModel);
@@ -99,13 +93,31 @@ public sealed class MainViewModel : ViewModelBase
 
     public LoginViewModel LoginViewModel { get; }
 
-    public RegistrationViewModel RegistrationViewModel { get; }
+    public RegistrationViewModel RegistrationViewModel =>
+        _registrationViewModel ??= new RegistrationViewModel(
+            UiPreferences,
+            _endpoints,
+            NavigateToLogin,
+            OnAuthenticationSucceededAsync);
 
-    public PasswordsViewModel PasswordsViewModel { get; }
+    public PasswordsViewModel PasswordsViewModel =>
+        _passwordsViewModel ??= new PasswordsViewModel(UiPreferences, _endpoints);
 
-    public ProfileViewModel ProfileViewModel { get; }
+    public ProfileViewModel ProfileViewModel =>
+        _profileViewModel ??= new ProfileViewModel(
+            UiPreferences,
+            _endpoints,
+            RefreshProfileDataAsync,
+            HandleAccountDeletedAsync);
 
-    public ChangeProfileViewModel ChangeProfileViewModel { get; }
+    public ChangeProfileViewModel ChangeProfileViewModel =>
+        _changeProfileViewModel ??= new ChangeProfileViewModel(
+            UiPreferences,
+            _endpoints,
+            _authSessionRegistry,
+            NavigateBackFromChangeProfileAsync,
+            NavigateToLoginAnotherProfile,
+            SwitchToProfileAsync);
 
     public ViewModelBase CurrentPageViewModel
     {
@@ -206,7 +218,9 @@ public sealed class MainViewModel : ViewModelBase
         ? LightNavigationFrameBrush
         : DarkNavigationFrameBrush;
 
-    private bool IsMainContentPageVisible => ReferenceEquals(CurrentPageViewModel, PasswordsViewModel) || ReferenceEquals(CurrentPageViewModel, ProfileViewModel);
+    private bool IsMainContentPageVisible =>
+        ReferenceEquals(CurrentPageViewModel, _passwordsViewModel) ||
+        ReferenceEquals(CurrentPageViewModel, _profileViewModel);
 
     public int CurrentMobileNavigationIndex => CurrentMainPageIndex;
 
@@ -478,17 +492,17 @@ public sealed class MainViewModel : ViewModelBase
             return true;
         }
 
-        if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
+        if (_passwordsViewModel is not null && ReferenceEquals(CurrentPageViewModel, _passwordsViewModel))
         {
-            return PasswordsViewModel.TryNavigateBack();
+            return _passwordsViewModel.TryNavigateBack();
         }
 
-        if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
+        if (_profileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _profileViewModel))
         {
-            return ProfileViewModel.TryNavigateBack();
+            return _profileViewModel.TryNavigateBack();
         }
 
-        if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
+        if (_changeProfileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _changeProfileViewModel))
         {
             if (_isStartupProfileSelection)
                 return false;
@@ -511,7 +525,7 @@ public sealed class MainViewModel : ViewModelBase
             return false;
         }
 
-        if (ReferenceEquals(CurrentPageViewModel, RegistrationViewModel))
+        if (_registrationViewModel is not null && ReferenceEquals(CurrentPageViewModel, _registrationViewModel))
         {
             if (_isAddingProfile)
                 await NavigateBackFromAddProfileAsync();
@@ -540,7 +554,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private void HideVisibleSensitiveData()
     {
-        PasswordsViewModel.HideVisibleSensitiveData();
+        _passwordsViewModel?.HideVisibleSensitiveData();
     }
 
 
@@ -717,8 +731,9 @@ public sealed class MainViewModel : ViewModelBase
 
     private void NavigateToRegistration()
     {
+        var registrationViewModel = RegistrationViewModel;
         ConfigureAuthBackNavigation();
-        CurrentPageViewModel = RegistrationViewModel;
+        CurrentPageViewModel = registrationViewModel;
         ClearStatusMessage();
     }
 
@@ -732,8 +747,8 @@ public sealed class MainViewModel : ViewModelBase
         IsAuthenticated = false;
         CurrentUserDisplayName = string.Empty;
         CurrentUserSubtitle = string.Empty;
-        PasswordsViewModel.Reset();
-        ProfileViewModel.Reset();
+        _passwordsViewModel?.Reset();
+        _profileViewModel?.Reset();
         ChangeProfileViewModel.SetStartupSelectionMode(true);
         ConfigureAuthBackNavigation();
         await ChangeProfileViewModel.LoadAsync();
@@ -765,7 +780,7 @@ public sealed class MainViewModel : ViewModelBase
 
         _isAddingProfile = true;
         LoginViewModel.Reset();
-        RegistrationViewModel.Reset();
+        _registrationViewModel?.Reset();
         ConfigureAuthBackNavigation();
         CurrentPageViewModel = LoginViewModel;
         ClearStatusMessage();
@@ -775,7 +790,7 @@ public sealed class MainViewModel : ViewModelBase
     {
         var isVisible = _isAddingProfile;
         LoginViewModel.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
-        RegistrationViewModel.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
+        _registrationViewModel?.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
     }
 
     private async Task NavigateBackFromAddProfileAsync()
@@ -784,7 +799,7 @@ public sealed class MainViewModel : ViewModelBase
         _isAddingProfile = false;
         ConfigureAuthBackNavigation();
         LoginViewModel.Reset();
-        RegistrationViewModel.Reset();
+        _registrationViewModel?.Reset();
 
         if (wasStartupProfileSelection)
         {
@@ -1067,23 +1082,29 @@ public sealed class MainViewModel : ViewModelBase
         CurrentUserSubtitle = BuildSubtitle(profile);
         ApplyRememberMeFromSession(profile.IsRememberMeEnabled);
 
-        PasswordsViewModel.Reset();
-        ProfileViewModel.Reset();
-        var passwordsLoaded = await PasswordsViewModel.LoadAsync(token);
-        var profileLoaded = await ProfileViewModel.LoadAsync(token, profile);
+        var passwordsViewModel = PasswordsViewModel;
+        var profileViewModel = ProfileViewModel;
+        passwordsViewModel.Reset();
+        profileViewModel.Reset();
 
-        CurrentPageViewModel = PasswordsViewModel;
+        var passwordsLoadTask = passwordsViewModel.LoadAsync(token);
+        var profileLoadTask = profileViewModel.LoadAsync(token, profile);
+        await Task.WhenAll(passwordsLoadTask, profileLoadTask);
+        var passwordsLoaded = await passwordsLoadTask;
+        var profileLoaded = await profileLoadTask;
+
+        CurrentPageViewModel = passwordsViewModel;
 
         if (!passwordsLoaded)
         {
-            var errorMessage = PasswordsViewModel.StatusMessage ?? GetTranslation("Error_Generic");
-            PasswordsViewModel.ClearStatusMessage();
+            var errorMessage = passwordsViewModel.StatusMessage ?? GetTranslation("Error_Generic");
+            passwordsViewModel.ClearStatusMessage();
             ShowErrorMessage(errorMessage);
         }
         else if (!profileLoaded)
         {
-            var errorMessage = ProfileViewModel.StatusMessage ?? GetTranslation("Error_Generic");
-            ProfileViewModel.ClearStatusMessage();
+            var errorMessage = profileViewModel.StatusMessage ?? GetTranslation("Error_Generic");
+            profileViewModel.ClearStatusMessage();
             ShowErrorMessage(errorMessage);
         }
         else
@@ -1103,18 +1124,18 @@ public sealed class MainViewModel : ViewModelBase
 
         ClearStatusMessage();
 
-        if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
+        if (_passwordsViewModel is not null && ReferenceEquals(CurrentPageViewModel, _passwordsViewModel))
         {
-            await PasswordsViewModel.RefreshCurrentDataAsync();
+            await _passwordsViewModel.RefreshCurrentDataAsync();
             return;
         }
 
-        if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
+        if (_profileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _profileViewModel))
         {
-            if (ProfileViewModel.IsDevicesMainPage)
-                await ProfileViewModel.RefreshDevicesOnlyAsync();
+            if (_profileViewModel.IsDevicesMainPage)
+                await _profileViewModel.RefreshDevicesOnlyAsync();
             else
-                await ProfileViewModel.RefreshCurrentDataAsync();
+                await _profileViewModel.RefreshCurrentDataAsync();
 
             return;
         }
@@ -1237,10 +1258,10 @@ public sealed class MainViewModel : ViewModelBase
         CurrentUserDisplayName = string.Empty;
         CurrentUserSubtitle = string.Empty;
         ApplyRememberMeFromSession(false);
-        PasswordsViewModel.Reset();
-        ProfileViewModel.Reset();
+        _passwordsViewModel?.Reset();
+        _profileViewModel?.Reset();
         LoginViewModel.Reset();
-        RegistrationViewModel.Reset();
+        _registrationViewModel?.Reset();
         CurrentPageViewModel = LoginViewModel;
         ShowShellMessage(message ?? GetTranslation("Shell_LoggedOut"), messageKind);
         return Task.CompletedTask;
@@ -1426,8 +1447,8 @@ public sealed class MainViewModel : ViewModelBase
         if (_sessionRenewalPromptShownForToken == oldToken)
             _sessionRenewalPromptShownForToken = Guid.Empty;
 
-        if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
-            await ChangeProfileViewModel.LoadAsync();
+        if (_changeProfileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _changeProfileViewModel))
+            await _changeProfileViewModel.LoadAsync();
     }
 
 
@@ -1470,8 +1491,8 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
-        if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
-            await ChangeProfileViewModel.LoadAsync();
+        if (_changeProfileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _changeProfileViewModel))
+            await _changeProfileViewModel.LoadAsync();
     }
 
 
@@ -1502,8 +1523,8 @@ public sealed class MainViewModel : ViewModelBase
                 return true;
             }
 
-            if (ReferenceEquals(CurrentPageViewModel, ChangeProfileViewModel))
-                await ChangeProfileViewModel.LoadAsync();
+            if (_changeProfileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _changeProfileViewModel))
+                await _changeProfileViewModel.LoadAsync();
 
             return true;
         }
@@ -1611,17 +1632,19 @@ public sealed class MainViewModel : ViewModelBase
     {
         get
         {
-            if (ReferenceEquals(CurrentPageViewModel, PasswordsViewModel))
+            if (_passwordsViewModel is not null && ReferenceEquals(CurrentPageViewModel, _passwordsViewModel))
             {
                 return 0;
             }
 
-            if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel) && ProfileViewModel.IsDevicesMainPage)
+            if (_profileViewModel is not null &&
+                ReferenceEquals(CurrentPageViewModel, _profileViewModel) &&
+                _profileViewModel.IsDevicesMainPage)
             {
                 return 1;
             }
 
-            if (ReferenceEquals(CurrentPageViewModel, ProfileViewModel))
+            if (_profileViewModel is not null && ReferenceEquals(CurrentPageViewModel, _profileViewModel))
             {
                 return 2;
             }
