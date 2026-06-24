@@ -58,6 +58,7 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _currentMainPage = MainProfilePage;
     private string _currentProfilePane = ProfileTabsPane;
     private string _currentDevicePane = DeviceListPane;
+    private int _selectedProfileTabIndex;
     private PasswordSortOptionViewModel? _selectedDeviceSortOption;
 
     public ProfileViewModel(
@@ -308,6 +309,12 @@ public sealed class ProfileViewModel : ViewModelBase
     public bool IsProfileMainPage => CurrentMainPage == MainProfilePage;
 
     public bool IsDevicesMainPage => CurrentMainPage == MainDevicesPage;
+
+    public int SelectedProfileTabIndex
+    {
+        get => _selectedProfileTabIndex;
+        set => this.RaiseAndSetIfChanged(ref _selectedProfileTabIndex, value);
+    }
 
     public string CurrentProfilePane
     {
@@ -777,6 +784,7 @@ public sealed class ProfileViewModel : ViewModelBase
         DeviceSearchQuery = string.Empty;
         ResetProfileEditFields();
         ResetDeviceNavigationState();
+        SelectedProfileTabIndex = 0;
         CurrentProfilePane = ProfileTabsPane;
     }
 
@@ -918,6 +926,7 @@ public sealed class ProfileViewModel : ViewModelBase
         SelectedDevice = null;
         DeviceSearchQuery = string.Empty;
         CurrentMainPage = MainProfilePage;
+        SelectedProfileTabIndex = 0;
         CurrentProfilePane = ProfileTabsPane;
         CurrentDevicePane = DeviceListPane;
         SelectDefaultDeviceSortOption();

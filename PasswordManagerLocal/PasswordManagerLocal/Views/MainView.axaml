@@ -131,9 +131,27 @@
               Padding="10,6"
               IsVisible="{Binding IsDesktopNavigationVisible}">
         <WrapPanel Orientation="Horizontal" HorizontalAlignment="Center">
-          <Button Classes="ghost" Command="{Binding ShowPasswordsCommand}" Content="{Binding PasswordVaultLabel}" Margin="3" Padding="12,6" MinHeight="32" />
-          <Button Classes="ghost" Command="{Binding ShowDevicesCommand}" Content="{Binding DevicesLabel}" Margin="3" Padding="12,6" MinHeight="32" />
-          <Button Classes="ghost" Command="{Binding ShowProfileCommand}" Content="{Binding ProfileLabel}" Margin="3" Padding="12,6" MinHeight="32" />
+          <Button Classes="ghost mainNavigation"
+                  Command="{Binding ShowPasswordsCommand}"
+                  Content="{Binding PasswordVaultLabel}"
+                  BorderBrush="{Binding PasswordsNavigationFrameBrush}"
+                  Margin="3"
+                  Padding="12,6"
+                  MinHeight="32" />
+          <Button Classes="ghost mainNavigation"
+                  Command="{Binding ShowDevicesCommand}"
+                  Content="{Binding DevicesLabel}"
+                  BorderBrush="{Binding DevicesNavigationFrameBrush}"
+                  Margin="3"
+                  Padding="12,6"
+                  MinHeight="32" />
+          <Button Classes="ghost mainNavigation"
+                  Command="{Binding ShowProfileCommand}"
+                  Content="{Binding ProfileLabel}"
+                  BorderBrush="{Binding ProfileNavigationFrameBrush}"
+                  Margin="3"
+                  Padding="12,6"
+                  MinHeight="32" />
         </WrapPanel>
       </Border>
 

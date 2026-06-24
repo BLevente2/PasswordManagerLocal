@@ -1,3 +1,4 @@
+using Avalonia.Media;
 using Avalonia.Threading;
 using PasswordManagerLocal.Abstractions.Services;
 using PasswordManagerLocal.Exceptions;
@@ -20,6 +21,8 @@ namespace PasswordManagerLocal.ViewModels;
 public sealed class MainViewModel : ViewModelBase
 {
     private static readonly TimeSpan SessionRenewalWarningLeadTime = TimeSpan.FromMinutes(1);
+    private static readonly IBrush LightNavigationFrameBrush = Brush.Parse("#FF1F5FBF");
+    private static readonly IBrush DarkNavigationFrameBrush = Brush.Parse("#FF7DB3FF");
 
     private readonly IEndpoints _endpoints;
     private readonly IAuthSessionRegistry _authSessionRegistry;
@@ -133,6 +136,12 @@ public sealed class MainViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(IsDesktopContentVisible));
             this.RaisePropertyChanged(nameof(IsDesktopNavigationVisible));
             this.RaisePropertyChanged(nameof(IsMobilePageIndicatorVisible));
+            this.RaisePropertyChanged(nameof(IsPasswordsMainPageSelected));
+            this.RaisePropertyChanged(nameof(IsDevicesMainPageSelected));
+            this.RaisePropertyChanged(nameof(IsProfileMainPageSelected));
+            this.RaisePropertyChanged(nameof(PasswordsNavigationFrameBrush));
+            this.RaisePropertyChanged(nameof(DevicesNavigationFrameBrush));
+            this.RaisePropertyChanged(nameof(ProfileNavigationFrameBrush));
             this.RaisePropertyChanged(nameof(CanChangeRememberMe));
         }
     }
@@ -174,6 +183,28 @@ public sealed class MainViewModel : ViewModelBase
     public bool IsDesktopNavigationVisible => IsAuthenticated && !IsMobileNavigationEnabled && IsMainContentPageVisible;
 
     public bool IsMobilePageIndicatorVisible => IsAuthenticated && IsMobileNavigationEnabled && IsMainContentPageVisible;
+
+    public bool IsPasswordsMainPageSelected => IsAuthenticated && CurrentMainPageIndex == 0;
+
+    public bool IsDevicesMainPageSelected => IsAuthenticated && CurrentMainPageIndex == 1;
+
+    public bool IsProfileMainPageSelected => IsAuthenticated && CurrentMainPageIndex == 2;
+
+    public IBrush PasswordsNavigationFrameBrush => IsPasswordsMainPageSelected
+        ? SelectedNavigationFrameBrush
+        : Brushes.Transparent;
+
+    public IBrush DevicesNavigationFrameBrush => IsDevicesMainPageSelected
+        ? SelectedNavigationFrameBrush
+        : Brushes.Transparent;
+
+    public IBrush ProfileNavigationFrameBrush => IsProfileMainPageSelected
+        ? SelectedNavigationFrameBrush
+        : Brushes.Transparent;
+
+    private IBrush SelectedNavigationFrameBrush => CurrentThemeMode == AppThemeMode.Light
+        ? LightNavigationFrameBrush
+        : DarkNavigationFrameBrush;
 
     private bool IsMainContentPageVisible => ReferenceEquals(CurrentPageViewModel, PasswordsViewModel) || ReferenceEquals(CurrentPageViewModel, ProfileViewModel);
 
@@ -633,6 +664,13 @@ public sealed class MainViewModel : ViewModelBase
         RaiseDatabaseRecoveryProperties();
         RaiseHeaderSubtitleProperties();
         this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
+    }
+
+    protected override void OnThemeChanged()
+    {
+        this.RaisePropertyChanged(nameof(PasswordsNavigationFrameBrush));
+        this.RaisePropertyChanged(nameof(DevicesNavigationFrameBrush));
+        this.RaisePropertyChanged(nameof(ProfileNavigationFrameBrush));
     }
 
     protected override void OnStatusMessageChanged()
@@ -1591,6 +1629,12 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(CurrentMobileNavigationIndex));
         this.RaisePropertyChanged(nameof(MobileCurrentPageLabel));
         this.RaisePropertyChanged(nameof(MobilePageIndicatorText));
+        this.RaisePropertyChanged(nameof(IsPasswordsMainPageSelected));
+        this.RaisePropertyChanged(nameof(IsDevicesMainPageSelected));
+        this.RaisePropertyChanged(nameof(IsProfileMainPageSelected));
+        this.RaisePropertyChanged(nameof(PasswordsNavigationFrameBrush));
+        this.RaisePropertyChanged(nameof(DevicesNavigationFrameBrush));
+        this.RaisePropertyChanged(nameof(ProfileNavigationFrameBrush));
         this.RaisePropertyChanged(nameof(IsDesktopNavigationVisible));
         this.RaisePropertyChanged(nameof(IsMobilePageIndicatorVisible));
     }

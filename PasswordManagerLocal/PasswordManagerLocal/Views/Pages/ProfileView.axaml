@@ -23,7 +23,9 @@
         </Border>
 
         <StackPanel IsVisible="{Binding IsProfileMainPage}" Spacing="12" HorizontalAlignment="Stretch">
-          <TabControl IsVisible="{Binding IsProfileTabsPaneVisible}" HorizontalAlignment="Stretch">
+          <TabControl IsVisible="{Binding IsProfileTabsPaneVisible}"
+                      SelectedIndex="{Binding SelectedProfileTabIndex, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch">
             <TabControl.ItemsPanel>
               <ItemsPanelTemplate>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" />
