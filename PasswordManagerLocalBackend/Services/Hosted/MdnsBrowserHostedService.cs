@@ -335,7 +335,7 @@ public sealed class MdnsBrowserHostedService : ISyncControlledHostedService
         {
             foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                if (!LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork(networkInterface))
                     continue;
 
                 if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||

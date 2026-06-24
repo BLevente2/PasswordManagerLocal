@@ -95,6 +95,8 @@ public abstract class ViewModelBase : ReactiveObject
             DeviceEnrollmentErrorCode.ProfileDataInvalid => GetTranslation("Error_DeviceEnrollment_ProfileDataInvalid"),
             DeviceEnrollmentErrorCode.ProfileDataTooLarge => GetTranslation("Error_DeviceEnrollment_ProfileDataTooLarge"),
             DeviceEnrollmentErrorCode.DeviceIdentityConflict => GetTranslation("Error_DeviceEnrollment_DeviceIdentityConflict"),
+            DeviceEnrollmentErrorCode.LocalNetworkUnavailable => GetTranslation("Error_DeviceEnrollment_LocalNetworkUnavailable"),
+            DeviceEnrollmentErrorCode.LocalEnrollmentListenerUnavailable => GetTranslation("Error_DeviceEnrollment_LocalEnrollmentListenerUnavailable"),
             _ => GetTranslation("Error_DeviceEnrollment_Generic")
         };
 

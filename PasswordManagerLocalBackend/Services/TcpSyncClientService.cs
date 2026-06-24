@@ -234,7 +234,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         try
         {
             return NetworkInterface.GetAllNetworkInterfaces()
-                .Where(networkInterface => networkInterface.OperationalStatus == OperationalStatus.Up)
+                .Where(LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork)
                 .Where(networkInterface => networkInterface.NetworkInterfaceType is not NetworkInterfaceType.Loopback and not NetworkInterfaceType.Tunnel)
                 .SelectMany(networkInterface =>
                 {

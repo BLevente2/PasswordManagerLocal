@@ -1,6 +1,7 @@
 using Makaretu.Dns;
 using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Utils;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -86,7 +87,7 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
         {
             foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                if (!LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork(networkInterface))
                     continue;
 
                 if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
@@ -179,6 +180,22 @@ public sealed class MdnsPublisherHostedService : ISyncControlledHostedService
             }
             catch
             {
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            foreach (var address in LocalNetworkInterfaceUtil.GetRoutedLocalAddressFallbacks())
+            {
+                if (!IsUsableUnicastAddress(address))
+                    continue;
+
+                candidates.Add(new LocalSyncHostCandidate
+                {
+                    Address = address,
+                    Priority = address.AddressFamily == AddressFamily.InterNetwork ? 75 : 25,
+                    IsVirtualAdapter = false
+                });
             }
         }
 

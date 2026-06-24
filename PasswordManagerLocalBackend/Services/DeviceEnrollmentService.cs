@@ -106,7 +106,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             .ToList();
 
         if (hosts.Count == 0)
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, "No usable local network address was available for device enrollment.");
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.LocalNetworkUnavailable, "No usable local network address was available after checking active interfaces, DNS, and the platform route fallback.");
 
         var failures = new List<string>();
         var request = new GetDeviceEnrollmentInfoRequest
@@ -152,7 +152,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
 
         throw new DeviceEnrollmentException(
-            DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
+            DeviceEnrollmentErrorCode.LocalEnrollmentListenerUnavailable,
             $"The local TCP enrollment listener could not complete its own authenticated self-test. {string.Join("; ", failures)}");
     }
 
@@ -731,7 +731,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                if (!LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork(networkInterface))
                     continue;
 
                 if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
@@ -836,6 +836,25 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             catch (Exception ex)
             {
                 DeviceEnrollmentTrace.Error($"Could not enumerate DNS fallback enrollment addresses: {ex.Message}", ex);
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            foreach (var address in LocalNetworkInterfaceUtil.GetRoutedLocalAddressFallbacks())
+            {
+                if (!IsUsableUnicastAddress(address))
+                    continue;
+
+                candidates.Add(new LocalEnrollmentHostCandidate
+                {
+                    Address = address,
+                    Priority = address.AddressFamily == AddressFamily.InterNetwork ? 75 : 25,
+                    InterfaceName = "Platform route fallback",
+                    InterfaceDescription = "Platform route fallback",
+                    IsVirtualAdapter = false,
+                    HasGateway = true
+                });
             }
         }
 
@@ -1023,7 +1042,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
             {
-                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                if (!LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork(networkInterface))
                     continue;
 
                 if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||

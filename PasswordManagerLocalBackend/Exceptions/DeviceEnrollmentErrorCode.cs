@@ -12,5 +12,7 @@ public enum DeviceEnrollmentErrorCode
     CodeProofInvalid,
     ProfileDataInvalid,
     ProfileDataTooLarge,
-    DeviceIdentityConflict
+    DeviceIdentityConflict,
+    LocalNetworkUnavailable,
+    LocalEnrollmentListenerUnavailable
 }
