@@ -24,6 +24,109 @@ public sealed class ProfileViewModel : ViewModelBase
     private const string DeviceAddPane = "add";
     private const string DeviceDisconnectPane = "disconnect";
 
+    private static readonly string[] ProfileLocalizedPropertyNames =
+    [
+        nameof(Title),
+        nameof(Subtitle),
+        nameof(AccountOverviewLabel),
+        nameof(BackToProfileLabel),
+        nameof(OpenProfileSectionLabel),
+        nameof(EditPersonalInfoLabel),
+        nameof(EditPersonalInfoDescription),
+        nameof(ChangeUsernameDescription),
+        nameof(ChangeMasterPasswordDescription),
+        nameof(DeleteAccountWarningTitle),
+        nameof(DeleteAccountFinalWarning),
+        nameof(OverviewTabLabel),
+        nameof(DevicesTabLabel),
+        nameof(AccountTabLabel),
+        nameof(SecurityTabLabel),
+        nameof(PersonalInfoTitle),
+        nameof(UsernameTitle),
+        nameof(SecurityTitle),
+        nameof(DevicesTitle),
+        nameof(DevicesDescription),
+        nameof(DevicesEmptyTitle),
+        nameof(DevicesEmptyDescription),
+        nameof(DangerZoneTitle),
+        nameof(UsernameLabel),
+        nameof(FirstNameLabel),
+        nameof(LastNameLabel),
+        nameof(EmailLabel),
+        nameof(RegistrationDateLabel),
+        nameof(LastLoginDateLabel),
+        nameof(SaveProfileLabel),
+        nameof(ChangeUsernameLabel),
+        nameof(ChangeMasterPasswordLabel),
+        nameof(DeleteAccountLabel),
+        nameof(CurrentPasswordLabel),
+        nameof(NewPasswordLabel),
+        nameof(ConfirmNewPasswordLabel),
+        nameof(DeleteAccountDescription),
+        nameof(EditUsernamePlaceholder),
+        nameof(CurrentPasswordPlaceholder),
+        nameof(NewPasswordPlaceholder),
+        nameof(ConfirmNewPasswordPlaceholder),
+        nameof(DeleteAccountPasswordPlaceholder),
+    ];
+
+    private static readonly string[] DeviceLocalizedPropertyNames =
+    [
+        nameof(RefreshDevicesLabel),
+        nameof(AddDeviceLabel),
+        nameof(AddDeviceIconLabel),
+        nameof(DeviceSearchLabel),
+        nameof(DeviceSearchPlaceholder),
+        nameof(DeviceSortLabel),
+        nameof(DeviceSearchEmptyTitle),
+        nameof(DeviceSearchEmptyDescription),
+        nameof(BackToDevicesLabel),
+        nameof(DeviceDetailsTitle),
+        nameof(AddDeviceDialogTitle),
+        nameof(AddDeviceDescription),
+        nameof(AddDeviceCodeLabel),
+        nameof(AddDeviceCodePlaceholder),
+        nameof(AddDeviceQrOptionsDescription),
+        nameof(ScanDeviceEnrollmentQrCodeLabel),
+        nameof(PickDeviceEnrollmentQrImageLabel),
+        nameof(PickDeviceEnrollmentQrImageTitle),
+        nameof(ScanDeviceEnrollmentQrCodeTitle),
+        nameof(ScanDeviceEnrollmentQrCodeDescription),
+        nameof(ConfirmAddDeviceLabel),
+        nameof(CurrentDeviceLabel),
+        nameof(BlockedLabel),
+        nameof(TrustedLabel),
+        nameof(NotTrustedLabel),
+        nameof(SyncEnabledLabel),
+        nameof(SyncDisabledLabel),
+        nameof(SyncToggleOnLabel),
+        nameof(SyncToggleOffLabel),
+        nameof(SaveDeviceNameLabel),
+        nameof(UnblockDeviceLabel),
+        nameof(DisconnectDeviceLabel),
+        nameof(DeviceNameLabel),
+        nameof(DeviceTypeLabel),
+        nameof(WindowsPcDeviceTypeLabel),
+        nameof(AndroidMobileDeviceTypeLabel),
+        nameof(UnknownDeviceTypeLabel),
+        nameof(DeviceLastSeenLabel),
+        nameof(DeviceLastSyncLabel),
+        nameof(DeviceLinkedAtLabel),
+        nameof(DeviceBlockedReasonLabel),
+        nameof(DeviceBlockedAtLabel),
+        nameof(DeviceInvalidAttemptsLabel),
+        nameof(DisconnectDialogTitle),
+        nameof(DisconnectDialogWarning),
+        nameof(DisconnectDialogPasswordPlaceholder),
+        nameof(ConfirmDisconnectLabel),
+        nameof(CancelLabel),
+        nameof(LocalSyncDialogTitle),
+        nameof(LocalSyncDialogWarning),
+        nameof(LocalSyncConfirmLabel),
+        nameof(RegistrationDateText),
+        nameof(LastLoginDateText),
+    ];
+
     private readonly IEndpoints _endpoints;
     private readonly Func<Task<bool>> _refreshAuthenticatedStateAsync;
     private readonly Func<Task> _handleAccountDeletedAsync;
@@ -658,105 +761,15 @@ public sealed class ProfileViewModel : ViewModelBase
 
     protected override void OnLanguageChanged()
     {
-        this.RaisePropertyChanged(nameof(Title));
-        this.RaisePropertyChanged(nameof(Subtitle));
-        this.RaisePropertyChanged(nameof(AccountOverviewLabel));
-        this.RaisePropertyChanged(nameof(BackToProfileLabel));
-        this.RaisePropertyChanged(nameof(OpenProfileSectionLabel));
-        this.RaisePropertyChanged(nameof(EditPersonalInfoLabel));
-        this.RaisePropertyChanged(nameof(EditPersonalInfoDescription));
-        this.RaisePropertyChanged(nameof(ChangeUsernameDescription));
-        this.RaisePropertyChanged(nameof(ChangeMasterPasswordDescription));
-        this.RaisePropertyChanged(nameof(DeleteAccountWarningTitle));
-        this.RaisePropertyChanged(nameof(DeleteAccountFinalWarning));
-        this.RaisePropertyChanged(nameof(OverviewTabLabel));
-        this.RaisePropertyChanged(nameof(DevicesTabLabel));
-        this.RaisePropertyChanged(nameof(AccountTabLabel));
-        this.RaisePropertyChanged(nameof(SecurityTabLabel));
-        this.RaisePropertyChanged(nameof(PersonalInfoTitle));
-        this.RaisePropertyChanged(nameof(UsernameTitle));
-        this.RaisePropertyChanged(nameof(SecurityTitle));
-        this.RaisePropertyChanged(nameof(DevicesTitle));
-        this.RaisePropertyChanged(nameof(DevicesDescription));
-        this.RaisePropertyChanged(nameof(DevicesEmptyTitle));
-        this.RaisePropertyChanged(nameof(DevicesEmptyDescription));
-        this.RaisePropertyChanged(nameof(DangerZoneTitle));
-        this.RaisePropertyChanged(nameof(UsernameLabel));
-        this.RaisePropertyChanged(nameof(FirstNameLabel));
-        this.RaisePropertyChanged(nameof(LastNameLabel));
-        this.RaisePropertyChanged(nameof(EmailLabel));
-        this.RaisePropertyChanged(nameof(RegistrationDateLabel));
-        this.RaisePropertyChanged(nameof(LastLoginDateLabel));
-        this.RaisePropertyChanged(nameof(SaveProfileLabel));
-        this.RaisePropertyChanged(nameof(ChangeUsernameLabel));
-        this.RaisePropertyChanged(nameof(ChangeMasterPasswordLabel));
-        this.RaisePropertyChanged(nameof(DeleteAccountLabel));
-        this.RaisePropertyChanged(nameof(CurrentPasswordLabel));
-        this.RaisePropertyChanged(nameof(NewPasswordLabel));
-        this.RaisePropertyChanged(nameof(ConfirmNewPasswordLabel));
-        this.RaisePropertyChanged(nameof(DeleteAccountDescription));
-        this.RaisePropertyChanged(nameof(EditUsernamePlaceholder));
-        this.RaisePropertyChanged(nameof(CurrentPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(NewPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(ConfirmNewPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(DeleteAccountPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(RefreshDevicesLabel));
-        this.RaisePropertyChanged(nameof(AddDeviceLabel));
-        this.RaisePropertyChanged(nameof(AddDeviceIconLabel));
-        this.RaisePropertyChanged(nameof(DeviceSearchLabel));
-        this.RaisePropertyChanged(nameof(DeviceSearchPlaceholder));
-        this.RaisePropertyChanged(nameof(DeviceSortLabel));
-        RaiseDeviceSortMenuLabelProperties();
-        this.RaisePropertyChanged(nameof(DeviceSearchEmptyTitle));
-        this.RaisePropertyChanged(nameof(DeviceSearchEmptyDescription));
-        this.RaisePropertyChanged(nameof(BackToDevicesLabel));
-        this.RaisePropertyChanged(nameof(DeviceDetailsTitle));
-        this.RaisePropertyChanged(nameof(AddDeviceDialogTitle));
-        this.RaisePropertyChanged(nameof(AddDeviceDescription));
-        this.RaisePropertyChanged(nameof(AddDeviceCodeLabel));
-        this.RaisePropertyChanged(nameof(AddDeviceCodePlaceholder));
-        this.RaisePropertyChanged(nameof(AddDeviceQrOptionsDescription));
-        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeLabel));
-        this.RaisePropertyChanged(nameof(PickDeviceEnrollmentQrImageLabel));
-        this.RaisePropertyChanged(nameof(PickDeviceEnrollmentQrImageTitle));
-        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeTitle));
-        this.RaisePropertyChanged(nameof(ScanDeviceEnrollmentQrCodeDescription));
-        this.RaisePropertyChanged(nameof(ConfirmAddDeviceLabel));
-        this.RaisePropertyChanged(nameof(CurrentDeviceLabel));
-        this.RaisePropertyChanged(nameof(BlockedLabel));
-        this.RaisePropertyChanged(nameof(TrustedLabel));
-        this.RaisePropertyChanged(nameof(NotTrustedLabel));
-        this.RaisePropertyChanged(nameof(SyncEnabledLabel));
-        this.RaisePropertyChanged(nameof(SyncDisabledLabel));
-        this.RaisePropertyChanged(nameof(SyncToggleOnLabel));
-        this.RaisePropertyChanged(nameof(SyncToggleOffLabel));
-        this.RaisePropertyChanged(nameof(SaveDeviceNameLabel));
-        this.RaisePropertyChanged(nameof(UnblockDeviceLabel));
-        this.RaisePropertyChanged(nameof(DisconnectDeviceLabel));
-        this.RaisePropertyChanged(nameof(DeviceNameLabel));
-        this.RaisePropertyChanged(nameof(DeviceTypeLabel));
-        this.RaisePropertyChanged(nameof(WindowsPcDeviceTypeLabel));
-        this.RaisePropertyChanged(nameof(AndroidMobileDeviceTypeLabel));
-        this.RaisePropertyChanged(nameof(UnknownDeviceTypeLabel));
-        this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
-        this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
-        this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
-        this.RaisePropertyChanged(nameof(DeviceBlockedReasonLabel));
-        this.RaisePropertyChanged(nameof(DeviceBlockedAtLabel));
-        this.RaisePropertyChanged(nameof(DeviceInvalidAttemptsLabel));
-        this.RaisePropertyChanged(nameof(DisconnectDialogTitle));
-        this.RaisePropertyChanged(nameof(DisconnectDialogWarning));
-        this.RaisePropertyChanged(nameof(DisconnectDialogPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(ConfirmDisconnectLabel));
-        this.RaisePropertyChanged(nameof(CancelLabel));
-        this.RaisePropertyChanged(nameof(LocalSyncDialogTitle));
-        this.RaisePropertyChanged(nameof(LocalSyncDialogWarning));
-        this.RaisePropertyChanged(nameof(LocalSyncConfirmLabel));
-        this.RaisePropertyChanged(nameof(RegistrationDateText));
-        this.RaisePropertyChanged(nameof(LastLoginDateText));
-
+        RaisePropertiesChanged(ProfileLocalizedPropertyNames);
+        RaisePropertiesChanged(DeviceLocalizedPropertyNames);
         ApplyLocalizationToDeviceItems();
+        RebuildLocalizedDeviceSortOptions();
+    }
 
+    
+    private void RebuildLocalizedDeviceSortOptions()
+    {
         var selectedDeviceSortKey = SelectedDeviceSortOption?.Key;
         RebuildDeviceSortOptions();
         SelectedDeviceSortOption = DeviceSortOptions.FirstOrDefault(item => item.Key == selectedDeviceSortKey)
@@ -765,7 +778,6 @@ public sealed class ProfileViewModel : ViewModelBase
         RaiseDeviceSortMenuLabelProperties();
     }
 
-    
     public void ShowProfileMainPage()
     {
         DiscardTransientNavigationState();
@@ -1155,34 +1167,38 @@ public sealed class ProfileViewModel : ViewModelBase
     private DeviceItemViewModel CreateDeviceItem(UserDeviceInfoResponse device) =>
         DeviceItemViewModel.Create(
             device,
-            CurrentDeviceLabel,
-            BlockedLabel,
-            TrustedLabel,
-            NotTrustedLabel,
-            SyncEnabledLabel,
-            SyncDisabledLabel,
-            SyncToggleOnLabel,
-            SyncToggleOffLabel,
-            WindowsPcDeviceTypeLabel,
-            AndroidMobileDeviceTypeLabel,
-            UnknownDeviceTypeLabel,
-            SaveDeviceNameLabel,
-            UnblockDeviceLabel,
-            DisconnectDeviceLabel,
-            DeviceNameLabel,
-            DeviceLastSeenLabel,
-            DeviceLastSyncLabel,
-            DeviceLinkedAtLabel,
-            DeviceBlockedReasonLabel,
-            DeviceBlockedAtLabel,
-            DeviceInvalidAttemptsLabel,
+            CreateDeviceItemLocalization(),
             BeginViewDeviceAsync,
             SaveDeviceNameAsync,
             ToggleDeviceSyncAsync,
             UnblockDeviceAsync,
             BeginDisconnectDevice);
 
-
+    private DeviceItemLocalization CreateDeviceItemLocalization() =>
+        new()
+        {
+            CurrentDeviceLabel = CurrentDeviceLabel,
+            BlockedLabel = BlockedLabel,
+            TrustedLabel = TrustedLabel,
+            NotTrustedLabel = NotTrustedLabel,
+            SyncEnabledLabel = SyncEnabledLabel,
+            SyncDisabledLabel = SyncDisabledLabel,
+            SyncToggleOnLabel = SyncToggleOnLabel,
+            SyncToggleOffLabel = SyncToggleOffLabel,
+            WindowsPcLabel = WindowsPcDeviceTypeLabel,
+            AndroidMobileLabel = AndroidMobileDeviceTypeLabel,
+            UnknownDeviceTypeLabel = UnknownDeviceTypeLabel,
+            SaveNameLabel = SaveDeviceNameLabel,
+            UnblockLabel = UnblockDeviceLabel,
+            DisconnectLabel = DisconnectDeviceLabel,
+            DeviceNameLabel = DeviceNameLabel,
+            DeviceLastSeenLabel = DeviceLastSeenLabel,
+            DeviceLastSyncLabel = DeviceLastSyncLabel,
+            DeviceLinkedAtLabel = DeviceLinkedAtLabel,
+            DeviceBlockedReasonLabel = DeviceBlockedReasonLabel,
+            DeviceBlockedAtLabel = DeviceBlockedAtLabel,
+            DeviceInvalidAttemptsLabel = DeviceInvalidAttemptsLabel
+        };
 
     private Task BeginViewDeviceAsync(DeviceItemViewModel device)
     {
@@ -1632,31 +1648,9 @@ public sealed class ProfileViewModel : ViewModelBase
 
     private void ApplyLocalizationToDeviceItems()
     {
+        var localization = CreateDeviceItemLocalization();
         foreach (var device in _allDevices)
-        {
-            device.ApplyLocalization(
-                CurrentDeviceLabel,
-                BlockedLabel,
-                TrustedLabel,
-                NotTrustedLabel,
-                SyncEnabledLabel,
-                SyncDisabledLabel,
-                SyncToggleOnLabel,
-                SyncToggleOffLabel,
-                WindowsPcDeviceTypeLabel,
-                AndroidMobileDeviceTypeLabel,
-                UnknownDeviceTypeLabel,
-                SaveDeviceNameLabel,
-                UnblockDeviceLabel,
-                DisconnectDeviceLabel,
-                DeviceNameLabel,
-                DeviceLastSeenLabel,
-                DeviceLastSyncLabel,
-                DeviceLinkedAtLabel,
-                DeviceBlockedReasonLabel,
-                DeviceBlockedAtLabel,
-                DeviceInvalidAttemptsLabel);
-        }
+            device.ApplyLocalization(localization);
     }
 
     private void RaiseDeviceCollectionStateChanged()

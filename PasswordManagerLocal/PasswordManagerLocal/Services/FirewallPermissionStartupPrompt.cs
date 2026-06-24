@@ -185,7 +185,26 @@ public static class FirewallPermissionStartupPrompt
         Action<bool> setResult,
         bool isMessageKey = true)
     {
-        var dialog = new Window
+        var dialog = CreateDialogWindow(language, titleKey);
+        var title = CreateDialogTitle(language, titleKey);
+        var message = CreateDialogMessage(language, messageKeyOrText, isMessageKey);
+        var buttons = CreateDialogButtons(
+            dialog,
+            language,
+            primaryButtonKey,
+            secondaryButtonKey,
+            setResult);
+
+        dialog.Content = new StackPanel
+        {
+            Margin = new Thickness(24),
+            Children = { title, message, buttons }
+        };
+        return dialog;
+    }
+
+    private static Window CreateDialogWindow(AppLanguage language, string titleKey) =>
+        new()
         {
             Title = T(language, titleKey),
             Width = 520,
@@ -194,7 +213,8 @@ public static class FirewallPermissionStartupPrompt
             CanResize = false
         };
 
-        var title = new TextBlock
+    private static TextBlock CreateDialogTitle(AppLanguage language, string titleKey) =>
+        new()
         {
             Text = T(language, titleKey),
             FontSize = 20,
@@ -202,26 +222,24 @@ public static class FirewallPermissionStartupPrompt
             TextWrapping = TextWrapping.Wrap
         };
 
-        var message = new TextBlock
+    private static TextBlock CreateDialogMessage(
+        AppLanguage language,
+        string messageKeyOrText,
+        bool isMessageKey) =>
+        new()
         {
             Text = isMessageKey ? T(language, messageKeyOrText) : messageKeyOrText,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 14, 0, 0)
         };
 
-        var primaryButton = new Button
-        {
-            Content = T(language, primaryButtonKey),
-            MinWidth = 120,
-            HorizontalContentAlignment = HorizontalAlignment.Center
-        };
-
-        primaryButton.Click += (_, _) =>
-        {
-            setResult(true);
-            dialog.Close();
-        };
-
+    private static StackPanel CreateDialogButtons(
+        Window dialog,
+        AppLanguage language,
+        string primaryButtonKey,
+        string? secondaryButtonKey,
+        Action<bool> setResult)
+    {
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -231,37 +249,31 @@ public static class FirewallPermissionStartupPrompt
         };
 
         if (secondaryButtonKey is not null)
+            buttons.Children.Add(CreateResultButton(dialog, language, secondaryButtonKey, false, setResult));
+
+        buttons.Children.Add(CreateResultButton(dialog, language, primaryButtonKey, true, setResult));
+        return buttons;
+    }
+
+    private static Button CreateResultButton(
+        Window dialog,
+        AppLanguage language,
+        string buttonKey,
+        bool result,
+        Action<bool> setResult)
+    {
+        var button = new Button
         {
-            var secondaryButton = new Button
-            {
-                Content = T(language, secondaryButtonKey),
-                MinWidth = 120,
-                HorizontalContentAlignment = HorizontalAlignment.Center
-            };
-
-            secondaryButton.Click += (_, _) =>
-            {
-                setResult(false);
-                dialog.Close();
-            };
-
-            buttons.Children.Add(secondaryButton);
-        }
-
-        buttons.Children.Add(primaryButton);
-
-        dialog.Content = new StackPanel
-        {
-            Margin = new Thickness(24),
-            Children =
-            {
-                title,
-                message,
-                buttons
-            }
+            Content = T(language, buttonKey),
+            MinWidth = 120,
+            HorizontalContentAlignment = HorizontalAlignment.Center
         };
-
-        return dialog;
+        button.Click += (_, _) =>
+        {
+            setResult(result);
+            dialog.Close();
+        };
+        return button;
     }
 
 

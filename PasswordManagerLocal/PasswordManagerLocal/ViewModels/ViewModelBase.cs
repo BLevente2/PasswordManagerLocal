@@ -101,6 +101,12 @@ public abstract class ViewModelBase : ReactiveObject
     protected static Task<bool> TryCopyTextToClipboardAsync(string? text) =>
         ClipboardService.TrySetTextAsync(text);
 
+    protected void RaisePropertiesChanged(IEnumerable<string> propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+            this.RaisePropertyChanged(propertyName);
+    }
+
     protected virtual void OnLanguageChanged()
     {
     }

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels"
+    x:Class="PasswordManagerLocal.Views.Controls.OperationMessageView"
+    x:DataType="vm:ViewModelBase"
+    IsVisible="{Binding HasStatusMessage}">
+  <Border Classes="card" IsVisible="{Binding HasStatusMessage}">
+    <Grid>
+      <TextBlock
+          Text="{Binding StatusMessage}"
+          Classes="subtleText"
+          IsVisible="{Binding HasNonErrorStatusMessage}"
+          TextWrapping="Wrap" />
+      <TextBlock
+          Text="{Binding StatusMessage}"
+          Classes="errorText"
+          IsVisible="{Binding IsStatusMessageError}"
+          TextWrapping="Wrap" />
+    </Grid>
+  </Border>
+</UserControl>

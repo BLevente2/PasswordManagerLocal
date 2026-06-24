@@ -1666,13 +1666,4 @@ public sealed class MainViewModel : ViewModelBase
         return profile.Email;
     }
 
-    private enum DatabaseRecoveryStage
-    {
-        None,
-        CompatibilityError,
-        FinalConfirmation,
-        Declined,
-        ResetFailed
-    }
-
 }

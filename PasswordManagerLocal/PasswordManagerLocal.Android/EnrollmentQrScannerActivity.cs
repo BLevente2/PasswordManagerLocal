@@ -166,48 +166,66 @@ public sealed class EnrollmentQrScannerActivity : Activity, TextureView.ISurface
 
     private void BuildLayout()
     {
+        var root = CreateRootLayout();
+        root.AddView(
+            CreateHeaderText(ResolveIntentText(TitleExtra, "Scan enrollment QR code"), 20, 28, 8),
+            CreateWrapContentLayoutParams());
+        root.AddView(
+            CreateHeaderText(
+                ResolveIntentText(
+                    DescriptionExtra,
+                    "Point the camera at the QR code shown on the new device. Only PasswordManagerLocal enrollment QR codes are accepted."),
+                14,
+                0,
+                18),
+            CreateWrapContentLayoutParams());
+        root.AddView(CreatePreviewContainer(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, 0, 1f));
+
+        _statusText = CreateStatusText();
+        root.AddView(_statusText, CreateWrapContentLayoutParams());
+        root.AddView(CreateCancelButton(), CreateWrapContentLayoutParams());
+        SetContentView(root);
+    }
+
+    private LinearLayout CreateRootLayout()
+    {
         var root = new LinearLayout(this)
         {
             Orientation = global::Android.Widget.Orientation.Vertical
         };
         root.SetBackgroundColor(Color.Rgb(18, 18, 18));
+        return root;
+    }
 
-        var title = Intent?.GetStringExtra(TitleExtra);
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            title = "Scan enrollment QR code";
-        }
+    private string ResolveIntentText(string extraName, string fallback)
+    {
+        var value = Intent?.GetStringExtra(extraName);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
 
-        var description = Intent?.GetStringExtra(DescriptionExtra);
-        if (string.IsNullOrWhiteSpace(description))
+    private TextView CreateHeaderText(string text, float textSize, int topPadding, int bottomPadding)
+    {
+        var textView = new TextView(this)
         {
-            description = "Point the camera at the QR code shown on the new device. Only PasswordManagerLocal enrollment QR codes are accepted.";
-        }
-
-        var titleText = new TextView(this)
-        {
-            Text = title,
-            TextSize = 20,
+            Text = text,
+            TextSize = textSize,
             Gravity = GravityFlags.Center
         };
-        titleText.SetTextColor(Color.White);
-        titleText.SetPadding(28, 28, 28, 8);
-        root.AddView(titleText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
+        textView.SetTextColor(textSize >= 20 ? Color.White : Color.Rgb(210, 210, 210));
+        textView.SetPadding(28, topPadding, 28, bottomPadding);
+        return textView;
+    }
 
-        var descriptionText = new TextView(this)
-        {
-            Text = description,
-            TextSize = 14,
-            Gravity = GravityFlags.Center
-        };
-        descriptionText.SetTextColor(Color.Rgb(210, 210, 210));
-        descriptionText.SetPadding(28, 0, 28, 18);
-        root.AddView(descriptionText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
-
+    private FrameLayout CreatePreviewContainer()
+    {
         var previewContainer = new FrameLayout(this);
-        _previewView = new TextureView(this);
-        _previewView.SurfaceTextureListener = this;
-        previewContainer.AddView(_previewView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        _previewView = new TextureView(this)
+        {
+            SurfaceTextureListener = this
+        };
+        previewContainer.AddView(
+            _previewView,
+            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
 
         var guide = new TextView(this)
         {
@@ -216,20 +234,27 @@ public sealed class EnrollmentQrScannerActivity : Activity, TextureView.ISurface
             Gravity = GravityFlags.Center
         };
         guide.SetTextColor(Color.Argb(180, 255, 255, 255));
-        previewContainer.AddView(guide, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        previewContainer.AddView(
+            guide,
+            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
+        return previewContainer;
+    }
 
-        root.AddView(previewContainer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, 0, 1f));
-
-        _statusText = new TextView(this)
+    private TextView CreateStatusText()
+    {
+        var statusText = new TextView(this)
         {
             Text = "Looking for an enrollment QR code...",
             TextSize = 14,
             Gravity = GravityFlags.Center
         };
-        _statusText.SetTextColor(Color.White);
-        _statusText.SetPadding(28, 18, 28, 10);
-        root.AddView(_statusText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
+        statusText.SetTextColor(Color.White);
+        statusText.SetPadding(28, 18, 28, 10);
+        return statusText;
+    }
 
+    private Button CreateCancelButton()
+    {
         var cancelButton = new Button(this)
         {
             Text = "Cancel"
@@ -239,10 +264,11 @@ public sealed class EnrollmentQrScannerActivity : Activity, TextureView.ISurface
             SetResult(Result.Canceled);
             Finish();
         };
-        root.AddView(cancelButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
-
-        SetContentView(root);
+        return cancelButton;
     }
+
+    private static LinearLayout.LayoutParams CreateWrapContentLayoutParams() =>
+        new(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent);
 
 
     private bool HasCameraPermission() =>
@@ -272,70 +298,79 @@ public sealed class EnrollmentQrScannerActivity : Activity, TextureView.ISurface
     private void StartCamera(SurfaceTexture surfaceTexture)
     {
         if (!HasCameraPermission() || _camera is not null || _hasResult)
-        {
             return;
-        }
 
         try
         {
-            _cameraId = FindBackCameraId();
-            _camera = _cameraId >= 0 ? Camera.Open(_cameraId) : Camera.Open();
-
+            OpenCamera();
             if (_camera is null)
             {
                 SetStatus("The camera could not be opened.");
                 return;
             }
 
-            var parameters = _camera.GetParameters();
-            parameters.PreviewFormat = ImageFormatType.Nv21;
-
-            var previewSize = ChoosePreviewSize(parameters.SupportedPreviewSizes);
-            if (previewSize is not null)
-            {
-                _previewWidth = previewSize.Width;
-                _previewHeight = previewSize.Height;
-                parameters.SetPreviewSize(_previewWidth, _previewHeight);
-            }
-            else
-            {
-                _previewWidth = parameters.PreviewSize?.Width ?? 0;
-                _previewHeight = parameters.PreviewSize?.Height ?? 0;
-            }
-
-            var supportedFocusModes = parameters.SupportedFocusModes;
-            if (supportedFocusModes?.Contains(Camera.Parameters.FocusModeContinuousVideo) == true)
-            {
-                parameters.FocusMode = Camera.Parameters.FocusModeContinuousVideo;
-            }
-            else if (supportedFocusModes?.Contains(Camera.Parameters.FocusModeAuto) == true)
-            {
-                parameters.FocusMode = Camera.Parameters.FocusModeAuto;
-            }
-
+            var parameters = ConfigureCameraParameters(_camera.GetParameters());
             _camera.SetParameters(parameters);
-            _camera.SetDisplayOrientation(CalculateDisplayOrientation(_cameraId));
-            _camera.SetPreviewTexture(surfaceTexture);
-            _camera.SetPreviewCallback(this);
-            _camera.StartPreview();
-
-            if (parameters.FocusMode == Camera.Parameters.FocusModeAuto)
-            {
-                try
-                {
-                    _camera.AutoFocus(null);
-                }
-                catch
-                {
-                }
-            }
-
+            StartCameraPreview(surfaceTexture, parameters);
             SetStatus("Looking for an enrollment QR code...");
         }
         catch
         {
             StopCamera();
             SetStatus("The camera could not be started.");
+        }
+    }
+
+    private void OpenCamera()
+    {
+        _cameraId = FindBackCameraId();
+        _camera = _cameraId >= 0 ? Camera.Open(_cameraId) : Camera.Open();
+    }
+
+    private Camera.Parameters ConfigureCameraParameters(Camera.Parameters parameters)
+    {
+        parameters.PreviewFormat = ImageFormatType.Nv21;
+        var previewSize = ChoosePreviewSize(parameters.SupportedPreviewSizes);
+        if (previewSize is not null)
+        {
+            _previewWidth = previewSize.Width;
+            _previewHeight = previewSize.Height;
+            parameters.SetPreviewSize(_previewWidth, _previewHeight);
+        }
+        else
+        {
+            _previewWidth = parameters.PreviewSize?.Width ?? 0;
+            _previewHeight = parameters.PreviewSize?.Height ?? 0;
+        }
+
+        SetPreferredFocusMode(parameters);
+        return parameters;
+    }
+
+    private static void SetPreferredFocusMode(Camera.Parameters parameters)
+    {
+        var supportedFocusModes = parameters.SupportedFocusModes;
+        if (supportedFocusModes?.Contains(Camera.Parameters.FocusModeContinuousVideo) == true)
+            parameters.FocusMode = Camera.Parameters.FocusModeContinuousVideo;
+        else if (supportedFocusModes?.Contains(Camera.Parameters.FocusModeAuto) == true)
+            parameters.FocusMode = Camera.Parameters.FocusModeAuto;
+    }
+
+    private void StartCameraPreview(SurfaceTexture surfaceTexture, Camera.Parameters parameters)
+    {
+        _camera!.SetDisplayOrientation(CalculateDisplayOrientation(_cameraId));
+        _camera.SetPreviewTexture(surfaceTexture);
+        _camera.SetPreviewCallback(this);
+        _camera.StartPreview();
+        if (parameters.FocusMode != Camera.Parameters.FocusModeAuto)
+            return;
+
+        try
+        {
+            _camera.AutoFocus(null);
+        }
+        catch
+        {
         }
     }
 

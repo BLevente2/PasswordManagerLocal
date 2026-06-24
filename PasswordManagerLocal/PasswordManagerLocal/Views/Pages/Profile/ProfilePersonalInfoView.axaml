@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
+    x:Class="PasswordManagerLocal.Views.Pages.Profile.ProfilePersonalInfoView"
+    x:DataType="vm:ProfileViewModel"
+    IsVisible="{Binding IsProfilePersonalInfoPaneVisible}">
+  <StackPanel Spacing="12" IsVisible="{Binding IsProfilePersonalInfoPaneVisible}">
+    <Border Classes="card">
+      <StackPanel Spacing="14">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button
+              Classes="ghost iconButton"
+              Command="{Binding BackToProfileCommand}"
+              Content="←"
+              ToolTip.Tip="{Binding BackToProfileLabel}" />
+          <TextBlock
+              Text="{Binding EditPersonalInfoLabel}"
+              Classes="sectionTitle"
+              VerticalAlignment="Center"
+              TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Spacing="6">
+          <TextBlock Text="{Binding FirstNameLabel}" Classes="subtleText" />
+          <TextBox Text="{Binding EditFirstName}">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+        </StackPanel>
+        <StackPanel Spacing="6">
+          <TextBlock Text="{Binding LastNameLabel}" Classes="subtleText" />
+          <TextBox Text="{Binding EditLastName}">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+        </StackPanel>
+        <StackPanel Spacing="6">
+          <TextBlock Text="{Binding EmailLabel}" Classes="subtleText" />
+          <TextBox Text="{Binding EditEmail}">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding SaveProfileCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+        </StackPanel>
+        <WrapPanel Orientation="Horizontal">
+          <Button
+              Classes="primary"
+              Command="{Binding SaveProfileCommand}"
+              Content="{Binding SaveProfileLabel}"
+              Margin="0,0,8,8" />
+        </WrapPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>

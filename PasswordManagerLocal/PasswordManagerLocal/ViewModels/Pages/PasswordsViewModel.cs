@@ -20,6 +20,70 @@ public sealed class PasswordsViewModel : ViewModelBase
     private const string ColorPane = "color";
     private const string CustomColorKey = "custom";
 
+    private static readonly string[] LocalizedPropertyNames =
+    [
+        nameof(Title),
+        nameof(Subtitle),
+        nameof(AddPasswordButtonLabel),
+        nameof(AddPasswordIconLabel),
+        nameof(RefreshButtonLabel),
+        nameof(EmptyStateTitle),
+        nameof(EmptyStateDescription),
+        nameof(EmptyStateAddLabel),
+        nameof(SearchEmptyTitle),
+        nameof(SearchEmptyDescription),
+        nameof(DetailsTitle),
+        nameof(DetailsEmptyTitle),
+        nameof(DetailsEmptyDescription),
+        nameof(NameLabel),
+        nameof(PasswordLabel),
+        nameof(DescriptionLabel),
+        nameof(ColorLabel),
+        nameof(CurrentColorCodeLabel),
+        nameof(MoreColorsLabel),
+        nameof(ColorPickerTitle),
+        nameof(ColorPickerDescription),
+        nameof(ColorPickerCodeLabel),
+        nameof(ColorPickerCodePlaceholder),
+        nameof(ApplyColorCodeLabel),
+        nameof(BackToPasswordEditorLabel),
+        nameof(AlphaLabel),
+        nameof(RedLabel),
+        nameof(GreenLabel),
+        nameof(BlueLabel),
+        nameof(CreatedAtLabel),
+        nameof(UpdatedAtLabel),
+        nameof(RevealPasswordLabel),
+        nameof(HidePasswordLabel),
+        nameof(CopyPasswordLabel),
+        nameof(RevealEditorPasswordLabel),
+        nameof(EditPasswordLabel),
+        nameof(DeletePasswordLabel),
+        nameof(EditorTitle),
+        nameof(SavePasswordButtonLabel),
+        nameof(CancelButtonLabel),
+        nameof(BackToListLabel),
+        nameof(EditorNamePlaceholder),
+        nameof(EditorDescriptionPlaceholder),
+        nameof(EditorPasswordPlaceholder),
+        nameof(EditorPasswordHint),
+        nameof(EditorPasswordVisibilityToggleText),
+        nameof(SearchLabel),
+        nameof(SearchPlaceholder),
+        nameof(SortLabel),
+        nameof(ClearSelectionLabel),
+        nameof(PasswordRevealHint),
+        nameof(DeleteConfirmationTitle),
+        nameof(DeleteConfirmationMessage),
+        nameof(ConfirmDeletePasswordLabel),
+        nameof(ListTabLabel),
+        nameof(EditorTabLabel),
+        nameof(DetailsTabLabel),
+        nameof(EditorClosedTitle),
+        nameof(EditorClosedDescription),
+        nameof(IsEditorPasswordVisibilityToggleVisible),
+    ];
+
     private readonly IEndpoints _endpoints;
     private readonly List<PasswordItemViewModel> _allPasswords = [];
 
@@ -262,7 +326,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
     }
 
-    public IBrush EditorColorBrush => ParseBrush(EditorColor);
+    public IBrush EditorColorBrush => PasswordColorUtility.ParseBrush(EditorColor);
 
     public string EditorColorCode => EditorColor;
 
@@ -281,7 +345,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         get => _customAlpha;
         set
         {
-            var normalized = NormalizeColorComponent(value);
+            var normalized = PasswordColorUtility.NormalizeComponent(value);
             if (Math.Abs(_customAlpha - normalized) < 0.01)
             {
                 return;
@@ -298,7 +362,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         get => _customRed;
         set
         {
-            var normalized = NormalizeColorComponent(value);
+            var normalized = PasswordColorUtility.NormalizeComponent(value);
             if (Math.Abs(_customRed - normalized) < 0.01)
             {
                 return;
@@ -315,7 +379,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         get => _customGreen;
         set
         {
-            var normalized = NormalizeColorComponent(value);
+            var normalized = PasswordColorUtility.NormalizeComponent(value);
             if (Math.Abs(_customGreen - normalized) < 0.01)
             {
                 return;
@@ -332,7 +396,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         get => _customBlue;
         set
         {
-            var normalized = NormalizeColorComponent(value);
+            var normalized = PasswordColorUtility.NormalizeComponent(value);
             if (Math.Abs(_customBlue - normalized) < 0.01)
             {
                 return;
@@ -344,13 +408,13 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
     }
 
-    public string CustomAlphaText => ToColorComponentByte(CustomAlpha).ToString();
+    public string CustomAlphaText => PasswordColorUtility.ToComponentByte(CustomAlpha).ToString();
 
-    public string CustomRedText => ToColorComponentByte(CustomRed).ToString();
+    public string CustomRedText => PasswordColorUtility.ToComponentByte(CustomRed).ToString();
 
-    public string CustomGreenText => ToColorComponentByte(CustomGreen).ToString();
+    public string CustomGreenText => PasswordColorUtility.ToComponentByte(CustomGreen).ToString();
 
-    public string CustomBlueText => ToColorComponentByte(CustomBlue).ToString();
+    public string CustomBlueText => PasswordColorUtility.ToComponentByte(CustomBlue).ToString();
 
     public string EditorPassword
     {
@@ -598,78 +662,16 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     protected override void OnLanguageChanged()
     {
-        this.RaisePropertyChanged(nameof(Title));
-        this.RaisePropertyChanged(nameof(Subtitle));
-        this.RaisePropertyChanged(nameof(AddPasswordButtonLabel));
-        this.RaisePropertyChanged(nameof(AddPasswordIconLabel));
-        this.RaisePropertyChanged(nameof(RefreshButtonLabel));
-        this.RaisePropertyChanged(nameof(EmptyStateTitle));
-        this.RaisePropertyChanged(nameof(EmptyStateDescription));
-        this.RaisePropertyChanged(nameof(EmptyStateAddLabel));
-        this.RaisePropertyChanged(nameof(SearchEmptyTitle));
-        this.RaisePropertyChanged(nameof(SearchEmptyDescription));
-        this.RaisePropertyChanged(nameof(DetailsTitle));
-        this.RaisePropertyChanged(nameof(DetailsEmptyTitle));
-        this.RaisePropertyChanged(nameof(DetailsEmptyDescription));
-        this.RaisePropertyChanged(nameof(NameLabel));
-        this.RaisePropertyChanged(nameof(PasswordLabel));
-        this.RaisePropertyChanged(nameof(DescriptionLabel));
-        this.RaisePropertyChanged(nameof(ColorLabel));
-        this.RaisePropertyChanged(nameof(CurrentColorCodeLabel));
-        this.RaisePropertyChanged(nameof(MoreColorsLabel));
-        this.RaisePropertyChanged(nameof(ColorPickerTitle));
-        this.RaisePropertyChanged(nameof(ColorPickerDescription));
-        this.RaisePropertyChanged(nameof(ColorPickerCodeLabel));
-        this.RaisePropertyChanged(nameof(ColorPickerCodePlaceholder));
-        this.RaisePropertyChanged(nameof(ApplyColorCodeLabel));
-        this.RaisePropertyChanged(nameof(BackToPasswordEditorLabel));
-        this.RaisePropertyChanged(nameof(AlphaLabel));
-        this.RaisePropertyChanged(nameof(RedLabel));
-        this.RaisePropertyChanged(nameof(GreenLabel));
-        this.RaisePropertyChanged(nameof(BlueLabel));
-        this.RaisePropertyChanged(nameof(CreatedAtLabel));
-        this.RaisePropertyChanged(nameof(UpdatedAtLabel));
-        this.RaisePropertyChanged(nameof(RevealPasswordLabel));
-        this.RaisePropertyChanged(nameof(HidePasswordLabel));
-        this.RaisePropertyChanged(nameof(CopyPasswordLabel));
-        this.RaisePropertyChanged(nameof(RevealEditorPasswordLabel));
-        this.RaisePropertyChanged(nameof(EditPasswordLabel));
-        this.RaisePropertyChanged(nameof(DeletePasswordLabel));
-        this.RaisePropertyChanged(nameof(EditorTitle));
-        this.RaisePropertyChanged(nameof(SavePasswordButtonLabel));
-        this.RaisePropertyChanged(nameof(CancelButtonLabel));
-        this.RaisePropertyChanged(nameof(BackToListLabel));
-        this.RaisePropertyChanged(nameof(EditorNamePlaceholder));
-        this.RaisePropertyChanged(nameof(EditorDescriptionPlaceholder));
-        this.RaisePropertyChanged(nameof(EditorPasswordPlaceholder));
-        this.RaisePropertyChanged(nameof(EditorPasswordHint));
-        this.RaisePropertyChanged(nameof(EditorPasswordVisibilityToggleText));
-        this.RaisePropertyChanged(nameof(SearchLabel));
-        this.RaisePropertyChanged(nameof(SearchPlaceholder));
-        this.RaisePropertyChanged(nameof(SortLabel));
-        RaiseSortMenuLabelProperties();
-        this.RaisePropertyChanged(nameof(ClearSelectionLabel));
-        this.RaisePropertyChanged(nameof(PasswordRevealHint));
-        this.RaisePropertyChanged(nameof(DeleteConfirmationTitle));
-        this.RaisePropertyChanged(nameof(DeleteConfirmationMessage));
-        this.RaisePropertyChanged(nameof(ConfirmDeletePasswordLabel));
-        this.RaisePropertyChanged(nameof(ListTabLabel));
-        this.RaisePropertyChanged(nameof(EditorTabLabel));
-        this.RaisePropertyChanged(nameof(DetailsTabLabel));
-        this.RaisePropertyChanged(nameof(EditorClosedTitle));
-        this.RaisePropertyChanged(nameof(EditorClosedDescription));
-        this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
+        RaisePropertiesChanged(LocalizedPropertyNames);
 
         foreach (var password in _allPasswords)
             password.ApplyActionLabels(EditPasswordLabel, DeletePasswordLabel);
 
         var currentEditorColor = EditorColor;
         var selectedSortKey = SelectedSortOption?.Key;
-
         RebuildPresetColors();
         RebuildSortOptions();
         ApplyEditorColor(currentEditorColor);
-
         SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == selectedSortKey)
             ?? SortOptions.FirstOrDefault();
         UpdateSortOptionSelectionMarks();
@@ -1022,91 +1024,21 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private async Task SavePasswordAsync()
     {
-        if (_isSavingPassword)
-        {
+        if (_isSavingPassword || !ValidatePasswordEditor())
             return;
-        }
-
-        ClearStatusMessage();
-
-        if (string.IsNullOrWhiteSpace(EditorName))
-        {
-            ShowErrorMessage(GetTranslation("Validation_PasswordName_Required"));
-            return;
-        }
 
         try
         {
             _isSavingPassword = true;
-            string successMessage;
-
-            if (IsCreateMode)
-            {
-                if (string.IsNullOrWhiteSpace(EditorPassword))
-                {
-                    ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Required"));
-                    return;
-                }
-
-                var rawPassword = SecretTransform.Utf8Bytes(EditorPassword);
-                try
-                {
-                    await _endpoints.AddNewPasswordAsync(_token, new NewPasswordRequest
-                    {
-                        Name = EditorName.Trim(),
-                        Description = EditorDescription.Trim(),
-                        Color = EditorColor,
-                        Password = rawPassword
-                    });
-                }
-                finally
-                {
-                    CryptographicOperations.ZeroMemory(rawPassword);
-                }
-
-                successMessage = GetTranslation("Passwords_Save_CreateSuccess");
-            }
-            else if (SelectedPassword is not null)
-            {
-                byte[]? rawPassword = null;
-                try
-                {
-                    if (!string.IsNullOrWhiteSpace(EditorPassword))
-                    {
-                        rawPassword = SecretTransform.Utf8Bytes(EditorPassword);
-                    }
-
-                    await _endpoints.UpdatePasswordAsync(_token, new UpdatePasswordRequest
-                    {
-                        Id = SelectedPassword.Id,
-                        Name = EditorName.Trim(),
-                        Description = EditorDescription.Trim(),
-                        Color = EditorColor,
-                        Password = rawPassword
-                    });
-                }
-                finally
-                {
-                    if (rawPassword is not null)
-                    {
-                        CryptographicOperations.ZeroMemory(rawPassword);
-                    }
-                }
-
-                successMessage = GetTranslation("Passwords_Save_UpdateSuccess");
-            }
-            else
-            {
+            var successMessage = await PersistPasswordEditorAsync();
+            if (successMessage is null)
                 return;
-            }
 
             HidePassword();
             ResetEditorFields();
             CurrentPane = ListPane;
-            if (!await RefreshAsync(false))
-                return;
-
-            ShowSuccessMessage(successMessage);
+            if (await RefreshAsync(false))
+                ShowSuccessMessage(successMessage);
         }
         catch (Exception ex)
         {
@@ -1115,6 +1047,82 @@ public sealed class PasswordsViewModel : ViewModelBase
         finally
         {
             _isSavingPassword = false;
+        }
+    }
+
+    private bool ValidatePasswordEditor()
+    {
+        ClearStatusMessage();
+        if (string.IsNullOrWhiteSpace(EditorName))
+        {
+            ShowErrorMessage(GetTranslation("Validation_PasswordName_Required"));
+            return false;
+        }
+
+        if (IsCreateMode && string.IsNullOrWhiteSpace(EditorPassword))
+        {
+            ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Required"));
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<string?> PersistPasswordEditorAsync()
+    {
+        if (IsCreateMode)
+        {
+            await CreatePasswordFromEditorAsync();
+            return GetTranslation("Passwords_Save_CreateSuccess");
+        }
+
+        if (SelectedPassword is null)
+            return null;
+
+        await UpdatePasswordFromEditorAsync(SelectedPassword.Id);
+        return GetTranslation("Passwords_Save_UpdateSuccess");
+    }
+
+    private async Task CreatePasswordFromEditorAsync()
+    {
+        var rawPassword = SecretTransform.Utf8Bytes(EditorPassword);
+        try
+        {
+            await _endpoints.AddNewPasswordAsync(_token, new NewPasswordRequest
+            {
+                Name = EditorName.Trim(),
+                Description = EditorDescription.Trim(),
+                Color = EditorColor,
+                Password = rawPassword
+            });
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(rawPassword);
+        }
+    }
+
+    private async Task UpdatePasswordFromEditorAsync(Guid passwordId)
+    {
+        byte[]? rawPassword = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(EditorPassword))
+                rawPassword = SecretTransform.Utf8Bytes(EditorPassword);
+
+            await _endpoints.UpdatePasswordAsync(_token, new UpdatePasswordRequest
+            {
+                Id = passwordId,
+                Name = EditorName.Trim(),
+                Description = EditorDescription.Trim(),
+                Color = EditorColor,
+                Password = rawPassword
+            });
+        }
+        finally
+        {
+            if (rawPassword is not null)
+                CryptographicOperations.ZeroMemory(rawPassword);
         }
     }
 
@@ -1270,7 +1278,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         ClearStatusMessage();
 
-        if (!TryNormalizeHexColor(CustomColorCode, out var normalizedColor))
+        if (!PasswordColorUtility.TryNormalizeHexColor(CustomColorCode, out var normalizedColor))
         {
             ShowErrorMessage(GetTranslation("Passwords_ColorPicker_InvalidCode"));
             return;
@@ -1287,13 +1295,13 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
-        var normalizedColor = $"#{ToColorComponentByte(CustomAlpha):X2}{ToColorComponentByte(CustomRed):X2}{ToColorComponentByte(CustomGreen):X2}{ToColorComponentByte(CustomBlue):X2}";
+        var normalizedColor = $"#{PasswordColorUtility.ToComponentByte(CustomAlpha):X2}{PasswordColorUtility.ToComponentByte(CustomRed):X2}{PasswordColorUtility.ToComponentByte(CustomGreen):X2}{PasswordColorUtility.ToComponentByte(CustomBlue):X2}";
         ApplyEditorColor(normalizedColor, updateColorFields: false);
     }
 
     private void ApplyEditorColor(string color, bool updateSelectedPreset = true, bool updateColorFields = true)
     {
-        if (!TryNormalizeHexColor(color, out var normalizedColor))
+        if (!PasswordColorUtility.TryNormalizeHexColor(color, out var normalizedColor))
         {
             normalizedColor = "#FFFFD700";
         }
@@ -1315,7 +1323,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void SelectMatchingPresetColor(string normalizedColor)
     {
         var match = PresetColors.FirstOrDefault(item => item.Key != CustomColorKey
-            && string.Equals(NormalizeKnownColor(item.HexValue), normalizedColor, StringComparison.OrdinalIgnoreCase));
+            && string.Equals(PasswordColorUtility.NormalizeKnownColor(item.HexValue), normalizedColor, StringComparison.OrdinalIgnoreCase));
 
         if (ReferenceEquals(_selectedEditorColorOption, match))
         {
@@ -1328,7 +1336,7 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private void SyncColorFieldsFromEditorColor()
     {
-        if (!TryNormalizeHexColor(EditorColor, out var normalizedColor))
+        if (!PasswordColorUtility.TryNormalizeHexColor(EditorColor, out var normalizedColor))
         {
             normalizedColor = "#FFFFD700";
         }
@@ -1365,64 +1373,5 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(textPropertyName);
     }
 
-    private static string NormalizeKnownColor(string color) => TryNormalizeHexColor(color, out var normalizedColor)
-        ? normalizedColor
-        : "#FFFFD700";
 
-    private static bool TryNormalizeHexColor(string? input, out string normalizedColor)
-    {
-        normalizedColor = "#FFFFD700";
-
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return false;
-        }
-
-        var hex = input.Trim();
-        if (hex.StartsWith('#'))
-        {
-            hex = hex[1..];
-        }
-
-        if (hex.Length == 3)
-        {
-            hex = $"FF{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}";
-        }
-        else if (hex.Length == 4)
-        {
-            hex = $"{hex[0]}{hex[0]}{hex[1]}{hex[1]}{hex[2]}{hex[2]}{hex[3]}{hex[3]}";
-        }
-        else if (hex.Length == 6)
-        {
-            hex = $"FF{hex}";
-        }
-        else if (hex.Length != 8)
-        {
-            return false;
-        }
-
-        if (!hex.All(Uri.IsHexDigit))
-        {
-            return false;
-        }
-
-        normalizedColor = $"#{hex.ToUpperInvariant()}";
-        return true;
-    }
-
-    private static double NormalizeColorComponent(double value) => Math.Clamp(Math.Round(value), 0, 255);
-
-    private static byte ToColorComponentByte(double value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
-
-    private static IBrush ParseBrush(string color)
-    {
-        try
-        {
-            return Brush.Parse(string.IsNullOrWhiteSpace(color) ? "#FFFFD700" : color);
-        }
-        catch
-        {
-            return Brush.Parse("#FFFFD700");
-        }
-    }
 }

@@ -38,27 +38,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     private DeviceItemViewModel(
         UserDeviceInfoResponse device,
-        string currentDeviceLabel,
-        string blockedLabel,
-        string trustedLabel,
-        string notTrustedLabel,
-        string syncEnabledLabel,
-        string syncDisabledLabel,
-        string syncToggleOnLabel,
-        string syncToggleOffLabel,
-        string windowsPcLabel,
-        string androidMobileLabel,
-        string unknownDeviceTypeLabel,
-        string saveNameLabel,
-        string unblockLabel,
-        string disconnectLabel,
-        string deviceNameLabel,
-        string deviceLastSeenLabel,
-        string deviceLastSyncLabel,
-        string deviceLinkedAtLabel,
-        string deviceBlockedReasonLabel,
-        string deviceBlockedAtLabel,
-        string deviceInvalidAttemptsLabel,
+        DeviceItemLocalization localization,
         Func<DeviceItemViewModel, Task> viewAsync,
         Func<DeviceItemViewModel, Task> saveNameAsync,
         Func<DeviceItemViewModel, Task> toggleSyncAsync,
@@ -79,33 +59,12 @@ public sealed class DeviceItemViewModel : ReactiveObject
         IsSyncOn = device.IsSyncOn;
         LinkedAt = device.LinkedAt;
         IsCurrentDevice = device.IsCurrentDevice;
-        _currentDeviceLabel = currentDeviceLabel;
-        _blockedLabel = blockedLabel;
-        _trustedLabel = trustedLabel;
-        _notTrustedLabel = notTrustedLabel;
-        _syncEnabledLabel = syncEnabledLabel;
-        _syncDisabledLabel = syncDisabledLabel;
-        _syncToggleOnLabel = syncToggleOnLabel;
-        _syncToggleOffLabel = syncToggleOffLabel;
-        _windowsPcLabel = windowsPcLabel;
-        _androidMobileLabel = androidMobileLabel;
-        _unknownDeviceTypeLabel = unknownDeviceTypeLabel;
-        _saveNameLabel = saveNameLabel;
-        _unblockLabel = unblockLabel;
-        _disconnectLabel = disconnectLabel;
-        _deviceNameLabel = deviceNameLabel;
-        _deviceLastSeenLabel = deviceLastSeenLabel;
-        _deviceLastSyncLabel = deviceLastSyncLabel;
-        _deviceLinkedAtLabel = deviceLinkedAtLabel;
-        _deviceBlockedReasonLabel = deviceBlockedReasonLabel;
-        _deviceBlockedAtLabel = deviceBlockedAtLabel;
-        _deviceInvalidAttemptsLabel = deviceInvalidAttemptsLabel;
+        AssignLocalization(localization);
         _viewAsync = viewAsync;
         _saveNameAsync = saveNameAsync;
         _toggleSyncAsync = toggleSyncAsync;
         _unblockAsync = unblockAsync;
         _beginDisconnect = beginDisconnect;
-
         ViewCommand = ReactiveCommand.CreateFromTask(() => _viewAsync(this));
         SaveNameCommand = ReactiveCommand.CreateFromTask(() => _saveNameAsync(this));
         ToggleSyncCommand = ReactiveCommand.CreateFromTask(() => _toggleSyncAsync(this));
@@ -238,51 +197,39 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(Name));
     }
 
-    public void ApplyLocalization(
-        string currentDeviceLabel,
-        string blockedLabel,
-        string trustedLabel,
-        string notTrustedLabel,
-        string syncEnabledLabel,
-        string syncDisabledLabel,
-        string syncToggleOnLabel,
-        string syncToggleOffLabel,
-        string windowsPcLabel,
-        string androidMobileLabel,
-        string unknownDeviceTypeLabel,
-        string saveNameLabel,
-        string unblockLabel,
-        string disconnectLabel,
-        string deviceNameLabel,
-        string deviceLastSeenLabel,
-        string deviceLastSyncLabel,
-        string deviceLinkedAtLabel,
-        string deviceBlockedReasonLabel,
-        string deviceBlockedAtLabel,
-        string deviceInvalidAttemptsLabel)
+    public void ApplyLocalization(DeviceItemLocalization localization)
     {
-        _currentDeviceLabel = currentDeviceLabel;
-        _blockedLabel = blockedLabel;
-        _trustedLabel = trustedLabel;
-        _notTrustedLabel = notTrustedLabel;
-        _syncEnabledLabel = syncEnabledLabel;
-        _syncDisabledLabel = syncDisabledLabel;
-        _syncToggleOnLabel = syncToggleOnLabel;
-        _syncToggleOffLabel = syncToggleOffLabel;
-        _windowsPcLabel = windowsPcLabel;
-        _androidMobileLabel = androidMobileLabel;
-        _unknownDeviceTypeLabel = unknownDeviceTypeLabel;
-        _saveNameLabel = saveNameLabel;
-        _unblockLabel = unblockLabel;
-        _disconnectLabel = disconnectLabel;
-        _deviceNameLabel = deviceNameLabel;
-        _deviceLastSeenLabel = deviceLastSeenLabel;
-        _deviceLastSyncLabel = deviceLastSyncLabel;
-        _deviceLinkedAtLabel = deviceLinkedAtLabel;
-        _deviceBlockedReasonLabel = deviceBlockedReasonLabel;
-        _deviceBlockedAtLabel = deviceBlockedAtLabel;
-        _deviceInvalidAttemptsLabel = deviceInvalidAttemptsLabel;
+        AssignLocalization(localization);
+        RaiseLocalizedPropertiesChanged();
+    }
 
+    private void AssignLocalization(DeviceItemLocalization localization)
+    {
+        _currentDeviceLabel = localization.CurrentDeviceLabel;
+        _blockedLabel = localization.BlockedLabel;
+        _trustedLabel = localization.TrustedLabel;
+        _notTrustedLabel = localization.NotTrustedLabel;
+        _syncEnabledLabel = localization.SyncEnabledLabel;
+        _syncDisabledLabel = localization.SyncDisabledLabel;
+        _syncToggleOnLabel = localization.SyncToggleOnLabel;
+        _syncToggleOffLabel = localization.SyncToggleOffLabel;
+        _windowsPcLabel = localization.WindowsPcLabel;
+        _androidMobileLabel = localization.AndroidMobileLabel;
+        _unknownDeviceTypeLabel = localization.UnknownDeviceTypeLabel;
+        _saveNameLabel = localization.SaveNameLabel;
+        _unblockLabel = localization.UnblockLabel;
+        _disconnectLabel = localization.DisconnectLabel;
+        _deviceNameLabel = localization.DeviceNameLabel;
+        _deviceLastSeenLabel = localization.DeviceLastSeenLabel;
+        _deviceLastSyncLabel = localization.DeviceLastSyncLabel;
+        _deviceLinkedAtLabel = localization.DeviceLinkedAtLabel;
+        _deviceBlockedReasonLabel = localization.DeviceBlockedReasonLabel;
+        _deviceBlockedAtLabel = localization.DeviceBlockedAtLabel;
+        _deviceInvalidAttemptsLabel = localization.DeviceInvalidAttemptsLabel;
+    }
+
+    private void RaiseLocalizedPropertiesChanged()
+    {
         this.RaisePropertyChanged(nameof(CurrentDeviceLabel));
         this.RaisePropertyChanged(nameof(BlockedLabel));
         this.RaisePropertyChanged(nameof(TrustedLabel));
@@ -308,27 +255,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public static DeviceItemViewModel Create(
         UserDeviceInfoResponse device,
-        string currentDeviceLabel,
-        string blockedLabel,
-        string trustedLabel,
-        string notTrustedLabel,
-        string syncEnabledLabel,
-        string syncDisabledLabel,
-        string syncToggleOnLabel,
-        string syncToggleOffLabel,
-        string windowsPcLabel,
-        string androidMobileLabel,
-        string unknownDeviceTypeLabel,
-        string saveNameLabel,
-        string unblockLabel,
-        string disconnectLabel,
-        string deviceNameLabel,
-        string deviceLastSeenLabel,
-        string deviceLastSyncLabel,
-        string deviceLinkedAtLabel,
-        string deviceBlockedReasonLabel,
-        string deviceBlockedAtLabel,
-        string deviceInvalidAttemptsLabel,
+        DeviceItemLocalization localization,
         Func<DeviceItemViewModel, Task> viewAsync,
         Func<DeviceItemViewModel, Task> saveNameAsync,
         Func<DeviceItemViewModel, Task> toggleSyncAsync,
@@ -336,30 +263,11 @@ public sealed class DeviceItemViewModel : ReactiveObject
         Action<DeviceItemViewModel> beginDisconnect) =>
         new(
             device,
-            currentDeviceLabel,
-            blockedLabel,
-            trustedLabel,
-            notTrustedLabel,
-            syncEnabledLabel,
-            syncDisabledLabel,
-            syncToggleOnLabel,
-            syncToggleOffLabel,
-            windowsPcLabel,
-            androidMobileLabel,
-            unknownDeviceTypeLabel,
-            saveNameLabel,
-            unblockLabel,
-            disconnectLabel,
-            deviceNameLabel,
-            deviceLastSeenLabel,
-            deviceLastSyncLabel,
-            deviceLinkedAtLabel,
-            deviceBlockedReasonLabel,
-            deviceBlockedAtLabel,
-            deviceInvalidAttemptsLabel,
+            localization,
             viewAsync,
             saveNameAsync,
             toggleSyncAsync,
             unblockAsync,
             beginDisconnect);
+
 }

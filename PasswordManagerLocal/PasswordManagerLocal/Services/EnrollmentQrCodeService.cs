@@ -89,68 +89,82 @@ public static class EnrollmentQrCodeService
     public static string? ExtractEnrollmentCode(string? qrText, bool allowPlainEnrollmentCode = true)
     {
         if (string.IsNullOrWhiteSpace(qrText))
-        {
             return null;
-        }
 
         var text = qrText.Trim();
-        if (text.StartsWith(EnrollmentPayloadPrefix, StringComparison.OrdinalIgnoreCase))
+        if (TryExtractPrefixedPayload(text, out var enrollmentCode))
+            return enrollmentCode;
+        if (TryExtractDirectUriPayload(text, out enrollmentCode))
+            return enrollmentCode;
+        if (TryExtractEnrollmentUriQuery(text, out enrollmentCode))
+            return enrollmentCode;
+
+        return allowPlainEnrollmentCode && LooksLikeEnrollmentCode(text) ? text : null;
+    }
+
+    private static bool TryExtractPrefixedPayload(string text, out string? enrollmentCode)
+    {
+        enrollmentCode = null;
+        if (!text.StartsWith(EnrollmentPayloadPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        enrollmentCode = NormalizeEnrollmentCode(text[EnrollmentPayloadPrefix.Length..]);
+        return true;
+    }
+
+    private static bool TryExtractDirectUriPayload(string text, out string? enrollmentCode)
+    {
+        enrollmentCode = null;
+        if (!text.StartsWith(EnrollmentPayloadUriPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var encodedCode = text[EnrollmentPayloadUriPrefix.Length..].Trim();
+        if (string.IsNullOrWhiteSpace(encodedCode))
+            return true;
+
+        try
         {
-            var code = text[EnrollmentPayloadPrefix.Length..].Trim();
-            return string.IsNullOrWhiteSpace(code) ? null : code;
+            enrollmentCode = NormalizeEnrollmentCode(Uri.UnescapeDataString(encodedCode));
+        }
+        catch
+        {
+            enrollmentCode = null;
         }
 
-        if (text.StartsWith(EnrollmentPayloadUriPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var encodedCode = text[EnrollmentPayloadUriPrefix.Length..].Trim();
-            if (string.IsNullOrWhiteSpace(encodedCode))
-            {
-                return null;
-            }
+        return true;
+    }
 
-            try
-            {
-                var code = Uri.UnescapeDataString(encodedCode).Trim();
-                return string.IsNullOrWhiteSpace(code) ? null : code;
-            }
-            catch
-            {
-                return null;
-            }
+    private static bool TryExtractEnrollmentUriQuery(string text, out string? enrollmentCode)
+    {
+        enrollmentCode = null;
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri)
+            || !string.Equals(uri.Scheme, "passwordmanagerlocal", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(uri.Host, "enrollment", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
         }
 
-        if (Uri.TryCreate(text, UriKind.Absolute, out var uri)
-            && string.Equals(uri.Scheme, "passwordmanagerlocal", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(uri.Host, "enrollment", StringComparison.OrdinalIgnoreCase))
+        foreach (var part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
-            var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var part in query)
-            {
-                var equalsIndex = part.IndexOf('=');
-                if (equalsIndex <= 0)
-                {
-                    continue;
-                }
+            var equalsIndex = part.IndexOf('=');
+            if (equalsIndex <= 0)
+                continue;
 
-                var key = Uri.UnescapeDataString(part[..equalsIndex]);
-                if (!string.Equals(key, "code", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+            var key = Uri.UnescapeDataString(part[..equalsIndex]);
+            if (!string.Equals(key, "code", StringComparison.OrdinalIgnoreCase))
+                continue;
 
-                var value = Uri.UnescapeDataString(part[(equalsIndex + 1)..]).Trim();
-                return string.IsNullOrWhiteSpace(value) ? null : value;
-            }
-
-            return null;
+            enrollmentCode = NormalizeEnrollmentCode(Uri.UnescapeDataString(part[(equalsIndex + 1)..]));
+            break;
         }
 
-        if (allowPlainEnrollmentCode && LooksLikeEnrollmentCode(text))
-        {
-            return text;
-        }
+        return true;
+    }
 
-        return null;
+    private static string? NormalizeEnrollmentCode(string value)
+    {
+        var enrollmentCode = value.Trim();
+        return string.IsNullOrWhiteSpace(enrollmentCode) ? null : enrollmentCode;
     }
 
 

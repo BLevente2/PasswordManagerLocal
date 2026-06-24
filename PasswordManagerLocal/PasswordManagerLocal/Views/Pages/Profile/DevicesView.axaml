@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
+    xmlns:profile="clr-namespace:PasswordManagerLocal.Views.Pages.Profile"
+    x:Class="PasswordManagerLocal.Views.Pages.Profile.DevicesView"
+    x:DataType="vm:ProfileViewModel"
+    IsVisible="{Binding IsDevicesMainPage}">
+  <StackPanel IsVisible="{Binding IsDevicesMainPage}" Spacing="12">
+    <StackPanel Spacing="12">
+      <profile:DeviceToolbarView />
+      <profile:DeviceListView />
+      <profile:DeviceAddView />
+      <profile:DeviceDetailsView />
+      <profile:DeviceDisconnectView />
+    </StackPanel>
+  </StackPanel>
+</UserControl>

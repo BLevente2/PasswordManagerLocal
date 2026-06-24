@@ -128,68 +128,14 @@ public sealed class ChangeProfileViewModel : ViewModelBase
         if (IsBusy)
             return;
 
-        ClearStatusMessage();
-        IsBusy = true;
-        Profiles.Clear();
-        RaiseProfilesChanged();
-
+        PrepareProfileListForLoading();
         try
         {
             foreach (var originalToken in _authSessionRegistry.ListTokens().ToList())
             {
-                var token = originalToken;
-                var status = await _endpoints.GetAuthSessionStatusAsync(token);
-                if (!status.IsAuthenticated)
-                {
-                    var session = _authSessionRegistry.GetSession(token);
-                    if (session?.IsRememberMeEnabled == true && session.UserId != Guid.Empty)
-                    {
-                        try
-                        {
-                            var newToken = await _endpoints.InitializeRememberMeSessionAsync(session.UserId);
-                            if (!_authSessionRegistry.TryReplaceToken(token, newToken))
-                            {
-                                _authSessionRegistry.TryAdd(newToken, originalToken == _authSessionRegistry.CurrentUserToken);
-                                _authSessionRegistry.TryRemove(token);
-                            }
-
-                            token = newToken;
-                            status = await _endpoints.GetAuthSessionStatusAsync(token);
-                        }
-                        catch
-                        {
-                        }
-                    }
-
-                    if (!status.IsAuthenticated)
-                    {
-                        _authSessionRegistry.TryRemove(originalToken);
-                        continue;
-                    }
-                }
-
-                var profile = await _endpoints.GetUserProfileInfoAsync(token);
-                var displayName = BuildDisplayName(profile);
-                var subtitle = string.IsNullOrWhiteSpace(profile.Username)
-                    ? profile.Email
-                    : $"@{profile.Username}";
-
-                _authSessionRegistry.TrySetProfile(
-                    token,
-                    profile.UId,
-                    displayName,
-                    subtitle,
-                    profile.Username,
-                    profile.Email,
-                    profile.IsRememberMeEnabled);
-
-                Profiles.Add(new ProfileSessionItemViewModel(
-                    UiPreferences,
-                    token,
-                    displayName,
-                    subtitle,
-                    token == _authSessionRegistry.CurrentUserToken,
-                    SelectProfileAsync));
+                var profileItem = await CreateProfileSessionItemAsync(originalToken);
+                if (profileItem is not null)
+                    Profiles.Add(profileItem);
             }
         }
         catch (Exception ex)
@@ -201,6 +147,91 @@ public sealed class ChangeProfileViewModel : ViewModelBase
             IsBusy = false;
             RaiseProfilesChanged();
         }
+    }
+
+    private void PrepareProfileListForLoading()
+    {
+        ClearStatusMessage();
+        IsBusy = true;
+        Profiles.Clear();
+        RaiseProfilesChanged();
+    }
+
+    private async Task<ProfileSessionItemViewModel?> CreateProfileSessionItemAsync(Guid originalToken)
+    {
+        var token = await ResolveAuthenticatedTokenAsync(originalToken);
+        if (token is null)
+            return null;
+
+        var profile = await _endpoints.GetUserProfileInfoAsync(token.Value);
+        var displayName = BuildDisplayName(profile);
+        var subtitle = string.IsNullOrWhiteSpace(profile.Username) ? profile.Email : $"@{profile.Username}";
+        UpdateRegisteredProfile(token.Value, profile, displayName, subtitle);
+
+        return new ProfileSessionItemViewModel(
+            UiPreferences,
+            token.Value,
+            displayName,
+            subtitle,
+            token.Value == _authSessionRegistry.CurrentUserToken,
+            SelectProfileAsync);
+    }
+
+    private async Task<Guid?> ResolveAuthenticatedTokenAsync(Guid originalToken)
+    {
+        var status = await _endpoints.GetAuthSessionStatusAsync(originalToken);
+        if (status.IsAuthenticated)
+            return originalToken;
+
+        var restoredToken = await TryRestoreRememberedSessionAsync(originalToken);
+        if (restoredToken is not null)
+        {
+            status = await _endpoints.GetAuthSessionStatusAsync(restoredToken.Value);
+            if (status.IsAuthenticated)
+                return restoredToken;
+        }
+
+        _authSessionRegistry.TryRemove(originalToken);
+        return null;
+    }
+
+    private async Task<Guid?> TryRestoreRememberedSessionAsync(Guid originalToken)
+    {
+        var session = _authSessionRegistry.GetSession(originalToken);
+        if (session?.IsRememberMeEnabled != true || session.UserId == Guid.Empty)
+            return null;
+
+        try
+        {
+            var newToken = await _endpoints.InitializeRememberMeSessionAsync(session.UserId);
+            if (!_authSessionRegistry.TryReplaceToken(originalToken, newToken))
+            {
+                _authSessionRegistry.TryAdd(newToken, originalToken == _authSessionRegistry.CurrentUserToken);
+                _authSessionRegistry.TryRemove(originalToken);
+            }
+
+            return newToken;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void UpdateRegisteredProfile(
+        Guid token,
+        UserProfileInfoResponse profile,
+        string displayName,
+        string subtitle)
+    {
+        _authSessionRegistry.TrySetProfile(
+            token,
+            profile.UId,
+            displayName,
+            subtitle,
+            profile.Username,
+            profile.Email,
+            profile.IsRememberMeEnabled);
     }
 
     public void RefreshCurrentSelection()

@@ -236,46 +236,8 @@ public sealed class RegistrationViewModel : ViewModelBase
 
     private async Task RegisterAsync()
     {
-        if (IsBusy)
+        if (IsBusy || !ValidateRegistrationInput())
             return;
-
-        ClearStatusMessage();
-
-        if (string.IsNullOrWhiteSpace(Username))
-        {
-            ShowErrorMessage(GetTranslation("Validation_Username_Required"));
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(FirstName))
-        {
-            ShowErrorMessage(GetTranslation("Validation_FirstName_Required"));
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(LastName))
-        {
-            ShowErrorMessage(GetTranslation("Validation_LastName_Required"));
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(Email))
-        {
-            ShowErrorMessage(GetTranslation("Validation_Email_Required"));
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(Password))
-        {
-            ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Required"));
-            return;
-        }
-
-        if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
-        {
-            ShowErrorMessage(GetTranslation("Validation_RegisterPassword_Mismatch"));
-            return;
-        }
 
         var passwordHash = SecretTransform.HashPassword(Password);
         Password = string.Empty;
@@ -284,16 +246,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         try
         {
             IsBusy = true;
-            var token = await _endpoints.RegisterAsync(new RegistrationRequest
-            {
-                Username = Username.Trim(),
-                Password = passwordHash,
-                FirstName = FirstName.Trim(),
-                LastName = LastName.Trim(),
-                Email = Email.Trim(),
-                RememberMe = RememberMe
-            });
-
+            var token = await _endpoints.RegisterAsync(CreateRegistrationRequest(passwordHash));
             await _onAuthenticationSucceededAsync(token);
             Reset();
         }
@@ -307,6 +260,46 @@ public sealed class RegistrationViewModel : ViewModelBase
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(passwordHash);
         }
     }
+
+    private bool ValidateRegistrationInput()
+    {
+        ClearStatusMessage();
+        var validationError = GetRegistrationValidationError();
+        if (validationError is null)
+            return true;
+
+        ShowErrorMessage(validationError);
+        return false;
+    }
+
+    private string? GetRegistrationValidationError()
+    {
+        if (string.IsNullOrWhiteSpace(Username))
+            return GetTranslation("Validation_Username_Required");
+        if (string.IsNullOrWhiteSpace(FirstName))
+            return GetTranslation("Validation_FirstName_Required");
+        if (string.IsNullOrWhiteSpace(LastName))
+            return GetTranslation("Validation_LastName_Required");
+        if (string.IsNullOrWhiteSpace(Email))
+            return GetTranslation("Validation_Email_Required");
+        if (string.IsNullOrWhiteSpace(Password))
+            return GetTranslation("Validation_RegisterPassword_Required");
+        if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
+            return GetTranslation("Validation_RegisterPassword_Mismatch");
+
+        return null;
+    }
+
+    private RegistrationRequest CreateRegistrationRequest(byte[] passwordHash) =>
+        new()
+        {
+            Username = Username.Trim(),
+            Password = passwordHash,
+            FirstName = FirstName.Trim(),
+            LastName = LastName.Trim(),
+            Email = Email.Trim(),
+            RememberMe = RememberMe
+        };
 
     private void TogglePasswordVisibility() => IsPasswordVisible = !IsPasswordVisible;
 

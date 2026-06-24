@@ -4,26 +4,32 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using System.ComponentModel;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocal.ViewModels;
+using PasswordManagerLocal.Views.Behaviors;
+using System.ComponentModel;
 
 namespace PasswordManagerLocal.Views;
 
 public partial class MainView : UserControl
 {
-    private const double SwipeThreshold = 96;
-    private const double SwipeDominanceRatio = 1.25;
-
-    private Point? _swipeStartPoint;
-    private IPointer? _trackedSwipePointer;
-    private bool _swipeTrackingCancelled;
+    private readonly MainViewKeyboardHandler _keyboardHandler;
+    private readonly MainViewSwipeNavigationHandler _swipeNavigationHandler;
     private TopLevel? _inputTopLevel;
     private MainViewModel? _observedViewModel;
 
     public MainView()
     {
         InitializeComponent();
+        _keyboardHandler = new MainViewKeyboardHandler(this);
+        _swipeNavigationHandler = new MainViewSwipeNavigationHandler(this);
+        RegisterLocalInputHandlers();
+        RegisterLifecycleHandlers();
+        HandleDataContextChanged(this, EventArgs.Empty);
+    }
+
+    private void RegisterLocalInputHandlers()
+    {
         AddHandler(KeyDownEvent, HandleKeyDown, RoutingStrategies.Tunnel);
         AddHandler(
             TextBox.CopyingToClipboardEvent,
@@ -33,45 +39,49 @@ public partial class MainView : UserControl
             TextBox.CuttingToClipboardEvent,
             HandleCuttingToClipboard,
             RoutingStrategies.Tunnel | RoutingStrategies.Bubble | RoutingStrategies.Direct);
+    }
+
+    private void RegisterLifecycleHandlers()
+    {
         AttachedToVisualTree += HandleAttachedToVisualTree;
         DetachedFromVisualTree += HandleDetachedFromVisualTree;
         DataContextChanged += HandleDataContextChanged;
-        HandleDataContextChanged(this, EventArgs.Empty);
     }
-
-
 
     private void HandleAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
         HandleDataContextChanged(this, EventArgs.Empty);
-
         var topLevel = TopLevel.GetTopLevel(this);
+        SetActiveTopLevelForUiServices(topLevel);
+
+        if (ReferenceEquals(_inputTopLevel, topLevel))
+            return;
+
+        DetachTopLevelInputHandlers();
+        AttachTopLevelInputHandlers(topLevel);
+    }
+
+    private void SetActiveTopLevelForUiServices(TopLevel? topLevel)
+    {
         ClipboardService.SetActiveTopLevel(topLevel);
         QrImagePickerService.SetActiveTopLevel(topLevel);
         FirewallPermissionStartupPrompt.SetActiveTopLevel(topLevel);
-
-        if (ReferenceEquals(_inputTopLevel, topLevel))
-        {
-            return;
-        }
-
-        DetachTopLevelInputHandlers();
-
-        if (topLevel is not null)
-        {
-            _inputTopLevel = topLevel;
-            topLevel.AddHandler(KeyDownEvent, HandleTopLevelKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
-
-            if (OperatingSystem.IsAndroid())
-            {
-                topLevel.AddHandler(PointerPressedEvent, HandlePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
-                topLevel.AddHandler(PointerMovedEvent, HandlePointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
-                topLevel.AddHandler(PointerReleasedEvent, HandlePointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
-            }
-        }
     }
 
+    private void AttachTopLevelInputHandlers(TopLevel? topLevel)
+    {
+        if (topLevel is null)
+            return;
 
+        _inputTopLevel = topLevel;
+        topLevel.AddHandler(KeyDownEvent, HandleTopLevelKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        if (!OperatingSystem.IsAndroid())
+            return;
+
+        topLevel.AddHandler(PointerPressedEvent, HandlePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        topLevel.AddHandler(PointerMovedEvent, HandlePointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
+        topLevel.AddHandler(PointerReleasedEvent, HandlePointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+    }
 
     private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
@@ -80,48 +90,35 @@ public partial class MainView : UserControl
         DetachObservedViewModel();
     }
 
-
-
     private void HandleDataContextChanged(object? sender, EventArgs e)
     {
         DetachObservedViewModel();
+        if (DataContext is not MainViewModel viewModel)
+            return;
 
-        if (DataContext is MainViewModel viewModel)
-        {
-            _observedViewModel = viewModel;
-            _observedViewModel.PropertyChanged += HandleViewModelPropertyChanged;
-        }
+        _observedViewModel = viewModel;
+        _observedViewModel.PropertyChanged += HandleViewModelPropertyChanged;
     }
-
-
 
     private void DetachObservedViewModel()
     {
-        if (_observedViewModel is not null)
-        {
-            _observedViewModel.PropertyChanged -= HandleViewModelPropertyChanged;
-            _observedViewModel = null;
-        }
+        if (_observedViewModel is null)
+            return;
+
+        _observedViewModel.PropertyChanged -= HandleViewModelPropertyChanged;
+        _observedViewModel = null;
     }
-
-
 
     private void HandleViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if ((e.PropertyName == nameof(MainViewModel.IsAuthenticated)
-                && sender is MainViewModel { IsAuthenticated: false })
-            || e.PropertyName == nameof(MainViewModel.CurrentUserDisplayName))
-        {
+        var loggedOut = e.PropertyName == nameof(MainViewModel.IsAuthenticated)
+            && sender is MainViewModel { IsAuthenticated: false };
+        if (loggedOut || e.PropertyName == nameof(MainViewModel.CurrentUserDisplayName))
             HideAccountMenuFlyout();
-        }
     }
-
-
 
     private void HandleAccountMenuActionClick(object? sender, RoutedEventArgs e) =>
         Dispatcher.UIThread.Post(HideAccountMenuFlyout);
-
-
 
     private void HideAccountMenuFlyout()
     {
@@ -134,14 +131,11 @@ public partial class MainView : UserControl
         this.FindControl<Button>("AccountMenuButton")?.Flyout?.Hide();
     }
 
-
-
     private void DetachTopLevelInputHandlers()
     {
         if (_inputTopLevel is not null)
         {
             _inputTopLevel.RemoveHandler(KeyDownEvent, HandleTopLevelKeyDown);
-
             if (OperatingSystem.IsAndroid())
             {
                 _inputTopLevel.RemoveHandler(PointerPressedEvent, HandlePointerPressed);
@@ -152,337 +146,27 @@ public partial class MainView : UserControl
             _inputTopLevel = null;
         }
 
-        ResetSwipeTracking();
+        _swipeNavigationHandler.Reset();
     }
 
+    private async void HandleTopLevelKeyDown(object? sender, KeyEventArgs e) =>
+        await _keyboardHandler.HandleTopLevelKeyDownAsync(e);
 
+    private async void HandleKeyDown(object? sender, KeyEventArgs e) =>
+        await _keyboardHandler.HandleKeyDownAsync(e);
 
-    private async void HandleTopLevelKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Handled || e.Key != Key.Escape || e.KeyModifiers != KeyModifiers.None)
-        {
-            return;
-        }
+    private async void HandleCopyingToClipboard(object? sender, RoutedEventArgs e) =>
+        await _keyboardHandler.HandleCopyingToClipboardAsync(e);
 
-        e.Handled = true;
-        await HandleEscapeAsync();
-    }
+    private async void HandleCuttingToClipboard(object? sender, RoutedEventArgs e) =>
+        await _keyboardHandler.HandleCuttingToClipboardAsync(e);
 
+    private void HandlePointerPressed(object? sender, PointerPressedEventArgs e) =>
+        _swipeNavigationHandler.HandlePointerPressed(e);
 
+    private void HandlePointerMoved(object? sender, PointerEventArgs e) =>
+        _swipeNavigationHandler.HandlePointerMoved(e);
 
-    private async void HandleKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Handled)
-        {
-            return;
-        }
-
-        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None)
-        {
-            e.Handled = true;
-            await HandleEscapeAsync();
-            return;
-        }
-
-        if ((e.KeyModifiers & KeyModifiers.Control) != KeyModifiers.Control
-            || e.Source is not Control sourceControl)
-        {
-            return;
-        }
-
-        var textBox = FindSourceTextBox(sourceControl);
-
-        if (textBox is null)
-        {
-            return;
-        }
-
-        if (e.Key == Key.C)
-        {
-            await CopySelectedTextAsync(textBox, e);
-            return;
-        }
-
-        if (e.Key == Key.X)
-        {
-            await CutSelectedTextAsync(textBox, e);
-        }
-    }
-
-
-
-    private async Task HandleEscapeAsync()
-    {
-        if (DataContext is not MainViewModel viewModel)
-        {
-            return;
-        }
-
-        if (await viewModel.TryNavigateBackAsync())
-        {
-            return;
-        }
-
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        if (viewModel.IsAuthenticated)
-        {
-            if (await ShowConfirmationDialogAsync(
-                    viewModel.LogoutConfirmationTitle,
-                    viewModel.LogoutConfirmationMessage,
-                    viewModel.YesLabel,
-                    viewModel.NoLabel))
-            {
-                await viewModel.RequestLogoutAsync();
-            }
-
-            return;
-        }
-
-        if (await ShowConfirmationDialogAsync(
-                viewModel.ExitConfirmationTitle,
-                viewModel.ExitConfirmationMessage,
-                viewModel.YesLabel,
-                viewModel.NoLabel))
-        {
-            (TopLevel.GetTopLevel(this) as Window)?.Close();
-        }
-    }
-
-
-
-    private async Task<bool> ShowConfirmationDialogAsync(string title, string message, string yesLabel, string noLabel)
-    {
-        if (TopLevel.GetTopLevel(this) is not Window owner)
-        {
-            return false;
-        }
-
-        var dialog = new ConfirmationDialog(title, message, yesLabel, noLabel);
-        var result = await dialog.ShowDialog<bool?>(owner);
-        return result == true;
-    }
-
-
-
-    private async void HandleCopyingToClipboard(object? sender, RoutedEventArgs e)
-    {
-        if (e.Handled || e.Source is not TextBox textBox)
-        {
-            return;
-        }
-
-        await CopySelectedTextAsync(textBox, e);
-    }
-
-
-
-    private async void HandleCuttingToClipboard(object? sender, RoutedEventArgs e)
-    {
-        if (e.Handled || e.Source is not TextBox textBox)
-        {
-            return;
-        }
-
-        await CutSelectedTextAsync(textBox, e);
-    }
-
-
-
-    private void HandlePointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (!CanStartSwipeTracking(e))
-        {
-            ResetSwipeTracking();
-            return;
-        }
-
-        _trackedSwipePointer = e.Pointer;
-        _swipeStartPoint = e.GetPosition(this);
-        _swipeTrackingCancelled = false;
-    }
-
-
-
-    private void HandlePointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (!CanContinueSwipeTracking(e))
-        {
-            return;
-        }
-
-        var startPoint = _swipeStartPoint!.Value;
-        var currentPoint = e.GetPosition(this);
-        var deltaX = currentPoint.X - startPoint.X;
-        var deltaY = currentPoint.Y - startPoint.Y;
-
-        if (IsMostlyVerticalMovement(deltaX, deltaY))
-        {
-            _swipeTrackingCancelled = true;
-            return;
-        }
-
-        TryCompleteSwipe(deltaX, deltaY, e);
-    }
-
-
-
-    private void HandlePointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (!CanContinueSwipeTracking(e))
-        {
-            ResetSwipeTracking();
-            return;
-        }
-
-        var startPoint = _swipeStartPoint!.Value;
-        var endPoint = e.GetPosition(this);
-        var deltaX = endPoint.X - startPoint.X;
-        var deltaY = endPoint.Y - startPoint.Y;
-
-        TryCompleteSwipe(deltaX, deltaY, e);
-        ResetSwipeTracking();
-    }
-
-
-
-    private bool CanStartSwipeTracking(PointerEventArgs e) =>
-        IsMobileSwipeNavigationEnabled()
-        && IsPointerInsideMainView(e)
-        && !IsTextInputSource(e.Source);
-
-
-
-    private bool CanContinueSwipeTracking(PointerEventArgs e) =>
-        _swipeStartPoint is not null
-        && !_swipeTrackingCancelled
-        && IsTrackedSwipePointer(e.Pointer)
-        && IsMobileSwipeNavigationEnabled();
-
-
-
-    private bool IsTrackedSwipePointer(IPointer pointer) =>
-        _trackedSwipePointer is not null && Equals(_trackedSwipePointer, pointer);
-
-
-
-    private bool IsPointerInsideMainView(PointerEventArgs e) =>
-        new Rect(0, 0, Bounds.Width, Bounds.Height).Contains(e.GetPosition(this));
-
-
-
-    private static bool IsMostlyVerticalMovement(double deltaX, double deltaY) =>
-        Math.Abs(deltaY) >= SwipeThreshold && Math.Abs(deltaY) > Math.Abs(deltaX);
-
-
-
-    private void TryCompleteSwipe(double deltaX, double deltaY, PointerEventArgs e)
-    {
-        var absoluteDeltaX = Math.Abs(deltaX);
-        var absoluteDeltaY = Math.Abs(deltaY);
-
-        if (absoluteDeltaX < SwipeThreshold || absoluteDeltaX < absoluteDeltaY * SwipeDominanceRatio)
-        {
-            return;
-        }
-
-        if (DataContext is not MainViewModel viewModel)
-        {
-            ResetSwipeTracking();
-            return;
-        }
-
-        var changedPage = deltaX < 0
-            ? viewModel.NavigateToNextMainPage()
-            : viewModel.NavigateToPreviousMainPage();
-
-        if (changedPage)
-        {
-            e.Handled = true;
-        }
-
-        ResetSwipeTracking();
-    }
-
-
-
-    private void ResetSwipeTracking()
-    {
-        _swipeStartPoint = null;
-        _trackedSwipePointer = null;
-        _swipeTrackingCancelled = false;
-    }
-
-
-
-    private bool IsMobileSwipeNavigationEnabled() =>
-        DataContext is MainViewModel { IsMobileNavigationEnabled: true, IsAuthenticated: true, IsSessionRenewalDialogOpen: false };
-
-
-
-    private static bool IsTextInputSource(object? source)
-    {
-        if (source is not Control sourceControl)
-        {
-            return false;
-        }
-
-        return FindSourceTextBox(sourceControl) is not null;
-    }
-
-
-
-    private static TextBox? FindSourceTextBox(Control sourceControl) =>
-        sourceControl as TextBox ?? sourceControl.FindAncestorOfType<TextBox>();
-
-
-
-    private static async Task CopySelectedTextAsync(TextBox textBox, RoutedEventArgs e)
-    {
-        var selectedText = ClipboardService.GetSelectedText(textBox);
-
-        if (string.IsNullOrEmpty(selectedText))
-        {
-            return;
-        }
-
-        e.Handled = true;
-        await ClipboardService.TrySetTextAsync(selectedText);
-    }
-
-
-
-    private static async Task CutSelectedTextAsync(TextBox textBox, RoutedEventArgs e)
-    {
-        e.Handled = true;
-
-        if (textBox.IsReadOnly)
-        {
-            return;
-        }
-
-        var text = textBox.Text ?? string.Empty;
-        var selectionStart = Math.Clamp(Math.Min(textBox.SelectionStart, textBox.SelectionEnd), 0, text.Length);
-        var selectionEnd = Math.Clamp(Math.Max(textBox.SelectionStart, textBox.SelectionEnd), 0, text.Length);
-
-        if (selectionStart >= selectionEnd)
-        {
-            return;
-        }
-
-        var selectedText = text[selectionStart..selectionEnd];
-
-        if (!await ClipboardService.TrySetTextAsync(selectedText))
-        {
-            return;
-        }
-
-        textBox.Text = text.Remove(selectionStart, selectionEnd - selectionStart);
-        textBox.CaretIndex = selectionStart;
-        textBox.SelectionStart = selectionStart;
-        textBox.SelectionEnd = selectionStart;
-    }
+    private void HandlePointerReleased(object? sender, PointerReleasedEventArgs e) =>
+        _swipeNavigationHandler.HandlePointerReleased(e);
 }

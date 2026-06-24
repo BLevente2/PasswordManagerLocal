@@ -25,114 +25,7 @@ internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionMana
         "PasswordManagerLocal mDNS UDP"
     ];
 
-    public async Task<FirewallPermissionCheckResult> CheckAsync(CancellationToken ct = default)
-    {
-        if (!OperatingSystem.IsWindows())
-            return FirewallPermissionCheckResult.Unsupported();
-
-        var appExePath = GetApplicationPath();
-        if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
-            appExePath = string.Empty;
-
-        var result = await RunPowerShellScriptAsync(CreateCheckScript(), appExePath, elevated: false, ct);
-        var details = GetBestProcessDetails(result);
-
-        if (result.ExitCode == 0)
-        {
-            DeviceEnrollmentTrace.Info($"Windows Firewall effective-policy check succeeded. {details}");
-            return new FirewallPermissionCheckResult
-            {
-                IsSupported = true,
-                IsConfigured = true,
-                CanRequestPermission = true,
-                Details = details
-            };
-        }
-
-        DeviceEnrollmentTrace.Error($"Windows Firewall effective-policy check failed. {details}");
-        return new FirewallPermissionCheckResult
-        {
-            IsSupported = true,
-            IsConfigured = false,
-            CanRequestPermission = true,
-            Details = details
-        };
-    }
-
-    public async Task<FirewallPermissionCheckResult> RequestPermissionAsync(CancellationToken ct = default)
-    {
-        if (!OperatingSystem.IsWindows())
-            return FirewallPermissionCheckResult.Unsupported();
-
-        var appExePath = GetApplicationPath();
-        if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
-            appExePath = string.Empty;
-
-        var applyResult = await RunPowerShellScriptAsync(CreateApplyScript(), appExePath, elevated: true, ct);
-        if (applyResult.ExitCode != 0)
-        {
-            var details = GetBestProcessDetails(applyResult);
-            DeviceEnrollmentTrace.Error($"Windows Firewall configuration failed. {details}");
-            return new FirewallPermissionCheckResult
-            {
-                IsSupported = true,
-                IsConfigured = false,
-                CanRequestPermission = true,
-                Details = details
-            };
-        }
-
-        FirewallPermissionCheckResult? verification = null;
-        for (var attempt = 0; attempt < 4; attempt++)
-        {
-            if (attempt > 0)
-                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
-
-            verification = await CheckAsync(ct);
-            if (verification.IsConfigured)
-            {
-                var details = GetBestProcessDetails(applyResult);
-                DeviceEnrollmentTrace.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
-                return new FirewallPermissionCheckResult
-                {
-                    IsSupported = true,
-                    IsConfigured = true,
-                    CanRequestPermission = true,
-                    Details = details
-                };
-            }
-        }
-
-        var applyDetails = GetBestProcessDetails(applyResult);
-        var verificationDetails = verification?.Details;
-        var combinedDetails = string.IsNullOrWhiteSpace(verificationDetails)
-            ? $"{applyDetails} The firewall rules were created, but they are not present in the effective Windows Firewall policy."
-            : $"{applyDetails} Effective-policy verification failed: {verificationDetails}";
-
-        DeviceEnrollmentTrace.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
-        return new FirewallPermissionCheckResult
-        {
-            IsSupported = true,
-            IsConfigured = false,
-            CanRequestPermission = true,
-            Details = combinedDetails
-        };
-    }
-
-    private static string? GetApplicationPath()
-    {
-        try
-        {
-            return Environment.ProcessPath;
-        }
-        catch
-        {
-            return Process.GetCurrentProcess().MainModule?.FileName;
-        }
-    }
-
-    private static string CreateCheckScript() =>
-        $$"""
+    private const string CheckScriptTemplate = """
 param([string]$AppExe)
 $ErrorActionPreference = 'Stop'
 Import-Module NetSecurity -ErrorAction Stop
@@ -379,20 +272,20 @@ if ($appBlockRules.Count -gt 0) {
 }
 
 $tcpInboundOk =
-    (Test-PmlEffectiveAllowRule -DisplayName '{{TcpPortRuleName}}' -Direction 'Inbound' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}' -PortSide 'Local' -RequireProgram $false -AppExe $AppExe -ActiveProfiles $enabledProfiles) -or
-    (Test-PmlEffectiveAllowRule -DisplayName '{{TcpAppRuleName}}' -Direction 'Inbound' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}' -PortSide 'Local' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles)
+    (Test-PmlEffectiveAllowRule -DisplayName '%TCP_PORT_RULE_NAME%' -Direction 'Inbound' -Protocol 'TCP' -Port '%SYNC_PORT%' -PortSide 'Local' -RequireProgram $false -AppExe $AppExe -ActiveProfiles $enabledProfiles) -or
+    (Test-PmlEffectiveAllowRule -DisplayName '%TCP_APP_RULE_NAME%' -Direction 'Inbound' -Protocol 'TCP' -Port '%SYNC_PORT%' -PortSide 'Local' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles)
 
 $udpInboundOk =
-    (Test-PmlEffectiveAllowRule -DisplayName '{{MdnsPortRuleName}}' -Direction 'Inbound' -Protocol 'UDP' -Port '5353' -PortSide 'Local' -RequireProgram $false -AppExe $AppExe -ActiveProfiles $enabledProfiles) -or
-    (Test-PmlEffectiveAllowRule -DisplayName '{{MdnsAppRuleName}}' -Direction 'Inbound' -Protocol 'UDP' -Port '5353' -PortSide 'Local' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles)
+    (Test-PmlEffectiveAllowRule -DisplayName '%MDNS_PORT_RULE_NAME%' -Direction 'Inbound' -Protocol 'UDP' -Port '5353' -PortSide 'Local' -RequireProgram $false -AppExe $AppExe -ActiveProfiles $enabledProfiles) -or
+    (Test-PmlEffectiveAllowRule -DisplayName '%MDNS_APP_RULE_NAME%' -Direction 'Inbound' -Protocol 'UDP' -Port '5353' -PortSide 'Local' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles)
 
 if ([string]::IsNullOrWhiteSpace($AppExe) -or -not (Test-Path -LiteralPath $AppExe)) {
     Write-Error 'The running application executable could not be resolved, so outbound firewall permission cannot be verified.'
     exit 13
 }
 
-$tcpOutboundOk = Test-PmlEffectiveAllowRule -DisplayName '{{TcpOutboundAppRuleName}}' -Direction 'Outbound' -Protocol 'TCP' -Port '{{SyncConstants.SyncPort}}' -PortSide 'Remote' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles
-$udpOutboundOk = Test-PmlEffectiveAllowRule -DisplayName '{{MdnsOutboundAppRuleName}}' -Direction 'Outbound' -Protocol 'UDP' -Port '5353' -PortSide 'Remote' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles
+$tcpOutboundOk = Test-PmlEffectiveAllowRule -DisplayName '%TCP_OUTBOUND_APP_RULE_NAME%' -Direction 'Outbound' -Protocol 'TCP' -Port '%SYNC_PORT%' -PortSide 'Remote' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles
+$udpOutboundOk = Test-PmlEffectiveAllowRule -DisplayName '%MDNS_OUTBOUND_APP_RULE_NAME%' -Direction 'Outbound' -Protocol 'UDP' -Port '5353' -PortSide 'Remote' -RequireProgram $true -AppExe $AppExe -ActiveProfiles $enabledProfiles
 
 if (-not $tcpInboundOk -or -not $udpInboundOk -or -not $tcpOutboundOk -or -not $udpOutboundOk) {
     Write-Error "Required rules are not effective. TCP inbound=$tcpInboundOk, mDNS inbound=$udpInboundOk, TCP outbound=$tcpOutboundOk, mDNS outbound=$udpOutboundOk, active profiles=$($enabledProfiles -join ', ')."
@@ -403,21 +296,7 @@ Write-Output "OK: effective inbound and outbound local-network rules are active 
 exit 0
 """;
 
-    private static string CreateApplyScript()
-    {
-        var allRuleNames = new[]
-        {
-            TcpAppRuleName,
-            TcpPortRuleName,
-            MdnsAppRuleName,
-            MdnsPortRuleName,
-            TcpOutboundAppRuleName,
-            MdnsOutboundAppRuleName
-        }.Concat(LegacyRuleNames);
-
-        var deleteLines = string.Join(Environment.NewLine, allRuleNames.Select(name => $"Remove-PmlFirewallRuleByDisplayName -DisplayName '{EscapePowerShellSingleQuotedString(name)}'"));
-
-        return $$"""
+    private const string ApplyScriptTemplate = """
 param(
     [string]$AppExe,
     [string]$StatusFile
@@ -485,17 +364,17 @@ function Remove-PmlConflictingAppBlockRules {
     }
 }
 
-{{deleteLines}}
+%DELETE_LINES%
 Remove-PmlConflictingAppBlockRules -AppExe $AppExe
 
-New-NetFirewallRule -DisplayName '{{TcpPortRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP -LocalPort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-New-NetFirewallRule -DisplayName '{{MdnsPortRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+New-NetFirewallRule -DisplayName '%TCP_PORT_RULE_NAME%' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP -LocalPort %SYNC_PORT% -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+New-NetFirewallRule -DisplayName '%MDNS_PORT_RULE_NAME%' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($AppExe) -and (Test-Path -LiteralPath $AppExe)) {
-    New-NetFirewallRule -DisplayName '{{TcpAppRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -LocalPort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-    New-NetFirewallRule -DisplayName '{{MdnsAppRuleName}}' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-    New-NetFirewallRule -DisplayName '{{TcpOutboundAppRuleName}}' -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -RemotePort {{SyncConstants.SyncPort}} -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-    New-NetFirewallRule -DisplayName '{{MdnsOutboundAppRuleName}}' -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -RemotePort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '%TCP_APP_RULE_NAME%' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -LocalPort %SYNC_PORT% -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '%MDNS_APP_RULE_NAME%' -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -LocalPort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '%TCP_OUTBOUND_APP_RULE_NAME%' -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -RemotePort %SYNC_PORT% -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName '%MDNS_OUTBOUND_APP_RULE_NAME%' -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -RemotePort 5353 -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 } else {
     throw 'The running application executable could not be resolved.'
 }
@@ -515,9 +394,158 @@ exit 0
     exit 1
 }
 """;
+
+    public async Task<FirewallPermissionCheckResult> CheckAsync(CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows())
+            return FirewallPermissionCheckResult.Unsupported();
+
+        var appExePath = GetApplicationPath();
+        if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
+            appExePath = string.Empty;
+
+        var result = await RunPowerShellScriptAsync(CreateCheckScript(), appExePath, elevated: false, ct);
+        var details = GetBestProcessDetails(result);
+
+        if (result.ExitCode == 0)
+        {
+            DeviceEnrollmentTrace.Info($"Windows Firewall effective-policy check succeeded. {details}");
+            return new FirewallPermissionCheckResult
+            {
+                IsSupported = true,
+                IsConfigured = true,
+                CanRequestPermission = true,
+                Details = details
+            };
+        }
+
+        DeviceEnrollmentTrace.Error($"Windows Firewall effective-policy check failed. {details}");
+        return new FirewallPermissionCheckResult
+        {
+            IsSupported = true,
+            IsConfigured = false,
+            CanRequestPermission = true,
+            Details = details
+        };
     }
 
-    private static async Task<(int ExitCode, string Output, string Error)> RunPowerShellScriptAsync(string script, string appExePath, bool elevated, CancellationToken ct)
+    public async Task<FirewallPermissionCheckResult> RequestPermissionAsync(CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows())
+            return FirewallPermissionCheckResult.Unsupported();
+
+        var appExePath = GetApplicationPath();
+        if (string.IsNullOrWhiteSpace(appExePath) || !File.Exists(appExePath))
+            appExePath = string.Empty;
+
+        var applyResult = await RunPowerShellScriptAsync(CreateApplyScript(), appExePath, elevated: true, ct);
+        if (applyResult.ExitCode != 0)
+        {
+            var details = GetBestProcessDetails(applyResult);
+            DeviceEnrollmentTrace.Error($"Windows Firewall configuration failed. {details}");
+            return new FirewallPermissionCheckResult
+            {
+                IsSupported = true,
+                IsConfigured = false,
+                CanRequestPermission = true,
+                Details = details
+            };
+        }
+
+        FirewallPermissionCheckResult? verification = null;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            if (attempt > 0)
+                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+
+            verification = await CheckAsync(ct);
+            if (verification.IsConfigured)
+            {
+                var details = GetBestProcessDetails(applyResult);
+                DeviceEnrollmentTrace.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
+                return new FirewallPermissionCheckResult
+                {
+                    IsSupported = true,
+                    IsConfigured = true,
+                    CanRequestPermission = true,
+                    Details = details
+                };
+            }
+        }
+
+        var applyDetails = GetBestProcessDetails(applyResult);
+        var verificationDetails = verification?.Details;
+        var combinedDetails = string.IsNullOrWhiteSpace(verificationDetails)
+            ? $"{applyDetails} The firewall rules were created, but they are not present in the effective Windows Firewall policy."
+            : $"{applyDetails} Effective-policy verification failed: {verificationDetails}";
+
+        DeviceEnrollmentTrace.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
+        return new FirewallPermissionCheckResult
+        {
+            IsSupported = true,
+            IsConfigured = false,
+            CanRequestPermission = true,
+            Details = combinedDetails
+        };
+    }
+
+    private static string? GetApplicationPath()
+    {
+        try
+        {
+            return Environment.ProcessPath;
+        }
+        catch
+        {
+            return Process.GetCurrentProcess().MainModule?.FileName;
+        }
+    }
+
+    private static string CreateCheckScript() =>
+        CheckScriptTemplate
+            .Replace("%TCP_PORT_RULE_NAME%", TcpPortRuleName, StringComparison.Ordinal)
+            .Replace("%TCP_APP_RULE_NAME%", TcpAppRuleName, StringComparison.Ordinal)
+            .Replace("%MDNS_PORT_RULE_NAME%", MdnsPortRuleName, StringComparison.Ordinal)
+            .Replace("%MDNS_APP_RULE_NAME%", MdnsAppRuleName, StringComparison.Ordinal)
+            .Replace("%TCP_OUTBOUND_APP_RULE_NAME%", TcpOutboundAppRuleName, StringComparison.Ordinal)
+            .Replace("%MDNS_OUTBOUND_APP_RULE_NAME%", MdnsOutboundAppRuleName, StringComparison.Ordinal)
+            .Replace("%SYNC_PORT%", SyncConstants.SyncPort.ToString(), StringComparison.Ordinal);
+
+    private static string CreateApplyScript()
+    {
+        var allRuleNames = GetManagedFirewallRuleNames();
+        var deleteLines = string.Join(
+            Environment.NewLine,
+            allRuleNames.Select(name =>
+                $"Remove-PmlFirewallRuleByDisplayName -DisplayName '{EscapePowerShellSingleQuotedString(name)}'"));
+
+        return ApplyScriptTemplate
+            .Replace("%DELETE_LINES%", deleteLines, StringComparison.Ordinal)
+            .Replace("%TCP_PORT_RULE_NAME%", TcpPortRuleName, StringComparison.Ordinal)
+            .Replace("%MDNS_PORT_RULE_NAME%", MdnsPortRuleName, StringComparison.Ordinal)
+            .Replace("%TCP_APP_RULE_NAME%", TcpAppRuleName, StringComparison.Ordinal)
+            .Replace("%MDNS_APP_RULE_NAME%", MdnsAppRuleName, StringComparison.Ordinal)
+            .Replace("%TCP_OUTBOUND_APP_RULE_NAME%", TcpOutboundAppRuleName, StringComparison.Ordinal)
+            .Replace("%MDNS_OUTBOUND_APP_RULE_NAME%", MdnsOutboundAppRuleName, StringComparison.Ordinal)
+            .Replace("%SYNC_PORT%", SyncConstants.SyncPort.ToString(), StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<string> GetManagedFirewallRuleNames() =>
+        new[]
+        {
+            TcpAppRuleName,
+            TcpPortRuleName,
+            MdnsAppRuleName,
+            MdnsPortRuleName,
+            TcpOutboundAppRuleName,
+            MdnsOutboundAppRuleName
+        }.Concat(LegacyRuleNames);
+
+    private static async Task<(int ExitCode, string Output, string Error)> RunPowerShellScriptAsync(
+        string script,
+        string appExePath,
+        bool elevated,
+        CancellationToken ct)
     {
         var scriptPath = Path.Combine(Path.GetTempPath(), $"pml-firewall-{Guid.NewGuid():N}.ps1");
         var statusPath = elevated ? Path.Combine(Path.GetTempPath(), $"pml-firewall-status-{Guid.NewGuid():N}.txt") : null;
@@ -525,51 +553,8 @@ exit 0
 
         try
         {
-            var arguments = $"-NoProfile -ExecutionPolicy Bypass -File {QuoteArgument(scriptPath)} -AppExe {QuoteArgument(appExePath)}";
-            if (!string.IsNullOrWhiteSpace(statusPath))
-                arguments += $" -StatusFile {QuoteArgument(statusPath)}";
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = arguments,
-                UseShellExecute = elevated,
-                CreateNoWindow = !elevated
-            };
-
-            if (elevated)
-            {
-                startInfo.Verb = "runas";
-            }
-            else
-            {
-                startInfo.RedirectStandardOutput = true;
-                startInfo.RedirectStandardError = true;
-            }
-
-            using var process = Process.Start(startInfo);
-            if (process is null)
-                return (-1, string.Empty, "Could not start PowerShell.");
-
-            string output = string.Empty;
-            string error = string.Empty;
-
-            if (!elevated)
-            {
-                var outputTask = process.StandardOutput.ReadToEndAsync(ct);
-                var errorTask = process.StandardError.ReadToEndAsync(ct);
-                await process.WaitForExitAsync(ct);
-                output = await outputTask;
-                error = await errorTask;
-            }
-            else
-            {
-                await process.WaitForExitAsync(ct);
-                if (!string.IsNullOrWhiteSpace(statusPath) && File.Exists(statusPath))
-                    output = await File.ReadAllTextAsync(statusPath, ct);
-            }
-
-            return (process.ExitCode, output.Trim(), error.Trim());
+            var startInfo = CreatePowerShellStartInfo(scriptPath, appExePath, statusPath, elevated);
+            return await ExecutePowerShellAsync(startInfo, statusPath, elevated, ct);
         }
         catch (System.ComponentModel.Win32Exception ex) when ((uint)ex.NativeErrorCode == 1223)
         {
@@ -581,6 +566,59 @@ exit 0
             if (!string.IsNullOrWhiteSpace(statusPath))
                 TryDeleteFile(statusPath);
         }
+    }
+
+    private static ProcessStartInfo CreatePowerShellStartInfo(
+        string scriptPath,
+        string appExePath,
+        string? statusPath,
+        bool elevated)
+    {
+        var arguments = $"-NoProfile -ExecutionPolicy Bypass -File {QuoteArgument(scriptPath)} -AppExe {QuoteArgument(appExePath)}";
+        if (!string.IsNullOrWhiteSpace(statusPath))
+            arguments += $" -StatusFile {QuoteArgument(statusPath)}";
+
+        return new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = arguments,
+            UseShellExecute = elevated,
+            CreateNoWindow = !elevated,
+            Verb = elevated ? "runas" : string.Empty,
+            RedirectStandardOutput = !elevated,
+            RedirectStandardError = !elevated
+        };
+    }
+
+    private static async Task<(int ExitCode, string Output, string Error)> ExecutePowerShellAsync(
+        ProcessStartInfo startInfo,
+        string? statusPath,
+        bool elevated,
+        CancellationToken ct)
+    {
+        using var process = Process.Start(startInfo);
+        if (process is null)
+            return (-1, string.Empty, "Could not start PowerShell.");
+
+        if (elevated)
+            return await ReadElevatedProcessResultAsync(process, statusPath, ct);
+
+        var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+        var errorTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        return (process.ExitCode, (await outputTask).Trim(), (await errorTask).Trim());
+    }
+
+    private static async Task<(int ExitCode, string Output, string Error)> ReadElevatedProcessResultAsync(
+        Process process,
+        string? statusPath,
+        CancellationToken ct)
+    {
+        await process.WaitForExitAsync(ct);
+        var output = !string.IsNullOrWhiteSpace(statusPath) && File.Exists(statusPath)
+            ? await File.ReadAllTextAsync(statusPath, ct)
+            : string.Empty;
+        return (process.ExitCode, output.Trim(), string.Empty);
     }
 
     private static string GetBestProcessDetails((int ExitCode, string Output, string Error) result)
