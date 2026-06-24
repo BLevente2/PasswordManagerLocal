@@ -849,9 +849,7 @@ public sealed class MainViewModel : ViewModelBase
         ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.DiscardTransientNavigationState();
-        CurrentPageViewModel = PasswordsViewModel;
-        CurrentAnimatedPageViewModel = new MainPageContentViewModel(PasswordsViewModel);
-        RaiseNavigationStateProperties();
+        ShowMainContentPage(PasswordsViewModel);
     }
 
     private void NavigateToProfile()
@@ -864,9 +862,7 @@ public sealed class MainViewModel : ViewModelBase
         ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowProfileMainPage();
-        CurrentPageViewModel = ProfileViewModel;
-        CurrentAnimatedPageViewModel = new MainPageContentViewModel(ProfileViewModel);
-        RaiseNavigationStateProperties();
+        ShowMainContentPage(ProfileViewModel);
     }
 
     private void NavigateToDevices()
@@ -879,8 +875,18 @@ public sealed class MainViewModel : ViewModelBase
         ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowDevicesMainPage();
-        CurrentPageViewModel = ProfileViewModel;
-        CurrentAnimatedPageViewModel = new MainPageContentViewModel(ProfileViewModel);
+        ShowMainContentPage(ProfileViewModel);
+    }
+
+    private void ShowMainContentPage(ViewModelBase pageViewModel)
+    {
+        if (!ReferenceEquals(CurrentPageViewModel, pageViewModel))
+        {
+            CurrentPageViewModel = pageViewModel;
+            return;
+        }
+
+        CurrentAnimatedPageViewModel = new MainPageContentViewModel(pageViewModel);
         RaiseNavigationStateProperties();
     }
 

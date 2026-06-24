@@ -172,11 +172,15 @@
     </Grid>
 
     <TransitioningContentControl Grid.Row="2"
+                                  ClipToBounds="True"
                                   Content="{Binding CurrentAnimatedPageViewModel}"
                                   IsVisible="{Binding IsMobileNavigationEnabled}"
                                   IsTransitionReversed="{Binding IsPageTransitionReversed}">
       <TransitioningContentControl.PageTransition>
-        <PageSlide Duration="0:0:0.22" Orientation="Horizontal" />
+        <PageSlide Duration="0:0:0.20"
+                   Orientation="Horizontal"
+                   SlideInEasing="CubicEaseOut"
+                   SlideOutEasing="CubicEaseIn" />
       </TransitioningContentControl.PageTransition>
     </TransitioningContentControl>
 

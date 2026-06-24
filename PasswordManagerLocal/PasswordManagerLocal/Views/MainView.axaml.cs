@@ -81,6 +81,7 @@ public partial class MainView : UserControl
         topLevel.AddHandler(PointerPressedEvent, HandlePointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         topLevel.AddHandler(PointerMovedEvent, HandlePointerMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
         topLevel.AddHandler(PointerReleasedEvent, HandlePointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(PointerCaptureLostEvent, HandlePointerCaptureLost, RoutingStrategies.Direct, handledEventsToo: true);
     }
 
     private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
@@ -141,6 +142,7 @@ public partial class MainView : UserControl
                 _inputTopLevel.RemoveHandler(PointerPressedEvent, HandlePointerPressed);
                 _inputTopLevel.RemoveHandler(PointerMovedEvent, HandlePointerMoved);
                 _inputTopLevel.RemoveHandler(PointerReleasedEvent, HandlePointerReleased);
+                RemoveHandler(PointerCaptureLostEvent, HandlePointerCaptureLost);
             }
 
             _inputTopLevel = null;
@@ -169,4 +171,7 @@ public partial class MainView : UserControl
 
     private void HandlePointerReleased(object? sender, PointerReleasedEventArgs e) =>
         _swipeNavigationHandler.HandlePointerReleased(e);
+
+    private void HandlePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e) =>
+        _swipeNavigationHandler.HandlePointerCaptureLost(e);
 }

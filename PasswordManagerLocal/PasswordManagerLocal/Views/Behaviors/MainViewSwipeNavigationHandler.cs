@@ -1,5 +1,9 @@
 using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.VisualTree;
+using System.Diagnostics;
 using PasswordManagerLocal.ViewModels;
 using PasswordManagerLocal.Views;
 
@@ -7,12 +11,22 @@ namespace PasswordManagerLocal.Views.Behaviors;
 
 internal sealed class MainViewSwipeNavigationHandler
 {
-    private const double SwipeThreshold = 96;
-    private const double SwipeDominanceRatio = 1.25;
+    private const double EarlyHorizontalLockDistance = 5;
+    private const double DirectionLockDistance = 10;
+    private const double EarlyHorizontalDominanceRatio = 1.2;
+    private const double HorizontalDominanceRatio = 1.15;
+    private const double MinimumFlickDistance = 24;
+    private const double FlickVelocityThreshold = 650;
+    private const double VelocitySmoothingFactor = 0.35;
 
     private readonly MainView _view;
     private Point? _startPoint;
+    private Point _lastPoint;
     private IPointer? _trackedPointer;
+    private long _lastVelocityTimestamp;
+    private double _horizontalVelocity;
+    private bool _isHorizontalSwipe;
+    private bool _hasCapturedPointer;
     private bool _trackingCancelled;
 
     public MainViewSwipeNavigationHandler(MainView view)
@@ -22,15 +36,18 @@ internal sealed class MainViewSwipeNavigationHandler
 
     public void HandlePointerPressed(PointerPressedEventArgs e)
     {
+        Reset();
         if (!CanStartTracking(e))
-        {
-            Reset();
             return;
-        }
+
+        var point = e.GetCurrentPoint(_view);
+        if (!point.Properties.IsLeftButtonPressed)
+            return;
 
         _trackedPointer = e.Pointer;
-        _startPoint = e.GetPosition(_view);
-        _trackingCancelled = false;
+        _startPoint = point.Position;
+        _lastPoint = point.Position;
+        _lastVelocityTimestamp = Stopwatch.GetTimestamp();
     }
 
     public void HandlePointerMoved(PointerEventArgs e)
@@ -38,14 +55,14 @@ internal sealed class MainViewSwipeNavigationHandler
         if (!CanContinueTracking(e))
             return;
 
-        var delta = GetMovement(e);
-        if (IsMostlyVerticalMovement(delta.X, delta.Y))
-        {
-            _trackingCancelled = true;
-            return;
-        }
+        var currentPoint = e.GetPosition(_view);
+        var movement = currentPoint - _startPoint!.Value;
 
-        TryCompleteSwipe(delta.X, delta.Y, e);
+        if (!_isHorizontalSwipe && !TryLockDirection(movement, e))
+            return;
+
+        UpdateVelocity(currentPoint);
+        e.Handled = true;
     }
 
     public void HandlePointerReleased(PointerReleasedEventArgs e)
@@ -56,22 +73,41 @@ internal sealed class MainViewSwipeNavigationHandler
             return;
         }
 
-        var delta = GetMovement(e);
-        TryCompleteSwipe(delta.X, delta.Y, e);
-        Reset();
+        if (!_isHorizontalSwipe)
+        {
+            Reset();
+            return;
+        }
+
+        var movement = e.GetPosition(_view) - _startPoint!.Value;
+        var shouldNavigate = ShouldNavigate(movement.X);
+        var navigateForward = movement.X < 0;
+
+        e.Handled = true;
+        ReleasePointerCapture();
+        ResetState();
+
+        if (shouldNavigate)
+            Navigate(navigateForward);
+    }
+
+    public void HandlePointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        if (Equals(_trackedPointer, e.Pointer))
+            ResetState();
     }
 
     public void Reset()
     {
-        _startPoint = null;
-        _trackedPointer = null;
-        _trackingCancelled = false;
+        ReleasePointerCapture();
+        ResetState();
     }
 
-    private bool CanStartTracking(PointerEventArgs e) =>
-        IsNavigationEnabled()
+    private bool CanStartTracking(PointerPressedEventArgs e) =>
+        e.Pointer.Type is PointerType.Touch or PointerType.Pen
+        && IsNavigationEnabled()
         && IsPointerInsideView(e)
-        && !TextBoxClipboardHandler.IsTextInputSource(e.Source);
+        && !IsExcludedInputSource(e.Source);
 
     private bool CanContinueTracking(PointerEventArgs e) =>
         _startPoint is not null
@@ -79,11 +115,104 @@ internal sealed class MainViewSwipeNavigationHandler
         && Equals(_trackedPointer, e.Pointer)
         && IsNavigationEnabled();
 
-    private Point GetMovement(PointerEventArgs e)
+    private bool TryLockDirection(Vector movement, PointerEventArgs e)
     {
-        var currentPoint = e.GetPosition(_view);
-        var startPoint = _startPoint!.Value;
-        return new Point(currentPoint.X - startPoint.X, currentPoint.Y - startPoint.Y);
+        var absoluteX = Math.Abs(movement.X);
+        var absoluteY = Math.Abs(movement.Y);
+
+        if (absoluteX >= EarlyHorizontalLockDistance
+            && absoluteX >= absoluteY * EarlyHorizontalDominanceRatio)
+        {
+            BeginHorizontalSwipe(e);
+            return true;
+        }
+
+        if (Math.Max(absoluteX, absoluteY) < DirectionLockDistance)
+            return false;
+
+        if (absoluteX >= absoluteY * HorizontalDominanceRatio)
+        {
+            BeginHorizontalSwipe(e);
+            return true;
+        }
+
+        if (absoluteY >= absoluteX)
+            _trackingCancelled = true;
+
+        return false;
+    }
+
+    private void BeginHorizontalSwipe(PointerEventArgs e)
+    {
+        _isHorizontalSwipe = true;
+        _hasCapturedPointer = true;
+        e.Pointer.Capture(_view);
+        e.PreventGestureRecognition();
+        e.Handled = true;
+    }
+
+    private void UpdateVelocity(Point currentPoint)
+    {
+        var timestamp = Stopwatch.GetTimestamp();
+        if (_lastVelocityTimestamp != 0)
+        {
+            var elapsedSeconds = (double)(timestamp - _lastVelocityTimestamp) / Stopwatch.Frequency;
+            var deltaX = currentPoint.X - _lastPoint.X;
+            if (elapsedSeconds is > 0 and <= 0.12 && Math.Abs(deltaX) >= 0.5)
+            {
+                var instantVelocity = deltaX / elapsedSeconds;
+                _horizontalVelocity = _horizontalVelocity == 0
+                    ? instantVelocity
+                    : (_horizontalVelocity * (1 - VelocitySmoothingFactor))
+                      + (instantVelocity * VelocitySmoothingFactor);
+            }
+        }
+
+        _lastPoint = currentPoint;
+        _lastVelocityTimestamp = timestamp;
+    }
+
+    private bool ShouldNavigate(double horizontalDistance)
+    {
+        var distanceThreshold = Math.Clamp(_view.Bounds.Width * 0.16, 52, 88);
+        var completedByDistance = Math.Abs(horizontalDistance) >= distanceThreshold;
+        var completedByFlick = Math.Abs(horizontalDistance) >= MinimumFlickDistance
+            && Math.Abs(_horizontalVelocity) >= FlickVelocityThreshold
+            && Math.Sign(horizontalDistance) == Math.Sign(_horizontalVelocity);
+
+        return completedByDistance || completedByFlick;
+    }
+
+    private void Navigate(bool forward)
+    {
+        if (_view.DataContext is not MainViewModel viewModel)
+            return;
+
+        if (forward)
+            viewModel.NavigateToNextMainPage();
+        else
+            viewModel.NavigateToPreviousMainPage();
+    }
+
+    private void ReleasePointerCapture()
+    {
+        if (!_hasCapturedPointer || _trackedPointer is null)
+            return;
+
+        _hasCapturedPointer = false;
+        _trackedPointer.Capture(null);
+    }
+
+    private void ResetState()
+    {
+        _startPoint = null;
+        _trackedPointer = null;
+        _lastPoint = default;
+        _lastVelocityTimestamp = 0;
+        _horizontalVelocity = 0;
+        _isHorizontalSwipe = false;
+        _hasCapturedPointer = false;
+        _trackingCancelled = false;
     }
 
     private bool IsPointerInsideView(PointerEventArgs e) =>
@@ -97,29 +226,14 @@ internal sealed class MainViewSwipeNavigationHandler
             IsSessionRenewalDialogOpen: false
         };
 
-    private static bool IsMostlyVerticalMovement(double deltaX, double deltaY) =>
-        Math.Abs(deltaY) >= SwipeThreshold && Math.Abs(deltaY) > Math.Abs(deltaX);
-
-    private void TryCompleteSwipe(double deltaX, double deltaY, PointerEventArgs e)
+    private static bool IsExcludedInputSource(object? source)
     {
-        var absoluteDeltaX = Math.Abs(deltaX);
-        var absoluteDeltaY = Math.Abs(deltaY);
-        if (absoluteDeltaX < SwipeThreshold || absoluteDeltaX < absoluteDeltaY * SwipeDominanceRatio)
-            return;
+        if (source is not Control sourceControl)
+            return false;
 
-        if (_view.DataContext is not MainViewModel viewModel)
-        {
-            Reset();
-            return;
-        }
-
-        var changedPage = deltaX < 0
-            ? viewModel.NavigateToNextMainPage()
-            : viewModel.NavigateToPreviousMainPage();
-
-        if (changedPage)
-            e.Handled = true;
-
-        Reset();
+        return TextBoxClipboardHandler.FindSourceTextBox(sourceControl) is not null
+            || sourceControl is Slider or ScrollBar
+            || sourceControl.FindAncestorOfType<Slider>() is not null
+            || sourceControl.FindAncestorOfType<ScrollBar>() is not null;
     }
 }
