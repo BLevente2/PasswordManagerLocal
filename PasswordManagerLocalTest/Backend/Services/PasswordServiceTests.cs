@@ -1,4 +1,4 @@
-﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
@@ -191,6 +191,27 @@ public sealed class PasswordServiceTests
 
         MSTestAssert.AreEqual("New", passwords.Passwords[0].Name);
         CollectionAssert.AreEqual(Encoding.UTF8.GetBytes("newpw"), decrypted);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public async Task GetUnsecurePassword_WhenStoredEntryWasTampered_ThrowsIntegrityException()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Protected",
+            Password = Encoding.UTF8.GetBytes("secret")
+        }, passwords);
+
+        var stored = passwords.Passwords.Single();
+        stored.Password[0] ^= 0x01;
+
+        await ExpectThrowsAsync<InvalidDataIntegrityException>(() =>
+            service.GetUnsecurePasswordAsync(stored.Id, passwords));
     }
 
     [TestMethod]

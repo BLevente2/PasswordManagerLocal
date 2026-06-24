@@ -6,7 +6,7 @@ namespace PasswordManagerLocalBackend.Constants;
 public static class RegexConstants
 {
     public static readonly Regex EmailRegex = new(
-    $@"^(?=.{{{EmailMinLength},{EmailMaxLength}}}$)[a-z0-9._%+-]+@[a-z0-9-]+(?:.[a-z0-9-]+)*.[a-z]{{2,}}$",
+    $@"^(?=.{{{EmailMinLength},{EmailMaxLength}}}$)[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{{2,}}$",
     RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant
     );
 
