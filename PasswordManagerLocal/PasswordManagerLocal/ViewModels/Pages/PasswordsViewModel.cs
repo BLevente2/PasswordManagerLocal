@@ -265,6 +265,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(SavePasswordButtonLabel));
             this.RaisePropertyChanged(nameof(EditorPasswordHint));
             this.RaisePropertyChanged(nameof(CanRevealEditorStoredPassword));
+            this.RaisePropertyChanged(nameof(IsEditorPasswordFieldVisible));
             this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
         }
     }
@@ -440,14 +441,16 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _isEditorStoredPasswordRevealed, value);
             this.RaisePropertyChanged(nameof(CanRevealEditorStoredPassword));
+            this.RaisePropertyChanged(nameof(IsEditorPasswordFieldVisible));
             this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
-            this.RaisePropertyChanged(nameof(EditorPasswordHint));
         }
     }
 
     public bool CanRevealEditorStoredPassword => IsEditMode && !IsEditorStoredPasswordRevealed;
 
-    public bool IsEditorPasswordVisibilityToggleVisible => IsCreateMode || IsEditorStoredPasswordRevealed;
+    public bool IsEditorPasswordFieldVisible => IsCreateMode || IsEditorStoredPasswordRevealed;
+
+    public bool IsEditorPasswordVisibilityToggleVisible => IsEditorPasswordFieldVisible;
 
     public char EditorPasswordMaskCharacter => IsEditorPasswordVisible ? '\0' : '●';
 
@@ -614,11 +617,7 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string EditorPasswordPlaceholder => GetTranslation("Passwords_Editor_PasswordPlaceholder");
 
-    public string EditorPasswordHint => IsCreateMode
-        ? GetTranslation("Passwords_Editor_PasswordHint_Create")
-        : IsEditorStoredPasswordRevealed
-            ? GetTranslation("Passwords_Editor_PasswordHint_Revealed")
-            : GetTranslation("Passwords_Editor_PasswordHint_Edit");
+    public string EditorPasswordHint => GetTranslation("Passwords_Editor_PasswordHint_Create");
 
     public string EditorPasswordVisibilityToggleText => GetTranslation(IsEditorPasswordVisible ? "Common_Hide" : "Common_Show");
 
