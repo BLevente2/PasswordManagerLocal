@@ -240,7 +240,7 @@
   "Common_Red": "Piros",
   "Common_Green": "Zöld",
   "Common_Blue": "Kék",
-  "Passwords_Color_More": "További színek…",
+  "Passwords_Color_More": "Egyéb…",
   "Passwords_ColorPicker_Title": "További színek",
   "Passwords_ColorPicker_Description": "Állítsd be a jelszó színét csúszkákkal vagy kézi ARGB/RGB hex színkóddal. Példák: #FFFFD700, #FFD700 vagy #FD0.",
   "Passwords_ColorPicker_CurrentColor": "Jelenleg kiválasztott színkód",

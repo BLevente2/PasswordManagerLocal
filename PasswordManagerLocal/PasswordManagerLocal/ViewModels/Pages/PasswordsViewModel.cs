@@ -20,6 +20,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private const string DetailsPane = "details";
     private const string ColorPane = "color";
     private const string CustomColorKey = "custom";
+    private const string SelectedCustomColorKey = "selected-custom";
 
     private static readonly string[] LocalizedPropertyNames =
     [
@@ -342,7 +343,7 @@ public sealed class PasswordsViewModel : ViewModelBase
 
             if (value is not null)
             {
-                ApplyEditorColor(value.HexValue, updateSelectedPreset: false);
+                ApplyEditorColor(value.HexValue);
             }
         }
     }
@@ -1375,11 +1376,12 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         if (!PasswordColorUtility.TryNormalizeHexColor(color, out var normalizedColor))
         {
-            normalizedColor = "#FFFFD700";
+            normalizedColor = PasswordColorUtility.DefaultColor;
         }
 
         EditorColor = normalizedColor;
         CustomColorCode = normalizedColor;
+        UpdateMoreColorsOption(normalizedColor);
 
         if (updateColorFields)
         {
@@ -1395,14 +1397,54 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void SelectMatchingPresetColor(string normalizedColor)
     {
         var match = PresetColors.FirstOrDefault(item => item.Key != CustomColorKey
+            && item.Key != SelectedCustomColorKey
             && string.Equals(PasswordColorUtility.NormalizeKnownColor(item.HexValue), normalizedColor, StringComparison.OrdinalIgnoreCase));
 
-        if (ReferenceEquals(_selectedEditorColorOption, match))
+        if (match is not null)
+        {
+            RemoveSelectedCustomColorOption();
+            SetSelectedEditorColorOption(match);
+            return;
+        }
+
+        var customOption = PresetColors.FirstOrDefault(item => item.Key == SelectedCustomColorKey);
+        if (customOption is null)
+        {
+            customOption = new PasswordColorOptionViewModel(SelectedCustomColorKey, normalizedColor, normalizedColor);
+            var moreColorsIndex = PresetColors.ToList().FindIndex(item => item.Key == CustomColorKey);
+            PresetColors.Insert(moreColorsIndex >= 0 ? moreColorsIndex : PresetColors.Count, customOption);
+        }
+        else
+        {
+            customOption.Update(normalizedColor, normalizedColor);
+        }
+
+        SetSelectedEditorColorOption(customOption);
+    }
+
+    private void UpdateMoreColorsOption(string normalizedColor)
+    {
+        var moreColorsOption = PresetColors.FirstOrDefault(item => item.Key == CustomColorKey);
+        moreColorsOption?.Update(GetTranslation("Passwords_Color_More"), normalizedColor);
+    }
+
+    private void RemoveSelectedCustomColorOption()
+    {
+        var customOption = PresetColors.FirstOrDefault(item => item.Key == SelectedCustomColorKey);
+        if (customOption is not null)
+        {
+            PresetColors.Remove(customOption);
+        }
+    }
+
+    private void SetSelectedEditorColorOption(PasswordColorOptionViewModel option)
+    {
+        if (ReferenceEquals(_selectedEditorColorOption, option))
         {
             return;
         }
 
-        _selectedEditorColorOption = match;
+        _selectedEditorColorOption = option;
         this.RaisePropertyChanged(nameof(SelectedEditorColorOption));
     }
 
