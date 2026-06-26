@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Helpers;
+using PasswordManagerLocal.Security;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Requests;
@@ -10,6 +11,7 @@ namespace PasswordManagerLocal.ViewModels.Auth;
 public sealed class RegistrationViewModel : ViewModelBase
 {
     private readonly IEndpoints _endpoints;
+    private readonly PasswordStrengthEstimator _passwordStrengthEstimator = new();
     private readonly Action _navigateToLogin;
     private readonly Func<Guid, Task> _onAuthenticationSucceededAsync;
     private Func<Task>? _navigateBackAsync;
@@ -25,6 +27,7 @@ public sealed class RegistrationViewModel : ViewModelBase
     private bool _isConfirmPasswordVisible;
     private bool _isBusy;
     private bool _isBackButtonVisible;
+    private int _passwordStrength;
 
     public RegistrationViewModel(
         UiPreferencesService uiPreferences,
@@ -47,31 +50,51 @@ public sealed class RegistrationViewModel : ViewModelBase
     public string Username
     {
         get => _username;
-        set => this.RaiseAndSetIfChanged(ref _username, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _username, value);
+            RefreshPasswordStrength();
+        }
     }
 
     public string FirstName
     {
         get => _firstName;
-        set => this.RaiseAndSetIfChanged(ref _firstName, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _firstName, value);
+            RefreshPasswordStrength();
+        }
     }
 
     public string LastName
     {
         get => _lastName;
-        set => this.RaiseAndSetIfChanged(ref _lastName, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _lastName, value);
+            RefreshPasswordStrength();
+        }
     }
 
     public string Email
     {
         get => _email;
-        set => this.RaiseAndSetIfChanged(ref _email, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _email, value);
+            RefreshPasswordStrength();
+        }
     }
 
     public string Password
     {
         get => _password;
-        set => this.RaiseAndSetIfChanged(ref _password, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _password, value);
+            RefreshPasswordStrength();
+        }
     }
 
     public string ConfirmPassword
@@ -123,6 +146,8 @@ public sealed class RegistrationViewModel : ViewModelBase
     public char PasswordMaskCharacter => IsPasswordVisible ? '\0' : '●';
 
     public char ConfirmPasswordMaskCharacter => IsConfirmPasswordVisible ? '\0' : '●';
+
+    public int PasswordStrength => _passwordStrength;
 
     public ReactiveCommand<Unit, Unit> RegisterCommand { get; }
 
@@ -178,6 +203,14 @@ public sealed class RegistrationViewModel : ViewModelBase
 
     public string BusyText => GetTranslation("Common_Loading");
 
+    public string PasswordStrengthLabel => GetTranslation("PasswordStrength_Label");
+
+    public string PasswordStrengthInfoTitle => GetTranslation("PasswordStrength_Info_Title");
+
+    public string PasswordStrengthInfoBody => GetTranslation("PasswordStrength_Info_Body");
+
+    public string PasswordStrengthInfoAccessibleLabel => GetTranslation("PasswordStrength_Info_AccessibleLabel");
+
     protected override void OnLanguageChanged()
     {
         this.RaisePropertyChanged(nameof(Title));
@@ -202,6 +235,10 @@ public sealed class RegistrationViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(PasswordVisibilityToggleText));
         this.RaisePropertyChanged(nameof(ConfirmPasswordVisibilityToggleText));
         this.RaisePropertyChanged(nameof(BusyText));
+        this.RaisePropertyChanged(nameof(PasswordStrengthLabel));
+        this.RaisePropertyChanged(nameof(PasswordStrengthInfoTitle));
+        this.RaisePropertyChanged(nameof(PasswordStrengthInfoBody));
+        this.RaisePropertyChanged(nameof(PasswordStrengthInfoAccessibleLabel));
     }
 
     public void Reset()
@@ -288,6 +325,19 @@ public sealed class RegistrationViewModel : ViewModelBase
             return GetTranslation("Validation_RegisterPassword_Mismatch");
 
         return null;
+    }
+
+    private void RefreshPasswordStrength()
+    {
+        var result = _passwordStrengthEstimator.Evaluate(
+            Password,
+            [Username, FirstName, LastName, Email]);
+
+        if (_passwordStrength == result.Score)
+            return;
+
+        _passwordStrength = result.Score;
+        this.RaisePropertyChanged(nameof(PasswordStrength));
     }
 
     private RegistrationRequest CreateRegistrationRequest(byte[] passwordHash) =>

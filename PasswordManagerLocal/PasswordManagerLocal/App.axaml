@@ -60,6 +60,18 @@
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
+    <Style Selector="Button.passwordStrengthInfoButton">
+      <Setter Property="MinWidth" Value="36" />
+      <Setter Property="Width" Value="36" />
+      <Setter Property="MinHeight" Value="36" />
+      <Setter Property="Height" Value="36" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
     <Style Selector="Border.toolbarGroup">
       <Setter Property="Padding" Value="10,8" />
       <Setter Property="CornerRadius" Value="14" />

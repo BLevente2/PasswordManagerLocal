@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using PasswordManagerLocal.Helpers;
+using PasswordManagerLocal.Security;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Requests;
@@ -82,9 +83,16 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(EditorClosedTitle),
         nameof(EditorClosedDescription),
         nameof(IsEditorPasswordVisibilityToggleVisible),
+        nameof(PasswordStrengthLabel),
+        nameof(PasswordStrengthInfoTitle),
+        nameof(PasswordStrengthInfoBody),
+        nameof(PasswordStrengthInfoAccessibleLabel),
+        nameof(GeneratePasswordLabel),
     ];
 
     private readonly IEndpoints _endpoints;
+    private readonly PasswordStrengthEstimator _passwordStrengthEstimator = new();
+    private readonly MaximumStrengthPasswordGenerator _passwordGenerator;
     private readonly List<PasswordItemViewModel> _allPasswords = [];
 
     private Guid _token;
@@ -102,6 +110,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     private string _editorPassword = string.Empty;
     private bool _isEditorPasswordVisible;
     private bool _isEditorStoredPasswordRevealed;
+    private int _editorPasswordStrength;
+    private int _revealedPasswordStrength;
     private string _customColorCode = "#FFFFD700";
     private double _customAlpha = 255;
     private double _customRed = 255;
@@ -116,6 +126,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         : base(uiPreferences)
     {
         _endpoints = endpoints;
+        _passwordGenerator = new MaximumStrengthPasswordGenerator(_passwordStrengthEstimator);
 
         Passwords = new ObservableCollection<PasswordItemViewModel>();
         PresetColors = new ObservableCollection<PasswordColorOptionViewModel>();
@@ -137,6 +148,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         SavePasswordCommand = ReactiveCommand.CreateFromTask(SavePasswordAsync);
         CancelPasswordEditorCommand = ReactiveCommand.Create(CancelPasswordEditor);
         ToggleEditorPasswordVisibilityCommand = ReactiveCommand.Create(ToggleEditorPasswordVisibility);
+        GenerateEditorPasswordCommand = ReactiveCommand.Create(GenerateEditorPassword);
         OpenCustomColorPickerCommand = ReactiveCommand.Create(OpenCustomColorPicker);
         BackToPasswordEditorCommand = ReactiveCommand.Create(BackToPasswordEditor);
         ApplyManualColorCodeCommand = ReactiveCommand.Create(ApplyManualColorCode);
@@ -204,12 +216,15 @@ public sealed class PasswordsViewModel : ViewModelBase
             this.RaiseAndSetIfChanged(ref _revealedPassword, value);
             this.RaisePropertyChanged(nameof(HasRevealedPassword));
             this.RaisePropertyChanged(nameof(IsPasswordHidden));
+            RefreshRevealedPasswordStrength();
         }
     }
 
     public bool HasRevealedPassword => !string.IsNullOrEmpty(RevealedPassword);
 
     public bool IsPasswordHidden => HasSelection && !HasRevealedPassword;
+
+    public int RevealedPasswordStrength => _revealedPasswordStrength;
 
     public bool HasPasswords => Passwords.Count > 0;
 
@@ -267,6 +282,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(CanRevealEditorStoredPassword));
             this.RaisePropertyChanged(nameof(IsEditorPasswordFieldVisible));
             this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
+            this.RaisePropertyChanged(nameof(IsEditorPasswordStrengthVisible));
         }
     }
 
@@ -281,7 +297,11 @@ public sealed class PasswordsViewModel : ViewModelBase
     public string EditorName
     {
         get => _editorName;
-        set => this.RaiseAndSetIfChanged(ref _editorName, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _editorName, value);
+            RefreshEditorPasswordStrength();
+        }
     }
 
     public string EditorDescription
@@ -420,8 +440,14 @@ public sealed class PasswordsViewModel : ViewModelBase
     public string EditorPassword
     {
         get => _editorPassword;
-        set => this.RaiseAndSetIfChanged(ref _editorPassword, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _editorPassword, value);
+            RefreshEditorPasswordStrength();
+        }
     }
+
+    public int EditorPasswordStrength => _editorPasswordStrength;
 
     public bool IsEditorPasswordVisible
     {
@@ -443,6 +469,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(CanRevealEditorStoredPassword));
             this.RaisePropertyChanged(nameof(IsEditorPasswordFieldVisible));
             this.RaisePropertyChanged(nameof(IsEditorPasswordVisibilityToggleVisible));
+            this.RaisePropertyChanged(nameof(IsEditorPasswordStrengthVisible));
         }
     }
 
@@ -451,6 +478,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public bool IsEditorPasswordFieldVisible => IsCreateMode || IsEditorStoredPasswordRevealed;
 
     public bool IsEditorPasswordVisibilityToggleVisible => IsEditorPasswordFieldVisible;
+
+    public bool IsEditorPasswordStrengthVisible => IsCreateMode || IsEditorStoredPasswordRevealed;
 
     public char EditorPasswordMaskCharacter => IsEditorPasswordVisible ? '\0' : '●';
 
@@ -518,6 +547,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> CancelPasswordEditorCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ToggleEditorPasswordVisibilityCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> GenerateEditorPasswordCommand { get; }
 
     public ReactiveCommand<Unit, Unit> OpenCustomColorPickerCommand { get; }
 
@@ -620,6 +651,16 @@ public sealed class PasswordsViewModel : ViewModelBase
     public string EditorPasswordHint => GetTranslation("Passwords_Editor_PasswordHint_Create");
 
     public string EditorPasswordVisibilityToggleText => GetTranslation(IsEditorPasswordVisible ? "Common_Hide" : "Common_Show");
+
+    public string PasswordStrengthLabel => GetTranslation("PasswordStrength_Label");
+
+    public string PasswordStrengthInfoTitle => GetTranslation("PasswordStrength_Info_Title");
+
+    public string PasswordStrengthInfoBody => GetTranslation("PasswordStrength_Info_Body");
+
+    public string PasswordStrengthInfoAccessibleLabel => GetTranslation("PasswordStrength_Info_AccessibleLabel");
+
+    public string GeneratePasswordLabel => GetTranslation("Passwords_Editor_GeneratePassword");
 
     public string SearchLabel => GetTranslation("Common_Search");
 
@@ -1131,6 +1172,38 @@ public sealed class PasswordsViewModel : ViewModelBase
         HidePassword();
         ClearStatusMessage();
         CurrentPane = ListPane;
+    }
+
+    private void RefreshEditorPasswordStrength()
+    {
+        var result = _passwordStrengthEstimator.Evaluate(
+            EditorPassword,
+            [EditorName]);
+
+        if (_editorPasswordStrength == result.Score)
+            return;
+
+        _editorPasswordStrength = result.Score;
+        this.RaisePropertyChanged(nameof(EditorPasswordStrength));
+    }
+
+    private void RefreshRevealedPasswordStrength()
+    {
+        var result = _passwordStrengthEstimator.Evaluate(
+            RevealedPassword,
+            [SelectedPassword?.Name]);
+
+        if (_revealedPasswordStrength == result.Score)
+            return;
+
+        _revealedPasswordStrength = result.Score;
+        this.RaisePropertyChanged(nameof(RevealedPasswordStrength));
+    }
+
+    private void GenerateEditorPassword()
+    {
+        EditorPassword = _passwordGenerator.Generate([EditorName]);
+        IsEditorPasswordVisible = true;
     }
 
     private void ToggleEditorPasswordVisibility() => IsEditorPasswordVisible = !IsEditorPasswordVisible;

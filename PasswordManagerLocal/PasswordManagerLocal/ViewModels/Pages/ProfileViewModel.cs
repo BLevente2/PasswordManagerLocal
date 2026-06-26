@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Helpers;
+using PasswordManagerLocal.Security;
 using PasswordManagerLocal.Services;
 using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Requests;
@@ -68,6 +69,10 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(NewPasswordPlaceholder),
         nameof(ConfirmNewPasswordPlaceholder),
         nameof(DeleteAccountPasswordPlaceholder),
+        nameof(PasswordStrengthLabel),
+        nameof(PasswordStrengthInfoTitle),
+        nameof(PasswordStrengthInfoBody),
+        nameof(PasswordStrengthInfoAccessibleLabel),
     ];
 
     private static readonly string[] DeviceLocalizedPropertyNames =
@@ -128,6 +133,7 @@ public sealed class ProfileViewModel : ViewModelBase
     ];
 
     private readonly IEndpoints _endpoints;
+    private readonly PasswordStrengthEstimator _passwordStrengthEstimator = new();
     private readonly Func<Task<bool>> _refreshAuthenticatedStateAsync;
     private readonly Func<Task> _handleAccountDeletedAsync;
     private readonly List<DeviceItemViewModel> _allDevices = [];
@@ -162,6 +168,7 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _currentProfilePane = ProfileTabsPane;
     private string _currentDevicePane = DeviceListPane;
     private int _selectedProfileTabIndex;
+    private int _newPasswordStrength;
     private PasswordSortOptionViewModel? _selectedDeviceSortOption;
 
     public ProfileViewModel(
@@ -207,25 +214,41 @@ public sealed class ProfileViewModel : ViewModelBase
     public string Username
     {
         get => _username;
-        private set => this.RaiseAndSetIfChanged(ref _username, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _username, value);
+            RefreshNewPasswordStrength();
+        }
     }
 
     public string FirstName
     {
         get => _firstName;
-        private set => this.RaiseAndSetIfChanged(ref _firstName, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _firstName, value);
+            RefreshNewPasswordStrength();
+        }
     }
 
     public string LastName
     {
         get => _lastName;
-        private set => this.RaiseAndSetIfChanged(ref _lastName, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _lastName, value);
+            RefreshNewPasswordStrength();
+        }
     }
 
     public string Email
     {
         get => _email;
-        private set => this.RaiseAndSetIfChanged(ref _email, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _email, value);
+            RefreshNewPasswordStrength();
+        }
     }
 
     public DateTime RegistrationDate
@@ -281,8 +304,14 @@ public sealed class ProfileViewModel : ViewModelBase
     public string NewPassword
     {
         get => _newPassword;
-        set => this.RaiseAndSetIfChanged(ref _newPassword, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _newPassword, value);
+            RefreshNewPasswordStrength();
+        }
     }
+
+    public int NewPasswordStrength => _newPasswordStrength;
 
     public string ConfirmNewPassword
     {
@@ -649,6 +678,14 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string DeleteAccountPasswordPlaceholder => GetTranslation("Profile_DeletePassword_Placeholder");
 
+    public string PasswordStrengthLabel => GetTranslation("PasswordStrength_Label");
+
+    public string PasswordStrengthInfoTitle => GetTranslation("PasswordStrength_Info_Title");
+
+    public string PasswordStrengthInfoBody => GetTranslation("PasswordStrength_Info_Body");
+
+    public string PasswordStrengthInfoAccessibleLabel => GetTranslation("PasswordStrength_Info_AccessibleLabel");
+
     public string RefreshDevicesLabel => GetTranslation("Common_Refresh");
 
     public string AddDeviceLabel => GetTranslation("Profile_Device_Add");
@@ -1001,6 +1038,19 @@ public sealed class ProfileViewModel : ViewModelBase
         {
             ShowErrorMessage(GetSafeErrorMessage(ex));
         }
+    }
+
+    private void RefreshNewPasswordStrength()
+    {
+        var result = _passwordStrengthEstimator.Evaluate(
+            NewPassword,
+            [Username, FirstName, LastName, Email]);
+
+        if (_newPasswordStrength == result.Score)
+            return;
+
+        _newPasswordStrength = result.Score;
+        this.RaisePropertyChanged(nameof(NewPasswordStrength));
     }
 
     private async Task ChangeMasterPasswordAsync()

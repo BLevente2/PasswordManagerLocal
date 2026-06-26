@@ -232,6 +232,7 @@
   "Passwords_SearchEmpty_Description": "No passwords match the current search. Change the search text or sort order.",
   "Passwords_BackToList": "Back to passwords",
   "Passwords_Editor_RevealStoredPassword": "Reveal current",
+  "Passwords_Editor_GeneratePassword": "Generate a maximum-strength password",
   "Passwords_DeleteConfirm_Title": "Delete password",
   "Passwords_DeleteConfirm_Message": "Are you sure you want to delete this password: “{0}”? This action cannot be undone.",
   "Passwords_DeleteConfirm_Confirm": "Yes, delete",
@@ -344,5 +345,9 @@
   "DatabaseVersion_ResetDeclined_Message": "The database was not reset. Password Manager Local cannot open or use this unsupported database, so the application must remain locked. Close the app, or choose Reset database to create a new empty database.",
   "DatabaseVersion_Resetting_Message": "Deleting the incompatible database and creating a new empty database with a new protected key. Do not close the app during this operation.",
   "DatabaseVersion_ResetFailed_Title": "Database reset failed",
-  "DatabaseVersion_ResetFailed_Message": "The incompatible database could not be fully removed or the new database could not be created. The app remains locked. Check that the application can write to its local data folder, then go back and try again."
+  "DatabaseVersion_ResetFailed_Message": "The incompatible database could not be fully removed or the new database could not be created. The app remains locked. Check that the application can write to its local data folder, then go back and try again.",
+  "PasswordStrength_Label": "Password strength",
+  "PasswordStrength_Info_AccessibleLabel": "Show information about password strength",
+  "PasswordStrength_Info_Title": "What makes a password strong?",
+  "PasswordStrength_Info_Body": "The meter estimates how difficult the password would be to guess. It looks at:\n\n• Length: longer passwords and passphrases are usually harder to guess. Aim for at least 15 characters.\n• Unpredictability: avoid common passwords, names, dates, keyboard paths, number or letter sequences, and repeated text.\n• Variety: different kinds of characters can help when they make the password less predictable.\n• Personal or account information: do not include your name, username, email address, or the name of the account or service.\n• Uniqueness: use a different password for every account.\n\nA long passphrase made from several unrelated words can be both memorable and strong. This meter is an estimate, not a guarantee."
 }
