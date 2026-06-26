@@ -232,7 +232,7 @@
   "Passwords_SearchEmpty_Description": "Nincs a keresésnek megfelelő jelszó. Módosítsd a keresést vagy a rendezést.",
   "Passwords_BackToList": "Vissza a jelszavakhoz",
   "Passwords_Editor_RevealStoredPassword": "Jelenlegi felfedése",
-  "Passwords_Editor_GeneratePassword": "Maximális erősségű jelszó generálása",
+  "Passwords_Editor_GeneratePassword": "Jelszó generálása",
   "Passwords_DeleteConfirm_Title": "Jelszó törlése",
   "Passwords_DeleteConfirm_Message": "Biztos, hogy törölni szeretnéd ezt a jelszót: „{0}”? Ez a művelet nem vonható vissza.",
   "Passwords_DeleteConfirm_Confirm": "Igen, törlés",

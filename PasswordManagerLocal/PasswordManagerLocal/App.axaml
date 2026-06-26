@@ -4,6 +4,14 @@
              xmlns:fluent="clr-namespace:Avalonia.Themes.Fluent;assembly=Avalonia.Themes.Fluent"
              x:Class="PasswordManagerLocal.App">
 
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://PasswordManagerLocal/Assets/Icons/IconGeometries.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
   <Application.Styles>
     <fluent:FluentTheme />
 
@@ -58,6 +66,26 @@
       <Setter Property="FontSize" Value="18" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <Style Selector="PathIcon.actionButtonIcon">
+      <Setter Property="Width" Value="18" />
+      <Setter Property="Height" Value="18" />
+    </Style>
+
+    <Style Selector="PathIcon.smallUiIcon">
+      <Setter Property="Width" Value="16" />
+      <Setter Property="Height" Value="16" />
+    </Style>
+
+    <Style Selector="PathIcon.mediumUiIcon">
+      <Setter Property="Width" Value="20" />
+      <Setter Property="Height" Value="20" />
+    </Style>
+
+    <Style Selector="PathIcon.largeEmptyStateIcon">
+      <Setter Property="Width" Value="44" />
+      <Setter Property="Height" Value="44" />
     </Style>
 
     <Style Selector="Button.passwordStrengthInfoButton">

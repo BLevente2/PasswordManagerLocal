@@ -19,8 +19,10 @@
             <Button Classes="ghost iconButton"
                     IsVisible="{Binding IsBackButtonVisible}"
                     Command="{Binding NavigateBackCommand}"
-                    Content="←"
-                    ToolTip.Tip="{Binding BackLabel}" />
+                    
+                    ToolTip.Tip="{Binding BackLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
               <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
               <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
@@ -88,7 +90,9 @@
               <Button Grid.Column="1"
                       Classes="ghost"
                       Command="{Binding TogglePasswordVisibilityCommand}"
-                      Content="{Binding PasswordVisibilityToggleText}" />
+                      Content="{Binding PasswordVisibilityToggleText}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             </Grid>
             <controls:PasswordStrengthIndicator
                 Strength="{Binding PasswordStrength}"
@@ -110,7 +114,9 @@
               <Button Grid.Column="1"
                       Classes="ghost"
                       Command="{Binding ToggleConfirmPasswordVisibilityCommand}"
-                      Content="{Binding ConfirmPasswordVisibilityToggleText}" />
+                      Content="{Binding ConfirmPasswordVisibilityToggleText}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             </Grid>
           </StackPanel>
 
@@ -120,7 +126,9 @@
 
           <Button Classes="primary"
                   Command="{Binding RegisterCommand}"
-                  Content="{Binding RegisterButtonLabel}" />
+                  Content="{Binding RegisterButtonLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
 
           <Border Classes="divider" />
 
@@ -128,7 +136,9 @@
             <TextBlock Text="{Binding AlreadyHaveAccountText}" Classes="subtleText" TextWrapping="Wrap" />
             <Button Classes="ghost"
                     Command="{Binding NavigateToLoginCommand}"
-                    Content="{Binding NavigateToLoginLabel}" />
+                    Content="{Binding NavigateToLoginLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           </StackPanel>
         </StackPanel>
       </Border>

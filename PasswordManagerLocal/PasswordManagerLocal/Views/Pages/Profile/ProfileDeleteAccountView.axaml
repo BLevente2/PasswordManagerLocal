@@ -13,8 +13,10 @@
           <Button
               Classes="ghost iconButton"
               Command="{Binding BackToProfileCommand}"
-              Content="←"
-              ToolTip.Tip="{Binding BackToProfileLabel}" />
+              
+              ToolTip.Tip="{Binding BackToProfileLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           <TextBlock
               Text="{Binding DeleteAccountLabel}"
               Classes="sectionTitle"
@@ -51,7 +53,9 @@
               Classes="danger"
               Command="{Binding DeleteAccountCommand}"
               Content="{Binding DeleteAccountLabel}"
-              Margin="0,0,8,8" />
+              Margin="0,0,8,8" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
         </WrapPanel>
       </StackPanel>
     </Border>

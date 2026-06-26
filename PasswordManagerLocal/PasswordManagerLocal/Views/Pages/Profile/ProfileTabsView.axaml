@@ -105,12 +105,12 @@
                       TextWrapping="Wrap" />
                   <TextBlock Text="{Binding EditPersonalInfoDescription}" Classes="subtleText" TextWrapping="Wrap" />
                 </StackPanel>
-                <TextBlock
+                <PathIcon
                     Grid.Column="1"
-                    Text="›"
-                    FontSize="28"
+                    Classes="mediumUiIcon"
+                    Data="{StaticResource ChevronRightIconGeometry}"
                     Width="44"
-                    TextAlignment="Center"
+                    HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -137,12 +137,12 @@
                       TextWrapping="Wrap" />
                   <TextBlock Text="{Binding ChangeUsernameDescription}" Classes="subtleText" TextWrapping="Wrap" />
                 </StackPanel>
-                <TextBlock
+                <PathIcon
                     Grid.Column="1"
-                    Text="›"
-                    FontSize="28"
+                    Classes="mediumUiIcon"
+                    Data="{StaticResource ChevronRightIconGeometry}"
                     Width="44"
-                    TextAlignment="Center"
+                    HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -188,12 +188,12 @@
                       Classes="subtleText"
                       TextWrapping="Wrap" />
                 </StackPanel>
-                <TextBlock
+                <PathIcon
                     Grid.Column="1"
-                    Text="›"
-                    FontSize="28"
+                    Classes="mediumUiIcon"
+                    Data="{StaticResource ChevronRightIconGeometry}"
                     Width="44"
-                    TextAlignment="Center"
+                    HorizontalAlignment="Center"
                     VerticalAlignment="Center" />
               </Grid>
             </Button>
@@ -221,12 +221,12 @@
                       Foreground="#FFD13438" />
                   <TextBlock Text="{Binding DeleteAccountDescription}" Classes="subtleText" TextWrapping="Wrap" />
                 </StackPanel>
-                <TextBlock
+                <PathIcon
                     Grid.Column="1"
-                    Text="›"
-                    FontSize="28"
+                    Classes="mediumUiIcon"
+                    Data="{StaticResource ChevronRightIconGeometry}"
                     Width="44"
-                    TextAlignment="Center"
+                    HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     Foreground="#FFD13438" />
               </Grid>

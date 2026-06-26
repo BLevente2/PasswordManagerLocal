@@ -10,7 +10,7 @@
     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" MaxWidth="560" HorizontalAlignment="Center">
       <Border Classes="toolbarGroup" Grid.Column="0" MinWidth="0">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" MinWidth="0">
-          <TextBlock Text="🔍" VerticalAlignment="Center" FontSize="16" ToolTip.Tip="{Binding DeviceSearchLabel}" />
+          <PathIcon Classes="smallUiIcon" Data="{StaticResource SearchIconGeometry}" VerticalAlignment="Center" />
           <TextBox
               Grid.Column="1"
               Text="{Binding DeviceSearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -30,8 +30,8 @@
           Grid.Column="1"
           Width="48"
           MinWidth="48"
-          Content="⇅"
           ToolTip.Tip="{Binding DeviceSortLabel}">
+        <PathIcon Classes="actionButtonIcon" Data="{StaticResource SortIconGeometry}" />
         <Button.Flyout>
           <MenuFlyout>
             <MenuItem
@@ -51,8 +51,9 @@
           Width="48"
           MinWidth="48"
           Command="{Binding BeginAddDeviceCommand}"
-          Content="{Binding AddDeviceIconLabel}"
-          ToolTip.Tip="{Binding AddDeviceLabel}" />
+          ToolTip.Tip="{Binding AddDeviceLabel}">
+        <PathIcon Classes="actionButtonIcon" Data="{StaticResource AddIconGeometry}" />
+      </Button>
     </Grid>
   </Border>
 </UserControl>

@@ -13,8 +13,10 @@
           <Button
               Classes="ghost iconButton"
               Command="{Binding CancelAddDeviceCommand}"
-              Content="←"
-              ToolTip.Tip="{Binding BackToDevicesLabel}" />
+              
+              ToolTip.Tip="{Binding BackToDevicesLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           <TextBlock
               Text="{Binding AddDeviceDialogTitle}"
               Classes="sectionTitle"
@@ -30,12 +32,16 @@
                 Command="{Binding ScanDeviceEnrollmentQrCodeCommand}"
                 Content="{Binding ScanDeviceEnrollmentQrCodeLabel}"
                 IsVisible="{Binding IsDeviceEnrollmentCameraScanAvailable}"
-                Margin="0,0,8,8" />
+                Margin="0,0,8,8" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             <Button
                 Classes="ghost"
                 Command="{Binding PickDeviceEnrollmentQrImageCommand}"
                 Content="{Binding PickDeviceEnrollmentQrImageLabel}"
-                Margin="0,0,8,8" />
+                Margin="0,0,8,8" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           </WrapPanel>
         </StackPanel>
         <StackPanel Spacing="6">
@@ -58,7 +64,9 @@
               Classes="primary"
               Command="{Binding ConfirmAddDeviceCommand}"
               Content="{Binding ConfirmAddDeviceLabel}"
-              Margin="0,0,8,8" />
+              Margin="0,0,8,8" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
         </WrapPanel>
       </StackPanel>
     </Border>

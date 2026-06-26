@@ -13,8 +13,10 @@
           <Button
               Classes="ghost iconButton"
               Command="{Binding CancelDisconnectDeviceCommand}"
-              Content="←"
-              ToolTip.Tip="{Binding BackToDevicesLabel}" />
+              
+              ToolTip.Tip="{Binding BackToDevicesLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           <TextBlock
               Text="{Binding DisconnectDialogTitle}"
               Classes="sectionTitle"
@@ -46,7 +48,9 @@
               Classes="danger"
               Command="{Binding ConfirmDisconnectDeviceCommand}"
               Content="{Binding ConfirmDisconnectLabel}"
-              Margin="0,0,8,8" />
+              Margin="0,0,8,8" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
         </WrapPanel>
       </StackPanel>
     </Border>

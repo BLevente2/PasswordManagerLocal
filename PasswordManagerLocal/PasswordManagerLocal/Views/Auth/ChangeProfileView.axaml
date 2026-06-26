@@ -14,8 +14,10 @@
             <Button Classes="ghost iconButton"
                     IsVisible="{Binding IsBackButtonVisible}"
                     Command="{Binding BackCommand}"
-                    Content="←"
-                    ToolTip.Tip="{Binding BackLabel}" />
+                    
+                    ToolTip.Tip="{Binding BackLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
               <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
               <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
@@ -34,7 +36,9 @@
             <Button Grid.Column="1"
                     Classes="ghost"
                     Command="{Binding RefreshCommand}"
-                    Content="{Binding RefreshLabel}" />
+                    Content="{Binding RefreshLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           </Grid>
 
           <ItemsControl ItemsSource="{Binding Profiles}" IsVisible="{Binding HasProfiles}">
@@ -74,7 +78,9 @@
 
           <Button Classes="primary"
                   Command="{Binding LoginAnotherProfileCommand}"
-                  Content="{Binding LoginAnotherProfileLabel}" />
+                  Content="{Binding LoginAnotherProfileLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
         </StackPanel>
       </Border>
     </Grid>

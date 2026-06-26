@@ -13,8 +13,10 @@
           <Button
               Classes="ghost iconButton"
               Command="{Binding BackToDevicesCommand}"
-              Content="←"
-              ToolTip.Tip="{Binding BackToDevicesLabel}" />
+              
+              ToolTip.Tip="{Binding BackToDevicesLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           <TextBlock
               Text="{Binding SelectedDevice.Name}"
               Classes="sectionTitle"
@@ -63,7 +65,9 @@
               Classes="primary"
               VerticalAlignment="Bottom"
               Command="{Binding SelectedDevice.SaveNameCommand}"
-              Content="{Binding SaveDeviceNameLabel}" />
+              Content="{Binding SaveDeviceNameLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
         </Grid>
         <StackPanel Spacing="4">
           <TextBlock Text="{Binding DeviceTypeLabel}" Classes="subtleText" />
@@ -108,7 +112,9 @@
                 Classes="ghost"
                 Command="{Binding SelectedDevice.UnblockCommand}"
                 Content="{Binding UnblockDeviceLabel}"
-                IsVisible="{Binding SelectedDevice.CanUnblock}" />
+                IsVisible="{Binding SelectedDevice.CanUnblock}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           </StackPanel>
         </Border>
         <StackPanel Spacing="4" IsVisible="{Binding SelectedDevice.HasInvalidSyncAttempts}">
@@ -121,7 +127,9 @@
               Command="{Binding SelectedDevice.BeginDisconnectCommand}"
               Content="{Binding DisconnectDeviceLabel}"
               IsVisible="{Binding SelectedDevice.CanDisconnect}"
-              Margin="0,0,8,8" />
+              Margin="0,0,8,8" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
         </WrapPanel>
       </StackPanel>
     </Border>

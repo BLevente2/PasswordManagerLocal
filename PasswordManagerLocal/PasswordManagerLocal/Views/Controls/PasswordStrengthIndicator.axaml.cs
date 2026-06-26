@@ -21,11 +21,13 @@ public partial class PasswordStrengthIndicator : UserControl
 
     private readonly Border[] _segments;
     private readonly TextBlock _strengthLabelText;
+    private readonly TextBlock _strengthScoreText;
 
     public PasswordStrengthIndicator()
     {
         InitializeComponent();
         _strengthLabelText = this.FindControl<TextBlock>("StrengthLabelText")!;
+        _strengthScoreText = this.FindControl<TextBlock>("StrengthScoreText")!;
         _segments =
         [
             this.FindControl<Border>("StrengthSegment1")!,
@@ -79,6 +81,8 @@ public partial class PasswordStrengthIndicator : UserControl
 
         var strength = Math.Clamp(Strength, 0, 10);
         var activeBrush = GetActiveBrush(strength);
+
+        _strengthScoreText.Text = $"{strength}/10";
 
         for (var index = 0; index < _segments.Length; index++)
             _segments[index].Background = index < strength ? activeBrush : InactiveBrush;

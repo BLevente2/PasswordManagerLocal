@@ -18,8 +18,10 @@
             <Button Classes="ghost iconButton"
                     IsVisible="{Binding IsBackButtonVisible}"
                     Command="{Binding NavigateBackCommand}"
-                    Content="←"
-                    ToolTip.Tip="{Binding BackLabel}" />
+                    
+                    ToolTip.Tip="{Binding BackLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
               <TextBlock Text="{Binding Title}" Classes="pageTitle" TextWrapping="Wrap" />
               <TextBlock Text="{Binding Subtitle}" Classes="subtleText" TextWrapping="Wrap" />
@@ -56,7 +58,9 @@
                 <Button Grid.Column="1"
                         Classes="ghost"
                         Command="{Binding TogglePasswordVisibilityCommand}"
-                        Content="{Binding PasswordVisibilityToggleText}" />
+                        Content="{Binding PasswordVisibilityToggleText}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
               </Grid>
             </StackPanel>
 
@@ -66,11 +70,15 @@
 
             <Button Classes="primary"
                     Command="{Binding LoginCommand}"
-                    Content="{Binding LoginButtonLabel}" />
+                    Content="{Binding LoginButtonLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
 
             <Button Classes="ghost"
                     Command="{Binding ShowDeviceTransferIntroCommand}"
-                    Content="{Binding DeviceTransferButtonLabel}" />
+                    Content="{Binding DeviceTransferButtonLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
 
             <Border Classes="divider" />
 
@@ -78,7 +86,9 @@
               <TextBlock Text="{Binding NoAccountText}" Classes="subtleText" TextWrapping="Wrap" />
               <Button Classes="ghost"
                       Command="{Binding NavigateToRegistrationCommand}"
-                      Content="{Binding NavigateToRegisterLabel}" />
+                      Content="{Binding NavigateToRegisterLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             </StackPanel>
           </StackPanel>
 
@@ -88,11 +98,15 @@
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
               <Button Classes="ghost"
                       Command="{Binding CancelDeviceTransferCommand}"
-                      Content="{Binding CancelLabel}" />
+                      Content="{Binding CancelLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
               <Button Grid.Column="1"
                       Classes="primary"
                       Command="{Binding StartDeviceTransferCommand}"
-                      Content="{Binding DeviceTransferStartLabel}" />
+                      Content="{Binding DeviceTransferStartLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             </Grid>
           </StackPanel>
 
@@ -125,7 +139,9 @@
               <Button Grid.Column="1"
                       Classes="ghost"
                       Command="{Binding CopyDeviceTransferCodeCommand}"
-                      Content="{Binding DeviceTransferCopyCodeLabel}" />
+                      Content="{Binding DeviceTransferCopyCodeLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             </Grid>
             <TextBlock Text="{Binding DeviceTransferCodeReadabilityHint}" Classes="subtleText" TextWrapping="Wrap" />
             <Grid>
@@ -141,11 +157,15 @@
             <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
               <Button Classes="ghost"
                       Command="{Binding CancelDeviceTransferCommand}"
-                      Content="{Binding CancelLabel}" />
+                      Content="{Binding CancelLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
               <Button Grid.Column="1"
                       Classes="ghost"
                       Command="{Binding CheckDeviceTransferStatusCommand}"
-                      Content="{Binding DeviceTransferCheckStatusLabel}" />
+                      Content="{Binding DeviceTransferCheckStatusLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
             </Grid>
           </StackPanel>
 
@@ -163,7 +183,9 @@
             </Grid>
             <Button Classes="primary"
                     Command="{Binding FinishDeviceTransferCommand}"
-                    Content="{Binding DeviceTransferFinishLabel}" />
+                    Content="{Binding DeviceTransferFinishLabel}" >
+              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+            </Button>
           </StackPanel>
         </StackPanel>
       </Border>

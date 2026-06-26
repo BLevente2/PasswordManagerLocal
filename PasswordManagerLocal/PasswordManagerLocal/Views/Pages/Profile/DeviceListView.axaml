@@ -9,7 +9,7 @@
   <StackPanel Spacing="12" IsVisible="{Binding IsDeviceListPaneVisible}">
     <Border Classes="card" IsVisible="{Binding IsDeviceListEmpty}">
       <StackPanel Spacing="14" HorizontalAlignment="Center" MaxWidth="520">
-        <TextBlock Text="＋" FontSize="48" HorizontalAlignment="Center" />
+        <PathIcon Classes="largeEmptyStateIcon" Data="{StaticResource AddIconGeometry}" HorizontalAlignment="Center" />
         <TextBlock
             Text="{Binding DevicesEmptyTitle}"
             Classes="sectionTitle"
