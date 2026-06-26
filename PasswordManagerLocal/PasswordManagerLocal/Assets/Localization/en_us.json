@@ -83,7 +83,7 @@
   "Passwords_Editor_EditTitle": "Edit password",
   "Passwords_Editor_NamePlaceholder": "Entry name",
   "Passwords_Editor_DescriptionPlaceholder": "Description, note, or account details",
-  "Passwords_Editor_ColorPlaceholder": "ARGB hex color, for example #FFFFD700",
+  "Passwords_Editor_ColorPlaceholder": "ARGB hex color, for example #FF14B8A6",
   "Passwords_Editor_PasswordPlaceholder": "Enter the password value",
   "Passwords_Editor_PasswordHint_Create": "Enter the password you want to store securely.",
   "Passwords_Refreshed": "Passwords refreshed.",
@@ -242,10 +242,10 @@
   "Common_Blue": "Blue",
   "Passwords_Color_More": "Other…",
   "Passwords_ColorPicker_Title": "More colors",
-  "Passwords_ColorPicker_Description": "Set the password color with sliders or by entering an ARGB/RGB hex color code manually. Examples: #FFFFD700, #FFD700, or #FD0.",
+  "Passwords_ColorPicker_Description": "Set the password color with sliders or by entering an ARGB/RGB hex color code manually. Examples: #FF14B8A6, #14B8A6, or #1BA.",
   "Passwords_ColorPicker_CurrentColor": "Currently selected color code",
   "Passwords_ColorPicker_CodeLabel": "Enter color code manually",
-  "Passwords_ColorPicker_CodePlaceholder": "For example #FFFFD700 or #FFD700",
+  "Passwords_ColorPicker_CodePlaceholder": "For example #FF14B8A6 or #14B8A6",
   "Passwords_ColorPicker_ApplyCode": "Apply color code",
   "Passwords_ColorPicker_BackToEditor": "Back to password editor",
   "Passwords_ColorPicker_InvalidCode": "Invalid color code. Use #RGB, #ARGB, #RRGGBB, or #AARRGGBB format.",
@@ -313,7 +313,7 @@
   "Profiles_UnknownProfile": "this profile",
   "Shell_SessionRenewal_ProfileMessage": "The session for {0} will expire in about one minute. Do you want to extend that login for another 30 minutes?",
   "Error_ProfileAlreadyLoggedIn": "Error: This profile is already signed in on this device. Choose it from Change profile instead.",
-  "Shell_RememberMeSwitch": "Remember me on this device",
+  "Shell_RememberMeSwitch": "Remember Me",
   "Shell_RememberMeEnabled": "Remember me is enabled for this profile on this device.",
   "Shell_RememberMeDisabled": "Remember me is disabled for this profile on this device.",
   "Shell_RememberMeUpdateFailed": "Remember me could not be changed. Please try again.",
@@ -349,5 +349,5 @@
   "PasswordStrength_Label": "Password strength",
   "PasswordStrength_Info_AccessibleLabel": "Show information about password strength",
   "PasswordStrength_Info_Title": "What makes a password strong?",
-  "PasswordStrength_Info_Body": "The meter estimates how difficult the password would be to guess. It looks at:\n\n• Length: longer passwords and passphrases are usually harder to guess. Aim for at least 15 characters.\n• Unpredictability: avoid common passwords, names, dates, keyboard paths, number or letter sequences, and repeated text.\n• Variety: different kinds of characters can help when they make the password less predictable.\n• Personal or account information: do not include your name, username, email address, or the name of the account or service.\n• Uniqueness: use a different password for every account.\n\nA long passphrase made from several unrelated words can be both memorable and strong. This meter is an estimate, not a guarantee."
+  "PasswordStrength_Info_Body": "A stronger password is longer and harder to guess.\n\nUse several unrelated words, or a long mix of letters, numbers, and symbols. Avoid names, birthdays, common words, and simple patterns.\n\nUse a different password for every account."
 }

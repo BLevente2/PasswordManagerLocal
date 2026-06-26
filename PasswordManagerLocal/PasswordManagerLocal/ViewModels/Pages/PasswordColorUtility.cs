@@ -4,7 +4,7 @@ namespace PasswordManagerLocal.ViewModels.Pages;
 
 internal static class PasswordColorUtility
 {
-    public const string DefaultColor = "#FFFFD700";
+    public const string DefaultColor = "#FF14B8A6";
 
     public static string NormalizeKnownColor(string color) =>
         TryNormalizeHexColor(color, out var normalizedColor) ? normalizedColor : DefaultColor;

@@ -15,6 +15,7 @@ public partial class MainView : UserControl
 {
     private readonly MainViewKeyboardHandler _keyboardHandler;
     private readonly MainViewSwipeNavigationHandler _swipeNavigationHandler;
+    private readonly MainViewTapOutsideKeyboardDismissHandler _tapOutsideKeyboardDismissHandler;
     private TopLevel? _inputTopLevel;
     private MainViewModel? _observedViewModel;
 
@@ -23,6 +24,7 @@ public partial class MainView : UserControl
         InitializeComponent();
         _keyboardHandler = new MainViewKeyboardHandler(this);
         _swipeNavigationHandler = new MainViewSwipeNavigationHandler(this);
+        _tapOutsideKeyboardDismissHandler = new MainViewTapOutsideKeyboardDismissHandler(this);
         RegisterLocalInputHandlers();
         RegisterLifecycleHandlers();
         HandleDataContextChanged(this, EventArgs.Empty);
@@ -163,8 +165,11 @@ public partial class MainView : UserControl
     private async void HandleCuttingToClipboard(object? sender, RoutedEventArgs e) =>
         await _keyboardHandler.HandleCuttingToClipboardAsync(e);
 
-    private void HandlePointerPressed(object? sender, PointerPressedEventArgs e) =>
+    private void HandlePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _tapOutsideKeyboardDismissHandler.HandlePointerPressed(e);
         _swipeNavigationHandler.HandlePointerPressed(e);
+    }
 
     private void HandlePointerMoved(object? sender, PointerEventArgs e) =>
         _swipeNavigationHandler.HandlePointerMoved(e);

@@ -83,7 +83,7 @@
   "Passwords_Editor_EditTitle": "Jelszó szerkesztése",
   "Passwords_Editor_NamePlaceholder": "Bejegyzés neve",
   "Passwords_Editor_DescriptionPlaceholder": "Leírás, megjegyzés vagy fiókadatok",
-  "Passwords_Editor_ColorPlaceholder": "ARGB hex szín, például #FFFFD700",
+  "Passwords_Editor_ColorPlaceholder": "ARGB hex szín, például #FF14B8A6",
   "Passwords_Editor_PasswordPlaceholder": "Írd be a jelszó értékét",
   "Passwords_Editor_PasswordHint_Create": "Add meg a biztonságosan tárolni kívánt jelszót.",
   "Passwords_Refreshed": "A jelszavak frissítve lettek.",
@@ -242,10 +242,10 @@
   "Common_Blue": "Kék",
   "Passwords_Color_More": "Egyéb…",
   "Passwords_ColorPicker_Title": "További színek",
-  "Passwords_ColorPicker_Description": "Állítsd be a jelszó színét csúszkákkal vagy kézi ARGB/RGB hex színkóddal. Példák: #FFFFD700, #FFD700 vagy #FD0.",
+  "Passwords_ColorPicker_Description": "Állítsd be a jelszó színét csúszkákkal vagy kézi ARGB/RGB hex színkóddal. Példák: #FF14B8A6, #14B8A6 vagy #1BA.",
   "Passwords_ColorPicker_CurrentColor": "Jelenleg kiválasztott színkód",
   "Passwords_ColorPicker_CodeLabel": "Színkód kézi megadása",
-  "Passwords_ColorPicker_CodePlaceholder": "Például #FFFFD700 vagy #FFD700",
+  "Passwords_ColorPicker_CodePlaceholder": "Például #FF14B8A6 vagy #14B8A6",
   "Passwords_ColorPicker_ApplyCode": "Színkód alkalmazása",
   "Passwords_ColorPicker_BackToEditor": "Vissza a jelszó szerkesztéséhez",
   "Passwords_ColorPicker_InvalidCode": "Érvénytelen színkód. Használj #RGB, #ARGB, #RRGGBB vagy #AARRGGBB formátumot.",
@@ -313,7 +313,7 @@
   "Profiles_UnknownProfile": "ez a profil",
   "Shell_SessionRenewal_ProfileMessage": "A(z) {0} profil munkamenete körülbelül egy perc múlva lejár. Szeretnéd ezt a bejelentkezést további 30 perccel meghosszabbítani?",
   "Error_ProfileAlreadyLoggedIn": "Hiba: Ez a profil már be van jelentkezve ezen az eszközön. Válaszd ki a Profilváltás menüből.",
-  "Shell_RememberMeSwitch": "Emlékezz rám ezen az eszközön",
+  "Shell_RememberMeSwitch": "Emlékezz rám",
   "Shell_RememberMeEnabled": "Az emlékezz rám be lett kapcsolva ehhez a profilhoz ezen az eszközön.",
   "Shell_RememberMeDisabled": "Az emlékezz rám ki lett kapcsolva ehhez a profilhoz ezen az eszközön.",
   "Shell_RememberMeUpdateFailed": "Az emlékezz rám beállítást nem sikerült módosítani. Próbáld újra.",
@@ -349,5 +349,5 @@
   "PasswordStrength_Label": "Jelszó erőssége",
   "PasswordStrength_Info_AccessibleLabel": "Információk megjelenítése a jelszó erősségéről",
   "PasswordStrength_Info_Title": "Mitől erős egy jelszó?",
-  "PasswordStrength_Info_Body": "A jelző megbecsüli, milyen nehéz lenne kitalálni a jelszót. Ezeket figyeli:\n\n• Hosszúság: a hosszabb jelszavakat és jelmondatokat általában sokkal nehezebb kitalálni. Törekedj legalább 15 karakterre.\n• Kiszámíthatatlanság: kerüld a gyakori jelszavakat, neveket, dátumokat, billentyűzetsorokat, szám- és betűsorozatokat, valamint az ismétlődő részeket.\n• Változatosság: többféle karakter segíthet, ha ettől a jelszó kevésbé lesz kiszámítható.\n• Személyes vagy fiókadatok: ne használd benne a nevedet, felhasználónevedet, e-mail-címedet, illetve a fiók vagy szolgáltatás nevét.\n• Egyediség: minden fiókhoz különböző jelszót használj.\n\nEgy több, egymástól független szóból álló hosszú jelmondat könnyen megjegyezhető és erős is lehet. A jelző csak becslést ad, nem jelent garanciát."
+  "PasswordStrength_Info_Body": "Az erősebb jelszó hosszabb, és nehezebb kitalálni.\n\nHasználj több, egymástól független szót, vagy hosszú keveréket betűkből, számokból és jelekből. Kerüld a neveket, születésnapokat, gyakori szavakat és egyszerű mintákat.\n\nMinden fiókhoz külön jelszót használj."
 }

@@ -2,6 +2,7 @@ using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.Net.Wifi;
+using Android.Views.InputMethods;
 using Avalonia;
 using Avalonia.Android;
 using Avalonia.ReactiveUI;
@@ -28,6 +29,7 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         global::PasswordManagerLocal.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
+        SoftwareKeyboardService.SetPlatformHideAction(HideSoftwareKeyboard);
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(new AndroidQrCodeCameraScanner(this));
         AcquireMulticastLock();
         BackendHost.ConfigurePlatformKeyProtector(new AndroidKeyProtector());
@@ -56,8 +58,18 @@ public class MainActivity : AvaloniaMainActivity<App>
     {
         CompleteEnrollmentQrScan(null);
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(null);
+        SoftwareKeyboardService.SetPlatformHideAction(null);
         ReleaseMulticastLock();
         base.OnDestroy();
+    }
+
+
+    private void HideSoftwareKeyboard()
+    {
+        var inputMethodManager = GetSystemService(InputMethodService) as InputMethodManager;
+        var windowToken = CurrentFocus?.WindowToken ?? Window?.DecorView?.WindowToken;
+        if (windowToken is not null)
+            inputMethodManager?.HideSoftInputFromWindow(windowToken, HideSoftInputFlags.None);
     }
 
 

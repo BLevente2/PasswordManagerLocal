@@ -86,15 +86,6 @@ public sealed class PasswordItemViewModel : ReactiveObject
         Func<PasswordItemViewModel, Task> deleteAsync) =>
         new(password, editLabel, deleteLabel, viewAsync, editAsync, deleteAsync);
 
-    private static IBrush ParseBrush(string color)
-    {
-        try
-        {
-            return Brush.Parse(string.IsNullOrWhiteSpace(color) ? "#FFFFD700" : color);
-        }
-        catch
-        {
-            return Brush.Parse("#FFFFD700");
-        }
-    }
+    private static IBrush ParseBrush(string color) =>
+        PasswordColorUtility.ParseBrush(color);
 }

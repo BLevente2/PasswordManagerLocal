@@ -107,17 +107,17 @@ public sealed class PasswordsViewModel : ViewModelBase
     private bool _isDeletingPassword;
     private string _editorName = string.Empty;
     private string _editorDescription = string.Empty;
-    private string _editorColor = "#FFFFD700";
+    private string _editorColor = PasswordColorUtility.DefaultColor;
     private string _editorPassword = string.Empty;
     private bool _isEditorPasswordVisible;
     private bool _isEditorStoredPasswordRevealed;
     private int _editorPasswordStrength;
     private int _revealedPasswordStrength;
-    private string _customColorCode = "#FFFFD700";
+    private string _customColorCode = PasswordColorUtility.DefaultColor;
     private double _customAlpha = 255;
-    private double _customRed = 255;
-    private double _customGreen = 215;
-    private double _customBlue;
+    private double _customRed = 20;
+    private double _customGreen = 184;
+    private double _customBlue = 166;
     private bool _isUpdatingColorFields;
     private string _searchQuery = string.Empty;
     private PasswordColorOptionViewModel? _selectedEditorColorOption;
@@ -1222,7 +1222,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         EditorName = string.Empty;
         EditorDescription = string.Empty;
-        ApplyEditorColor("#FFFFD700");
+        ApplyEditorColor(PasswordColorUtility.DefaultColor);
         EditorPassword = string.Empty;
         IsEditorPasswordVisible = false;
         IsEditorStoredPasswordRevealed = false;
@@ -1281,13 +1281,13 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void RebuildPresetColors()
     {
         PresetColors.Clear();
+        PresetColors.Add(new PasswordColorOptionViewModel("teal", GetTranslation("Passwords_Color_Teal"), PasswordColorUtility.DefaultColor));
         PresetColors.Add(new PasswordColorOptionViewModel("gold", GetTranslation("Passwords_Color_Gold"), "#FFFFD700"));
         PresetColors.Add(new PasswordColorOptionViewModel("blue", GetTranslation("Passwords_Color_Blue"), "#FF3B82F6"));
         PresetColors.Add(new PasswordColorOptionViewModel("green", GetTranslation("Passwords_Color_Green"), "#FF22C55E"));
         PresetColors.Add(new PasswordColorOptionViewModel("red", GetTranslation("Passwords_Color_Red"), "#FFEF4444"));
         PresetColors.Add(new PasswordColorOptionViewModel("purple", GetTranslation("Passwords_Color_Purple"), "#FFA855F7"));
         PresetColors.Add(new PasswordColorOptionViewModel("orange", GetTranslation("Passwords_Color_Orange"), "#FFF97316"));
-        PresetColors.Add(new PasswordColorOptionViewModel("teal", GetTranslation("Passwords_Color_Teal"), "#FF14B8A6"));
         PresetColors.Add(new PasswordColorOptionViewModel("gray", GetTranslation("Passwords_Color_Gray"), "#FF94A3B8"));
         PresetColors.Add(new PasswordColorOptionViewModel(CustomColorKey, GetTranslation("Passwords_Color_More"), EditorColor));
     }
@@ -1303,7 +1303,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         SortOptions.Add(new PasswordSortOptionViewModel("updated-asc", GetTranslation("Passwords_Sort_UpdatedOldest")));
     }
 
-    private void SelectDefaultPresetColor() => ApplyEditorColor("#FFFFD700");
+    private void SelectDefaultPresetColor() => ApplyEditorColor(PasswordColorUtility.DefaultColor);
 
     private void SelectDefaultSortOption() => SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? SortOptions.FirstOrDefault();
 
@@ -1452,7 +1452,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         if (!PasswordColorUtility.TryNormalizeHexColor(EditorColor, out var normalizedColor))
         {
-            normalizedColor = "#FFFFD700";
+            normalizedColor = PasswordColorUtility.DefaultColor;
         }
 
         var alpha = Convert.ToByte(normalizedColor.Substring(1, 2), 16);

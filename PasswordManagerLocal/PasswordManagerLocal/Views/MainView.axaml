@@ -70,23 +70,34 @@
           </StackPanel>
           <Button.Flyout>
             <Flyout>
-              <Border Classes="card" Padding="10" MinWidth="240">
+              <Border Classes="card" Padding="10">
                 <StackPanel Spacing="8">
-                  <ToggleSwitch IsChecked="{Binding IsCurrentRememberMeEnabled, Mode=TwoWay}"
-                                IsEnabled="{Binding CanChangeRememberMe}"
-                                Content="{Binding RememberMeDropdownLabel}"
-                                OnContent="{Binding RememberMeOnLabel}"
-                                OffContent="{Binding RememberMeOffLabel}" />
+                  <Grid ColumnDefinitions="Auto,Auto"
+                        ColumnSpacing="8"
+                        HorizontalAlignment="Center">
+                    <TextBlock
+                        Text="{Binding RememberMeDropdownLabel}"
+                        VerticalAlignment="Center"
+                        TextWrapping="NoWrap" />
+                    <ToggleSwitch
+                        Grid.Column="1"
+                        IsChecked="{Binding IsCurrentRememberMeEnabled, Mode=TwoWay}"
+                        IsEnabled="{Binding CanChangeRememberMe}"
+                        MinWidth="0"
+                        OnContent="{Binding RememberMeOnLabel}"
+                        OffContent="{Binding RememberMeOffLabel}"
+                        AutomationProperties.Name="{Binding RememberMeDropdownLabel}" />
+                  </Grid>
                   <Border Classes="divider" />
                   <Button Classes="ghost"
                           HorizontalAlignment="Stretch"
-                          HorizontalContentAlignment="Left"
+                          HorizontalContentAlignment="Center"
                           Command="{Binding ShowChangeProfileCommand}"
                           Click="HandleAccountMenuActionClick"
                           Content="{Binding ChangeProfileLabel}" />
                   <Button Classes="ghost"
                           HorizontalAlignment="Stretch"
-                          HorizontalContentAlignment="Left"
+                          HorizontalContentAlignment="Center"
                           Command="{Binding LogoutCommand}"
                           Click="HandleAccountMenuActionClick"
                           Content="{Binding LogoutLabel}" />
