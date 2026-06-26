@@ -16,6 +16,7 @@ public partial class MainView : UserControl
     private readonly MainViewKeyboardHandler _keyboardHandler;
     private readonly MainViewSwipeNavigationHandler _swipeNavigationHandler;
     private readonly MainViewTapOutsideKeyboardDismissHandler _tapOutsideKeyboardDismissHandler;
+    private readonly MainViewLongPressToolTipHandler _longPressToolTipHandler;
     private TopLevel? _inputTopLevel;
     private MainViewModel? _observedViewModel;
 
@@ -25,6 +26,7 @@ public partial class MainView : UserControl
         _keyboardHandler = new MainViewKeyboardHandler(this);
         _swipeNavigationHandler = new MainViewSwipeNavigationHandler(this);
         _tapOutsideKeyboardDismissHandler = new MainViewTapOutsideKeyboardDismissHandler(this);
+        _longPressToolTipHandler = new MainViewLongPressToolTipHandler(this);
         RegisterLocalInputHandlers();
         RegisterLifecycleHandlers();
         HandleDataContextChanged(this, EventArgs.Empty);
@@ -151,13 +153,20 @@ public partial class MainView : UserControl
         }
 
         _swipeNavigationHandler.Reset();
+        _longPressToolTipHandler.Reset();
     }
 
-    private async void HandleTopLevelKeyDown(object? sender, KeyEventArgs e) =>
+    private async void HandleTopLevelKeyDown(object? sender, KeyEventArgs e)
+    {
+        _longPressToolTipHandler.DismissOpenToolTip();
         await _keyboardHandler.HandleTopLevelKeyDownAsync(e);
+    }
 
-    private async void HandleKeyDown(object? sender, KeyEventArgs e) =>
+    private async void HandleKeyDown(object? sender, KeyEventArgs e)
+    {
+        _longPressToolTipHandler.DismissOpenToolTip();
         await _keyboardHandler.HandleKeyDownAsync(e);
+    }
 
     private async void HandleCopyingToClipboard(object? sender, RoutedEventArgs e) =>
         await _keyboardHandler.HandleCopyingToClipboardAsync(e);
@@ -167,16 +176,35 @@ public partial class MainView : UserControl
 
     private void HandlePointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        _longPressToolTipHandler.HandlePointerPressed(e);
         _tapOutsideKeyboardDismissHandler.HandlePointerPressed(e);
         _swipeNavigationHandler.HandlePointerPressed(e);
     }
 
-    private void HandlePointerMoved(object? sender, PointerEventArgs e) =>
+    private void HandlePointerMoved(object? sender, PointerEventArgs e)
+    {
+        _longPressToolTipHandler.HandlePointerMoved(e);
+        if (e.Handled)
+            return;
+
         _swipeNavigationHandler.HandlePointerMoved(e);
+    }
 
-    private void HandlePointerReleased(object? sender, PointerReleasedEventArgs e) =>
+    private void HandlePointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _longPressToolTipHandler.HandlePointerReleased(e);
+        if (e.Handled)
+        {
+            _swipeNavigationHandler.Reset();
+            return;
+        }
+
         _swipeNavigationHandler.HandlePointerReleased(e);
+    }
 
-    private void HandlePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e) =>
+    private void HandlePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        _longPressToolTipHandler.HandlePointerCaptureLost(e);
         _swipeNavigationHandler.HandlePointerCaptureLost(e);
+    }
 }
