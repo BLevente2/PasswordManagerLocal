@@ -7,11 +7,47 @@
     x:Class="PasswordManagerLocal.Views.Pages.Profile.ProfileAccountView"
     x:DataType="vm:ProfileViewModel"
     IsVisible="{Binding IsProfileMainPage}">
-  <StackPanel IsVisible="{Binding IsProfileMainPage}" Spacing="12" HorizontalAlignment="Stretch">
-    <profile:ProfileTabsView />
-    <profile:ProfilePersonalInfoView />
-    <profile:ProfileUsernameView />
-    <profile:ProfileMasterPasswordView />
-    <profile:ProfileDeleteAccountView />
-  </StackPanel>
+
+  <UserControl.DataTemplates>
+    <DataTemplate x:DataType="vm:ProfileTabsPaneTransitionViewModel">
+      <profile:ProfileTabsView DataContext="{Binding Owner}" />
+    </DataTemplate>
+    <DataTemplate x:DataType="vm:ProfilePersonalInfoPaneTransitionViewModel">
+      <profile:ProfilePersonalInfoView DataContext="{Binding Owner}" />
+    </DataTemplate>
+    <DataTemplate x:DataType="vm:ProfileUsernamePaneTransitionViewModel">
+      <profile:ProfileUsernameView DataContext="{Binding Owner}" />
+    </DataTemplate>
+    <DataTemplate x:DataType="vm:ProfileMasterPasswordPaneTransitionViewModel">
+      <profile:ProfileMasterPasswordView DataContext="{Binding Owner}" />
+    </DataTemplate>
+    <DataTemplate x:DataType="vm:ProfileDeleteAccountPaneTransitionViewModel">
+      <profile:ProfileDeleteAccountView DataContext="{Binding Owner}" />
+    </DataTemplate>
+  </UserControl.DataTemplates>
+
+  <Grid IsVisible="{Binding IsProfileMainPage}">
+    <TransitioningContentControl
+        ClipToBounds="True"
+        Content="{Binding CurrentAnimatedProfilePaneViewModel}"
+        IsTransitionReversed="{Binding IsProfilePaneTransitionReversed}"
+        IsVisible="{Binding IsAndroidPaneTransitionEnabled}">
+      <TransitioningContentControl.PageTransition>
+        <PageSlide Duration="0:0:0.20"
+                   Orientation="Horizontal"
+                   SlideInEasing="CubicEaseOut"
+                   SlideOutEasing="CubicEaseIn" />
+      </TransitioningContentControl.PageTransition>
+    </TransitioningContentControl>
+
+    <StackPanel IsVisible="{Binding IsStaticPaneContentVisible}"
+                Spacing="12"
+                HorizontalAlignment="Stretch">
+      <profile:ProfileTabsView IsVisible="{Binding IsProfileTabsPaneVisible}" />
+      <profile:ProfilePersonalInfoView IsVisible="{Binding IsProfilePersonalInfoPaneVisible}" />
+      <profile:ProfileUsernameView IsVisible="{Binding IsProfileUsernamePaneVisible}" />
+      <profile:ProfileMasterPasswordView IsVisible="{Binding IsProfilePasswordPaneVisible}" />
+      <profile:ProfileDeleteAccountView IsVisible="{Binding IsProfileDeleteAccountPaneVisible}" />
+    </StackPanel>
+  </Grid>
 </UserControl>

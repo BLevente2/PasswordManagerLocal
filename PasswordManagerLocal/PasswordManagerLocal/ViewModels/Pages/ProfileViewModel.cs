@@ -167,6 +167,10 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _currentMainPage = MainProfilePage;
     private string _currentProfilePane = ProfileTabsPane;
     private string _currentDevicePane = DeviceListPane;
+    private ProfilePaneTransitionViewModel? _currentAnimatedProfilePaneViewModel;
+    private DevicePaneTransitionViewModel? _currentAnimatedDevicePaneViewModel;
+    private bool _isProfilePaneTransitionReversed;
+    private bool _isDevicePaneTransitionReversed;
     private int _selectedProfileTabIndex;
     private int _newPasswordStrength;
     private PasswordSortOptionViewModel? _selectedDeviceSortOption;
@@ -451,22 +455,24 @@ public sealed class ProfileViewModel : ViewModelBase
     public string CurrentProfilePane
     {
         get => _currentProfilePane;
-        private set
-        {
-            if (string.Equals(_currentProfilePane, value, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            ClearStatusMessage();
-            this.RaiseAndSetIfChanged(ref _currentProfilePane, value);
-            this.RaisePropertyChanged(nameof(IsProfileTabsPaneVisible));
-            this.RaisePropertyChanged(nameof(IsProfilePersonalInfoPaneVisible));
-            this.RaisePropertyChanged(nameof(IsProfileUsernamePaneVisible));
-            this.RaisePropertyChanged(nameof(IsProfilePasswordPaneVisible));
-            this.RaisePropertyChanged(nameof(IsProfileDeleteAccountPaneVisible));
-        }
+        private set => SetCurrentProfilePane(value, false);
     }
+
+    public ProfilePaneTransitionViewModel CurrentAnimatedProfilePaneViewModel
+    {
+        get => _currentAnimatedProfilePaneViewModel ??= CreateProfilePaneTransitionViewModel(CurrentProfilePane);
+        private set => this.RaiseAndSetIfChanged(ref _currentAnimatedProfilePaneViewModel, value);
+    }
+
+    public bool IsProfilePaneTransitionReversed
+    {
+        get => _isProfilePaneTransitionReversed;
+        private set => this.RaiseAndSetIfChanged(ref _isProfilePaneTransitionReversed, value);
+    }
+
+    public bool IsAndroidPaneTransitionEnabled => OperatingSystem.IsAndroid();
+
+    public bool IsStaticPaneContentVisible => !IsAndroidPaneTransitionEnabled;
 
     public bool IsProfileTabsPaneVisible => CurrentProfilePane == ProfileTabsPane;
 
@@ -478,24 +484,50 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public bool IsProfileDeleteAccountPaneVisible => CurrentProfilePane == ProfileDeleteAccountPane;
 
+    private void SetCurrentProfilePane(string value, bool isBackNavigation)
+    {
+        if (string.Equals(_currentProfilePane, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        IsProfilePaneTransitionReversed = isBackNavigation;
+        ClearStatusMessage();
+        this.RaiseAndSetIfChanged(ref _currentProfilePane, value);
+        this.RaisePropertyChanged(nameof(IsProfileTabsPaneVisible));
+        this.RaisePropertyChanged(nameof(IsProfilePersonalInfoPaneVisible));
+        this.RaisePropertyChanged(nameof(IsProfileUsernamePaneVisible));
+        this.RaisePropertyChanged(nameof(IsProfilePasswordPaneVisible));
+        this.RaisePropertyChanged(nameof(IsProfileDeleteAccountPaneVisible));
+        CurrentAnimatedProfilePaneViewModel = CreateProfilePaneTransitionViewModel(value);
+    }
+
+    private ProfilePaneTransitionViewModel CreateProfilePaneTransitionViewModel(string pane) =>
+        pane switch
+        {
+            ProfilePersonalInfoPane => new ProfilePersonalInfoPaneTransitionViewModel(this),
+            ProfileUsernamePane => new ProfileUsernamePaneTransitionViewModel(this),
+            ProfilePasswordPane => new ProfileMasterPasswordPaneTransitionViewModel(this),
+            ProfileDeleteAccountPane => new ProfileDeleteAccountPaneTransitionViewModel(this),
+            _ => new ProfileTabsPaneTransitionViewModel(this)
+        };
+
     public string CurrentDevicePane
     {
         get => _currentDevicePane;
-        private set
-        {
-            if (string.Equals(_currentDevicePane, value, StringComparison.Ordinal))
-            {
-                return;
-            }
+        private set => SetCurrentDevicePane(value, false);
+    }
 
-            ClearStatusMessage();
-            this.RaiseAndSetIfChanged(ref _currentDevicePane, value);
-            this.RaisePropertyChanged(nameof(IsDeviceListPaneVisible));
-            this.RaisePropertyChanged(nameof(IsDeviceDetailsPaneVisible));
-            this.RaisePropertyChanged(nameof(IsDeviceAddPaneVisible));
-            this.RaisePropertyChanged(nameof(IsDeviceDisconnectPaneVisible));
-            this.RaisePropertyChanged(nameof(IsDeviceToolbarVisible));
-        }
+    public DevicePaneTransitionViewModel CurrentAnimatedDevicePaneViewModel
+    {
+        get => _currentAnimatedDevicePaneViewModel ??= CreateDevicePaneTransitionViewModel(CurrentDevicePane);
+        private set => this.RaiseAndSetIfChanged(ref _currentAnimatedDevicePaneViewModel, value);
+    }
+
+    public bool IsDevicePaneTransitionReversed
+    {
+        get => _isDevicePaneTransitionReversed;
+        private set => this.RaiseAndSetIfChanged(ref _isDevicePaneTransitionReversed, value);
     }
 
     public bool IsDeviceListPaneVisible => CurrentDevicePane == DeviceListPane;
@@ -507,6 +539,33 @@ public sealed class ProfileViewModel : ViewModelBase
     public bool IsDeviceDisconnectPaneVisible => CurrentDevicePane == DeviceDisconnectPane;
 
     public bool IsDeviceToolbarVisible => IsDeviceListPaneVisible;
+
+    private void SetCurrentDevicePane(string value, bool isBackNavigation)
+    {
+        if (string.Equals(_currentDevicePane, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        IsDevicePaneTransitionReversed = isBackNavigation;
+        ClearStatusMessage();
+        this.RaiseAndSetIfChanged(ref _currentDevicePane, value);
+        this.RaisePropertyChanged(nameof(IsDeviceListPaneVisible));
+        this.RaisePropertyChanged(nameof(IsDeviceDetailsPaneVisible));
+        this.RaisePropertyChanged(nameof(IsDeviceAddPaneVisible));
+        this.RaisePropertyChanged(nameof(IsDeviceDisconnectPaneVisible));
+        this.RaisePropertyChanged(nameof(IsDeviceToolbarVisible));
+        CurrentAnimatedDevicePaneViewModel = CreateDevicePaneTransitionViewModel(value);
+    }
+
+    private DevicePaneTransitionViewModel CreateDevicePaneTransitionViewModel(string pane) =>
+        pane switch
+        {
+            DeviceDetailsPane => new DeviceDetailsPaneTransitionViewModel(this),
+            DeviceAddPane => new DeviceAddPaneTransitionViewModel(this),
+            DeviceDisconnectPane => new DeviceDisconnectPaneTransitionViewModel(this),
+            _ => new DeviceListPaneTransitionViewModel(this)
+        };
 
     public DeviceItemViewModel? DeviceToDisconnect
     {
@@ -1147,7 +1206,7 @@ public sealed class ProfileViewModel : ViewModelBase
         EditEmail = Email;
         EditUsername = Username;
         ClearStatusMessage();
-        CurrentProfilePane = ProfileTabsPane;
+        SetCurrentProfilePane(ProfileTabsPane, true);
     }
 
     private void BeginEditPersonalInfo()
@@ -1260,13 +1319,12 @@ public sealed class ProfileViewModel : ViewModelBase
 
     private void BackToDevices()
     {
-        SelectedDevice = null;
         DeviceToDisconnect = null;
         DisconnectDevicePassword = string.Empty;
         DeviceEnrollmentCodeInput = string.Empty;
         IsAddingDevice = false;
         ClearStatusMessage();
-        CurrentDevicePane = DeviceListPane;
+        SetCurrentDevicePane(DeviceListPane, true);
     }
 
     private void ApplyCurrentDeviceSearch() =>
@@ -1381,7 +1439,7 @@ public sealed class ProfileViewModel : ViewModelBase
         DisconnectDevicePassword = string.Empty;
 
         if (IsDeviceDisconnectPaneVisible)
-            CurrentDevicePane = SelectedDevice is null ? DeviceListPane : DeviceDetailsPane;
+            SetCurrentDevicePane(SelectedDevice is null ? DeviceListPane : DeviceDetailsPane, true);
     }
 
     private async Task ConfirmDisconnectDeviceAsync()
@@ -1506,7 +1564,7 @@ public sealed class ProfileViewModel : ViewModelBase
         IsAddingDevice = false;
 
         if (IsDeviceAddPaneVisible)
-            CurrentDevicePane = DeviceListPane;
+            SetCurrentDevicePane(DeviceListPane, true);
     }
 
     private async Task ScanDeviceEnrollmentQrCodeAsync()

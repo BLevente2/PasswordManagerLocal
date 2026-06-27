@@ -4,10 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
     x:Class="PasswordManagerLocal.Views.Pages.Profile.ProfileTabsView"
-    x:DataType="vm:ProfileViewModel"
-    IsVisible="{Binding IsProfileTabsPaneVisible}">
+    x:DataType="vm:ProfileViewModel">
   <TabControl
-      IsVisible="{Binding IsProfileTabsPaneVisible}"
       SelectedIndex="{Binding SelectedProfileTabIndex, Mode=TwoWay}"
       HorizontalAlignment="Stretch">
     <TabControl.ItemsPanel>

@@ -101,6 +101,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     private PasswordItemViewModel? _passwordPendingDeletion;
     private string? _revealedPassword;
     private string _currentPane = ListPane;
+    private PasswordPaneTransitionViewModel? _currentAnimatedPaneViewModel;
+    private bool _isPaneTransitionReversed;
     private bool _isCreateMode;
     private bool _isDeleteConfirmationOpen;
     private bool _isSavingPassword;
@@ -240,23 +242,24 @@ public sealed class PasswordsViewModel : ViewModelBase
     public string CurrentPane
     {
         get => _currentPane;
-        private set
-        {
-            if (string.Equals(_currentPane, value, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            ClearStatusMessage();
-            this.RaiseAndSetIfChanged(ref _currentPane, value);
-            this.RaisePropertyChanged(nameof(IsListPaneVisible));
-            this.RaisePropertyChanged(nameof(IsEditorPaneVisible));
-            this.RaisePropertyChanged(nameof(IsDetailsPaneVisible));
-            this.RaisePropertyChanged(nameof(IsColorPaneVisible));
-            this.RaisePropertyChanged(nameof(IsEditorOpen));
-            this.RaisePropertyChanged(nameof(IsEditorClosed));
-        }
+        private set => SetCurrentPane(value, false);
     }
+
+    public PasswordPaneTransitionViewModel CurrentAnimatedPaneViewModel
+    {
+        get => _currentAnimatedPaneViewModel ??= CreatePaneTransitionViewModel(CurrentPane);
+        private set => this.RaiseAndSetIfChanged(ref _currentAnimatedPaneViewModel, value);
+    }
+
+    public bool IsPaneTransitionReversed
+    {
+        get => _isPaneTransitionReversed;
+        private set => this.RaiseAndSetIfChanged(ref _isPaneTransitionReversed, value);
+    }
+
+    public bool IsAndroidPaneTransitionEnabled => OperatingSystem.IsAndroid();
+
+    public bool IsStaticPaneContentVisible => !IsAndroidPaneTransitionEnabled;
 
     public bool IsListPaneVisible => CurrentPane == ListPane;
 
@@ -269,6 +272,34 @@ public sealed class PasswordsViewModel : ViewModelBase
     public bool IsEditorOpen => IsEditorPaneVisible;
 
     public bool IsEditorClosed => !IsEditorPaneVisible;
+
+    private void SetCurrentPane(string value, bool isBackNavigation)
+    {
+        if (string.Equals(_currentPane, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        IsPaneTransitionReversed = isBackNavigation;
+        ClearStatusMessage();
+        this.RaiseAndSetIfChanged(ref _currentPane, value);
+        this.RaisePropertyChanged(nameof(IsListPaneVisible));
+        this.RaisePropertyChanged(nameof(IsEditorPaneVisible));
+        this.RaisePropertyChanged(nameof(IsDetailsPaneVisible));
+        this.RaisePropertyChanged(nameof(IsColorPaneVisible));
+        this.RaisePropertyChanged(nameof(IsEditorOpen));
+        this.RaisePropertyChanged(nameof(IsEditorClosed));
+        CurrentAnimatedPaneViewModel = CreatePaneTransitionViewModel(value);
+    }
+
+    private PasswordPaneTransitionViewModel CreatePaneTransitionViewModel(string pane) =>
+        pane switch
+        {
+            EditorPane => new PasswordEditorPaneTransitionViewModel(this),
+            DetailsPane => new PasswordDetailsPaneTransitionViewModel(this),
+            ColorPane => new PasswordColorPaneTransitionViewModel(this),
+            _ => new PasswordListPaneTransitionViewModel(this)
+        };
 
     public bool IsCreateMode
     {
@@ -1172,7 +1203,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         ResetEditorFields();
         HidePassword();
         ClearStatusMessage();
-        CurrentPane = ListPane;
+        SetCurrentPane(ListPane, true);
     }
 
     private void RefreshEditorPasswordStrength()
@@ -1211,11 +1242,10 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private void BackToList()
     {
-        SelectedPassword = null;
         HidePassword();
         ResetEditorFields();
         ClearStatusMessage();
-        CurrentPane = ListPane;
+        SetCurrentPane(ListPane, true);
     }
 
     private void ResetEditorFields()
@@ -1344,7 +1374,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void BackToPasswordEditor()
     {
         ClearStatusMessage();
-        CurrentPane = EditorPane;
+        SetCurrentPane(EditorPane, true);
     }
 
     private void ApplyManualColorCode()

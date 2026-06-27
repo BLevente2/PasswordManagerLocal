@@ -4,9 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
     x:Class="PasswordManagerLocal.Views.Pages.Profile.ProfilePersonalInfoView"
-    x:DataType="vm:ProfileViewModel"
-    IsVisible="{Binding IsProfilePersonalInfoPaneVisible}">
-  <StackPanel Spacing="12" IsVisible="{Binding IsProfilePersonalInfoPaneVisible}">
+    x:DataType="vm:ProfileViewModel">
+  <StackPanel Spacing="12">
     <Border Classes="card">
       <StackPanel Spacing="14">
         <StackPanel Orientation="Horizontal" Spacing="10">
