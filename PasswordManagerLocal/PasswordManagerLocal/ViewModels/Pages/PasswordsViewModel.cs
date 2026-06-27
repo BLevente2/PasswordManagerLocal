@@ -166,6 +166,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public ObservableCollection<PasswordItemViewModel> Passwords { get; }
 
+    public event EventHandler? ListScrollToTopRequested;
+
     public ObservableCollection<PasswordColorOptionViewModel> PresetColors { get; }
 
     public ObservableCollection<PasswordSortOptionViewModel> SortOptions { get; }
@@ -759,6 +761,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public void SetSessionToken(Guid token) => _token = token;
 
     public async Task<bool> RefreshCurrentDataAsync(bool showSuccessMessage = true) => await RefreshAsync(showSuccessMessage);
+
+    public void RequestListScrollToTop() => ListScrollToTopRequested?.Invoke(this, EventArgs.Empty);
 
     public void ShowMainPage()
     {

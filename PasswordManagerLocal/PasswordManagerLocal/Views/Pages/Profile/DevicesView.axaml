@@ -26,7 +26,7 @@
   <Grid RowDefinitions="Auto,*" IsVisible="{Binding IsDevicesMainPage}">
     <profile:DeviceToolbarView Grid.Row="0" Margin="0,0,0,12" />
 
-    <ScrollViewer Grid.Row="1">
+    <ScrollViewer x:Name="DeviceListScrollViewer" Grid.Row="1">
       <Grid>
         <TransitioningContentControl
             ClipToBounds="True"

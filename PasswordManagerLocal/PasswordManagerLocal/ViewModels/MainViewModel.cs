@@ -912,10 +912,17 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        var isReselectingPasswords = IsPasswordsMainPageSelected;
+
         ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.DiscardTransientNavigationState();
         ShowMainContentPage(PasswordsViewModel);
+
+        if (isReselectingPasswords)
+        {
+            PasswordsViewModel.RequestListScrollToTop();
+        }
     }
 
     private void NavigateToProfile()
@@ -938,10 +945,17 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
+        var isReselectingDevices = IsDevicesMainPageSelected;
+
         ClearStatusMessage();
         PasswordsViewModel.ShowMainPage();
         ProfileViewModel.ShowDevicesMainPage();
         ShowMainContentPage(ProfileViewModel);
+
+        if (isReselectingDevices)
+        {
+            ProfileViewModel.RequestDeviceListScrollToTop();
+        }
     }
 
     private void ShowMainContentPage(ViewModelBase pageViewModel)

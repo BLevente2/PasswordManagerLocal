@@ -37,20 +37,21 @@
         <DataTemplate x:DataType="vm:DeviceItemViewModel">
           <Border
               Classes="interactiveListItem"
+              PointerEntered="InteractiveListItem_PointerEntered"
+              PointerExited="InteractiveListItem_PointerExited"
+              PointerPressed="InteractiveListItem_PointerPressed"
+              PointerReleased="InteractiveListItem_PointerReleased"
+              Cursor="Hand"
               Margin="0,0,0,8"
               Padding="14"
               CornerRadius="16"
               HorizontalAlignment="Stretch">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" HorizontalAlignment="Stretch">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" HorizontalAlignment="Stretch" PointerEntered="InteractiveListItem_PointerEntered">
               <Button
                   Grid.Column="0"
-                  Classes="ghost"
-                  Command="{Binding ViewCommand}"
-                  Padding="0"
-                  HorizontalAlignment="Stretch"
-                  HorizontalContentAlignment="Stretch"
-                  Background="Transparent"
-                  BorderThickness="0">
+                  Classes="listItemContentButton"
+                  PointerEntered="InteractiveListItem_PointerEntered"
+                  Command="{Binding ViewCommand}">
                 <StackPanel Spacing="5" VerticalAlignment="Center">
                   <WrapPanel>
                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap" />
@@ -89,6 +90,7 @@
               </Button>
               <ToggleSwitch
                   Grid.Column="1"
+                  PointerEntered="InteractiveListItem_PointerEntered"
                   IsChecked="{Binding IsSyncOn, Mode=OneWay}"
                   Command="{Binding ToggleSyncCommand}"
                   OnContent="{Binding SyncToggleOnLabel}"

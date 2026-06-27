@@ -46,6 +46,32 @@
       <Setter Property="Padding" Value="14,10" />
     </Style>
 
+    <Style Selector="Button.listItemContentButton">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="Transparent">
+            <ContentPresenter Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Padding="{TemplateBinding Padding}"
+                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <Style Selector="Button.listItemContentButton:pointerover">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+
     <Style Selector="Button.mainNavigation">
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="Padding" Value="12,6" />
@@ -163,7 +189,12 @@
     </Style>
 
     <Style Selector="Border.interactiveListItem:pointerover">
-      <Setter Property="Background" Value="#302D6AE3" />
+      <Setter Property="Background" Value="#40808080" />
+      <Setter Property="BorderBrush" Value="#DD2D6AE3" />
+    </Style>
+
+    <Style Selector="Border.interactiveListItem.hovered">
+      <Setter Property="Background" Value="#40808080" />
       <Setter Property="BorderBrush" Value="#DD2D6AE3" />
     </Style>
 

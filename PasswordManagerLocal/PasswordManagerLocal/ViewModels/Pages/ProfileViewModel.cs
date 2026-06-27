@@ -337,6 +337,8 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public ObservableCollection<DeviceItemViewModel> Devices { get; }
 
+    public event EventHandler? DeviceListScrollToTopRequested;
+
     public ObservableCollection<PasswordSortOptionViewModel> DeviceSortOptions { get; }
 
     public DeviceItemViewModel? SelectedDevice
@@ -885,6 +887,8 @@ public sealed class ProfileViewModel : ViewModelBase
         DiscardTransientNavigationState();
         CurrentMainPage = MainDevicesPage;
     }
+
+    public void RequestDeviceListScrollToTop() => DeviceListScrollToTopRequested?.Invoke(this, EventArgs.Empty);
 
     public void DiscardTransientNavigationState()
     {
