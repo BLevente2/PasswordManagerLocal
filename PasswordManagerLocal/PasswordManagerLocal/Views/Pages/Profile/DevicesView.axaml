@@ -7,13 +7,16 @@
     x:Class="PasswordManagerLocal.Views.Pages.Profile.DevicesView"
     x:DataType="vm:ProfileViewModel"
     IsVisible="{Binding IsDevicesMainPage}">
-  <StackPanel IsVisible="{Binding IsDevicesMainPage}" Spacing="12">
-    <StackPanel Spacing="12">
-      <profile:DeviceToolbarView />
-      <profile:DeviceListView />
-      <profile:DeviceAddView />
-      <profile:DeviceDetailsView />
-      <profile:DeviceDisconnectView />
-    </StackPanel>
-  </StackPanel>
+  <Grid RowDefinitions="Auto,*" IsVisible="{Binding IsDevicesMainPage}">
+    <profile:DeviceToolbarView Grid.Row="0" Margin="0,0,0,12" />
+
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Spacing="12">
+        <profile:DeviceListView />
+        <profile:DeviceAddView />
+        <profile:DeviceDetailsView />
+        <profile:DeviceDisconnectView />
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
 </UserControl>

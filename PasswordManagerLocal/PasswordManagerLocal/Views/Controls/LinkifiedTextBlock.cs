@@ -2,6 +2,8 @@ using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
+using Avalonia.Input;
+using Avalonia.Media;
 
 namespace PasswordManagerLocal.Views.Controls;
 
@@ -12,8 +14,20 @@ public sealed class LinkifiedTextBlock : TextBlock
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
         TimeSpan.FromMilliseconds(100));
 
+    private static readonly IBrush LinkForeground = Brush.Parse("#FF2D6AE3");
+    private static readonly Cursor LinkCursor = new(StandardCursorType.Hand);
+
+    private readonly List<LinkTextRange> _links = [];
+
     public static readonly StyledProperty<string?> SourceTextProperty =
         AvaloniaProperty.Register<LinkifiedTextBlock, string?>(nameof(SourceText));
+
+    public LinkifiedTextBlock()
+    {
+        Tapped += HandleTapped;
+        PointerMoved += HandlePointerMoved;
+        PointerExited += HandlePointerExited;
+    }
 
     public string? SourceText
     {
@@ -34,6 +48,7 @@ public sealed class LinkifiedTextBlock : TextBlock
     private void RebuildInlines()
     {
         Inlines.Clear();
+        _links.Clear();
 
         var text = SourceText ?? string.Empty;
 
@@ -44,6 +59,7 @@ public sealed class LinkifiedTextBlock : TextBlock
         catch (RegexMatchTimeoutException)
         {
             Inlines.Clear();
+            _links.Clear();
             Inlines.Add(new Run(text));
         }
     }
@@ -68,17 +84,7 @@ public sealed class LinkifiedTextBlock : TextBlock
             var displayedUrl = match.Value[..urlLength];
             if (TryCreateWebUri(displayedUrl, out var uri))
             {
-                var link = new HyperlinkButton
-                {
-                    Content = displayedUrl,
-                    NavigateUri = uri,
-                    Padding = new Thickness(0),
-                    Margin = new Thickness(0),
-                    MinWidth = 0,
-                    MinHeight = 0
-                };
-
-                Inlines.Add(new InlineUIContainer(link));
+                AddLinkInline(displayedUrl, match.Index, uri);
             }
             else
             {
@@ -91,6 +97,93 @@ public sealed class LinkifiedTextBlock : TextBlock
         if (currentIndex < text.Length)
         {
             Inlines.Add(new Run(text[currentIndex..]));
+        }
+    }
+
+    private void AddLinkInline(string displayedUrl, int startIndex, Uri uri)
+    {
+        Inlines.Add(new Run(displayedUrl)
+        {
+            Foreground = LinkForeground,
+            TextDecorations = Avalonia.Media.TextDecorations.Underline
+        });
+
+        _links.Add(new LinkTextRange(startIndex, startIndex + displayedUrl.Length, uri));
+    }
+
+    private void HandleTapped(object? sender, TappedEventArgs args)
+    {
+        var link = GetLinkAtPoint(args.GetPosition(this));
+        if (link is null)
+        {
+            return;
+        }
+
+        args.Handled = true;
+        _ = LaunchUriAsync(link.Uri);
+    }
+
+    private void HandlePointerMoved(object? sender, PointerEventArgs args)
+    {
+        Cursor = GetLinkAtPoint(args.GetPosition(this)) is null ? null : LinkCursor;
+    }
+
+    private void HandlePointerExited(object? sender, PointerEventArgs args)
+    {
+        Cursor = null;
+    }
+
+    private LinkTextRange? GetLinkAtPoint(Point point)
+    {
+        if (_links.Count == 0 || TextLayout is null)
+        {
+            return null;
+        }
+
+        var hit = TextLayout.HitTestPoint(point);
+        if (!hit.IsInside)
+        {
+            return null;
+        }
+
+        var characterIndex = hit.TextPosition;
+        if (characterIndex < 0)
+        {
+            return null;
+        }
+
+        return GetLinkContainingCharacter(characterIndex);
+    }
+
+    private LinkTextRange? GetLinkContainingCharacter(int characterIndex)
+    {
+        foreach (var link in _links)
+        {
+            if (characterIndex >= link.StartIndex && characterIndex < link.EndIndex)
+            {
+                return link;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task LaunchUriAsync(Uri uri)
+    {
+        var launcher = TopLevel.GetTopLevel(this)?.Launcher;
+        if (launcher is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await launcher.LaunchUriAsync(uri);
+        }
+        catch
+        {
+            // Opening external links depends on the host platform.
+            // Ignore launcher failures so a bad OS handler cannot crash the details view.
         }
     }
 
@@ -157,5 +250,14 @@ public sealed class LinkifiedTextBlock : TextBlock
         }
 
         return balance < 0;
+    }
+
+    private sealed class LinkTextRange(int startIndex, int endIndex, Uri uri)
+    {
+        public int StartIndex { get; } = startIndex;
+
+        public int EndIndex { get; } = endIndex;
+
+        public Uri Uri { get; } = uri;
     }
 }

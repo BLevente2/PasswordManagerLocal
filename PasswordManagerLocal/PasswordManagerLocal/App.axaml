@@ -108,6 +108,17 @@
       <Setter Property="BorderBrush" Value="#33808080" />
     </Style>
 
+    <Style Selector="Border.interactiveListItem">
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="Background" Value="#08808080" />
+      <Setter Property="BorderBrush" Value="#33808080" />
+    </Style>
+
+    <Style Selector="Border.interactiveListItem:pointerover">
+      <Setter Property="Background" Value="#302D6AE3" />
+      <Setter Property="BorderBrush" Value="#DD2D6AE3" />
+    </Style>
+
     <Style Selector="TextBlock.pageTitle">
       <Setter Property="FontSize" Value="28" />
       <Setter Property="FontWeight" Value="Bold" />
@@ -120,6 +131,11 @@
 
     <Style Selector="TextBlock.subtleText">
       <Setter Property="Opacity" Value="0.78" />
+    </Style>
+
+    <Style Selector="TextBlock.descriptionLink">
+      <Setter Property="Foreground" Value="#FF2D6AE3" />
+      <Setter Property="TextDecorations" Value="Underline" />
     </Style>
 
     <Style Selector="TextBlock.errorText">

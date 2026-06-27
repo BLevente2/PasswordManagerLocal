@@ -9,13 +9,15 @@
     x:DataType="vm:ProfileViewModel">
 
   <Grid>
-    <ScrollViewer>
-      <StackPanel Margin="16,4,16,16" Spacing="12">
-        <controls:OperationMessageView />
+    <Grid RowDefinitions="Auto,*" Margin="16,4,16,16">
+      <controls:OperationMessageView Grid.Row="0" Margin="0,0,0,12" />
+
+      <ScrollViewer Grid.Row="1" IsVisible="{Binding IsProfileMainPage}">
         <profile:ProfileAccountView />
-        <profile:DevicesView />
-      </StackPanel>
-    </ScrollViewer>
+      </ScrollViewer>
+
+      <profile:DevicesView Grid.Row="1" />
+    </Grid>
 
     <profile:LocalSyncDialogView />
   </Grid>

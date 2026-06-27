@@ -3,6 +3,7 @@
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Pages"
+    xmlns:controls="clr-namespace:PasswordManagerLocal.Views.Controls"
     x:Class="PasswordManagerLocal.Views.Pages.Profile.DeviceToolbarView"
     x:DataType="vm:ProfileViewModel"
     IsVisible="{Binding IsDeviceToolbarVisible}">
@@ -11,7 +12,7 @@
       <Border Classes="toolbarGroup" Grid.Column="0" MinWidth="0">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" MinWidth="0">
           <PathIcon Classes="smallUiIcon" Data="{StaticResource SearchIconGeometry}" VerticalAlignment="Center" />
-          <TextBox
+          <controls:WatermarkWidthTextBox
               Grid.Column="1"
               Text="{Binding DeviceSearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
               Watermark="{Binding DeviceSearchPlaceholder}"
@@ -22,7 +23,7 @@
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding SearchDevicesCommand}" />
             </TextBox.KeyBindings>
-          </TextBox>
+          </controls:WatermarkWidthTextBox>
         </Grid>
       </Border>
       <Button
