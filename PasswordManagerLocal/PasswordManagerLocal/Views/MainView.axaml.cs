@@ -134,6 +134,7 @@ public partial class MainView : UserControl
         }
 
         this.FindControl<Button>("AccountMenuButton")?.Flyout?.Hide();
+        this.FindControl<Button>("MobileAccountMenuButton")?.Flyout?.Hide();
     }
 
     private void DetachTopLevelInputHandlers()

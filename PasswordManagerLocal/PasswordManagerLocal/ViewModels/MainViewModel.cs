@@ -78,6 +78,9 @@ public sealed class MainViewModel : ViewModelBase
         ShowPasswordsCommand = ReactiveCommand.Create(NavigateToPasswords);
         ShowProfileCommand = ReactiveCommand.Create(NavigateToProfile);
         ShowDevicesCommand = ReactiveCommand.Create(NavigateToDevices);
+        SelectMobilePasswordsCommand = ReactiveCommand.Create(() => NavigateToMainPageFromMobileDropdown(0));
+        SelectMobileDevicesCommand = ReactiveCommand.Create(() => NavigateToMainPageFromMobileDropdown(1));
+        SelectMobileProfileCommand = ReactiveCommand.Create(() => NavigateToMainPageFromMobileDropdown(2));
         ShowLoginCommand = ReactiveCommand.Create(NavigateToLogin);
         ShowRegistrationCommand = ReactiveCommand.Create(NavigateToRegistration);
         ShowChangeProfileCommand = ReactiveCommand.CreateFromTask(ShowChangeProfileAsync);
@@ -297,6 +300,12 @@ public sealed class MainViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> ShowDevicesCommand { get; }
 
+    public ReactiveCommand<Unit, Unit> SelectMobilePasswordsCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SelectMobileDevicesCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SelectMobileProfileCommand { get; }
+
     public ReactiveCommand<Unit, Unit> ShowLoginCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ShowRegistrationCommand { get; }
@@ -403,6 +412,8 @@ public sealed class MainViewModel : ViewModelBase
     public string RefreshButtonLabel => GetTranslation("Common_Refresh");
 
     public string RefreshVisiblePageLabel => $"↻ {GetTranslation("Shell_RefreshVisiblePage")}";
+
+    public string RefreshVisiblePageMenuLabel => GetTranslation("Shell_RefreshVisiblePage");
 
     public string YesLabel => GetTranslation("Common_Yes");
 
@@ -666,6 +677,7 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(NavigationLabel));
         this.RaisePropertyChanged(nameof(RefreshButtonLabel));
         this.RaisePropertyChanged(nameof(RefreshVisiblePageLabel));
+        this.RaisePropertyChanged(nameof(RefreshVisiblePageMenuLabel));
         this.RaisePropertyChanged(nameof(YesLabel));
         this.RaisePropertyChanged(nameof(NoLabel));
         this.RaisePropertyChanged(nameof(LogoutConfirmationTitle));
@@ -852,6 +864,45 @@ public sealed class MainViewModel : ViewModelBase
                 NavigateToPasswords();
                 break;
         }
+    }
+
+    private void NavigateToMainPageFromMobileDropdown(int targetMainPageIndex)
+    {
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        ConfigureDirectMobileMainPageTransition(targetMainPageIndex);
+
+        switch (targetMainPageIndex)
+        {
+            case 1:
+                NavigateToDevices();
+                break;
+            case 2:
+                NavigateToProfile();
+                break;
+            default:
+                NavigateToPasswords();
+                break;
+        }
+    }
+
+    private void ConfigureDirectMobileMainPageTransition(int targetMainPageIndex)
+    {
+        if (!IsMobileNavigationEnabled || !IsMainContentPageVisible)
+        {
+            return;
+        }
+
+        var currentMainPageIndex = CurrentMainPageIndex;
+        if (currentMainPageIndex == targetMainPageIndex)
+        {
+            return;
+        }
+
+        IsPageTransitionReversed = targetMainPageIndex < currentMainPageIndex;
     }
 
     private void NavigateToPasswords()

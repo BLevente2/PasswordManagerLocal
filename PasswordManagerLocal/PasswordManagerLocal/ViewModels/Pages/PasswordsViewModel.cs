@@ -1266,8 +1266,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             var searchTerm = SearchQuery.Trim();
             query = query.Where(item =>
-                item.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
-                || item.Description.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase));
+                item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || item.Description.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
         }
 
         query = SelectedSortOption?.Key switch

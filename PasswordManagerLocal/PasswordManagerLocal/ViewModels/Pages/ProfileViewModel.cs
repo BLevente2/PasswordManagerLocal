@@ -1703,10 +1703,10 @@ public sealed class ProfileViewModel : ViewModelBase
         {
             var searchTerm = DeviceSearchQuery.Trim();
             query = query.Where(item =>
-                item.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
-                || item.DeviceTypeText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
-                || item.TrustStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase)
-                || item.SyncStateText.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase));
+                item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || item.DeviceTypeText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || item.TrustStateText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || item.SyncStateText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
         }
 
         query = SelectedDeviceSortOption?.Key switch

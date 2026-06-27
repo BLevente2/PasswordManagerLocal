@@ -47,8 +47,56 @@
     </Style>
 
     <Style Selector="Button.mainNavigation">
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Padding" Value="12,6" />
       <Setter Property="BorderThickness" Value="2" />
       <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="MainNavigationChrome"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="{TemplateBinding CornerRadius}">
+            <ContentPresenter Content="{TemplateBinding Content}"
+                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                              Padding="{TemplateBinding Padding}"
+                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+
+    <Style Selector="Button.mainNavigation:pointerover">
+      <Setter Property="Background" Value="#4068A9FF" />
+      <Setter Property="BorderBrush" Value="#FF68A9FF" />
+    </Style>
+
+    <Style Selector="Button.mainNavigation.selected">
+      <Setter Property="Background" Value="#182D6AE3" />
+      <Setter Property="BorderBrush" Value="#FF1D4ED8" />
+    </Style>
+
+    <Style Selector="Button.mainNavigation.selected:pointerover">
+      <Setter Property="Background" Value="#4068A9FF" />
+      <Setter Property="BorderBrush" Value="#FF68A9FF" />
+    </Style>
+
+    <Style Selector="Button.mobileMainMenuDropdown">
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Background" Value="#08808080" />
+      <Setter Property="BorderBrush" Value="#33808080" />
+    </Style>
+
+    <Style Selector="Button.mobileMainMenuDropdown:pointerover">
+      <Setter Property="Background" Value="#182D6AE3" />
+      <Setter Property="BorderBrush" Value="#882D6AE3" />
     </Style>
 
     <Style Selector="Button.danger">
