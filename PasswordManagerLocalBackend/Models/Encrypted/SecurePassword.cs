@@ -1,4 +1,5 @@
-﻿using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Security;
+using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
@@ -10,7 +11,7 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
-    public string Color { get; set; } = "#FFFFD700"; // Classic gold default color
+    public string Color { get; set; } = DefaultPasswordColor;
     public byte[] Password { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;

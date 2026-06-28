@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
@@ -166,7 +167,7 @@ public sealed class IntegrityProtectionTests
             Id = Guid.Parse("5E955FCD-D3BA-47C9-AB2E-13D0A6389624"),
             Name = "Email",
             Description = "Primary account",
-            Color = "#FFFFD700",
+            Color = PasswordConstants.DefaultPasswordColor,
             Password = [10, 20, 30, 40, 50],
             CreatedAt = new DateTime(2026, 1, 1, 1, 2, 3, DateTimeKind.Utc),
             LastUpdatedAt = new DateTime(2026, 1, 1, 2, 3, 4, DateTimeKind.Utc)

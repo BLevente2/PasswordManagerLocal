@@ -1,4 +1,4 @@
-﻿using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
+using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
 
 namespace PasswordManagerLocalBackend.Requests;
 
@@ -27,7 +27,7 @@ public sealed class UpdatePasswordRequest
         if (!nameEmpty && (string.IsNullOrWhiteSpace(Name) || !IsValidPasswordName(Name)))
             errors.Add("Name");
 
-        if (!descriptionEmpty && (string.IsNullOrWhiteSpace(Description) || !IsValidDescription(Description)))
+        if (!descriptionEmpty && !IsValidDescription(Description!))
             errors.Add("Description");
 
         if (!colorEmpty && (string.IsNullOrWhiteSpace(Color) || !IsValidARGBColor(Color)))

@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Constants;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Utils;
 using System.Text;
@@ -56,6 +57,33 @@ public sealed class DataValidationUtilTests
         MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("00FF7FA0"));
         MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("#FFF"));
         MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("#GGFF7FA0"));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void PasswordDefaults_UseTealColor()
+    {
+        MSTestAssert.AreEqual(PasswordConstants.DefaultPasswordColor, new NewPasswordRequest().Color);
+        MSTestAssert.AreEqual(PasswordConstants.DefaultPasswordColor, new SecurePassword().Color);
+        MSTestAssert.AreEqual("#FF14B8A6", PasswordConstants.DefaultPasswordColor);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void UpdatePasswordRequest_AllowsEmptyDescriptionUpdate()
+    {
+        var request = new UpdatePasswordRequest
+        {
+            Id = Guid.NewGuid(),
+            Description = string.Empty
+        };
+
+        var valid = request.Validate(out var errors);
+
+        MSTestAssert.IsTrue(valid);
+        MSTestAssert.IsEmpty(errors);
     }
 
     [TestMethod]

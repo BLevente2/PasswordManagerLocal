@@ -1,4 +1,5 @@
-﻿using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
+using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
+using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 
 namespace PasswordManagerLocalBackend.Requests;
 
@@ -6,7 +7,7 @@ public sealed class NewPasswordRequest
 {
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
-    public string Color { get; set; } = "#FFFFD700"; // Classic gold default color
+    public string Color { get; set; } = DefaultPasswordColor;
     public byte[] Password { get; set; } = [];
 
 

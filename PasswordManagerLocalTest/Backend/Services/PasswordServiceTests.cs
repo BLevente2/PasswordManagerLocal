@@ -193,6 +193,32 @@ public sealed class PasswordServiceTests
         CollectionAssert.AreEqual(Encoding.UTF8.GetBytes("newpw"), decrypted);
     }
 
+
+    [TestMethod]
+    public async Task UpdatePassword_AllowsClearingDescription()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Description = "Remove me",
+            Password = Encoding.UTF8.GetBytes("secret")
+        }, passwords);
+
+        var id = passwords.Passwords[0].Id;
+
+        await service.UpdatePasswordAsync(new UpdatePasswordRequest
+        {
+            Id = id,
+            Description = string.Empty
+        }, passwords);
+
+        MSTestAssert.AreEqual(string.Empty, passwords.Passwords[0].Description);
+        passwords.VerifyIntegrity();
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Security")]
