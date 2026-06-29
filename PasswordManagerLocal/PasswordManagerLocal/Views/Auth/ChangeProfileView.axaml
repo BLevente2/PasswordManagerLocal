@@ -6,7 +6,7 @@
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels.Auth"
     x:DataType="vm:ChangeProfileViewModel">
 
-  <ScrollViewer>
+  <ScrollViewer x:Name="PageScrollViewer">
     <Grid Margin="16,8,16,16">
       <Border Classes="card" HorizontalAlignment="Center" MaxWidth="640" MinWidth="280">
         <StackPanel Spacing="16">

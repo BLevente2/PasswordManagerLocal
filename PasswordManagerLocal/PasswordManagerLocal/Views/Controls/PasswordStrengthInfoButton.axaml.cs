@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using PasswordManagerLocal.Views.Styling;
 
 namespace PasswordManagerLocal.Views.Controls;
 
@@ -32,16 +33,19 @@ public partial class PasswordStrengthInfoButton : UserControl
         _flyoutBodyText = CreateBodyTextBlock();
 
         ToolTip.SetTip(_infoButton, CreateInfoPanel(_tooltipTitleText, _tooltipBodyText, 12));
+        var flyoutScrollViewer = new ScrollViewer
+        {
+            MaxWidth = 380,
+            MaxHeight = 420,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = CreateInfoPanel(_flyoutTitleText, _flyoutBodyText, 8)
+        };
+        ScrollViewerStyleHelper.ApplyComfortableScrollerStyle(flyoutScrollViewer);
+
         _infoButton.Flyout = new Flyout
         {
-            Content = new ScrollViewer
-            {
-                MaxWidth = 380,
-                MaxHeight = 420,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = CreateInfoPanel(_flyoutTitleText, _flyoutBodyText, 8)
-            }
+            Content = flyoutScrollViewer
         };
 
         UpdateText();

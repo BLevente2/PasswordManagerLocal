@@ -19,6 +19,8 @@ public sealed class OperationMessageState : ReactiveObject, IDisposable
 
     public bool IsError => HasMessage && Kind == OperationMessageKind.Error;
 
+    public bool IsInformation => HasMessage && Kind == OperationMessageKind.Information;
+
     public bool IsSuccess => HasMessage && Kind == OperationMessageKind.Success;
 
     public bool HasNonErrorMessage => HasMessage && !IsError;
@@ -87,6 +89,7 @@ public sealed class OperationMessageState : ReactiveObject, IDisposable
 
         this.RaisePropertyChanged(nameof(HasMessage));
         this.RaisePropertyChanged(nameof(IsError));
+        this.RaisePropertyChanged(nameof(IsInformation));
         this.RaisePropertyChanged(nameof(IsSuccess));
         this.RaisePropertyChanged(nameof(HasNonErrorMessage));
     }

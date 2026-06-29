@@ -33,10 +33,13 @@
         IsTransitionReversed="{Binding IsProfilePaneTransitionReversed}"
         IsVisible="{Binding IsAndroidPaneTransitionEnabled}">
       <TransitioningContentControl.PageTransition>
-        <PageSlide Duration="0:0:0.20"
-                   Orientation="Horizontal"
-                   SlideInEasing="CubicEaseOut"
-                   SlideOutEasing="CubicEaseIn" />
+        <CompositePageTransition>
+          <PageSlide Duration="0:0:0.34"
+                     Orientation="Horizontal"
+                     SlideInEasing="CircularEaseOut"
+                     SlideOutEasing="SineEaseIn" />
+          <CrossFade Duration="0:0:0.22" />
+        </CompositePageTransition>
       </TransitioningContentControl.PageTransition>
     </TransitioningContentControl>
 

@@ -67,6 +67,27 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public string DescriptionPreview => string.IsNullOrWhiteSpace(Description) ? "—" : Description;
 
+    public string ListDescriptionPreview
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Description))
+            {
+                return "—";
+            }
+
+            var normalizedDescription = Description.Replace("\r\n", "\n").Replace('\r', '\n');
+            var firstLineBreakIndex = normalizedDescription.IndexOf('\n');
+            var firstLine = firstLineBreakIndex >= 0
+                ? normalizedDescription[..firstLineBreakIndex]
+                : normalizedDescription;
+
+            firstLine = firstLine.Trim();
+
+            return string.IsNullOrWhiteSpace(firstLine) ? "—" : firstLine;
+        }
+    }
+
     public string CreatedAtText => CreatedAt.ToLocalTime().ToString("g");
 
     public string LastUpdatedAtText => LastUpdatedAt.ToLocalTime().ToString("g");

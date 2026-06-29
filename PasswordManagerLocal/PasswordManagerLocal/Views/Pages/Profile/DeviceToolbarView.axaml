@@ -6,10 +6,17 @@
     xmlns:controls="clr-namespace:PasswordManagerLocal.Views.Controls"
     x:Class="PasswordManagerLocal.Views.Pages.Profile.DeviceToolbarView"
     x:DataType="vm:ProfileViewModel"
+    Classes="searchToolbar"
+    Classes.compactSearchToolbar="{Binding IsAndroidPaneTransitionEnabled}"
     IsVisible="{Binding IsDeviceToolbarVisible}">
-  <Border Classes="card" IsVisible="{Binding IsDeviceToolbarVisible}">
+  <Border Classes="card searchToolbarCard"
+          Classes.compactSearchCard="{Binding IsAndroidPaneTransitionEnabled}"
+          IsVisible="{Binding IsDeviceToolbarVisible}">
     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" MaxWidth="560" HorizontalAlignment="Center">
-      <Border Classes="toolbarGroup" Grid.Column="0" MinWidth="0">
+      <Border Classes="toolbarGroup searchToolbarGroup"
+              Classes.compactSearchGroup="{Binding IsAndroidPaneTransitionEnabled}"
+              Grid.Column="0"
+              MinWidth="0">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" MinWidth="0">
           <PathIcon Classes="smallUiIcon" Data="{StaticResource SearchIconGeometry}" VerticalAlignment="Center" />
           <controls:WatermarkWidthTextBox
@@ -27,10 +34,9 @@
         </Grid>
       </Border>
       <Button
-          Classes="ghost iconButton"
+          Classes="ghost iconButton searchToolbarButton"
+          Classes.compactSearchButton="{Binding IsAndroidPaneTransitionEnabled}"
           Grid.Column="1"
-          Width="48"
-          MinWidth="48"
           ToolTip.Tip="{Binding DeviceSortLabel}">
         <PathIcon Classes="actionButtonIcon" Data="{StaticResource SortIconGeometry}" />
         <Button.Flyout>
@@ -47,10 +53,9 @@
         </Button.Flyout>
       </Button>
       <Button
-          Classes="primary iconButton"
+          Classes="primary iconButton searchToolbarButton"
+          Classes.compactSearchButton="{Binding IsAndroidPaneTransitionEnabled}"
           Grid.Column="2"
-          Width="48"
-          MinWidth="48"
           Command="{Binding BeginAddDeviceCommand}"
           ToolTip.Tip="{Binding AddDeviceLabel}">
         <PathIcon Classes="actionButtonIcon" Data="{StaticResource AddIconGeometry}" />

@@ -17,6 +17,9 @@ internal sealed class MainViewKeyboardHandler
 
     public async Task HandleTopLevelKeyDownAsync(KeyEventArgs e)
     {
+        if (await TryHandleRefreshShortcutAsync(e))
+            return;
+
         if (e.Handled || e.Key != Key.Escape || e.KeyModifiers != KeyModifiers.None)
             return;
 
@@ -27,6 +30,9 @@ internal sealed class MainViewKeyboardHandler
     public async Task HandleKeyDownAsync(KeyEventArgs e)
     {
         if (e.Handled)
+            return;
+
+        if (await TryHandleRefreshShortcutAsync(e))
             return;
 
         if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None)
@@ -59,6 +65,22 @@ internal sealed class MainViewKeyboardHandler
     {
         if (!e.Handled && e.Source is TextBox textBox)
             await TextBoxClipboardHandler.CutSelectedTextAsync(textBox, e);
+    }
+
+    private async Task<bool> TryHandleRefreshShortcutAsync(KeyEventArgs e)
+    {
+        if (!OperatingSystem.IsWindows()
+            || e.Handled
+            || e.Key != Key.F5
+            || e.KeyModifiers != KeyModifiers.None
+            || _view.DataContext is not MainViewModel { IsAuthenticated: true, IsApplicationInteractionEnabled: true } viewModel)
+        {
+            return false;
+        }
+
+        e.Handled = true;
+        await viewModel.RequestRefreshVisiblePageAsync();
+        return true;
     }
 
     private async Task HandleEscapeAsync()

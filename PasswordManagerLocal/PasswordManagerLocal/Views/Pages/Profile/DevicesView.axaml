@@ -24,9 +24,12 @@
   </UserControl.DataTemplates>
 
   <Grid RowDefinitions="Auto,*" IsVisible="{Binding IsDevicesMainPage}">
-    <profile:DeviceToolbarView Grid.Row="0" Margin="0,0,0,12" />
+    <profile:DeviceToolbarView Grid.Row="0" />
 
-    <ScrollViewer x:Name="DeviceListScrollViewer" Grid.Row="1">
+    <ScrollViewer x:Name="DeviceListScrollViewer"
+                  Grid.Row="1"
+                  Classes="comfortableListScroller"
+                  Classes.androidComfortableListScroller="{Binding IsAndroidPaneTransitionEnabled}">
       <Grid>
         <TransitioningContentControl
             ClipToBounds="True"
@@ -34,10 +37,13 @@
             IsTransitionReversed="{Binding IsDevicePaneTransitionReversed}"
             IsVisible="{Binding IsAndroidPaneTransitionEnabled}">
           <TransitioningContentControl.PageTransition>
-            <PageSlide Duration="0:0:0.20"
-                       Orientation="Horizontal"
-                       SlideInEasing="CubicEaseOut"
-                       SlideOutEasing="CubicEaseIn" />
+            <CompositePageTransition>
+              <PageSlide Duration="0:0:0.34"
+                         Orientation="Horizontal"
+                         SlideInEasing="CircularEaseOut"
+                         SlideOutEasing="SineEaseIn" />
+              <CrossFade Duration="0:0:0.22" />
+            </CompositePageTransition>
           </TransitioningContentControl.PageTransition>
         </TransitioningContentControl>
 

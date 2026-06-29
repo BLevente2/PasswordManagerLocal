@@ -30,6 +30,8 @@ public abstract class ViewModelBase : ReactiveObject
 
     public bool IsStatusMessageError => OperationMessage.IsError;
 
+    public bool IsStatusMessageInformation => OperationMessage.IsInformation;
+
     public bool IsStatusMessageSuccess => OperationMessage.IsSuccess;
 
     public bool HasNonErrorStatusMessage => OperationMessage.HasNonErrorMessage;
@@ -133,6 +135,9 @@ public abstract class ViewModelBase : ReactiveObject
                 break;
             case nameof(OperationMessageState.IsError):
                 this.RaisePropertyChanged(nameof(IsStatusMessageError));
+                break;
+            case nameof(OperationMessageState.IsInformation):
+                this.RaisePropertyChanged(nameof(IsStatusMessageInformation));
                 break;
             case nameof(OperationMessageState.IsSuccess):
                 this.RaisePropertyChanged(nameof(IsStatusMessageSuccess));

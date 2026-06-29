@@ -43,8 +43,18 @@
             <TextBlock Text="{Binding AppTitle}" Classes="sectionTitle" />
             <Grid>
               <TextBlock Text="{Binding HeaderSubtitle}"
-                         IsVisible="{Binding HasNonErrorHeaderSubtitle}"
+                         IsVisible="{Binding IsHeaderSubtitleUser}"
                          Classes="subtleText"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding HeaderSubtitle}"
+                         IsVisible="{Binding IsHeaderSubtitleInformation}"
+                         Classes="statusInfoText"
+                         Foreground="{Binding HeaderInformationSubtitleBrush}"
+                         TextWrapping="Wrap" />
+              <TextBlock Text="{Binding HeaderSubtitle}"
+                         IsVisible="{Binding IsHeaderSubtitleSuccess}"
+                         Classes="statusSuccessText"
+                         Foreground="{Binding HeaderSuccessSubtitleBrush}"
                          TextWrapping="Wrap" />
               <TextBlock Text="{Binding HeaderSubtitle}"
                          IsVisible="{Binding IsHeaderSubtitleError}"
@@ -148,8 +158,22 @@
                        TextWrapping="NoWrap" />
             <Grid ClipToBounds="True">
               <TextBlock Text="{Binding HeaderSubtitle}"
-                         IsVisible="{Binding HasNonErrorHeaderSubtitle}"
+                         IsVisible="{Binding IsHeaderSubtitleUser}"
                          Classes="subtleText"
+                         FontSize="12"
+                         TextTrimming="CharacterEllipsis"
+                         TextWrapping="NoWrap" />
+              <TextBlock Text="{Binding HeaderSubtitle}"
+                         IsVisible="{Binding IsHeaderSubtitleInformation}"
+                         Classes="statusInfoText"
+                         Foreground="{Binding HeaderInformationSubtitleBrush}"
+                         FontSize="12"
+                         TextTrimming="CharacterEllipsis"
+                         TextWrapping="NoWrap" />
+              <TextBlock Text="{Binding HeaderSubtitle}"
+                         IsVisible="{Binding IsHeaderSubtitleSuccess}"
+                         Classes="statusSuccessText"
+                         Foreground="{Binding HeaderSuccessSubtitleBrush}"
                          FontSize="12"
                          TextTrimming="CharacterEllipsis"
                          TextWrapping="NoWrap" />
@@ -329,10 +353,13 @@
                                   IsVisible="{Binding IsMobileNavigationEnabled}"
                                   IsTransitionReversed="{Binding IsPageTransitionReversed}">
       <TransitioningContentControl.PageTransition>
-        <PageSlide Duration="0:0:0.20"
-                   Orientation="Horizontal"
-                   SlideInEasing="CubicEaseOut"
-                   SlideOutEasing="CubicEaseIn" />
+        <CompositePageTransition>
+          <PageSlide Duration="0:0:0.38"
+                     Orientation="Horizontal"
+                     SlideInEasing="CircularEaseOut"
+                     SlideOutEasing="SineEaseIn" />
+          <CrossFade Duration="0:0:0.26" />
+        </CompositePageTransition>
       </TransitioningContentControl.PageTransition>
     </TransitioningContentControl>
 

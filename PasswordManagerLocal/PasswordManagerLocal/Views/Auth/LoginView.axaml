@@ -10,7 +10,7 @@
     <KeyBinding Gesture="Enter" Command="{Binding ExecutePrimaryActionCommand}" />
   </UserControl.KeyBindings>
 
-  <ScrollViewer>
+  <ScrollViewer x:Name="PageScrollViewer">
     <Grid Margin="16,8,16,16">
       <Border Classes="card" HorizontalAlignment="Center" MaxWidth="520" MinWidth="280">
         <StackPanel Spacing="16">

@@ -13,6 +13,7 @@ using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Responses;
 using ReactiveUI;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Reactive;
 
@@ -23,6 +24,10 @@ public sealed class MainViewModel : ViewModelBase
     private static readonly TimeSpan SessionRenewalWarningLeadTime = TimeSpan.FromMinutes(1);
     private static readonly IBrush LightNavigationFrameBrush = Brush.Parse("#FF1F5FBF");
     private static readonly IBrush DarkNavigationFrameBrush = Brush.Parse("#FF7DB3FF");
+    private static readonly IBrush LightHeaderInformationBrush = Brush.Parse("#FF1D4ED8");
+    private static readonly IBrush DarkHeaderInformationBrush = Brush.Parse("#FF7DB3FF");
+    private static readonly IBrush LightHeaderSuccessBrush = Brush.Parse("#FF047857");
+    private static readonly IBrush DarkHeaderSuccessBrush = Brush.Parse("#FF34D399");
 
     private readonly IEndpoints _endpoints;
     private readonly IAuthSessionRegistry _authSessionRegistry;
@@ -54,6 +59,7 @@ public sealed class MainViewModel : ViewModelBase
     private PasswordsViewModel? _passwordsViewModel;
     private ProfileViewModel? _profileViewModel;
     private ChangeProfileViewModel? _changeProfileViewModel;
+    private ViewModelBase? _observedPageStatusViewModel;
 
     public MainViewModel(IEndpoints endpoints)
         : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
@@ -70,6 +76,7 @@ public sealed class MainViewModel : ViewModelBase
 
         _currentPageViewModel = LoginViewModel;
         _currentAnimatedPageViewModel = new MainPageContentViewModel(LoginViewModel);
+        ObservePageStatus(_currentPageViewModel);
 
         SetHungarianLanguageCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentLanguage = AppLanguage.Hungarian; });
         SetEnglishLanguageCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentLanguage = AppLanguage.English; });
@@ -133,10 +140,13 @@ public sealed class MainViewModel : ViewModelBase
             }
 
             _currentPageViewModel.OnNavigatedFrom();
+            StopObservingPageStatus();
             ClearStatusMessage();
             this.RaiseAndSetIfChanged(ref _currentPageViewModel, value);
+            ObservePageStatus(value);
             CurrentAnimatedPageViewModel = new MainPageContentViewModel(value);
             RaiseNavigationStateProperties();
+            RaiseHeaderSubtitleProperties();
         }
     }
 
@@ -318,6 +328,9 @@ public sealed class MainViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> RefreshVisiblePageCommand { get; }
 
+    public async Task RequestRefreshVisiblePageAsync() =>
+        await RefreshAllLoadedDataAsync();
+
     public ReactiveCommand<Unit, Unit> ConfirmSessionRenewalCommand { get; }
 
     public ReactiveCommand<Unit, Unit> DeclineSessionRenewalCommand { get; }
@@ -437,15 +450,39 @@ public sealed class MainViewModel : ViewModelBase
         ? GetTranslation("Common_Loading")
         : YesLabel;
 
-    public string HeaderSubtitle => !string.IsNullOrWhiteSpace(StatusMessage)
-        ? StatusMessage
-        : IsAuthenticated ? CurrentUserSubtitle : string.Empty;
+    public string HeaderSubtitle
+    {
+        get
+        {
+            if (TryGetShellHeaderStatus(out var shellMessage, out _))
+                return shellMessage;
+
+            if (TryGetCurrentPageHeaderStatus(out var pageMessage, out _))
+                return pageMessage;
+
+            return IsAuthenticated ? CurrentUserSubtitle : string.Empty;
+        }
+    }
 
     public bool HasHeaderSubtitle => !string.IsNullOrWhiteSpace(HeaderSubtitle);
 
-    public bool IsHeaderSubtitleError => IsStatusMessageError;
+    public bool IsHeaderSubtitleUser => HasHeaderSubtitle && HeaderSubtitleKind == OperationMessageKind.None;
+
+    public bool IsHeaderSubtitleInformation => HeaderSubtitleKind == OperationMessageKind.Information;
+
+    public bool IsHeaderSubtitleSuccess => HeaderSubtitleKind == OperationMessageKind.Success;
+
+    public bool IsHeaderSubtitleError => HeaderSubtitleKind == OperationMessageKind.Error;
 
     public bool HasNonErrorHeaderSubtitle => HasHeaderSubtitle && !IsHeaderSubtitleError;
+
+    public IBrush HeaderInformationSubtitleBrush => CurrentThemeMode == AppThemeMode.Light
+        ? LightHeaderInformationBrush
+        : DarkHeaderInformationBrush;
+
+    public IBrush HeaderSuccessSubtitleBrush => CurrentThemeMode == AppThemeMode.Light
+        ? LightHeaderSuccessBrush
+        : DarkHeaderSuccessBrush;
 
     public async Task InitializeAsync()
     {
@@ -697,6 +734,8 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(PasswordsNavigationFrameBrush));
         this.RaisePropertyChanged(nameof(DevicesNavigationFrameBrush));
         this.RaisePropertyChanged(nameof(ProfileNavigationFrameBrush));
+        this.RaisePropertyChanged(nameof(HeaderInformationSubtitleBrush));
+        this.RaisePropertyChanged(nameof(HeaderSuccessSubtitleBrush));
     }
 
     protected override void OnStatusMessageChanged()
@@ -708,8 +747,89 @@ public sealed class MainViewModel : ViewModelBase
     {
         this.RaisePropertyChanged(nameof(HeaderSubtitle));
         this.RaisePropertyChanged(nameof(HasHeaderSubtitle));
+        this.RaisePropertyChanged(nameof(IsHeaderSubtitleUser));
+        this.RaisePropertyChanged(nameof(IsHeaderSubtitleInformation));
+        this.RaisePropertyChanged(nameof(IsHeaderSubtitleSuccess));
         this.RaisePropertyChanged(nameof(IsHeaderSubtitleError));
         this.RaisePropertyChanged(nameof(HasNonErrorHeaderSubtitle));
+    }
+
+    private OperationMessageKind HeaderSubtitleKind
+    {
+        get
+        {
+            if (TryGetShellHeaderStatus(out _, out var shellKind))
+                return shellKind;
+
+            if (TryGetCurrentPageHeaderStatus(out _, out var pageKind))
+                return pageKind;
+
+            return OperationMessageKind.None;
+        }
+    }
+
+    private bool TryGetShellHeaderStatus(out string message, out OperationMessageKind kind)
+    {
+        message = StatusMessage ?? string.Empty;
+        kind = GetStatusMessageKind(this);
+        return !string.IsNullOrWhiteSpace(message) && kind != OperationMessageKind.None;
+    }
+
+    private bool TryGetCurrentPageHeaderStatus(out string message, out OperationMessageKind kind)
+    {
+        message = CurrentPageViewModel.StatusMessage ?? string.Empty;
+        kind = GetStatusMessageKind(CurrentPageViewModel);
+
+        if (string.IsNullOrWhiteSpace(message) || kind == OperationMessageKind.None)
+            return false;
+
+        return kind != OperationMessageKind.Error;
+    }
+
+    private static OperationMessageKind GetStatusMessageKind(ViewModelBase viewModel)
+    {
+        if (viewModel.IsStatusMessageError)
+            return OperationMessageKind.Error;
+
+        if (viewModel.IsStatusMessageSuccess)
+            return OperationMessageKind.Success;
+
+        if (viewModel.IsStatusMessageInformation)
+            return OperationMessageKind.Information;
+
+        return OperationMessageKind.None;
+    }
+
+    private void ObservePageStatus(ViewModelBase viewModel)
+    {
+        if (ReferenceEquals(_observedPageStatusViewModel, viewModel))
+            return;
+
+        StopObservingPageStatus();
+        _observedPageStatusViewModel = viewModel;
+        _observedPageStatusViewModel.PropertyChanged += HandlePageStatusChanged;
+    }
+
+    private void StopObservingPageStatus()
+    {
+        if (_observedPageStatusViewModel is null)
+            return;
+
+        _observedPageStatusViewModel.PropertyChanged -= HandlePageStatusChanged;
+        _observedPageStatusViewModel = null;
+    }
+
+    private void HandlePageStatusChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ViewModelBase.StatusMessage)
+            or nameof(ViewModelBase.HasStatusMessage)
+            or nameof(ViewModelBase.IsStatusMessageInformation)
+            or nameof(ViewModelBase.IsStatusMessageSuccess)
+            or nameof(ViewModelBase.IsStatusMessageError)
+            or nameof(ViewModelBase.HasNonErrorStatusMessage))
+        {
+            RaiseHeaderSubtitleProperties();
+        }
     }
 
     private void ShowShellMessage(string? message, OperationMessageKind kind = OperationMessageKind.Success)

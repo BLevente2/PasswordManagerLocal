@@ -5,18 +5,12 @@
     xmlns:vm="clr-namespace:PasswordManagerLocal.ViewModels"
     x:Class="PasswordManagerLocal.Views.Controls.OperationMessageView"
     x:DataType="vm:ViewModelBase"
-    IsVisible="{Binding HasStatusMessage}">
-  <Border Classes="card" IsVisible="{Binding HasStatusMessage}">
+    IsVisible="{Binding IsStatusMessageError}">
+  <Border Classes="card" IsVisible="{Binding IsStatusMessageError}">
     <Grid>
       <TextBlock
           Text="{Binding StatusMessage}"
-          Classes="subtleText"
-          IsVisible="{Binding HasNonErrorStatusMessage}"
-          TextWrapping="Wrap" />
-      <TextBlock
-          Text="{Binding StatusMessage}"
           Classes="errorText"
-          IsVisible="{Binding IsStatusMessageError}"
           TextWrapping="Wrap" />
     </Grid>
   </Border>
