@@ -326,16 +326,22 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (userDevice is null || !userDevice.IsDeleted)
             return;
 
-        if (await userDevices.HasAnyActiveLinkForDeviceAsync(userDevice.DeviceId, ct))
-            return;
-
-        var device = await devices.GetByIdWithUserDevicesAsync(userDevice.DeviceId, ct);
-        if (device is null)
-            return;
-
         await tombstones.UpsertAsync(syncItem.ModelId, SyncModelType.UserDevice, syncItem.ChangedAtTs, ct);
-        _syncDeviceIdentities.TryRemove(device);
-        devices.Delete(device);
+
+        if (!await userDevices.HasAnyActiveLinkForDeviceAsync(userDevice.DeviceId, ct))
+        {
+            var device = await devices.GetByIdWithUserDevicesAsync(userDevice.DeviceId, ct);
+            if (device is not null)
+            {
+                _syncDeviceIdentities.TryRemove(device);
+                devices.Delete(device);
+            }
+        }
+        else
+        {
+            userDevices.Delete(userDevice);
+        }
+
         await uow.SaveChangesAsync(ct);
     }
 

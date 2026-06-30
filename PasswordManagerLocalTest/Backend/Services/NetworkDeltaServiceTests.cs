@@ -71,6 +71,7 @@ public sealed class NetworkDeltaServiceTests
             new FakeGroupRepository(),
             devices,
             new FakeUserDeviceRepository(),
+            new FakeLocalUserDeviceRepository(),
             new FakeSyncTombstoneRepository(),
             new FakeSyncQueueRepository(),
             new FakeSyncQueueService(),

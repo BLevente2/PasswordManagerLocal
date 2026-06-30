@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Services;
+using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalTest.Fakes;
 using PasswordManagerLocalTest.TestInfrastructure;
 
@@ -70,6 +71,64 @@ public sealed class SyncQueueServiceIntegrationTests
         MSTestAssert.HasCount(1, queueItems);
         MSTestAssert.AreEqual(target.Id, queueItems[0].DeviceId);
         MSTestAssert.AreEqual(originalModifiedAt, seeded.User.LastModifiedAt);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task EnqueueDeletedUserDevice_QueuesRemovedDeviceAndOtherActiveDevices()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var seeded = await SeedUserRoutesAsync(database, enabledRemoteCount: 2, disabledRemoteCount: 0);
+        var removed = seeded.EnabledRemotes[0];
+        var other = seeded.EnabledRemotes[1];
+        var link = await database.Db.UserDevices.SingleAsync(ud => ud.UserId == seeded.User.UId && ud.DeviceId == removed.Id);
+        link.IsDeleted = true;
+        link.IsSyncOn = false;
+        link.DeletedAt = DateTimeOffset.UtcNow;
+        link.GenerateIntegrityHash();
+        await database.Db.SaveChangesAsync();
+        var service = CreateService(database, seeded.Identity, new FakeSyncAuthorizationService());
+
+        await service.EnqueueAsync(new SyncItem
+        {
+            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(seeded.User.UId, removed.Id),
+            ModelType = SyncModelType.UserDevice,
+            ChangeType = SyncChangeType.Deleted
+        });
+
+        var queueItems = await database.Db.SyncQueueItems.OrderBy(item => item.DeviceId).ToListAsync();
+        MSTestAssert.HasCount(2, queueItems);
+        CollectionAssert.AreEquivalent(new[] { removed.Id, other.Id }, queueItems.Select(item => item.DeviceId).ToArray());
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task EnqueuePropagationDeletedUserDevice_DoesNotQueueRemovedDevice()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var seeded = await SeedUserRoutesAsync(database, enabledRemoteCount: 3, disabledRemoteCount: 0);
+        var removed = seeded.EnabledRemotes[0];
+        var source = seeded.EnabledRemotes[1];
+        var target = seeded.EnabledRemotes[2];
+        var link = await database.Db.UserDevices.SingleAsync(ud => ud.UserId == seeded.User.UId && ud.DeviceId == removed.Id);
+        link.IsDeleted = true;
+        link.IsSyncOn = false;
+        link.DeletedAt = DateTimeOffset.UtcNow;
+        link.GenerateIntegrityHash();
+        await database.Db.SaveChangesAsync();
+        var service = CreateService(database, seeded.Identity, new FakeSyncAuthorizationService());
+
+        await service.EnqueuePropagationAsync(new SyncItem
+        {
+            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(seeded.User.UId, removed.Id),
+            ModelType = SyncModelType.UserDevice,
+            ChangeType = SyncChangeType.Deleted
+        }, source.Id, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+        var queueItem = await database.Db.SyncQueueItems.SingleAsync();
+        MSTestAssert.AreEqual(target.Id, queueItem.DeviceId);
     }
 
     [TestMethod]

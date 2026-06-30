@@ -87,7 +87,7 @@ public sealed class SyncQueueService : ISyncQueueService
                 .Where(id => id != Guid.Empty)
                 .ToHashSet();
 
-        var devices = await ListTargetDevicesAsync(syncItem, ct);
+        var devices = await ListTargetDevicesAsync(syncItem, touchLocalSyncState, ct);
         var targetDevices = devices
             .Where(d => !excludedDeviceIdSet.Contains(d.Id) && !IsLocalDevice(d))
             .GroupBy(d => d.Id)
@@ -314,7 +314,7 @@ public sealed class SyncQueueService : ISyncQueueService
     }
 
 
-    private async Task<IReadOnlyList<Device>> ListTargetDevicesAsync(SyncItem item, CancellationToken ct = default)
+    private async Task<IReadOnlyList<Device>> ListTargetDevicesAsync(SyncItem item, bool touchLocalSyncState, CancellationToken ct = default)
     {
         if (item.ModelType == SyncModelType.User)
             return await ListUserTargetDevicesAsync(item.ModelId, ct);
@@ -334,7 +334,7 @@ public sealed class SyncQueueService : ISyncQueueService
             return await ListUserDeviceChangeTargetDevicesAsync(
                 userDevice.UserId,
                 userDevice.DeviceId,
-                item.ChangeType == SyncChangeType.Deleted,
+                touchLocalSyncState && item.ChangeType == SyncChangeType.Deleted,
                 ct);
         }
 
@@ -409,9 +409,9 @@ public sealed class SyncQueueService : ISyncQueueService
 
         var links = await _userDevices.ListByUserAsync(userId, ct);
         return SelectDistinctDevices(links.Where(link =>
-            !link.IsDeleted &&
-            ((link.DeviceId != changedDeviceId && link.IsSyncOn) ||
-             (includeChangedDevice && link.DeviceId == changedDeviceId))));
+            link.DeviceId == changedDeviceId
+                ? includeChangedDevice
+                : !link.IsDeleted && link.IsSyncOn));
     }
 
 
