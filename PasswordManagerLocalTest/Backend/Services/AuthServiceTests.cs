@@ -32,9 +32,9 @@ public sealed class AuthServiceTests
         MSTestAssert.AreNotEqual(Guid.Empty, token1);
         MSTestAssert.IsTrue(tokens.Validate(token1));
         MSTestAssert.IsTrue(keys.HasUserKey(token1));
-        MSTestAssert.IsTrue(cache.TryGetUserData(token1, out var ud1));
+        MSTestAssert.IsTrue(cache.TryGetUserDataBundle(token1, out var ud1));
         MSTestAssert.IsNotNull(ud1);
-        MSTestAssert.AreEqual("alice", ud1.Username);
+        MSTestAssert.AreEqual("alice", ud1.GeneralUserData.Username);
 
         var login = host.CreateValidLoginRequest("alice");
         var token2 = await auth.LoginAsync(login);
@@ -42,9 +42,9 @@ public sealed class AuthServiceTests
         MSTestAssert.AreNotEqual(Guid.Empty, token2);
         MSTestAssert.IsTrue(tokens.Validate(token2));
         MSTestAssert.IsTrue(keys.HasUserKey(token2));
-        MSTestAssert.IsTrue(cache.TryGetUserData(token2, out var ud2));
+        MSTestAssert.IsTrue(cache.TryGetUserDataBundle(token2, out var ud2));
         MSTestAssert.IsNotNull(ud2);
-        MSTestAssert.AreEqual("alice", ud2.Username);
+        MSTestAssert.AreEqual("alice", ud2.GeneralUserData.Username);
 
         MSTestAssert.AreNotEqual(token1, token2);
     }
@@ -229,19 +229,19 @@ public sealed class AuthServiceTests
         var keys = host.Services.GetRequiredService<IKeyVaultService>();
         var cache = host.Services.GetRequiredService<IDataCachingService>();
         var oldToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("renew_user"));
-        MSTestAssert.IsTrue(cache.TryGetUserData(oldToken, out var oldUserData));
+        MSTestAssert.IsTrue(cache.TryGetUserDataBundle(oldToken, out var oldUserData));
 
         var newToken = await auth.RenewSessionAsync(oldToken);
 
         MSTestAssert.AreNotEqual(oldToken, newToken);
         MSTestAssert.IsFalse(tokens.Validate(oldToken));
         MSTestAssert.IsFalse(keys.HasUserKey(oldToken));
-        MSTestAssert.IsFalse(cache.TryGetUserData(oldToken, out _));
+        MSTestAssert.IsFalse(cache.TryGetUserDataBundle(oldToken, out _));
         MSTestAssert.IsTrue(tokens.TryGetInvalidationReason(oldToken, out var oldReason));
         MSTestAssert.AreEqual(AuthSessionInvalidationReason.LoggedOut, oldReason);
         MSTestAssert.IsTrue(tokens.Validate(newToken));
         MSTestAssert.IsTrue(keys.HasUserKey(newToken));
-        MSTestAssert.IsTrue(cache.TryGetUserData(newToken, out var newUserData));
+        MSTestAssert.IsTrue(cache.TryGetUserDataBundle(newToken, out var newUserData));
         MSTestAssert.AreSame(oldUserData, newUserData);
         MSTestAssert.IsTrue(auth.GetSessionStatus(newToken).IsAuthenticated);
         MSTestAssert.IsFalse(auth.GetSessionStatus(oldToken).IsAuthenticated);

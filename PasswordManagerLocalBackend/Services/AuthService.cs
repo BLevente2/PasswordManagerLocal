@@ -60,39 +60,57 @@ public sealed class AuthService : IAuthService
         if (foundUser is not null)
             throw new InvalidInputException();
 
-        var userData = new UserData
+        var now = DateTime.UtcNow;
+        var uid = Guid.NewGuid();
+        var userData = new UserData { UId = uid };
+        UserService.InitializeUserDataKeys(userData);
+
+        var generalUserData = new GeneralUserData
         {
-            UId = Guid.NewGuid(),
             Username = request.Username,
             FirstName = request.FirstName,
             LastName = request.LastName,
             Email = request.Email,
-            RegistrationDate = DateTime.UtcNow,
-            LastLoginDate = DateTime.UtcNow
+            RegistrationDate = now,
+            LastUpdatedAt = now
         };
 
-        using var passwordsKey = EncryptionKey.Create();
-        userData.Passwords.PasswordKey = passwordsKey.ExportCopy();
-        userData.Passwords.GenerateIntegrityHash();
+        var userPasswordsData = new UserPasswordsData();
+        using (var passwordsKey = EncryptionKey.Create())
+            userPasswordsData.PasswordKey = passwordsKey.ExportCopy();
 
         var linkedAt = DateTimeOffset.UtcNow;
         var localDeviceData = new UserDeviceData
         {
             Id = _identity.LocalDeviceId,
             Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
-            LinkedAt = linkedAt
+            LinkedAt = linkedAt,
+            LastLoginDate = now,
+            LastUpdatedAt = linkedAt
         };
         localDeviceData.GenerateIntegrityHash();
-        userData.UserDevices.Devices.Add(localDeviceData);
-        userData.UserDevices.GenerateIntegrityHash();
-        userData.GenerateIntegrityHash();
+
+        var userDevicesData = new UserDevicesData();
+        userDevicesData.Devices.Add(localDeviceData);
+
+        var bundle = new UserDataBundle
+        {
+            UserData = userData,
+            GeneralUserData = generalUserData,
+            UserPasswordsData = userPasswordsData,
+            UserDevicesData = userDevicesData
+        };
+        GenerateAndCopyIntegrityHashes(bundle);
 
         var usernameSalt = Hashing.GenerateSalt();
         var usernameHash = Hashing.SHA256Hash(usernameBytes, usernameSalt);
 
         var passwordSalt = Hashing.GenerateSalt();
         using var key = EncryptionKey.FromPassword(request.Password, passwordSalt);
-        var encryptedUserdata = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData);
+        var encryptedUserData = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData, ct: ct);
+        var encryptedGeneralUserData = await EncryptGeneralUserDataAsync(generalUserData, userData.GeneralUserDataKey, ct);
+        var encryptedUserPasswordsData = await EncryptUserPasswordsDataAsync(userPasswordsData, userData.UserPasswordsDataKey, ct);
+        var encryptedUserDevicesData = await EncryptUserDevicesDataAsync(userDevicesData, userData.UserDevicesDataKey, ct);
 
         var user = new User
         {
@@ -100,7 +118,14 @@ public sealed class AuthService : IAuthService
             UsernameSalt = usernameSalt,
             UsernameHash = usernameHash,
             PasswordSalt = passwordSalt,
-            EncryptedPayload = encryptedUserdata
+            EncryptedPayload = encryptedUserData,
+            EncryptedGeneralUserDataPayload = encryptedGeneralUserData,
+            EncryptedUserPasswordsDataPayload = encryptedUserPasswordsData,
+            EncryptedUserDevicesDataPayload = encryptedUserDevicesData,
+            UserDataLastModifiedAt = linkedAt,
+            GeneralUserDataLastModifiedAt = linkedAt,
+            UserPasswordsDataLastModifiedAt = linkedAt,
+            UserDevicesDataLastModifiedAt = linkedAt
         };
 
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
@@ -117,7 +142,8 @@ public sealed class AuthService : IAuthService
 
         var token = _tokens.Issue(userData.UId);
         _keys.SetUserKey(token, key);
-        _cache.SetUserData(token, userData);
+        _keys.SetUserBlobKeys(token, userData);
+        _cache.SetUserDataBundle(token, bundle);
 
         return token;
     }
@@ -135,11 +161,12 @@ public sealed class AuthService : IAuthService
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
         _keys.SetUserKey(token, key);
 
-        var userData = await _userService.GetAndVerifyUserDataAsync(user, key);
-        userData.LastLoginDate = DateTime.UtcNow;
+        var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, token, ct);
+        UpdateCurrentDeviceLastLoginDate(bundle.UserDevicesData);
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        await _userService.UpdateUserDataAsync(userData, user, key, true, ct);
-        _cache.SetUserData(token, userData);
+        await _userService.UpdateUserDataBundleAsync(bundle, user, key, UserDataBlobKind.Devices, true, ct);
+        _keys.SetUserBlobKeys(token, bundle.UserData);
+        _cache.SetUserDataBundle(token, bundle);
         return token;
     }
 
@@ -160,8 +187,11 @@ public sealed class AuthService : IAuthService
             var newToken = _tokens.Issue(uid);
             _keys.SetUserKey(newToken, key);
 
-            if (_cache.TryGetUserData(token, out var userData) && userData is not null)
-                _cache.SetUserData(newToken, userData);
+            if (_cache.TryGetUserDataBundle(token, out var bundle) && bundle is not null)
+            {
+                _keys.SetUserBlobKeys(newToken, bundle.UserData);
+                _cache.SetUserDataBundle(newToken, bundle);
+            }
 
             InvalidateToken(token, AuthSessionInvalidationReason.LoggedOut);
             return Task.FromResult(newToken);
@@ -229,8 +259,9 @@ public sealed class AuthService : IAuthService
 
             try
             {
-                var userData = await _userService.GetAndVerifyUserDataAsync(user, key);
-                _cache.SetUserData(token, userData);
+                var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, key, ct);
+                _keys.SetUserBlobKeys(token, bundle.UserData);
+                _cache.SetUserDataBundle(token, bundle);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -266,7 +297,7 @@ public sealed class AuthService : IAuthService
         if (!IsPasswordValid(request.Token, request.Password, user.PasswordSalt))
             throw new InvalidInputException();
 
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(request.Token, ct, user);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct, user);
 
         CryptographicOperations.ZeroMemory(user.PasswordSalt);
         user.PasswordSalt = Hashing.GenerateSalt();
@@ -276,7 +307,9 @@ public sealed class AuthService : IAuthService
         if (user.SavedKey is not null)
             _rememberMe.SetRememberMe(user, true, newKey);
 
-        await _userService.UpdateUserDataAsync(userData, user, newKey, true, ct);
+        await _userService.ReencryptUserDataBundleWithNewKeysAsync(bundle, user, newKey, true, ct);
+        _keys.SetUserBlobKeys(request.Token, bundle.UserData);
+        _cache.SetUserDataBundle(request.Token, bundle);
 
         foreach (var otherToken in _tokens.ListTokensByUid(user.UId))
         {
@@ -291,5 +324,84 @@ public sealed class AuthService : IAuthService
         using var currentKey = _userService.GetEncryptionKeyFromToken(token);
         using var confirmationKey = EncryptionKey.FromPassword(password, salt);
         return currentKey == confirmationKey;
+    }
+
+
+    public bool TryGetActiveUserEncryptionKey(Guid uid, out EncryptionKey? key)
+    {
+        foreach (var token in _tokens.ListTokensByUid(uid))
+        {
+            if (_keys.TryGetEncryptionKey(token, out key))
+                return true;
+        }
+
+        key = null;
+        return false;
+    }
+
+    private void UpdateCurrentDeviceLastLoginDate(UserDevicesData userDevicesData)
+    {
+        var device = userDevicesData.Devices.FirstOrDefault(device => device.Id == _identity.LocalDeviceId);
+        if (device is null)
+        {
+            device = new UserDeviceData
+            {
+                Id = _identity.LocalDeviceId,
+                Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
+                LinkedAt = DateTimeOffset.UtcNow,
+                LastUpdatedAt = DateTimeOffset.UtcNow
+            };
+            userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == device.Id);
+            userDevicesData.Devices.Add(device);
+        }
+
+        userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == device.Id);
+        device.LastLoginDate = DateTime.UtcNow;
+        device.LastUpdatedAt = DateTimeOffset.UtcNow;
+        device.GenerateIntegrityHash();
+        userDevicesData.GenerateIntegrityHash();
+    }
+
+    private static void GenerateAndCopyIntegrityHashes(UserDataBundle bundle)
+    {
+        bundle.GeneralUserData.GenerateIntegrityHash();
+
+        foreach (var password in bundle.UserPasswordsData.Passwords)
+            password.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.GenerateIntegrityHash();
+        bundle.UserPasswordsData.GenerateIntegrityHash();
+
+        foreach (var device in bundle.UserDevicesData.Devices)
+            device.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
+            deleted.GenerateIntegrityHash();
+        bundle.UserDevicesData.GenerateIntegrityHash();
+
+        CryptographicOperations.ZeroMemory(bundle.UserData.GeneralUserDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(bundle.UserData.UserPasswordsDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(bundle.UserData.UserDevicesDataIntegrityHash);
+        bundle.UserData.GeneralUserDataIntegrityHash = bundle.GeneralUserData.IntegrityHash.ToArray();
+        bundle.UserData.UserPasswordsDataIntegrityHash = bundle.UserPasswordsData.IntegrityHash.ToArray();
+        bundle.UserData.UserDevicesDataIntegrityHash = bundle.UserDevicesData.IntegrityHash.ToArray();
+        bundle.UserData.GenerateIntegrityHash();
+    }
+
+    private static async Task<byte[]> EncryptGeneralUserDataAsync(GeneralUserData data, byte[] rawKey, CancellationToken ct)
+    {
+        using var key = EncryptionKey.FromRaw(rawKey);
+        return await SerializeCompressEncryptAsync(data, key, BackendJsonSerializerContext.Default.GeneralUserData, ct: ct);
+    }
+
+    private static async Task<byte[]> EncryptUserPasswordsDataAsync(UserPasswordsData data, byte[] rawKey, CancellationToken ct)
+    {
+        using var key = EncryptionKey.FromRaw(rawKey);
+        return await SerializeCompressEncryptAsync(data, key, BackendJsonSerializerContext.Default.UserPasswordsData, ct: ct);
+    }
+
+    private static async Task<byte[]> EncryptUserDevicesDataAsync(UserDevicesData data, byte[] rawKey, CancellationToken ct)
+    {
+        using var key = EncryptionKey.FromRaw(rawKey);
+        return await SerializeCompressEncryptAsync(data, key, BackendJsonSerializerContext.Default.UserDevicesData, ct: ct);
     }
 }

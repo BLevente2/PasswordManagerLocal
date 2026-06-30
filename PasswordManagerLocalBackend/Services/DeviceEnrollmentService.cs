@@ -1750,7 +1750,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var groupsRepository = services.GetRequiredService<IGroupRepository>();
         var devicesRepository = services.GetRequiredService<IDeviceRepository>();
 
-        var user = await users.GetByIdAsNoTrackingAsync(userId, ct);
+        var user = await users.GetByIdAsNoTrackingWithRelationsAsync(userId, ct);
         if (user is null)
             throw new UserNotFoundException();
 
@@ -1848,7 +1848,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     UsernameSalt = user.UsernameSalt,
                     PasswordSalt = user.PasswordSalt,
                     EncryptedPayload = user.EncryptedPayload,
+                    EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
+                    EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
+                    EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
                     LastModifiedAt = user.LastModifiedAt,
+                    UserDataLastModifiedAt = user.UserDataLastModifiedAt,
+                    GeneralUserDataLastModifiedAt = user.GeneralUserDataLastModifiedAt,
+                    UserPasswordsDataLastModifiedAt = user.UserPasswordsDataLastModifiedAt,
+                    UserDevicesDataLastModifiedAt = user.UserDevicesDataLastModifiedAt,
                     IntegrityHash = user.IntegrityHash,
                     GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList()
                 }
@@ -1887,32 +1894,34 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     private async Task EnsureEncryptedDeviceDataAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct)
     {
-        using var userData = await users.GetAndVerifyUserDataAsync(user, token);
-        if (userData.UserDevices.Devices.Any(device => device.Id == deviceId))
+        using var bundle = await users.GetAndVerifyUserDataBundleAsync(user, token, ct);
+        if (bundle.UserDevicesData.Devices.Any(device => device.Id == deviceId))
             return;
 
         var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
-        var name = BuildUniqueEncryptedDeviceName(userData, baseName, deviceId);
+        var name = BuildUniqueEncryptedDeviceName(bundle.UserDevicesData, baseName, deviceId);
         var deviceData = new UserDeviceData
         {
             Id = deviceId,
             Name = name,
-            LinkedAt = DateTimeOffset.UtcNow
+            LinkedAt = DateTimeOffset.UtcNow,
+            LastUpdatedAt = DateTimeOffset.UtcNow
         };
         deviceData.GenerateIntegrityHash();
-        userData.UserDevices.Devices.Add(deviceData);
-        userData.UserDevices.GenerateIntegrityHash();
-        await users.UpdateUserDataAsync(userData, token, false, ct);
+        bundle.UserDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == deviceData.Id);
+        bundle.UserDevicesData.Devices.Add(deviceData);
+        bundle.UserDevicesData.GenerateIntegrityHash();
+        await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, ct);
     }
 
 
-    private string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
+    private string BuildUniqueEncryptedDeviceName(UserDevicesData userDevicesData, string requestedName, Guid deviceId)
     {
         var baseName = string.IsNullOrWhiteSpace(requestedName)
             ? DeviceNameUtil.BuildDefaultDeviceName(deviceId)
             : requestedName.Trim();
 
-        bool IsTaken(string value) => userData.UserDevices.Devices.Any(device =>
+        bool IsTaken(string value) => userDevicesData.Devices.Any(device =>
             device.Id != deviceId && string.Equals(device.Name, value, StringComparison.OrdinalIgnoreCase));
 
         if (!IsTaken(baseName))
@@ -2374,13 +2383,29 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 await users.AddAsync(user, ct);
             }
 
+            if (userSnapshot.EncryptedPayload.Length == 0 ||
+                userSnapshot.EncryptedGeneralUserDataPayload.Length == 0 ||
+                userSnapshot.EncryptedUserPasswordsDataPayload.Length == 0 ||
+                userSnapshot.EncryptedUserDevicesDataPayload.Length == 0 ||
+                userSnapshot.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+                throw new InvalidDataException("The enrollment snapshot contains incomplete encrypted user data.");
+
             user.UsernameHash = userSnapshot.UsernameHash;
             user.UsernameSalt = userSnapshot.UsernameSalt;
             user.PasswordSalt = userSnapshot.PasswordSalt;
             user.EncryptedPayload = userSnapshot.EncryptedPayload;
+            user.EncryptedGeneralUserDataPayload = userSnapshot.EncryptedGeneralUserDataPayload;
+            user.EncryptedUserPasswordsDataPayload = userSnapshot.EncryptedUserPasswordsDataPayload;
+            user.EncryptedUserDevicesDataPayload = userSnapshot.EncryptedUserDevicesDataPayload;
             user.SavedKey = null;
             user.LastModifiedAt = userSnapshot.LastModifiedAt == default ? now : userSnapshot.LastModifiedAt;
-            user.IntegrityHash = userSnapshot.IntegrityHash;
+            user.UserDataLastModifiedAt = userSnapshot.UserDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserDataLastModifiedAt;
+            user.GeneralUserDataLastModifiedAt = userSnapshot.GeneralUserDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.GeneralUserDataLastModifiedAt;
+            user.UserPasswordsDataLastModifiedAt = userSnapshot.UserPasswordsDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserPasswordsDataLastModifiedAt;
+            user.UserDevicesDataLastModifiedAt = userSnapshot.UserDevicesDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserDevicesDataLastModifiedAt;
+            user.GenerateIntegrityHash();
+            if (!Hashing.Verify(userSnapshot.IntegrityHash, user.IntegrityHash))
+                throw new InvalidDataException("The enrollment snapshot contains invalid user integrity data.");
         }
 
         foreach (var groupSnapshot in snapshot.Groups)
@@ -2427,7 +2452,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         foreach (var linkSnapshot in linkSnapshots)
         {
-            if (linkSnapshot.LastModifiedAt == default || linkSnapshot.IntegrityHash.Length == 0)
+            if (linkSnapshot.LastModifiedAt == default || linkSnapshot.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 throw new InvalidDataException("The enrollment snapshot contains an incomplete user-device relationship.");
 
             var verifiedSnapshotLink = new UserDevice

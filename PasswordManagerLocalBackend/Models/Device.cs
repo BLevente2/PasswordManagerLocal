@@ -40,28 +40,25 @@ public sealed class Device : IntegrityCheckableBase
         return Hashing.Verify(SignPublicKeyHash, expectedHash) && base.IsIntegrityValid();
     }
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(Id);
+            hash.WriteBytes(PublicKey);
+            hash.WriteBytes(SignPublicKey);
+            hash.WriteBytes(SignPublicKeyHash);
+            hash.WriteString(TlsCertFingerprint);
+            hash.Write((byte)DeviceType);
+            hash.WriteBytes(LastKnownHash);
+            hash.Write(LastSync);
+            hash.Write(LastSeen);
+            hash.Write(IsTrusted);
+            hash.Write(IsBlocked);
+            hash.WriteString(BlockedReason);
+            hash.Write(BlockedAt);
+            hash.Write(InvalidSyncAttemptCount);
+            hash.Write(LastInvalidSyncAttemptAt);
+            hash.Write(LastModifiedAt);
+        });
 
-        bw.Write(Id.ToByteArray());
-        bw.Write(PublicKey);
-        bw.Write(SignPublicKey);
-        bw.Write(SignPublicKeyHash);
-        bw.Write(Encoding.UTF8.GetBytes(TlsCertFingerprint));
-        bw.Write((byte)DeviceType);
-        bw.Write(LastKnownHash);
-        bw.Write(LastSync.ToBinary());
-        bw.Write(LastSeen.ToBinary());
-        bw.Write(IsTrusted ? (byte)1 : (byte)0);
-        bw.Write(IsBlocked ? (byte)1 : (byte)0);
-        bw.Write(Encoding.UTF8.GetBytes(BlockedReason ?? string.Empty));
-        bw.Write(BlockedAt?.ToUnixTimeMilliseconds() ?? 0);
-        bw.Write(InvalidSyncAttemptCount);
-        bw.Write(LastInvalidSyncAttemptAt?.ToUnixTimeMilliseconds() ?? 0);
-        bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
 }

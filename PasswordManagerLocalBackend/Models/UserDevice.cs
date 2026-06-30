@@ -26,19 +26,16 @@ public sealed class UserDevice : IntegrityCheckableBase
     public override bool IsIntegrityValid() =>
         ModelId == Sync.SyncIdentityUtil.BuildUserDeviceModelId(UserId, DeviceId) && base.IsIntegrityValid();
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(ModelId);
+            hash.Write(UserId);
+            hash.Write(DeviceId);
+            hash.Write(IsSyncOn);
+            hash.Write(IsDeleted);
+            hash.Write(DeletedAt);
+            hash.Write(LastModifiedAt);
+        });
 
-        bw.Write(ModelId.ToByteArray());
-        bw.Write(UserId.ToByteArray());
-        bw.Write(DeviceId.ToByteArray());
-        bw.Write(IsSyncOn);
-        bw.Write(IsDeleted);
-        bw.Write(DeletedAt?.ToUnixTimeMilliseconds() ?? 0);
-        bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
 }

@@ -15,15 +15,12 @@ public sealed class Group : IntegrityCheckableBase
 
 
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(Id);
+            hash.WriteBytes(EncryptedPayload);
+            hash.Write(LastModifiedAt);
+        });
 
-        bw.Write(Id.ToByteArray());
-        bw.Write(EncryptedPayload);
-        bw.Write(LastModifiedAt.ToUnixTimeMilliseconds());
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
 }

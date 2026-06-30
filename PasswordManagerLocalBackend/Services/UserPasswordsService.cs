@@ -20,38 +20,38 @@ public sealed class UserPasswordsService : IUserPasswordsService
 
     public async Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
     {
-        UserData userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        return _passwordService.ConvertToPasswordInfoRespponses(userData.Passwords);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        return _passwordService.ConvertToPasswordInfoRespponses(bundle.UserPasswordsData);
     }
 
 
     public async Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default)
     {
-        UserData userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        await _passwordService.AddNewPassword(request, userData.Passwords);
-        await _userService.UpdateUserDataAsync(userData, token, true, ct);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        await _passwordService.AddNewPassword(request, bundle.UserPasswordsData);
+        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 
 
     public async Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
     {
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        _passwordService.RemovePassword(passwordId, userData.Passwords);
-        await _userService.UpdateUserDataAsync(userData, token, true, ct);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        _passwordService.RemovePassword(passwordId, bundle.UserPasswordsData);
+        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 
 
     public async Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
     {
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        return await _passwordService.GetUnsecurePasswordAsync(passwordId, userData.Passwords);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        return await _passwordService.GetUnsecurePasswordAsync(passwordId, bundle.UserPasswordsData);
     }
 
 
     public async Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default)
     {
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
-        await _passwordService.UpdatePasswordAsync(request, userData.Passwords);
-        await _userService.UpdateUserDataAsync(userData, token, true, ct);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        await _passwordService.UpdatePasswordAsync(request, bundle.UserPasswordsData);
+        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 }

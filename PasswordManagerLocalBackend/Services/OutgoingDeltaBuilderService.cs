@@ -4,7 +4,8 @@ using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
-using System.Text.Json;
+using System.Text.Json;
+
 using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
@@ -75,7 +76,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
                 SignPub = _identity.SignPublicKey,
                 RecipientDeviceId = device.Id.ToString("N"),
                 EncryptionVersion = SyncConstants.SyncDeltaEncryptionVersion,
-                PayloadHash = Hashing.SHA512Hash(plaintextPayload)
+                PayloadHash = Hashing.SHA256Hash(plaintextPayload)
             };
 
             var associatedData = SyncCryptoUtil.BuildAssociatedData(networkDelta);
@@ -171,6 +172,13 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             UsernameSalt = user.UsernameSalt,
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
+            EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
+            EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
+            EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
+            UserDataLastModifiedAt = user.UserDataLastModifiedAt,
+            GeneralUserDataLastModifiedAt = user.GeneralUserDataLastModifiedAt,
+            UserPasswordsDataLastModifiedAt = user.UserPasswordsDataLastModifiedAt,
+            UserDevicesDataLastModifiedAt = user.UserDevicesDataLastModifiedAt,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
             DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Append(_identity.LocalDeviceId).Distinct().ToList()
         };

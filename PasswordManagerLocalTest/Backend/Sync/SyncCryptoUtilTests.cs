@@ -102,7 +102,7 @@ public sealed class SyncCryptoUtilTests
     public void ValidatePlaintextHash_AcceptsExactPayloadAndRejectsTampering()
     {
         var plaintext = "authenticated plaintext"u8.ToArray();
-        var expectedHash = Hashing.SHA512Hash(plaintext);
+        var expectedHash = Hashing.SHA256Hash(plaintext);
 
         SyncCryptoUtil.ValidatePlaintextHash(plaintext, expectedHash);
 

@@ -15,16 +15,21 @@ public sealed class UserProfileInfoResponse
 
 
 
-    public static UserProfileInfoResponse ConvertToUserProfileInfoResponse(UserData user, bool isRememberMeEnabled = false) =>
+    public static UserProfileInfoResponse ConvertToUserProfileInfoResponse(
+        UserData userData,
+        GeneralUserData generalUserData,
+        UserDevicesData userDevicesData,
+        Guid currentDeviceId,
+        bool isRememberMeEnabled = false) =>
         new UserProfileInfoResponse
         {
-            UId = user.UId,
-            Username = user.Username,
-            FirstName = user.FirstName,
-            LastName = user.LastName,
-            Email = user.Email,
-            RegistrationDate = user.RegistrationDate,
-            LastLoginDate = user.LastLoginDate,
+            UId = userData.UId,
+            Username = generalUserData.Username,
+            FirstName = generalUserData.FirstName,
+            LastName = generalUserData.LastName,
+            Email = generalUserData.Email,
+            RegistrationDate = generalUserData.RegistrationDate,
+            LastLoginDate = userDevicesData.Devices.FirstOrDefault(device => device.Id == currentDeviceId)?.LastLoginDate ?? DateTime.MinValue,
             IsRememberMeEnabled = isRememberMeEnabled
         };
 }

@@ -13,19 +13,16 @@ public sealed class LocalDeviceIdentity : IntegrityCheckableBase
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ICollection<LocalUserDevice> LocalUsers { get; set; } = [];
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(Id);
+            hash.WriteBytes(AgreementPrivateKeyBlob);
+            hash.WriteBytes(SignPrivateKeyBlob);
+            hash.WriteBytes(PFXCertificate);
+            hash.Write((byte)DeviceType);
+            hash.Write(IsSyncOn);
+            hash.Write(CreatedAt);
+        });
 
-        bw.Write(Id.ToByteArray());
-        bw.Write(AgreementPrivateKeyBlob);
-        bw.Write(SignPrivateKeyBlob);
-        bw.Write(PFXCertificate);
-        bw.Write((byte)DeviceType);
-        bw.Write(IsSyncOn);
-        bw.Write(CreatedAt.ToUnixTimeMilliseconds());
-
-        return Hashing.SHA256Hash(ms.ToArray());
-    }
 }

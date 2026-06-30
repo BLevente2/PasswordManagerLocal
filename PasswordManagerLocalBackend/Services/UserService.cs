@@ -116,10 +116,7 @@ public sealed class UserService : IUserService
 
     public async Task<UserData> GetAndVerifyUserDataAsync(User user, EncryptionKey key)
     {
-        var userData = await DecryptDecompressDeserializeAsync(user.EncryptedPayload, key, BackendJsonSerializerContext.Default.UserData);
-        if (userData is null)
-            throw new UnauthorizedAccessException();
-
+        var userData = await DecryptUserDataAsync(user, key);
         VerifyUserDataIntegrity(userData);
         return userData;
     }
@@ -129,6 +126,51 @@ public sealed class UserService : IUserService
     {
         using var key = GetEncryptionKeyFromToken(token);
         return await GetAndVerifyUserDataAsync(user, key);
+    }
+
+
+    public async Task<UserDataBundle> GetAndVerifyUserDataBundleAsync(User user, EncryptionKey key, CancellationToken ct = default)
+    {
+        var userData = await DecryptUserDataAsync(user, key, ct);
+        VerifyUserDataIntegrity(userData);
+
+        var generalUserData = await DecryptBlobAsync(
+            user.EncryptedGeneralUserDataPayload,
+            userData.GeneralUserDataKey,
+            BackendJsonSerializerContext.Default.GeneralUserData,
+            ct);
+
+        var userPasswordsData = await DecryptBlobAsync(
+            user.EncryptedUserPasswordsDataPayload,
+            userData.UserPasswordsDataKey,
+            BackendJsonSerializerContext.Default.UserPasswordsData,
+            ct);
+
+        var userDevicesData = await DecryptBlobAsync(
+            user.EncryptedUserDevicesDataPayload,
+            userData.UserDevicesDataKey,
+            BackendJsonSerializerContext.Default.UserDevicesData,
+            ct);
+
+        var bundle = new UserDataBundle
+        {
+            UserData = userData,
+            GeneralUserData = generalUserData,
+            UserPasswordsData = userPasswordsData,
+            UserDevicesData = userDevicesData
+        };
+
+        VerifyUserDataBundleIntegrity(bundle);
+        return bundle;
+    }
+
+
+    public async Task<UserDataBundle> GetAndVerifyUserDataBundleAsync(User user, Guid token, CancellationToken ct = default)
+    {
+        using var key = GetEncryptionKeyFromToken(token);
+        var bundle = await GetAndVerifyUserDataBundleAsync(user, key, ct);
+        _keys.SetUserBlobKeys(token, bundle.UserData);
+        return bundle;
     }
 
 
@@ -146,17 +188,38 @@ public sealed class UserService : IUserService
     }
 
 
+    public bool TryGetAndVerifyUserDataBundleFromCache(Guid token, out UserDataBundle? bundle)
+    {
+        if (_cache.TryGetUserDataBundle(token, out var foundBundle) && foundBundle is not null)
+        {
+            VerifyUserDataBundleIntegrity(foundBundle);
+            bundle = foundBundle;
+            return true;
+        }
+
+        bundle = null;
+        return false;
+    }
+
+
     public async Task<UserData> GetLoadAndVerifyUserDataAsync(Guid token, CancellationToken ct = default, User? user = null)
     {
-        if (TryGetAndVerifyUserDataFromCache(token, out var foundUserData) && foundUserData is not null)
-            return foundUserData;
+        var bundle = await GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        return bundle.UserData;
+    }
+
+
+    public async Task<UserDataBundle> GetLoadAndVerifyUserDataBundleAsync(Guid token, CancellationToken ct = default, User? user = null)
+    {
+        if (TryGetAndVerifyUserDataBundleFromCache(token, out var foundBundle) && foundBundle is not null)
+            return foundBundle;
 
         if (user is null)
             user = await GetAndVerifyUserAsync(token, ct);
 
-        var userData = await GetAndVerifyUserDataAsync(user, token);
-        _cache.SetUserData(token, userData);
-        return userData;
+        var bundle = await GetAndVerifyUserDataBundleAsync(user, token, ct);
+        _cache.SetUserDataBundle(token, bundle);
+        return bundle;
     }
 
 
@@ -177,7 +240,9 @@ public sealed class UserService : IUserService
 
     public async Task AddNewUserAsync(User user, CancellationToken ct = default)
     {
-        user.LastModifiedAt = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+        user.LastModifiedAt = now;
+        EnsureBlobTimestamps(user, now);
         user.GenerateIntegrityHash();
         await _users.AddAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
@@ -217,9 +282,10 @@ public sealed class UserService : IUserService
     {
         EnsureUserDataCanBePersisted(userData, user);
         userData.GenerateIntegrityHash();
-        var newEncryptedPayload = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData);
+        var newEncryptedPayload = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData, ct: ct);
         CryptographicOperations.ZeroMemory(user.EncryptedPayload);
         user.EncryptedPayload = newEncryptedPayload;
+        user.UserDataLastModifiedAt = DateTimeOffset.UtcNow;
         await UpdateUserAsync(user, enqueueSync, ct);
     }
 
@@ -246,41 +312,281 @@ public sealed class UserService : IUserService
     }
 
 
+    public Task UpdateUserDataBundleAsync(UserDataBundle bundle, User user, EncryptionKey key, UserDataBlobKind modifiedBlobs, CancellationToken ct = default) =>
+        UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, false, ct);
+
+
+    public async Task UpdateUserDataBundleAsync(UserDataBundle bundle, User user, EncryptionKey key, UserDataBlobKind modifiedBlobs, bool enqueueSync, CancellationToken ct = default)
+    {
+        EnsureUserDataBundleCanBePersisted(bundle, user);
+        await PersistUserDataBundleAsync(bundle, user, key, modifiedBlobs, false, enqueueSync, ct);
+    }
+
+
+    public Task UpdateUserDataBundleAsync(UserDataBundle bundle, Guid token, UserDataBlobKind modifiedBlobs, CancellationToken ct = default) =>
+        UpdateUserDataBundleAsync(bundle, token, modifiedBlobs, false, ct);
+
+
+    public async Task UpdateUserDataBundleAsync(UserDataBundle bundle, Guid token, UserDataBlobKind modifiedBlobs, bool enqueueSync, CancellationToken ct = default)
+    {
+        var user = await GetAndVerifyUserAsync(token, ct);
+        using var key = GetEncryptionKeyFromToken(token);
+        await UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, enqueueSync, ct);
+        _keys.SetUserBlobKeys(token, bundle.UserData);
+        _cache.SetUserDataBundle(token, bundle);
+    }
+
+
+    public async Task ReencryptUserDataBundleWithNewKeysAsync(UserDataBundle bundle, User user, EncryptionKey newUserKey, bool enqueueSync, CancellationToken ct = default)
+    {
+        EnsureUserDataBundleCanBePersisted(bundle, user);
+        ReplaceUserBlobKeys(bundle.UserData);
+        await PersistUserDataBundleAsync(bundle, user, newUserKey, UserDataBlobKind.All, true, enqueueSync, ct);
+    }
+
+
+    private async Task PersistUserDataBundleAsync(UserDataBundle bundle, User user, EncryptionKey userKey, UserDataBlobKind modifiedBlobs, bool forceRewriteAllBlobs, bool enqueueSync, CancellationToken ct)
+    {
+        GenerateAndCopyChildIntegrityHashes(bundle);
+        bundle.UserData.GenerateIntegrityHash();
+        EnsureUserDataBundleCanBePersisted(bundle, user);
+        VerifyUserDataBundleIntegrity(bundle);
+
+        var now = DateTimeOffset.UtcNow;
+        if (modifiedBlobs != UserDataBlobKind.None || forceRewriteAllBlobs)
+            user.UserDataLastModifiedAt = now;
+
+        if (forceRewriteAllBlobs || modifiedBlobs.HasFlag(UserDataBlobKind.General))
+        {
+            user.GeneralUserDataLastModifiedAt = now;
+            await ReplaceEncryptedGeneralUserDataPayloadAsync(user, bundle, ct);
+        }
+
+        if (forceRewriteAllBlobs || modifiedBlobs.HasFlag(UserDataBlobKind.Passwords))
+        {
+            user.UserPasswordsDataLastModifiedAt = now;
+            await ReplaceEncryptedUserPasswordsDataPayloadAsync(user, bundle, ct);
+        }
+
+        if (forceRewriteAllBlobs || modifiedBlobs.HasFlag(UserDataBlobKind.Devices))
+        {
+            user.UserDevicesDataLastModifiedAt = now;
+            await ReplaceEncryptedUserDevicesDataPayloadAsync(user, bundle, ct);
+        }
+
+        var encryptedUserData = await SerializeCompressEncryptAsync(bundle.UserData, userKey, BackendJsonSerializerContext.Default.UserData, ct: ct);
+        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
+        user.EncryptedPayload = encryptedUserData;
+
+        await UpdateUserAsync(user, enqueueSync, ct);
+    }
+
+
+    private async Task ReplaceEncryptedGeneralUserDataPayloadAsync(User user, UserDataBundle bundle, CancellationToken ct)
+    {
+        using var key = EncryptionKey.FromRaw(bundle.UserData.GeneralUserDataKey);
+        var encrypted = await SerializeCompressEncryptAsync(bundle.GeneralUserData, key, BackendJsonSerializerContext.Default.GeneralUserData, ct: ct);
+        CryptographicOperations.ZeroMemory(user.EncryptedGeneralUserDataPayload);
+        user.EncryptedGeneralUserDataPayload = encrypted;
+    }
+
+
+    private async Task ReplaceEncryptedUserPasswordsDataPayloadAsync(User user, UserDataBundle bundle, CancellationToken ct)
+    {
+        using var key = EncryptionKey.FromRaw(bundle.UserData.UserPasswordsDataKey);
+        var encrypted = await SerializeCompressEncryptAsync(bundle.UserPasswordsData, key, BackendJsonSerializerContext.Default.UserPasswordsData, ct: ct);
+        CryptographicOperations.ZeroMemory(user.EncryptedUserPasswordsDataPayload);
+        user.EncryptedUserPasswordsDataPayload = encrypted;
+    }
+
+
+    private async Task ReplaceEncryptedUserDevicesDataPayloadAsync(User user, UserDataBundle bundle, CancellationToken ct)
+    {
+        using var key = EncryptionKey.FromRaw(bundle.UserData.UserDevicesDataKey);
+        var encrypted = await SerializeCompressEncryptAsync(bundle.UserDevicesData, key, BackendJsonSerializerContext.Default.UserDevicesData, ct: ct);
+        CryptographicOperations.ZeroMemory(user.EncryptedUserDevicesDataPayload);
+        user.EncryptedUserDevicesDataPayload = encrypted;
+    }
+
+
+    private async Task<UserData> DecryptUserDataAsync(User user, EncryptionKey key, CancellationToken ct = default)
+    {
+        var userData = await DecryptDecompressDeserializeAsync(user.EncryptedPayload, key, BackendJsonSerializerContext.Default.UserData, ct: ct);
+        if (userData is null)
+            throw new UnauthorizedAccessException();
+
+        return userData;
+    }
+
+
+    private async Task<T> DecryptBlobAsync<T>(byte[] encryptedBlob, byte[] rawKey, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, CancellationToken ct) where T : class
+    {
+        if (encryptedBlob.Length == 0 || rawKey.Length == 0)
+            throw new UnauthorizedAccessException();
+
+        using var key = EncryptionKey.FromRaw(rawKey);
+        var data = await DecryptDecompressDeserializeAsync(encryptedBlob, key, typeInfo, ct: ct);
+        if (data is null)
+            throw new UnauthorizedAccessException();
+
+        return data;
+    }
+
+
+    public static byte[] GenerateBlobKey()
+    {
+        using var key = EncryptionKey.Create();
+        return key.ExportCopy();
+    }
+
+
+    public static void InitializeUserDataKeys(UserData userData)
+    {
+        ReplaceGeneralUserDataKey(userData);
+        ReplaceUserPasswordsDataKey(userData);
+        ReplaceUserDevicesDataKey(userData);
+    }
+
+
+    private static void ReplaceUserBlobKeys(UserData userData)
+    {
+        ReplaceGeneralUserDataKey(userData);
+        ReplaceUserPasswordsDataKey(userData);
+        ReplaceUserDevicesDataKey(userData);
+    }
+
+
+    private static void ReplaceGeneralUserDataKey(UserData userData)
+    {
+        CryptographicOperations.ZeroMemory(userData.GeneralUserDataKey);
+        userData.GeneralUserDataKey = GenerateBlobKey();
+    }
+
+
+    private static void ReplaceUserPasswordsDataKey(UserData userData)
+    {
+        CryptographicOperations.ZeroMemory(userData.UserPasswordsDataKey);
+        userData.UserPasswordsDataKey = GenerateBlobKey();
+    }
+
+
+    private static void ReplaceUserDevicesDataKey(UserData userData)
+    {
+        CryptographicOperations.ZeroMemory(userData.UserDevicesDataKey);
+        userData.UserDevicesDataKey = GenerateBlobKey();
+    }
+
+
+    private static void GenerateAndCopyChildIntegrityHashes(UserDataBundle bundle)
+    {
+        foreach (var password in bundle.UserPasswordsData.Passwords)
+            password.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.GenerateIntegrityHash();
+        bundle.UserPasswordsData.GenerateIntegrityHash();
+
+        foreach (var device in bundle.UserDevicesData.Devices)
+            device.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
+            deleted.GenerateIntegrityHash();
+        bundle.UserDevicesData.GenerateIntegrityHash();
+
+        bundle.GeneralUserData.GenerateIntegrityHash();
+
+        CryptographicOperations.ZeroMemory(bundle.UserData.GeneralUserDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(bundle.UserData.UserPasswordsDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(bundle.UserData.UserDevicesDataIntegrityHash);
+        bundle.UserData.GeneralUserDataIntegrityHash = bundle.GeneralUserData.IntegrityHash.ToArray();
+        bundle.UserData.UserPasswordsDataIntegrityHash = bundle.UserPasswordsData.IntegrityHash.ToArray();
+        bundle.UserData.UserDevicesDataIntegrityHash = bundle.UserDevicesData.IntegrityHash.ToArray();
+    }
+
+
     private void EnsureUserDataCanBePersisted(UserData userData, User user)
     {
         if (userData.UId == Guid.Empty || userData.UId != user.UId)
             throw new InvalidOperationException("Refusing to persist invalid user data.");
 
-        if (userData.Passwords.PasswordKey.Length == 0 || userData.UserDevices is null)
+        if (userData.GeneralUserDataKey.Length == 0 ||
+            userData.UserPasswordsDataKey.Length == 0 ||
+            userData.UserDevicesDataKey.Length == 0 ||
+            userData.GeneralUserDataIntegrityHash.Length != Hashing.SHA256HashSizeInBytes ||
+            userData.UserPasswordsDataIntegrityHash.Length != Hashing.SHA256HashSizeInBytes ||
+            userData.UserDevicesDataIntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            throw new InvalidOperationException("Refusing to persist incomplete user data.");
+    }
+
+
+    private void EnsureUserDataBundleCanBePersisted(UserDataBundle bundle, User user)
+    {
+        EnsureUserDataCanBePersisted(bundle.UserData, user);
+
+        if (bundle.UserPasswordsData.PasswordKey.Length == 0 || bundle.UserDevicesData is null)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
 
-        if (userData.UserDevices.Devices.Any(device =>
+        if (bundle.UserDevicesData.Devices.Any(device =>
                 device.Id == Guid.Empty ||
                 device.LinkedAt == default ||
                 !IsValidUserDeviceName(device.Name)))
             throw new InvalidOperationException("Refusing to persist invalid device data.");
 
-        if (userData.UserDevices.Devices
+        if (bundle.UserDevicesData.Devices
             .GroupBy(device => device.Id)
             .Any(group => group.Count() != 1))
             throw new InvalidOperationException("Refusing to persist duplicate device data.");
 
-        if (userData.UserDevices.Devices
+        if (bundle.UserDevicesData.Devices
             .GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
             .Any(group => group.Count() != 1))
             throw new InvalidOperationException("Refusing to persist duplicate device names.");
     }
 
-    private void VerifyUserDataIntegrity(UserData userData)
-    {
+    private void VerifyUserDataIntegrity(UserData userData) =>
         userData.VerifyIntegrity();
-        userData.Passwords.VerifyIntegrity();
-        foreach (var password in userData.Passwords.Passwords)
-            password.VerifyIntegrity();
 
-        userData.UserDevices.VerifyIntegrity();
-        foreach (var device in userData.UserDevices.Devices)
+
+    private void VerifyUserDataBundleIntegrity(UserDataBundle bundle)
+    {
+        bundle.UserData.VerifyIntegrity();
+
+        bundle.GeneralUserData.VerifyIntegrity();
+        VerifyStoredChildHash(bundle.UserData.GeneralUserDataIntegrityHash, bundle.GeneralUserData.IntegrityHash, typeof(GeneralUserData));
+
+        bundle.UserPasswordsData.VerifyIntegrity();
+        foreach (var password in bundle.UserPasswordsData.Passwords)
+            password.VerifyIntegrity();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.VerifyIntegrity();
+        VerifyStoredChildHash(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));
+
+        bundle.UserDevicesData.VerifyIntegrity();
+        foreach (var device in bundle.UserDevicesData.Devices)
             device.VerifyIntegrity();
+        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
+            deleted.VerifyIntegrity();
+        VerifyStoredChildHash(bundle.UserData.UserDevicesDataIntegrityHash, bundle.UserDevicesData.IntegrityHash, typeof(UserDevicesData));
+    }
+
+
+    private static void VerifyStoredChildHash(byte[] expected, byte[] actual, Type type)
+    {
+        if (expected.Length != Hashing.SHA256HashSizeInBytes ||
+            actual.Length != Hashing.SHA256HashSizeInBytes ||
+            !Hashing.Verify(expected, actual))
+            throw new InvalidDataIntegrityException(type);
+    }
+
+
+    private static void EnsureBlobTimestamps(User user, DateTimeOffset value)
+    {
+        if (user.UserDataLastModifiedAt == default)
+            user.UserDataLastModifiedAt = value;
+        if (user.GeneralUserDataLastModifiedAt == default)
+            user.GeneralUserDataLastModifiedAt = value;
+        if (user.UserPasswordsDataLastModifiedAt == default)
+            user.UserPasswordsDataLastModifiedAt = value;
+        if (user.UserDevicesDataLastModifiedAt == default)
+            user.UserDevicesDataLastModifiedAt = value;
     }
 
 
@@ -307,6 +613,7 @@ public sealed class UserService : IUserService
             }, ct);
         }
 
+        user.ClearEncryptedPayloads();
         _users.Delete(user);
         await _uow.SaveChangesAsync(ct);
         await _syncRuntime.RefreshSyncEnabledAsync(ct);

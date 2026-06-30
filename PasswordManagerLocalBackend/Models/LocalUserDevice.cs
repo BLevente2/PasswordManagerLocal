@@ -12,15 +12,12 @@ public sealed class LocalUserDevice : IntegrityCheckableBase
 
     public bool IsSyncOn { get; set; } = true;
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(UserId);
+            hash.Write(LocalDeviceIdentityId);
+            hash.Write(IsSyncOn);
+        });
 
-        bw.Write(UserId.ToByteArray());
-        bw.Write(LocalDeviceIdentityId.ToByteArray());
-        bw.Write(IsSyncOn);
-
-        return Hashing.SHA256Hash(ms.ToArray());
-    }
 }

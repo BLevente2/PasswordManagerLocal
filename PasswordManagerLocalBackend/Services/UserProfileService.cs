@@ -1,6 +1,7 @@
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Security;
@@ -14,11 +15,13 @@ public class UserProfileService : IUserProfileService
 {
     private readonly IUserService _userService;
     private readonly IAuthService _authService;
+    private readonly IDeviceIdentityService _identity;
 
-    public UserProfileService(IUserService userService, IAuthService authService)
+    public UserProfileService(IUserService userService, IAuthService authService, IDeviceIdentityService identity)
     {
         _userService = userService;
         _authService = authService;
+        _identity = identity;
     }
 
 
@@ -26,8 +29,13 @@ public class UserProfileService : IUserProfileService
     public async Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default)
     {
         var user = await _userService.GetAndVerifyUserAsync(token, ct);
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct, user);
-        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(userData, user.SavedKey is not null);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(
+            bundle.UserData,
+            bundle.GeneralUserData,
+            bundle.UserDevicesData,
+            _identity.LocalDeviceId,
+            user.SavedKey is not null);
     }
 
 
@@ -53,7 +61,7 @@ public class UserProfileService : IUserProfileService
             throw new InvalidInputException();
 
         var user = await _userService.GetAndVerifyUserAsync(token, ct);
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(token, ct);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var usernameBytes = Encoding.UTF8.GetBytes(newUsername);
 
         try
@@ -62,7 +70,8 @@ public class UserProfileService : IUserProfileService
             if (existingUser is not null && existingUser.UId != user.UId)
                 throw new InvalidInputException();
 
-            userData.Username = newUsername;
+            bundle.GeneralUserData.Username = newUsername;
+            bundle.GeneralUserData.LastUpdatedAt = DateTime.UtcNow;
             CryptographicOperations.ZeroMemory(user.UsernameSalt);
             CryptographicOperations.ZeroMemory(user.UsernameHash);
 
@@ -75,7 +84,7 @@ public class UserProfileService : IUserProfileService
         }
 
         using var key = _userService.GetEncryptionKeyFromToken(token);
-        await _userService.UpdateUserDataAsync(userData, user, key, true, ct);
+        await _userService.UpdateUserDataBundleAsync(bundle, user, key, UserDataBlobKind.General, true, ct);
     }
 
 
@@ -84,17 +93,19 @@ public class UserProfileService : IUserProfileService
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var userData = await _userService.GetLoadAndVerifyUserDataAsync(request.Token, ct);
+        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct);
 
         if (request.NewEamil is not null)
-            userData.Email = request.NewEamil;
+            bundle.GeneralUserData.Email = request.NewEamil;
 
         if (request.newFirstName is not null)
-            userData.FirstName = request.newFirstName;
+            bundle.GeneralUserData.FirstName = request.newFirstName;
 
         if (request.NewLastName is not null)
-            userData.LastName = request.NewLastName;
+            bundle.GeneralUserData.LastName = request.NewLastName;
 
-        await _userService.UpdateUserDataAsync(userData, request.Token, true, ct);
+        bundle.GeneralUserData.LastUpdatedAt = DateTime.UtcNow;
+
+        await _userService.UpdateUserDataBundleAsync(bundle, request.Token, UserDataBlobKind.General, true, ct);
     }
 }

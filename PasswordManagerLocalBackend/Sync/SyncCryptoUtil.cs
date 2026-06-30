@@ -72,7 +72,7 @@ public static class SyncCryptoUtil
 
     public static void ValidatePlaintextHash(byte[] plaintext, byte[] expectedHash)
     {
-        var actualHash = Hashing.SHA512Hash(plaintext);
+        var actualHash = Hashing.SHA256Hash(plaintext);
         if (!Hashing.Verify(expectedHash, actualHash))
             throw new InvalidDataException("Network delta plaintext hash is invalid.");
     }
@@ -120,7 +120,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.User)
         {
-            if (payload.User is null || payload.User.IntegrityHash.Length == 0)
+            if (payload.User is null || payload.User.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 throw new InvalidDataException("User sync hash is missing.");
 
             if (!Hashing.Verify(payload.User.IntegrityHash, CalculateUserHash(payload.User, timestamp)))
@@ -131,7 +131,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.Group)
         {
-            if (payload.Group is null || payload.Group.IntegrityHash.Length == 0)
+            if (payload.Group is null || payload.Group.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 throw new InvalidDataException("Group sync hash is missing.");
 
             if (!Hashing.Verify(payload.Group.IntegrityHash, CalculateGroupHash(payload.Group, timestamp)))
@@ -142,7 +142,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.Device)
         {
-            if (payload.Device is null || payload.Device.IntegrityHash.Length == 0)
+            if (payload.Device is null || payload.Device.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 throw new InvalidDataException("Device sync hash is missing.");
 
             if (!Hashing.Verify(payload.Device.IntegrityHash, CalculateDeviceHash(payload.Device, timestamp)))
@@ -153,7 +153,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.UserDevice)
         {
-            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length == 0)
+            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 throw new InvalidDataException("User device sync hash is missing.");
 
             if (!Hashing.Verify(payload.UserDevice.IntegrityHash, SyncHashUtil.CalculateUserDeviceHash(payload.UserDevice, timestamp)))
@@ -162,70 +162,68 @@ public static class SyncCryptoUtil
     }
 
 
-    public static byte[] CalculateUserHash(UserSyncPayload payload, long timestamp)
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public static byte[] CalculateUserHash(UserSyncPayload payload, long timestamp) =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(payload.UId);
+            hash.WriteBytes(payload.UsernameHash);
+            hash.WriteBytes(payload.UsernameSalt);
+            hash.WriteBytes(payload.PasswordSalt);
+            hash.WriteBytes(payload.EncryptedPayload);
+            hash.WriteBytes(payload.EncryptedGeneralUserDataPayload);
+            hash.WriteBytes(payload.EncryptedUserPasswordsDataPayload);
+            hash.WriteBytes(payload.EncryptedUserDevicesDataPayload);
+            hash.Write(payload.UserDataLastModifiedAt);
+            hash.Write(payload.GeneralUserDataLastModifiedAt);
+            hash.Write(payload.UserPasswordsDataLastModifiedAt);
+            hash.Write(payload.UserDevicesDataLastModifiedAt);
+            hash.Write(timestamp);
 
-        bw.Write(payload.UId.ToByteArray());
-        bw.Write(payload.UsernameHash);
-        bw.Write(payload.UsernameSalt);
-        bw.Write(payload.PasswordSalt);
-        bw.Write(payload.EncryptedPayload);
-        bw.Write(timestamp);
+            foreach (var groupId in payload.GroupIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
+                hash.Write(groupId);
 
-        foreach (var groupId in payload.GroupIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
-            bw.Write(groupId.ToByteArray());
-
-        foreach (var deviceId in payload.DeviceIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
-            bw.Write(deviceId.ToByteArray());
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
-
-
-    public static byte[] CalculateGroupHash(GroupSyncPayload payload, long timestamp)
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
-
-        bw.Write(payload.Id.ToByteArray());
-        bw.Write(payload.EncryptedPayload);
-        bw.Write(timestamp);
-
-        foreach (var userId in payload.UserIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
-            bw.Write(userId.ToByteArray());
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
+            foreach (var deviceId in payload.DeviceIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
+                hash.Write(deviceId);
+        });
 
 
-    public static byte[] CalculateDeviceHash(DeviceSyncPayload payload, long timestamp)
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
 
-        bw.Write(payload.Id.ToByteArray());
-        bw.Write(payload.PublicKey);
-        bw.Write(payload.SignPublicKey);
-        bw.Write(Encoding.UTF8.GetBytes(payload.TlsCertFingerprint ?? string.Empty));
-        bw.Write((byte)payload.DeviceType);
-        bw.Write(payload.LastKnownHash);
-        bw.Write(payload.LastSync.ToBinary());
-        bw.Write(payload.LastSeen.ToBinary());
-        bw.Write(payload.IsTrusted ? (byte)1 : (byte)0);
-        bw.Write(payload.IsBlocked ? (byte)1 : (byte)0);
-        bw.Write(Encoding.UTF8.GetBytes(payload.BlockedReason ?? string.Empty));
-        bw.Write(payload.BlockedAt?.ToUnixTimeMilliseconds() ?? 0);
-        bw.Write(payload.InvalidSyncAttemptCount);
-        bw.Write(payload.LastInvalidSyncAttemptAt?.ToUnixTimeMilliseconds() ?? 0);
-        bw.Write(timestamp);
+    public static byte[] CalculateGroupHash(GroupSyncPayload payload, long timestamp) =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(payload.Id);
+            hash.WriteBytes(payload.EncryptedPayload);
+            hash.Write(timestamp);
 
-        foreach (var userId in payload.UserIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
-            bw.Write(userId.ToByteArray());
+            foreach (var userId in payload.UserIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
+                hash.Write(userId);
+        });
 
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
+
+
+    public static byte[] CalculateDeviceHash(DeviceSyncPayload payload, long timestamp) =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(payload.Id);
+            hash.WriteBytes(payload.PublicKey);
+            hash.WriteBytes(payload.SignPublicKey);
+            hash.WriteString(payload.TlsCertFingerprint);
+            hash.Write((byte)payload.DeviceType);
+            hash.WriteBytes(payload.LastKnownHash);
+            hash.Write(payload.LastSync);
+            hash.Write(payload.LastSeen);
+            hash.Write(payload.IsTrusted);
+            hash.Write(payload.IsBlocked);
+            hash.WriteString(payload.BlockedReason);
+            hash.Write(payload.BlockedAt);
+            hash.Write(payload.InvalidSyncAttemptCount);
+            hash.Write(payload.LastInvalidSyncAttemptAt);
+            hash.Write(timestamp);
+
+            foreach (var userId in payload.UserIds.Where(id => id != Guid.Empty).Distinct().OrderBy(id => id))
+                hash.Write(userId);
+        });
+
 
 
     public static void WriteString(BinaryWriter writer, string? value)

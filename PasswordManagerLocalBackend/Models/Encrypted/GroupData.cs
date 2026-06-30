@@ -41,19 +41,15 @@ public sealed class GroupData : IntegrityCheckableBase, IDisposable
 
 
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(Id);
+            hash.WriteString(Name);
+            hash.WriteString(Description);
+            hash.Write(CreatedAt);
+            hash.Write(LastUpdatedAt);
+            hash.WriteBytes(Passwords.IntegrityHash);
+        });
 
-        bw.Write(Id.ToByteArray());
-        bw.Write(Name);
-        bw.Write(Description);
-        bw.Write(CreatedAt.ToBinary());
-        bw.Write(LastUpdatedAt.ToBinary());
-
-        bw.Write(Passwords.IntegrityHash);
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
 }

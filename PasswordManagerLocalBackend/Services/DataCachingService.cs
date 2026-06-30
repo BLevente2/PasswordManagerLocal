@@ -110,7 +110,7 @@ public sealed class DataCachingService : IDataCachingService
         return opts;
     }
 
-    public async Task<UserData?> GetOrLoadUserDataAsync(Guid token, Func<CancellationToken, Task<UserData?>> loader, CancellationToken ct = default)
+    public async Task<UserDataBundle?> GetOrLoadUserDataBundleAsync(Guid token, Func<CancellationToken, Task<UserDataBundle?>> loader, CancellationToken ct = default)
     {
         if (!_tokens.Validate(token))
         {
@@ -127,25 +127,96 @@ public sealed class DataCachingService : IDataCachingService
         return result;
     }
 
+    public Task<UserDataBundle?> GetOrLoadUserDataBundleAsync(Guid token, Func<Task<UserDataBundle?>> loader)
+        => GetOrLoadUserDataBundleAsync(token, _ => loader());
+
+    public bool TryGetUserDataBundle(Guid token, out UserDataBundle? value)
+    {
+        value = default;
+
+        if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
+            return false;
+        }
+
+        var key = UserKey(token);
+        if (!_cache.TryGet(key, out object? cached) || cached is null)
+            return false;
+
+        if (cached is UserDataBundle bundle)
+        {
+            value = bundle;
+            _currentByKey[key] = bundle;
+            return true;
+        }
+
+        return false;
+    }
+
+    public void SetUserDataBundle(Guid token, UserDataBundle value)
+    {
+        if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
+            return;
+        }
+
+        var key = UserKey(token);
+        _currentByKey[key] = value;
+        _cache.Set(key, value, EntryOptions(token, _userTtl));
+    }
+
+    public async Task<UserData?> GetOrLoadUserDataAsync(Guid token, Func<CancellationToken, Task<UserData?>> loader, CancellationToken ct = default)
+    {
+        if (!_tokens.Validate(token))
+        {
+            InvalidateToken(token);
+            return default;
+        }
+
+        if (TryGetUserData(token, out var cached))
+            return cached;
+
+        var loaded = await loader(ct);
+        if (loaded is not null)
+            SetUserData(token, loaded);
+
+        return loaded;
+    }
+
     public Task<UserData?> GetOrLoadUserDataAsync(Guid token, Func<Task<UserData?>> loader)
         => GetOrLoadUserDataAsync(token, _ => loader());
 
     public bool TryGetUserData(Guid token, out UserData? value)
     {
+        value = default;
+
         if (!_tokens.Validate(token))
         {
             InvalidateToken(token);
-            value = default;
             return false;
         }
 
         var key = UserKey(token);
-        var ok = _cache.TryGet(key, out value);
+        if (!_cache.TryGet(key, out object? cached) || cached is null)
+            return false;
 
-        if (ok && value != null)
-            _currentByKey[key] = value;
+        if (cached is UserDataBundle bundle)
+        {
+            value = bundle.UserData;
+            _currentByKey[key] = bundle;
+            return true;
+        }
 
-        return ok;
+        if (cached is UserData userData)
+        {
+            value = userData;
+            _currentByKey[key] = userData;
+            return true;
+        }
+
+        return false;
     }
 
     public void SetUserData(Guid token, UserData value)

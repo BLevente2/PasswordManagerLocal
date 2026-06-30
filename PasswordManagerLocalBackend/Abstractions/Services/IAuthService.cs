@@ -1,6 +1,7 @@
 ﻿using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
+using PasswordManagerLocalBackend.Security;
 
 namespace PasswordManagerLocalBackend.Abstractions.Services;
 
@@ -16,4 +17,5 @@ public interface IAuthService
     Task RefreshSyncedUserSessionsAsync(User user, CancellationToken ct = default);
     Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default);
     bool IsPasswordValid(Guid token, byte[] password, byte[] salt);
+    bool TryGetActiveUserEncryptionKey(Guid uid, out EncryptionKey? key);
 }

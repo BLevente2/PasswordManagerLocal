@@ -106,17 +106,18 @@ public sealed class DeviceService : IDeviceService
     public async Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(Guid token, CancellationToken ct = default)
     {
         var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var userData = await _users.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var userDevicesData = bundle.UserDevicesData;
         var localLink = await EnsureLocalUserDeviceAsync(user.UId, ct);
         var links = await _userDevices.ListByUserAsync(user.UId, ct);
 
-        var changed = EnsureEncryptedDeviceData(userData, _identity.LocalDeviceId, DateTimeOffset.UtcNow);
+        var changed = EnsureEncryptedDeviceData(userDevicesData, _identity.LocalDeviceId, DateTimeOffset.UtcNow);
         foreach (var link in links.Where(x => !x.IsDeleted))
-            changed |= EnsureEncryptedDeviceData(userData, link.DeviceId, link.LastModifiedAt);
+            changed |= EnsureEncryptedDeviceData(userDevicesData, link.DeviceId, link.LastModifiedAt);
         if (changed)
-            await PersistUserDeviceDataAsync(userData, token, ct);
+            await PersistUserDeviceDataAsync(bundle, token, ct);
 
-        var encryptedDevices = userData.UserDevices.Devices.ToDictionary(d => d.Id);
+        var encryptedDevices = userDevicesData.Devices.ToDictionary(d => d.Id);
         var result = new List<UserDeviceInfoResponse>();
         if (encryptedDevices.TryGetValue(_identity.LocalDeviceId, out var localDeviceData))
             result.Add(BuildLocalResponse(localLink, localDeviceData));
@@ -190,7 +191,8 @@ public sealed class DeviceService : IDeviceService
             throw new InvalidInputException();
 
         var userDevice = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
-        var userData = await _users.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var userDevicesData = bundle.UserDevicesData;
         var now = DateTimeOffset.UtcNow;
         userDevice.IsDeleted = true;
         userDevice.IsSyncOn = false;
@@ -199,12 +201,13 @@ public sealed class DeviceService : IDeviceService
         userDevice.GenerateIntegrityHash();
         _userDevices.Update(userDevice);
 
-        var encryptedDevice = userData.UserDevices.Devices.FirstOrDefault(d => d.Id == deviceId);
+        var encryptedDevice = userDevicesData.Devices.FirstOrDefault(d => d.Id == deviceId);
         if (encryptedDevice is not null)
         {
+            AddOrUpdateDeletedDeviceData(userDevicesData, encryptedDevice.Id, now);
             encryptedDevice.Dispose();
-            userData.UserDevices.Devices.Remove(encryptedDevice);
-            await PersistUserDeviceDataAsync(userData, token, ct);
+            userDevicesData.Devices.Remove(encryptedDevice);
+            await PersistUserDeviceDataAsync(bundle, token, ct);
         }
         await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Deleted, ct);
     }
@@ -213,31 +216,37 @@ public sealed class DeviceService : IDeviceService
     {
         var normalizedName = NormalizeUserDeviceName(name);
         var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var userData = await _users.GetLoadAndVerifyUserDataAsync(token, ct, user);
+        var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var userDevicesData = bundle.UserDevicesData;
         await EnsureLocalUserDeviceAsync(user.UId, ct);
         UserDevice? remoteLink = null;
         if (deviceId != _identity.LocalDeviceId)
             remoteLink = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
 
-        if (userData.UserDevices.Devices.Any(d => d.Id != deviceId && string.Equals(d.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
+        if (userDevicesData.Devices.Any(d => d.Id != deviceId && string.Equals(d.Name, normalizedName, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidInputException();
 
-        var encryptedDevice = userData.UserDevices.Devices.FirstOrDefault(d => d.Id == deviceId);
+        var encryptedDevice = userDevicesData.Devices.FirstOrDefault(d => d.Id == deviceId);
         if (encryptedDevice is null)
         {
             encryptedDevice = new UserDeviceData
             {
                 Id = deviceId,
                 Name = normalizedName,
-                LinkedAt = remoteLink?.LastModifiedAt ?? DateTimeOffset.UtcNow
+                LinkedAt = remoteLink?.LastModifiedAt ?? DateTimeOffset.UtcNow,
+                LastUpdatedAt = DateTimeOffset.UtcNow
             };
-            userData.UserDevices.Devices.Add(encryptedDevice);
+            userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == encryptedDevice.Id);
+            userDevicesData.Devices.Add(encryptedDevice);
         }
         else if (string.Equals(encryptedDevice.Name, normalizedName, StringComparison.Ordinal))
             return;
         else
+        {
             encryptedDevice.Name = normalizedName;
-        await PersistUserDeviceDataAsync(userData, token, ct);
+            encryptedDevice.LastUpdatedAt = DateTimeOffset.UtcNow;
+        }
+        await PersistUserDeviceDataAsync(bundle, token, ct);
     }
 
     private async Task<LocalUserDevice> EnsureLocalUserDeviceAsync(Guid userId, CancellationToken ct)
@@ -258,44 +267,63 @@ public sealed class DeviceService : IDeviceService
         return link;
     }
 
-    private bool EnsureEncryptedDeviceData(UserData userData, Guid deviceId, DateTimeOffset linkedAt)
+    private bool EnsureEncryptedDeviceData(UserDevicesData userDevicesData, Guid deviceId, DateTimeOffset linkedAt)
     {
-        if (userData.UserDevices.Devices.Any(d => d.Id == deviceId))
+        if (userDevicesData.Devices.Any(d => d.Id == deviceId))
             return false;
 
         var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
         var deviceData = new UserDeviceData
         {
             Id = deviceId,
-            Name = BuildUniqueEncryptedDeviceName(userData, baseName, deviceId),
-            LinkedAt = linkedAt == default ? DateTimeOffset.UtcNow : linkedAt
+            Name = BuildUniqueEncryptedDeviceName(userDevicesData, baseName, deviceId),
+            LinkedAt = linkedAt == default ? DateTimeOffset.UtcNow : linkedAt,
+            LastUpdatedAt = DateTimeOffset.UtcNow
         };
         deviceData.GenerateIntegrityHash();
-        userData.UserDevices.Devices.Add(deviceData);
+        userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == deviceData.Id);
+        userDevicesData.Devices.Add(deviceData);
         return true;
     }
 
-    private string BuildUniqueEncryptedDeviceName(UserData userData, string requestedName, Guid deviceId)
+    private static void AddOrUpdateDeletedDeviceData(UserDevicesData userDevicesData, Guid deviceId, DateTimeOffset deletedAt)
+    {
+        var tombstone = userDevicesData.DeletedDevices.FirstOrDefault(deleted => deleted.Id == deviceId);
+        if (tombstone is null)
+        {
+            tombstone = new DeletedUserDeviceData { Id = deviceId };
+            userDevicesData.DeletedDevices.Add(tombstone);
+        }
+
+        if (deletedAt > tombstone.DeletedAt)
+            tombstone.DeletedAt = deletedAt;
+
+        tombstone.GenerateIntegrityHash();
+    }
+
+
+    private string BuildUniqueEncryptedDeviceName(UserDevicesData userDevicesData, string requestedName, Guid deviceId)
     {
         var baseName = string.IsNullOrWhiteSpace(requestedName) ? DeviceNameUtil.BuildDefaultDeviceName(deviceId) : requestedName.Trim();
-        if (!IsEncryptedNameTaken(userData, baseName, deviceId)) return baseName;
+        if (!IsEncryptedNameTaken(userDevicesData, baseName, deviceId)) return baseName;
         for (var i = 2; i < 100; i++)
         {
             var suffix = $"-{i}";
             var candidate = baseName[..Math.Min(baseName.Length, 64 - suffix.Length)] + suffix;
-            if (!IsEncryptedNameTaken(userData, candidate, deviceId)) return candidate;
+            if (!IsEncryptedNameTaken(userDevicesData, candidate, deviceId)) return candidate;
         }
         throw new InvalidInputException();
     }
 
-    private bool IsEncryptedNameTaken(UserData userData, string name, Guid exceptDeviceId) =>
-        userData.UserDevices.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
+    private bool IsEncryptedNameTaken(UserDevicesData userDevicesData, string name, Guid exceptDeviceId) =>
+        userDevicesData.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
 
-    private async Task PersistUserDeviceDataAsync(UserData userData, Guid token, CancellationToken ct)
+    private async Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct)
     {
-        foreach (var device in userData.UserDevices.Devices) device.GenerateIntegrityHash();
-        userData.UserDevices.GenerateIntegrityHash();
-        await _users.UpdateUserDataAsync(userData, token, true, ct);
+        foreach (var device in bundle.UserDevicesData.Devices) device.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserDevicesData.DeletedDevices) deleted.GenerateIntegrityHash();
+        bundle.UserDevicesData.GenerateIntegrityHash();
+        await _users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, true, ct);
     }
 
     private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData) => new()

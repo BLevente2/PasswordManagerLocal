@@ -104,6 +104,16 @@ public class AppDbContext : DbContext
         queue.HasIndex(q => new { q.DeviceId, q.ProcessedAt, q.QueueId });
         queue.HasIndex(q => new { q.DeviceId, q.SyncItemId }).IsUnique();
 
+        var user = model.Entity<User>();
+        user.Property(u => u.EncryptedPayload).IsRequired();
+        user.Property(u => u.EncryptedGeneralUserDataPayload).IsRequired();
+        user.Property(u => u.EncryptedUserPasswordsDataPayload).IsRequired();
+        user.Property(u => u.EncryptedUserDevicesDataPayload).IsRequired();
+        user.Property(u => u.UserDataLastModifiedAt).IsRequired();
+        user.Property(u => u.GeneralUserDataLastModifiedAt).IsRequired();
+        user.Property(u => u.UserPasswordsDataLastModifiedAt).IsRequired();
+        user.Property(u => u.UserDevicesDataLastModifiedAt).IsRequired();
+
         model.Entity<User>()
             .HasMany(u => u.Groups)
             .WithMany(g => g.Users)

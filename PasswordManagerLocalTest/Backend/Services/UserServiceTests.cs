@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalTest.TestInfrastructure;
 using System.Text;
 
@@ -77,12 +78,12 @@ public sealed class UserServiceTests
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("charlie"));
 
-        var data1 = await users.GetLoadAndVerifyUserDataAsync(token);
-        var data2 = await users.GetLoadAndVerifyUserDataAsync(token);
+        var data1 = await users.GetLoadAndVerifyUserDataBundleAsync(token);
+        var data2 = await users.GetLoadAndVerifyUserDataBundleAsync(token);
 
         MSTestAssert.IsNotNull(data1);
         MSTestAssert.AreSame(data1, data2);
-        MSTestAssert.IsTrue(cache.TryGetUserData(token, out _));
+        MSTestAssert.IsTrue(cache.TryGetUserDataBundle(token, out _));
     }
 
     [TestMethod]
@@ -93,7 +94,7 @@ public sealed class UserServiceTests
 
         await ExpectThrowsAsync<InvalidTokenException>(async () =>
         {
-            await users.GetLoadAndVerifyUserDataAsync(Guid.NewGuid());
+            await users.GetLoadAndVerifyUserDataBundleAsync(Guid.NewGuid());
         });
     }
 
@@ -108,15 +109,15 @@ public sealed class UserServiceTests
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("dave"));
 
-        var data = await users.GetLoadAndVerifyUserDataAsync(token);
-        data.FirstName = "Updated";
+        var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
+        bundle.GeneralUserData.FirstName = "Updated";
 
-        await users.UpdateUserDataAsync(data, token);
+        await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.General);
 
         cache.InvalidateToken(token);
-        var reloaded = await users.GetLoadAndVerifyUserDataAsync(token);
+        var reloaded = await users.GetLoadAndVerifyUserDataBundleAsync(token);
 
-        MSTestAssert.AreEqual("Updated", reloaded.FirstName);
+        MSTestAssert.AreEqual("Updated", reloaded.GeneralUserData.FirstName);
     }
 
     [TestMethod]

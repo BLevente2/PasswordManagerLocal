@@ -84,8 +84,8 @@ public sealed class DeviceServiceTests
         MSTestAssert.AreEqual(remote.TlsCertFingerprint, remoteResponse.TlsCertFingerprint);
         MSTestAssert.IsFalse(string.IsNullOrWhiteSpace(remoteResponse.Name));
 
-        var userData = await users.GetLoadAndVerifyUserDataAsync(token);
-        MSTestAssert.IsTrue(userData.UserDevices.Devices.Any(device => device.Id == remote.Id));
+        var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
+        MSTestAssert.IsTrue(bundle.UserDevicesData.Devices.Any(device => device.Id == remote.Id));
     }
 
     [TestMethod]
@@ -225,6 +225,9 @@ public sealed class DeviceServiceTests
         MSTestAssert.IsNotNull(deleted.DeletedAt);
         MSTestAssert.IsTrue(queue.EnqueuedItems.Any(item =>
             item.ModelType == SyncModelType.UserDevice && item.ChangeType == SyncChangeType.Deleted));
+        var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
+        MSTestAssert.IsFalse(bundle.UserDevicesData.Devices.Any(device => device.Id == remote.Id));
+        MSTestAssert.IsTrue(bundle.UserDevicesData.DeletedDevices.Any(device => device.Id == remote.Id));
         var remaining = await service.GetUserDevicesAsync(token);
         MSTestAssert.IsFalse(remaining.Any(item => item.DeviceId == remote.Id));
     }

@@ -8,14 +8,12 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
     private bool _disposed;
 
     public Guid UId { get; set; } = Guid.NewGuid();
-    public string Username { get; set; } = string.Empty;
-    public string FirstName { get; set; } = string.Empty;
-    public string LastName { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
-    public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
-    public DateTime LastLoginDate { get; set; } = DateTime.UtcNow;
-    public SecurePasswords Passwords { get; set; } = new();
-    public SecureUserDevices UserDevices { get; set; } = new();
+    public byte[] GeneralUserDataKey { get; set; } = [];
+    public byte[] GeneralUserDataIntegrityHash { get; set; } = [];
+    public byte[] UserPasswordsDataKey { get; set; } = [];
+    public byte[] UserPasswordsDataIntegrityHash { get; set; } = [];
+    public byte[] UserDevicesDataKey { get; set; } = [];
+    public byte[] UserDevicesDataIntegrityHash { get; set; } = [];
 
     public void Dispose()
     {
@@ -29,38 +27,27 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
             return;
 
         UId = Guid.Empty;
-        Username = string.Empty;
-        FirstName = string.Empty;
-        LastName = string.Empty;
-        Email = string.Empty;
-        RegistrationDate = DateTime.MinValue;
-        LastLoginDate = DateTime.MinValue;
+        CryptographicOperations.ZeroMemory(GeneralUserDataKey);
+        CryptographicOperations.ZeroMemory(GeneralUserDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(UserPasswordsDataKey);
+        CryptographicOperations.ZeroMemory(UserPasswordsDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(UserDevicesDataKey);
+        CryptographicOperations.ZeroMemory(UserDevicesDataIntegrityHash);
         CryptographicOperations.ZeroMemory(IntegrityHash);
-
-        if (disposing)
-        {
-            Passwords.Dispose();
-            UserDevices.Dispose();
-        }
 
         _disposed = true;
     }
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(UId);
+            hash.WriteBytes(GeneralUserDataKey);
+            hash.WriteBytes(GeneralUserDataIntegrityHash);
+            hash.WriteBytes(UserPasswordsDataKey);
+            hash.WriteBytes(UserPasswordsDataIntegrityHash);
+            hash.WriteBytes(UserDevicesDataKey);
+            hash.WriteBytes(UserDevicesDataIntegrityHash);
+        });
 
-        bw.Write(UId.ToByteArray());
-        bw.Write(Username);
-        bw.Write(FirstName);
-        bw.Write(LastName);
-        bw.Write(Email);
-        bw.Write(RegistrationDate.ToBinary());
-        bw.Write(LastLoginDate.ToBinary());
-        bw.Write(Passwords.IntegrityHash);
-        bw.Write(UserDevices.IntegrityHash);
-
-        return Hashing.SHA512Hash(ms.ToArray());
-    }
 }

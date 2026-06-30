@@ -1,13 +1,17 @@
 using PasswordManagerLocalBackend.Abstractions.Persistence;
+using PasswordManagerLocalBackend.Abstractions.Security;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Utils;
+using static PasswordManagerLocalBackend.Constants.DataLengthConstants;
 using System.Security.Cryptography;
 using System.Text.Json;
+using static PasswordManagerLocalBackend.Utils.DataCodec;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -26,6 +30,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly ISyncAuthorizationService _authorization;
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IAuthService _auth;
+    private readonly IKeyProtector _keyProtector;
     private readonly IUnitOfWork _uow;
 
     public NetworkDeltaService(
@@ -42,6 +47,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         ISyncAuthorizationService authorization,
         ISyncRuntimeService syncRuntime,
         IAuthService auth,
+        IKeyProtector keyProtector,
         IUnitOfWork uow)
     {
         _outgoingDeltaBuilder = outgoingDeltaBuilder;
@@ -57,6 +63,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _authorization = authorization;
         _syncRuntime = syncRuntime;
         _auth = auth;
+        _keyProtector = keyProtector;
         _uow = uow;
     }
 
@@ -170,11 +177,11 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     {
         var existing = await _users.GetByIdWithRelationsAsync(delta.ModelId, ct);
 
-        if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
-            return false;
-
         if (delta.ChangeType == SyncChangeType.Deleted)
         {
+            if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
+                return false;
+
             if (existing is not null)
                 _users.Delete(existing);
 
@@ -184,6 +191,18 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (delta.User is null)
             throw new InvalidDataException("User sync payload is missing.");
+
+        if (existing is not null && await TryApplyUserBlobMergeAsync(existing, delta.User, ts, ct))
+        {
+            await RemoveTombstoneAsync(delta, ct);
+            return true;
+        }
+
+        if (existing is not null && !IncomingUserPayloadDominatesExistingBlobs(delta.User, existing))
+            return false;
+
+        if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
+            return false;
 
         var user = existing ?? CreateUser(delta.User);
         CopyUserData(delta.User, user);
@@ -197,6 +216,517 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         user.GenerateIntegrityHash();
         await RemoveTombstoneAsync(delta, ct);
         return true;
+    }
+
+
+
+
+    private static bool IncomingUserPayloadDominatesExistingBlobs(UserSyncPayload incoming, User existing) =>
+        incoming.GeneralUserDataLastModifiedAt >= existing.GeneralUserDataLastModifiedAt &&
+        incoming.UserPasswordsDataLastModifiedAt >= existing.UserPasswordsDataLastModifiedAt &&
+        incoming.UserDevicesDataLastModifiedAt >= existing.UserDevicesDataLastModifiedAt;
+
+
+    private async Task<bool> TryApplyUserBlobMergeAsync(User existing, UserSyncPayload incoming, long ts, CancellationToken ct)
+    {
+        var incomingTs = FromTimestamp(ts);
+
+        if (!existing.PasswordSalt.SequenceEqual(incoming.PasswordSalt))
+            return false;
+
+        var incomingHasPotentiallyNewerEncryptedData =
+            incoming.GeneralUserDataLastModifiedAt > existing.GeneralUserDataLastModifiedAt ||
+            incoming.UserPasswordsDataLastModifiedAt > existing.UserPasswordsDataLastModifiedAt ||
+            incoming.UserDevicesDataLastModifiedAt > existing.UserDevicesDataLastModifiedAt;
+        var localHasPotentiallyNewerEncryptedData =
+            existing.GeneralUserDataLastModifiedAt > incoming.GeneralUserDataLastModifiedAt ||
+            existing.UserPasswordsDataLastModifiedAt > incoming.UserPasswordsDataLastModifiedAt ||
+            existing.UserDevicesDataLastModifiedAt > incoming.UserDevicesDataLastModifiedAt;
+        var relationUpdateIsNewer = incomingTs > existing.LastModifiedAt;
+        var encryptedBlobsDiffer =
+            !existing.EncryptedGeneralUserDataPayload.SequenceEqual(incoming.EncryptedGeneralUserDataPayload) ||
+            !existing.EncryptedUserPasswordsDataPayload.SequenceEqual(incoming.EncryptedUserPasswordsDataPayload) ||
+            !existing.EncryptedUserDevicesDataPayload.SequenceEqual(incoming.EncryptedUserDevicesDataPayload);
+
+        if (!incomingHasPotentiallyNewerEncryptedData && !localHasPotentiallyNewerEncryptedData && !relationUpdateIsNewer && !encryptedBlobsDiffer)
+            return false;
+
+        if (!TryGetUserEncryptionKeyForSync(existing, out var userKey) || userKey is null)
+            return false;
+
+        try
+        {
+            var incomingUser = CreateUser(incoming);
+            CopyUserData(incoming, incomingUser);
+            incomingUser.LastModifiedAt = incomingTs;
+            incomingUser.GenerateIntegrityHash();
+
+            var existingBundle = await ReadAndVerifyUserDataBundleForSyncAsync(existing, userKey, ct);
+            var incomingBundle = await ReadAndVerifyUserDataBundleForSyncAsync(incomingUser, userKey, ct);
+
+            var changedBlobs = UserDataBlobKind.None;
+            if (MergeGeneralUserDataForSync(existingBundle, incomingBundle, existing, incoming))
+                changedBlobs |= UserDataBlobKind.General;
+
+            if (MergeUserPasswordsDataForSync(existingBundle.UserPasswordsData, incomingBundle.UserPasswordsData))
+                changedBlobs |= UserDataBlobKind.Passwords;
+
+            if (MergeUserDevicesDataForSync(existingBundle.UserDevicesData, incomingBundle.UserDevicesData))
+                changedBlobs |= UserDataBlobKind.Devices;
+
+            if (changedBlobs != UserDataBlobKind.None)
+            {
+                await PersistMergedUserBundleAsync(existing, existingBundle, userKey, ct);
+
+                existing.UserDataLastModifiedAt = MaxDateTimeOffset(existing.UserDataLastModifiedAt, incoming.UserDataLastModifiedAt, incomingTs);
+                if (changedBlobs.HasFlag(UserDataBlobKind.General))
+                    existing.GeneralUserDataLastModifiedAt = MaxDateTimeOffset(existing.GeneralUserDataLastModifiedAt, incoming.GeneralUserDataLastModifiedAt, incomingTs);
+                if (changedBlobs.HasFlag(UserDataBlobKind.Passwords))
+                    existing.UserPasswordsDataLastModifiedAt = MaxDateTimeOffset(existing.UserPasswordsDataLastModifiedAt, incoming.UserPasswordsDataLastModifiedAt, incomingTs);
+                if (changedBlobs.HasFlag(UserDataBlobKind.Devices))
+                    existing.UserDevicesDataLastModifiedAt = MaxDateTimeOffset(existing.UserDevicesDataLastModifiedAt, incoming.UserDevicesDataLastModifiedAt, incomingTs);
+            }
+
+            if (relationUpdateIsNewer)
+            {
+                await SyncUserGroupsAsync(existing, incoming.GroupIds, ct);
+                await SyncUserDevicesAsync(existing, incoming.DeviceIds, incomingTs, ct);
+            }
+
+            existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, incomingTs);
+            existing.GenerateIntegrityHash();
+            _users.Update(existing);
+            return changedBlobs != UserDataBlobKind.None || relationUpdateIsNewer;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        finally
+        {
+            userKey.Dispose();
+        }
+    }
+
+
+    private bool TryGetUserEncryptionKeyForSync(User user, out EncryptionKey? key)
+    {
+        if (_auth.TryGetActiveUserEncryptionKey(user.UId, out key) && key is not null)
+            return true;
+
+        key = null;
+        if (user.SavedKey is null || user.SavedKey.Length == 0)
+            return false;
+
+        byte[]? rawKey = null;
+        try
+        {
+            rawKey = _keyProtector.Unprotect(user.SavedKey);
+            key = EncryptionKey.FromRaw(rawKey);
+            return true;
+        }
+        catch (Exception ex) when (ex is CryptographicException or ArgumentException)
+        {
+            key = null;
+            return false;
+        }
+        finally
+        {
+            if (rawKey is not null)
+                CryptographicOperations.ZeroMemory(rawKey);
+        }
+    }
+
+
+    private static bool MergeGeneralUserDataForSync(UserDataBundle local, UserDataBundle incoming, User existingUser, UserSyncPayload incomingUser)
+    {
+        var localUpdatedAt = local.GeneralUserData.LastUpdatedAt;
+        var incomingUpdatedAt = incoming.GeneralUserData.LastUpdatedAt;
+        if (incomingUpdatedAt <= localUpdatedAt)
+            return false;
+
+        local.GeneralUserData.Username = incoming.GeneralUserData.Username;
+        local.GeneralUserData.FirstName = incoming.GeneralUserData.FirstName;
+        local.GeneralUserData.LastName = incoming.GeneralUserData.LastName;
+        local.GeneralUserData.Email = incoming.GeneralUserData.Email;
+        local.GeneralUserData.RegistrationDate = incoming.GeneralUserData.RegistrationDate;
+        local.GeneralUserData.LastUpdatedAt = incoming.GeneralUserData.LastUpdatedAt;
+
+        CryptographicOperations.ZeroMemory(existingUser.UsernameHash);
+        CryptographicOperations.ZeroMemory(existingUser.UsernameSalt);
+        existingUser.UsernameHash = incomingUser.UsernameHash.ToArray();
+        existingUser.UsernameSalt = incomingUser.UsernameSalt.ToArray();
+        return true;
+    }
+
+
+    private static bool MergeUserPasswordsDataForSync(UserPasswordsData local, UserPasswordsData incoming)
+    {
+        if (!local.PasswordKey.SequenceEqual(incoming.PasswordKey))
+            return false;
+
+        var changed = false;
+        var localPasswords = local.Passwords.ToDictionary(password => password.Id);
+        var incomingPasswords = incoming.Passwords.ToDictionary(password => password.Id);
+        var localDeleted = local.DeletedPasswords.ToDictionary(deleted => deleted.Id);
+        var incomingDeleted = incoming.DeletedPasswords.ToDictionary(deleted => deleted.Id);
+        var ids = localPasswords.Keys
+            .Concat(incomingPasswords.Keys)
+            .Concat(localDeleted.Keys)
+            .Concat(incomingDeleted.Keys)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        var mergedPasswords = new List<SecurePassword>();
+        var mergedDeleted = new List<DeletedPasswordData>();
+        foreach (var id in ids)
+        {
+            localPasswords.TryGetValue(id, out var localPassword);
+            incomingPasswords.TryGetValue(id, out var incomingPassword);
+            localDeleted.TryGetValue(id, out var localDeletion);
+            incomingDeleted.TryGetValue(id, out var incomingDeletion);
+
+            var newestPassword = NewerPassword(localPassword, incomingPassword);
+            var newestDeletion = NewerDeletedPassword(localDeletion, incomingDeletion);
+            var passwordTime = newestPassword?.LastUpdatedAt ?? DateTime.MinValue;
+            var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+
+            if (newestDeletion is not null && deletionTime >= passwordTime)
+            {
+                mergedDeleted.Add(newestDeletion);
+                if (localPassword is not null || !ReferenceEquals(localDeletion, newestDeletion))
+                    changed = true;
+                continue;
+            }
+
+            if (newestPassword is not null)
+            {
+                mergedPasswords.Add(newestPassword);
+                if (!ReferenceEquals(localPassword, newestPassword) || localDeletion is not null)
+                    changed = true;
+            }
+        }
+
+        changed |= local.Passwords.Count != mergedPasswords.Count || local.DeletedPasswords.Count != mergedDeleted.Count;
+        if (!changed)
+            return false;
+
+        DisposeItemsNotKept(local.Passwords, mergedPasswords);
+        DisposeItemsNotKept(local.DeletedPasswords, mergedDeleted);
+        local.Passwords = mergedPasswords.OrderBy(password => password.Name, StringComparer.OrdinalIgnoreCase).ThenBy(password => password.Id).ToList();
+        local.DeletedPasswords = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        return true;
+    }
+
+
+
+
+    private static void DisposeItemsNotKept<T>(IEnumerable<T> currentItems, IReadOnlyCollection<T> keptItems) where T : class, IDisposable
+    {
+        foreach (var current in currentItems)
+        {
+            if (!keptItems.Any(kept => ReferenceEquals(kept, current)))
+                current.Dispose();
+        }
+    }
+
+
+    private static SecurePassword? NewerPassword(SecurePassword? first, SecurePassword? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.LastUpdatedAt > first.LastUpdatedAt)
+            return second;
+        return first;
+    }
+
+
+    private static DeletedPasswordData? NewerDeletedPassword(DeletedPasswordData? first, DeletedPasswordData? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.DeletedAt > first.DeletedAt)
+            return second;
+        return first;
+    }
+
+
+    private static bool MergeUserDevicesDataForSync(UserDevicesData local, UserDevicesData incoming)
+    {
+        var changed = false;
+        var localDevices = local.Devices.ToDictionary(device => device.Id);
+        var incomingDevices = incoming.Devices.ToDictionary(device => device.Id);
+        var localDeleted = local.DeletedDevices.ToDictionary(deleted => deleted.Id);
+        var incomingDeleted = incoming.DeletedDevices.ToDictionary(deleted => deleted.Id);
+        var ids = localDevices.Keys
+            .Concat(incomingDevices.Keys)
+            .Concat(localDeleted.Keys)
+            .Concat(incomingDeleted.Keys)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        var mergedDevices = new List<UserDeviceData>();
+        var mergedDeleted = new List<DeletedUserDeviceData>();
+        foreach (var id in ids)
+        {
+            localDevices.TryGetValue(id, out var localDevice);
+            incomingDevices.TryGetValue(id, out var incomingDevice);
+            localDeleted.TryGetValue(id, out var localDeletion);
+            incomingDeleted.TryGetValue(id, out var incomingDeletion);
+
+            var newestDevice = NewerDevice(localDevice, incomingDevice);
+            var newestDeletion = NewerDeletedDevice(localDeletion, incomingDeletion);
+            var deviceTime = newestDevice?.LastUpdatedAt ?? DateTimeOffset.MinValue;
+            var deletionTime = newestDeletion?.DeletedAt ?? DateTimeOffset.MinValue;
+
+            if (newestDeletion is not null && deletionTime >= deviceTime)
+            {
+                mergedDeleted.Add(newestDeletion);
+                if (localDevice is not null || !ReferenceEquals(localDeletion, newestDeletion))
+                    changed = true;
+                continue;
+            }
+
+            if (newestDevice is not null)
+            {
+                if (localDevice is not null && incomingDevice is not null)
+                {
+                    var newestLogin = localDevice.LastLoginDate >= incomingDevice.LastLoginDate
+                        ? localDevice.LastLoginDate
+                        : incomingDevice.LastLoginDate;
+                    if (newestDevice.LastLoginDate != newestLogin)
+                    {
+                        newestDevice.LastLoginDate = newestLogin;
+                        changed = true;
+                    }
+                }
+
+                mergedDevices.Add(newestDevice);
+                if (!ReferenceEquals(localDevice, newestDevice) || localDeletion is not null)
+                    changed = true;
+            }
+        }
+
+        changed |= local.Devices.Count != mergedDevices.Count || local.DeletedDevices.Count != mergedDeleted.Count;
+        if (!changed)
+            return false;
+
+        DisposeItemsNotKept(local.Devices, mergedDevices);
+        DisposeItemsNotKept(local.DeletedDevices, mergedDeleted);
+        local.Devices = ResolveDuplicateDeviceNamesForSync(mergedDevices);
+        local.DeletedDevices = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        return true;
+    }
+
+
+    private static UserDeviceData? NewerDevice(UserDeviceData? first, UserDeviceData? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.LastUpdatedAt > first.LastUpdatedAt)
+            return second;
+        return first;
+    }
+
+
+    private static DeletedUserDeviceData? NewerDeletedDevice(DeletedUserDeviceData? first, DeletedUserDeviceData? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.DeletedAt > first.DeletedAt)
+            return second;
+        return first;
+    }
+
+
+    private static List<UserDeviceData> ResolveDuplicateDeviceNamesForSync(List<UserDeviceData> devices)
+    {
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in devices.OrderByDescending(device => device.LastUpdatedAt).ThenBy(device => device.Id))
+        {
+            var baseName = string.IsNullOrWhiteSpace(device.Name) ? DeviceNameUtil.BuildDefaultDeviceName(device.Id) : device.Name.Trim();
+            device.Name = BuildUniqueDeviceNameForSync(baseName, usedNames, device.Id);
+            usedNames.Add(device.Name);
+        }
+
+        return devices.OrderBy(device => device.Name, StringComparer.OrdinalIgnoreCase).ThenBy(device => device.Id).ToList();
+    }
+
+
+    private static string BuildUniqueDeviceNameForSync(string requestedName, HashSet<string> usedNames, Guid deviceId)
+    {
+        var baseName = requestedName.Trim();
+        if (baseName.Length == 0)
+            baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
+
+        if (baseName.Length > UserDeviceNameMaxLength)
+            baseName = baseName[..UserDeviceNameMaxLength];
+
+        if (!usedNames.Contains(baseName))
+            return baseName;
+
+        var suffixSeed = deviceId.ToString("N")[..6];
+        for (var i = 2; i < 100; i++)
+        {
+            var suffix = $"-{suffixSeed}-{i}";
+            var prefixLength = Math.Max(1, UserDeviceNameMaxLength - suffix.Length);
+            var candidate = baseName[..Math.Min(baseName.Length, prefixLength)] + suffix;
+            if (!usedNames.Contains(candidate))
+                return candidate;
+        }
+
+        return deviceId.ToString("N")[..UserDeviceNameMaxLength];
+    }
+
+
+    private async Task<UserDataBundle> ReadAndVerifyUserDataBundleForSyncAsync(User user, EncryptionKey userKey, CancellationToken ct)
+    {
+        var userData = await DecryptDecompressDeserializeAsync(user.EncryptedPayload, userKey, BackendJsonSerializerContext.Default.UserData, ct: ct);
+        if (userData is null)
+            throw new UnauthorizedAccessException();
+
+        userData.VerifyIntegrity();
+
+        var general = await DecryptEncryptedUserBlobAsync(user.EncryptedGeneralUserDataPayload, userData.GeneralUserDataKey, BackendJsonSerializerContext.Default.GeneralUserData, ct);
+        var passwords = await DecryptEncryptedUserBlobAsync(user.EncryptedUserPasswordsDataPayload, userData.UserPasswordsDataKey, BackendJsonSerializerContext.Default.UserPasswordsData, ct);
+        var devices = await DecryptEncryptedUserBlobAsync(user.EncryptedUserDevicesDataPayload, userData.UserDevicesDataKey, BackendJsonSerializerContext.Default.UserDevicesData, ct);
+
+        var bundle = new UserDataBundle
+        {
+            UserData = userData,
+            GeneralUserData = general,
+            UserPasswordsData = passwords,
+            UserDevicesData = devices
+        };
+
+        VerifyUserDataBundleForSync(bundle);
+        return bundle;
+    }
+
+
+    private static async Task<T> DecryptEncryptedUserBlobAsync<T>(byte[] encryptedBlob, byte[] rawKey, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, CancellationToken ct) where T : class
+    {
+        if (encryptedBlob.Length == 0 || rawKey.Length == 0)
+            throw new UnauthorizedAccessException();
+
+        using var key = EncryptionKey.FromRaw(rawKey);
+        var data = await DecryptDecompressDeserializeAsync(encryptedBlob, key, typeInfo, ct: ct);
+        if (data is null)
+            throw new UnauthorizedAccessException();
+
+        return data;
+    }
+
+
+    private async Task PersistMergedUserBundleAsync(User user, UserDataBundle bundle, EncryptionKey userKey, CancellationToken ct)
+    {
+        GenerateAndCopyUserBundleHashesForSync(bundle);
+        VerifyUserDataBundleForSync(bundle);
+
+        using (var generalKey = EncryptionKey.FromRaw(bundle.UserData.GeneralUserDataKey))
+        {
+            var encrypted = await SerializeCompressEncryptAsync(bundle.GeneralUserData, generalKey, BackendJsonSerializerContext.Default.GeneralUserData, ct: ct);
+            CryptographicOperations.ZeroMemory(user.EncryptedGeneralUserDataPayload);
+            user.EncryptedGeneralUserDataPayload = encrypted;
+        }
+
+        using (var passwordsKey = EncryptionKey.FromRaw(bundle.UserData.UserPasswordsDataKey))
+        {
+            var encrypted = await SerializeCompressEncryptAsync(bundle.UserPasswordsData, passwordsKey, BackendJsonSerializerContext.Default.UserPasswordsData, ct: ct);
+            CryptographicOperations.ZeroMemory(user.EncryptedUserPasswordsDataPayload);
+            user.EncryptedUserPasswordsDataPayload = encrypted;
+        }
+
+        using (var devicesKey = EncryptionKey.FromRaw(bundle.UserData.UserDevicesDataKey))
+        {
+            var encrypted = await SerializeCompressEncryptAsync(bundle.UserDevicesData, devicesKey, BackendJsonSerializerContext.Default.UserDevicesData, ct: ct);
+            CryptographicOperations.ZeroMemory(user.EncryptedUserDevicesDataPayload);
+            user.EncryptedUserDevicesDataPayload = encrypted;
+        }
+
+        var encryptedUserData = await SerializeCompressEncryptAsync(bundle.UserData, userKey, BackendJsonSerializerContext.Default.UserData, ct: ct);
+        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
+        user.EncryptedPayload = encryptedUserData;
+    }
+
+
+    private static void GenerateAndCopyUserBundleHashesForSync(UserDataBundle bundle)
+    {
+        bundle.GeneralUserData.GenerateIntegrityHash();
+
+        foreach (var password in bundle.UserPasswordsData.Passwords)
+            password.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.GenerateIntegrityHash();
+        bundle.UserPasswordsData.GenerateIntegrityHash();
+
+        foreach (var device in bundle.UserDevicesData.Devices)
+            device.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
+            deleted.GenerateIntegrityHash();
+        bundle.UserDevicesData.GenerateIntegrityHash();
+
+        CryptographicOperations.ZeroMemory(bundle.UserData.GeneralUserDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(bundle.UserData.UserPasswordsDataIntegrityHash);
+        CryptographicOperations.ZeroMemory(bundle.UserData.UserDevicesDataIntegrityHash);
+        bundle.UserData.GeneralUserDataIntegrityHash = bundle.GeneralUserData.IntegrityHash.ToArray();
+        bundle.UserData.UserPasswordsDataIntegrityHash = bundle.UserPasswordsData.IntegrityHash.ToArray();
+        bundle.UserData.UserDevicesDataIntegrityHash = bundle.UserDevicesData.IntegrityHash.ToArray();
+        bundle.UserData.GenerateIntegrityHash();
+    }
+
+
+    private static void VerifyUserDataBundleForSync(UserDataBundle bundle)
+    {
+        bundle.UserData.VerifyIntegrity();
+        bundle.GeneralUserData.VerifyIntegrity();
+        VerifyStoredUserBlobHashForSync(bundle.UserData.GeneralUserDataIntegrityHash, bundle.GeneralUserData.IntegrityHash, typeof(GeneralUserData));
+
+        foreach (var password in bundle.UserPasswordsData.Passwords)
+            password.VerifyIntegrity();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.VerifyIntegrity();
+        bundle.UserPasswordsData.VerifyIntegrity();
+        VerifyStoredUserBlobHashForSync(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));
+
+        foreach (var device in bundle.UserDevicesData.Devices)
+            device.VerifyIntegrity();
+        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
+            deleted.VerifyIntegrity();
+        bundle.UserDevicesData.VerifyIntegrity();
+        VerifyStoredUserBlobHashForSync(bundle.UserData.UserDevicesDataIntegrityHash, bundle.UserDevicesData.IntegrityHash, typeof(UserDevicesData));
+    }
+
+
+    private static void VerifyStoredUserBlobHashForSync(byte[] expected, byte[] actual, Type type)
+    {
+        if (expected.Length != Hashing.SHA256HashSizeInBytes ||
+            actual.Length != Hashing.SHA256HashSizeInBytes ||
+            !Hashing.Verify(expected, actual))
+            throw new InvalidDataIntegrityException(type);
+    }
+
+
+    private static DateTimeOffset MaxDateTimeOffset(params DateTimeOffset[] values)
+    {
+        var max = DateTimeOffset.MinValue;
+        foreach (var value in values)
+        {
+            if (value != default && value > max)
+                max = value;
+        }
+
+        return max == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : max;
     }
 
 
@@ -682,6 +1212,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             UsernameSalt = user.UsernameSalt,
             PasswordSalt = user.PasswordSalt,
             EncryptedPayload = user.EncryptedPayload,
+            EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
+            EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
+            EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
+            UserDataLastModifiedAt = user.UserDataLastModifiedAt,
+            GeneralUserDataLastModifiedAt = user.GeneralUserDataLastModifiedAt,
+            UserPasswordsDataLastModifiedAt = user.UserPasswordsDataLastModifiedAt,
+            UserDevicesDataLastModifiedAt = user.UserDevicesDataLastModifiedAt,
             GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
             DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Append(_identity.LocalDeviceId).Distinct().ToList()
         };
@@ -754,7 +1291,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (payload.ModelType == SyncModelType.User)
         {
-            if (payload.User is null || payload.User.IntegrityHash.Length == 0)
+            if (payload.User is null || payload.User.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 return false;
 
             var existing = await _users.GetByIdWithRelationsAsync(payload.ModelId, ct);
@@ -768,7 +1305,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (payload.ModelType == SyncModelType.Group)
         {
-            if (payload.Group is null || payload.Group.IntegrityHash.Length == 0)
+            if (payload.Group is null || payload.Group.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 return false;
 
             var existing = await _groups.GetByIdWithUsersAsync(payload.ModelId, ct);
@@ -782,7 +1319,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (payload.ModelType == SyncModelType.Device)
         {
-            if (payload.Device is null || payload.Device.IntegrityHash.Length == 0)
+            if (payload.Device is null || payload.Device.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 return false;
 
             var existing = await _devices.GetByIdWithUsersAsync(payload.ModelId, ct);
@@ -796,7 +1333,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (payload.ModelType == SyncModelType.UserDevice)
         {
-            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length == 0)
+            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 return false;
 
             var existing = await _userDevices.GetAsync(payload.UserDevice.UserId, payload.UserDevice.DeviceId, ct);
@@ -864,6 +1401,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         target.UsernameSalt = source.UsernameSalt;
         target.PasswordSalt = source.PasswordSalt;
         target.EncryptedPayload = source.EncryptedPayload;
+        target.EncryptedGeneralUserDataPayload = source.EncryptedGeneralUserDataPayload;
+        target.EncryptedUserPasswordsDataPayload = source.EncryptedUserPasswordsDataPayload;
+        target.EncryptedUserDevicesDataPayload = source.EncryptedUserDevicesDataPayload;
+        target.UserDataLastModifiedAt = source.UserDataLastModifiedAt;
+        target.GeneralUserDataLastModifiedAt = source.GeneralUserDataLastModifiedAt;
+        target.UserPasswordsDataLastModifiedAt = source.UserPasswordsDataLastModifiedAt;
+        target.UserDevicesDataLastModifiedAt = source.UserDevicesDataLastModifiedAt;
         target.IntegrityHash = source.IntegrityHash;
     }
 
@@ -1013,7 +1557,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (payload.ChangeType == SyncChangeType.Deleted && payload.UserDevice.DeletedAt is null)
             throw new InvalidDataException("Deleted user-device delta must contain deletion time.");
 
-        if (payload.UserDevice.IntegrityHash.Length == 0)
+        if (payload.UserDevice.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
             throw new InvalidDataException("User device sync hash is missing.");
     }
 

@@ -42,19 +42,16 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
 
 
 
-    public override byte[] CalculateIntegrityHash()
-    {
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+    public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(Id);
+            hash.WriteString(Name);
+            hash.WriteString(Description);
+            hash.WriteString(Color);
+            hash.WriteBytes(Password);
+            hash.Write(CreatedAt);
+            hash.Write(LastUpdatedAt);
+        });
 
-        bw.Write(Id.ToByteArray());
-        bw.Write(Name);
-        bw.Write(Description);
-        bw.Write(Color);
-        bw.Write(Password);
-        bw.Write(CreatedAt.ToBinary());
-        bw.Write(LastUpdatedAt.ToBinary());
-
-        return Hashing.SHA256Hash(ms.ToArray());
-    }
 }

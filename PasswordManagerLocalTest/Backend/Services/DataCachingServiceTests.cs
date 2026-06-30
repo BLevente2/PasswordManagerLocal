@@ -130,12 +130,12 @@ public sealed class DataCachingServiceTests
         var data = new UserData
         {
             UId = Guid.NewGuid(),
-            Username = username,
-            FirstName = "First",
-            LastName = "Last",
-            Email = $"{username}@example.com",
-            RegistrationDate = DateTime.UtcNow,
-            LastLoginDate = DateTime.UtcNow
+            GeneralUserDataKey = Enumerable.Repeat((byte)1, 32).ToArray(),
+            GeneralUserDataIntegrityHash = Enumerable.Repeat((byte)2, 32).ToArray(),
+            UserPasswordsDataKey = Enumerable.Repeat((byte)3, 32).ToArray(),
+            UserPasswordsDataIntegrityHash = Enumerable.Repeat((byte)4, 32).ToArray(),
+            UserDevicesDataKey = Enumerable.Repeat((byte)5, 32).ToArray(),
+            UserDevicesDataIntegrityHash = Enumerable.Repeat((byte)6, 32).ToArray()
         };
         data.GenerateIntegrityHash();
         return data;

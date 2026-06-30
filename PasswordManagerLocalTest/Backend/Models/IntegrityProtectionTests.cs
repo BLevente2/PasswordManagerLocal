@@ -3,6 +3,7 @@ using PasswordManagerLocalBackend.Constants;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Models.Encrypted;
+using PasswordManagerLocalBackend.Security;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
@@ -19,6 +20,7 @@ public sealed class IntegrityProtectionTests
         using var password = CreateSecurePassword();
         password.GenerateIntegrityHash();
 
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, password.IntegrityHash);
         MSTestAssert.IsTrue(password.IsIntegrityValid());
 
         password.Password[0] ^= 0x01;
@@ -48,7 +50,8 @@ public sealed class IntegrityProtectionTests
 
         device.GenerateIntegrityHash();
 
-        MSTestAssert.HasCount(32, device.SignPublicKeyHash);
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, device.SignPublicKeyHash);
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, device.IntegrityHash);
         MSTestAssert.IsTrue(device.IsIntegrityValid());
 
         device.SignPublicKey[0] ^= 0x01;
@@ -114,7 +117,7 @@ public sealed class IntegrityProtectionTests
         data.GenerateIntegrityHash();
         MSTestAssert.IsTrue(data.IsIntegrityValid());
 
-        data.Passwords.IntegrityHash[0] ^= 0x20;
+        data.UserPasswordsDataIntegrityHash[0] ^= 0x20;
 
         MSTestAssert.IsFalse(data.IsIntegrityValid());
         ExpectThrows<InvalidDataIntegrityException>(data.VerifyIntegrity);
@@ -175,38 +178,15 @@ public sealed class IntegrityProtectionTests
 
     private static UserData CreateUserData()
     {
-        var password = CreateSecurePassword();
-        password.GenerateIntegrityHash();
-
-        var passwords = new SecurePasswords
-        {
-            PasswordKey = Enumerable.Repeat((byte)4, 32).ToArray(),
-            Passwords = [password]
-        };
-        passwords.GenerateIntegrityHash();
-
-        var device = new UserDeviceData
-        {
-            Id = Guid.Parse("FD919B87-8D93-4996-887D-36FE0D791E97"),
-            Name = "Laptop",
-            LinkedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)
-        };
-        device.GenerateIntegrityHash();
-
-        var devices = new SecureUserDevices { Devices = [device] };
-        devices.GenerateIntegrityHash();
-
         return new UserData
         {
             UId = Guid.Parse("BD07BBD9-2ECB-4AC7-BD79-0E395BCF0414"),
-            Username = "alice",
-            FirstName = "Alice",
-            LastName = "Example",
-            Email = "alice@example.com",
-            RegistrationDate = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
-            LastLoginDate = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc),
-            Passwords = passwords,
-            UserDevices = devices
+            GeneralUserDataKey = Enumerable.Repeat((byte)1, 32).ToArray(),
+            GeneralUserDataIntegrityHash = Enumerable.Repeat((byte)2, 32).ToArray(),
+            UserPasswordsDataKey = Enumerable.Repeat((byte)3, 32).ToArray(),
+            UserPasswordsDataIntegrityHash = Enumerable.Repeat((byte)4, 32).ToArray(),
+            UserDevicesDataKey = Enumerable.Repeat((byte)5, 32).ToArray(),
+            UserDevicesDataIntegrityHash = Enumerable.Repeat((byte)6, 32).ToArray()
         };
     }
 

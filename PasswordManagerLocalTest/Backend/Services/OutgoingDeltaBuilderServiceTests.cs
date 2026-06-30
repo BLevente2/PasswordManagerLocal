@@ -82,7 +82,7 @@ public sealed class OutgoingDeltaBuilderServiceTests
             delta.Nonce,
             delta.Tag,
             SyncCryptoUtil.BuildAssociatedData(delta));
-        CollectionAssert.AreEqual(Hashing.SHA512Hash(plaintext), delta.PayloadHash);
+        CollectionAssert.AreEqual(Hashing.SHA256Hash(plaintext), delta.PayloadHash);
         var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintext);
         MSTestAssert.IsNotNull(payload);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);

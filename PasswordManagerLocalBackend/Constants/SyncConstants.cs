@@ -22,7 +22,7 @@ public static class SyncConstants
     public const int SyncDeltaEncryptionVersion = 1;
     public const int SyncDeltaNonceBytes = 12;
     public const int SyncDeltaTagBytes = 16;
-    public const int SyncDeltaPayloadHashBytes = 64;
+    public const int SyncDeltaPayloadHashBytes = 32;
     public const int SyncDeltaX25519PublicKeyBytes = 32;
     public const int SyncDeltaEd25519PublicKeyBytes = 32;
     public const int SyncDeltaEd25519SignatureBytes = 64;

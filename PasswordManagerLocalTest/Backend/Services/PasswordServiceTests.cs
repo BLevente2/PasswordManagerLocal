@@ -13,9 +13,9 @@ namespace PasswordManagerLocalTest.Backend.Services;
 [TestClass]
 public sealed class PasswordServiceTests
 {
-    private static SecurePasswords CreateEmptyPasswords()
+    private static UserPasswordsData CreateEmptyPasswords()
     {
-        var passwords = new SecurePasswords();
+        var passwords = new UserPasswordsData();
         passwords.PasswordKey = RandomNumberGenerator.GetBytes(32);
         passwords.GenerateIntegrityHash();
         return passwords;
@@ -152,6 +152,9 @@ public sealed class PasswordServiceTests
         service.RemovePassword(pw.Id, passwords);
 
         MSTestAssert.IsEmpty(passwords.Passwords);
+        MSTestAssert.HasCount(1, passwords.DeletedPasswords);
+        MSTestAssert.AreEqual(pw.Id, passwords.DeletedPasswords[0].Id);
+        passwords.VerifyIntegrity();
     }
 
     [TestMethod]

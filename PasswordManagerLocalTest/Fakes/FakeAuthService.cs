@@ -2,6 +2,7 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
+using PasswordManagerLocalBackend.Security;
 
 namespace PasswordManagerLocalTest.Fakes;
 
@@ -40,4 +41,10 @@ public sealed class FakeAuthService : IAuthService
         throw new NotSupportedException();
 
     public bool IsPasswordValid(Guid token, byte[] password, byte[] salt) => false;
+
+    public bool TryGetActiveUserEncryptionKey(Guid uid, out EncryptionKey? key)
+    {
+        key = null;
+        return false;
+    }
 }
