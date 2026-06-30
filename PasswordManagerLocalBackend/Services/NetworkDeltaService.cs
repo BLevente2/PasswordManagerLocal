@@ -22,6 +22,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly IGroupRepository _groups;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
+    private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly ISyncTombstoneRepository _tombstones;
     private readonly ISyncQueueRepository _syncQueue;
     private readonly ISyncQueueService _syncQueueService;
@@ -39,6 +40,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
+        ILocalUserDeviceRepository localUserDevices,
         ISyncTombstoneRepository tombstones,
         ISyncQueueRepository syncQueue,
         ISyncQueueService syncQueueService,
@@ -55,6 +57,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
+        _localUserDevices = localUserDevices;
         _tombstones = tombstones;
         _syncQueue = syncQueue;
         _syncQueueService = syncQueueService;
@@ -140,6 +143,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (applied && ShouldPropagate(payload))
             await PropagateIncomingDeltaAsync(payload, sourceDevice.Id, delta.Ts, ct);
+
+        if (applied && IsRemoteUserDeviceDeletion(payload))
+            await CleanupDetachedDeviceIfUserDeviceDeletionCompletedAsync(payload, delta.Ts, ct);
 
         if (applied &&
             payload.ModelType == SyncModelType.UserDevice &&
@@ -989,7 +995,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
             await _tombstones.UpsertAsync(delta.ModelId, delta.ModelType, ts, ct);
             if (payload.DeviceId != _identity.LocalDeviceId)
-                await DeleteDeviceIfDetachedAsync(payload.DeviceId, ct);
+                await RemovePendingSyncsForUserToDeviceAsync(payload.UserId, payload.DeviceId, ct);
             return true;
         }
 
@@ -1020,17 +1026,99 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private async Task DeleteDeviceIfDetachedAsync(Guid deviceId, CancellationToken ct)
+    private async Task CleanupDetachedDeviceIfUserDeviceDeletionCompletedAsync(SyncDeltaPayload payload, long ts, CancellationToken ct)
     {
-        if (await _userDevices.HasAnyActiveLinkForDeviceAsync(deviceId, ct))
+        if (payload.UserDevice is null || payload.UserDevice.DeviceId == _identity.LocalDeviceId)
             return;
 
-        var device = await _devices.GetByIdWithUserDevicesAsync(deviceId, ct);
-        if (device is null)
+        if (await _syncQueue.HasPendingForModelAsync(payload.ModelId, SyncModelType.UserDevice, ct))
             return;
 
-        _syncDeviceIdentities.TryRemove(device);
-        _devices.Delete(device);
+        var deletedUserDevice = await _userDevices.GetByModelIdAsync(payload.ModelId, ct);
+        if (deletedUserDevice is not null && !deletedUserDevice.IsDeleted)
+            return;
+
+        await _tombstones.UpsertAsync(payload.ModelId, SyncModelType.UserDevice, ts, ct);
+
+        if (!await _userDevices.HasAnyActiveLinkForDeviceAsync(payload.UserDevice.DeviceId, ct))
+        {
+            var device = await _devices.GetByIdWithUserDevicesAsync(payload.UserDevice.DeviceId, ct);
+            if (device is not null)
+            {
+                _syncDeviceIdentities.TryRemove(device);
+                _devices.Delete(device);
+            }
+        }
+        else if (deletedUserDevice is not null)
+        {
+            _userDevices.Delete(deletedUserDevice);
+        }
+
+        await _uow.SaveChangesAsync(ct);
+    }
+
+
+    private async Task RemovePendingSyncsForUserToDeviceAsync(Guid userId, Guid targetDeviceId, CancellationToken ct)
+    {
+        var pendingItems = await _syncQueue.ListPendingForDeviceWithItemsAsync(targetDeviceId, ct);
+        foreach (var queueItem in pendingItems)
+        {
+            if (queueItem.SyncItem is not null && await IsSyncItemOnlyForRemovedUserOrRouteAsync(queueItem.SyncItem, userId, targetDeviceId, ct))
+                _syncQueue.Delete(queueItem);
+        }
+    }
+
+
+    private async Task<bool> IsSyncItemOnlyForRemovedUserOrRouteAsync(SyncItem item, Guid removedUserId, Guid targetDeviceId, CancellationToken ct)
+    {
+        if (item.ModelType == SyncModelType.User)
+            return item.ModelId == removedUserId;
+
+        if (item.ModelType == SyncModelType.UserDevice)
+        {
+            var link = await _userDevices.GetByModelIdAsync(item.ModelId, ct);
+            return link?.UserId == removedUserId;
+        }
+
+        if (item.ModelType == SyncModelType.Group)
+        {
+            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
+            if (group is null || group.Users.All(user => user.UId != removedUserId))
+                return false;
+
+            return !await AnyOtherUserCanStillSyncToTargetAsync(
+                group.Users.Select(user => user.UId),
+                removedUserId,
+                targetDeviceId,
+                ct);
+        }
+
+        if (item.ModelType == SyncModelType.Device)
+        {
+            var links = await _userDevices.ListByDeviceAsync(item.ModelId, ct);
+            if (links.All(link => link.UserId != removedUserId))
+                return false;
+
+            return !await AnyOtherUserCanStillSyncToTargetAsync(
+                links.Where(link => !link.IsDeleted && link.IsSyncOn).Select(link => link.UserId),
+                removedUserId,
+                targetDeviceId,
+                ct);
+        }
+
+        return false;
+    }
+
+    private async Task<bool> AnyOtherUserCanStillSyncToTargetAsync(IEnumerable<Guid> userIds, Guid removedUserId, Guid targetDeviceId, CancellationToken ct)
+    {
+        foreach (var otherUserId in userIds.Where(id => id != Guid.Empty && id != removedUserId).Distinct())
+        {
+            if (await _localUserDevices.IsSyncOnAsync(otherUserId, ct) &&
+                await _userDevices.HasActiveLinkAsync(otherUserId, targetDeviceId, ct))
+                return true;
+        }
+
+        return false;
     }
 
 
@@ -1050,6 +1138,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             .Select(ud => ud.DeviceId)
             .Distinct()
             .ToList();
+
+        foreach (var deviceId in relatedDeviceIds)
+            await RemovePendingSyncsForUserToDeviceAsync(user.UId, deviceId, ct);
 
         _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
         _users.Delete(user);
@@ -1342,6 +1433,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         payload.ModelType == SyncModelType.Device &&
         payload.ChangeType == SyncChangeType.Deleted &&
         payload.ModelId == sourceDevice.Id;
+
+
+    private bool IsRemoteUserDeviceDeletion(SyncDeltaPayload payload) =>
+        payload.ModelType == SyncModelType.UserDevice &&
+        payload.ChangeType == SyncChangeType.Deleted &&
+        payload.UserDevice is not null &&
+        payload.UserDevice.IsDeleted &&
+        payload.UserDevice.DeviceId != _identity.LocalDeviceId;
 
 
     private bool ShouldPropagate(SyncDeltaPayload payload) =>

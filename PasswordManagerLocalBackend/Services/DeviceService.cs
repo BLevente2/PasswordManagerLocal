@@ -17,6 +17,7 @@ public sealed class DeviceService : IDeviceService
     private readonly IAuthService _auth;
     private readonly IDeviceIdentityService _identity;
     private readonly IDeviceRepository _devices;
+    private readonly IGroupRepository _groups;
     private readonly IUserDeviceRepository _userDevices;
     private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly ISyncQueueService _syncQueue;
@@ -30,6 +31,7 @@ public sealed class DeviceService : IDeviceService
         IAuthService auth,
         IDeviceIdentityService identity,
         IDeviceRepository devices,
+        IGroupRepository groups,
         IUserDeviceRepository userDevices,
         ILocalUserDeviceRepository localUserDevices,
         ISyncQueueService syncQueue,
@@ -42,6 +44,7 @@ public sealed class DeviceService : IDeviceService
         _auth = auth;
         _identity = identity;
         _devices = devices;
+        _groups = groups;
         _userDevices = userDevices;
         _localUserDevices = localUserDevices;
         _syncQueue = syncQueue;
@@ -202,13 +205,32 @@ public sealed class DeviceService : IDeviceService
         _userDevices.Update(userDevice);
 
         var encryptedDevice = userDevicesData.Devices.FirstOrDefault(d => d.Id == deviceId);
+        var userDeviceDataChanged = false;
         if (encryptedDevice is not null)
         {
             AddOrUpdateDeletedDeviceData(userDevicesData, encryptedDevice.Id, now);
             encryptedDevice.Dispose();
             userDevicesData.Devices.Remove(encryptedDevice);
-            await PersistUserDeviceDataAsync(bundle, token, ct);
+            userDeviceDataChanged = true;
         }
+
+        if (userDeviceDataChanged)
+            await PersistUserDeviceDataAsync(bundle, token, ct, false);
+        else
+            await _uow.SaveChangesAsync(ct);
+
+        await RemovePendingSyncsForUserToDeviceAsync(user.UId, deviceId, ct);
+
+        if (userDeviceDataChanged)
+        {
+            await _syncQueue.EnqueueAsync(new SyncItem
+            {
+                ModelId = user.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Updated
+            }, ct);
+        }
+
         await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Deleted, ct);
     }
 
@@ -318,12 +340,12 @@ public sealed class DeviceService : IDeviceService
     private bool IsEncryptedNameTaken(UserDevicesData userDevicesData, string name, Guid exceptDeviceId) =>
         userDevicesData.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
 
-    private async Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct)
+    private async Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct, bool enqueueSync = true)
     {
         foreach (var device in bundle.UserDevicesData.Devices) device.GenerateIntegrityHash();
         foreach (var deleted in bundle.UserDevicesData.DeletedDevices) deleted.GenerateIntegrityHash();
         bundle.UserDevicesData.GenerateIntegrityHash();
-        await _users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, true, ct);
+        await _users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
     }
 
     private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData) => new()
@@ -371,6 +393,68 @@ public sealed class DeviceService : IDeviceService
             ModelType = SyncModelType.UserDevice,
             ChangeType = changeType
         }, ct);
+
+    private async Task RemovePendingSyncsForUserToDeviceAsync(Guid userId, Guid targetDeviceId, CancellationToken ct)
+    {
+        var pendingItems = await _syncQueueItems.ListPendingForDeviceWithItemsAsync(targetDeviceId, ct);
+        foreach (var queueItem in pendingItems)
+        {
+            if (queueItem.SyncItem is not null && await IsSyncItemOnlyForRemovedUserOrRouteAsync(queueItem.SyncItem, userId, targetDeviceId, ct))
+                _syncQueueItems.Delete(queueItem);
+        }
+    }
+
+    private async Task<bool> IsSyncItemOnlyForRemovedUserOrRouteAsync(SyncItem item, Guid removedUserId, Guid targetDeviceId, CancellationToken ct)
+    {
+        if (item.ModelType == SyncModelType.User)
+            return item.ModelId == removedUserId;
+
+        if (item.ModelType == SyncModelType.UserDevice)
+        {
+            var link = await _userDevices.GetByModelIdAsync(item.ModelId, ct);
+            return link?.UserId == removedUserId;
+        }
+
+        if (item.ModelType == SyncModelType.Group)
+        {
+            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
+            if (group is null || group.Users.All(user => user.UId != removedUserId))
+                return false;
+
+            return !await AnyOtherUserCanStillSyncToTargetAsync(
+                group.Users.Select(user => user.UId),
+                removedUserId,
+                targetDeviceId,
+                ct);
+        }
+
+        if (item.ModelType == SyncModelType.Device)
+        {
+            var links = await _userDevices.ListByDeviceAsync(item.ModelId, ct);
+            if (links.All(link => link.UserId != removedUserId))
+                return false;
+
+            return !await AnyOtherUserCanStillSyncToTargetAsync(
+                links.Where(link => !link.IsDeleted && link.IsSyncOn).Select(link => link.UserId),
+                removedUserId,
+                targetDeviceId,
+                ct);
+        }
+
+        return false;
+    }
+
+    private async Task<bool> AnyOtherUserCanStillSyncToTargetAsync(IEnumerable<Guid> userIds, Guid removedUserId, Guid targetDeviceId, CancellationToken ct)
+    {
+        foreach (var otherUserId in userIds.Where(id => id != Guid.Empty && id != removedUserId).Distinct())
+        {
+            if (await _localUserDevices.IsSyncOnAsync(otherUserId, ct) &&
+                await _userDevices.HasActiveLinkAsync(otherUserId, targetDeviceId, ct))
+                return true;
+        }
+
+        return false;
+    }
 
     private async Task RemoveCachedDeviceIfNoPendingAsync(UserDevice userDevice, CancellationToken ct)
     {

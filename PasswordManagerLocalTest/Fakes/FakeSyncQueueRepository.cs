@@ -35,6 +35,16 @@ public sealed class FakeSyncQueueRepository : ISyncQueueRepository
             return Task.FromResult(_items.Any(item => item.SyncItemId == syncItemId && item.ProcessedAt is null));
     }
 
+    public Task<bool> HasPendingForModelAsync(Guid modelId, SyncModelType modelType, CancellationToken ct = default)
+    {
+        lock (_gate)
+            return Task.FromResult(_items.Any(item =>
+                item.ProcessedAt is null &&
+                item.SyncItem is not null &&
+                item.SyncItem.ModelId == modelId &&
+                item.SyncItem.ModelType == modelType));
+    }
+
     public Task<SyncQueueItem?> GetNextPendingForDeviceAsync(Guid deviceId, CancellationToken ct = default)
     {
         lock (_gate)
@@ -54,6 +64,17 @@ public sealed class FakeSyncQueueRepository : ISyncQueueRepository
                 .Where(item => item.DeviceId == deviceId && item.ProcessedAt is null)
                 .OrderBy(item => item.QueueId)
                 .Take(Math.Max(0, limit))
+                .ToList());
+        }
+    }
+
+    public Task<IReadOnlyList<SyncQueueItem>> ListPendingForDeviceWithItemsAsync(Guid deviceId, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult((IReadOnlyList<SyncQueueItem>)_items
+                .Where(item => item.DeviceId == deviceId && item.ProcessedAt is null)
+                .OrderBy(item => item.QueueId)
                 .ToList());
         }
     }

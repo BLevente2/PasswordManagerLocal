@@ -29,6 +29,14 @@ public sealed class SyncQueueRepository : ISyncQueueRepository
         await _queue.AsNoTracking().AnyAsync(x => x.SyncItemId == syncItemId && x.ProcessedAt == null, ct);
 
 
+    public async Task<bool> HasPendingForModelAsync(Guid modelId, SyncModelType modelType, CancellationToken ct = default) =>
+        await _queue.AsNoTracking()
+            .AnyAsync(x => x.ProcessedAt == null &&
+                           x.SyncItem != null &&
+                           x.SyncItem.ModelId == modelId &&
+                           x.SyncItem.ModelType == modelType, ct);
+
+
     public async Task<SyncQueueItem?> GetNextPendingForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
         await _queue
             .Include(x => x.SyncItem)
@@ -49,6 +57,14 @@ public sealed class SyncQueueRepository : ISyncQueueRepository
             .Take(limit)
             .ToListAsync(ct);
     }
+
+
+    public async Task<IReadOnlyList<SyncQueueItem>> ListPendingForDeviceWithItemsAsync(Guid deviceId, CancellationToken ct = default) =>
+        await _queue
+            .Include(x => x.SyncItem)
+            .Where(x => x.DeviceId == deviceId && x.ProcessedAt == null)
+            .OrderBy(x => x.QueueId)
+            .ToListAsync(ct);
 
 
     public async Task<IReadOnlyList<Guid>> ListQueuedDeviceIdsAsync(Guid syncItemId, IReadOnlyList<Guid> deviceIds, CancellationToken ct = default)
