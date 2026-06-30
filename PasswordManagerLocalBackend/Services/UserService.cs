@@ -11,6 +11,7 @@ using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
 using static PasswordManagerLocalBackend.Constants.PasswordConstants;
+using static PasswordManagerLocalBackend.Constants.TombstoneConstants;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -534,6 +535,11 @@ public sealed class UserService : IUserService
 
         if (bundle.UserPasswordsData.CustomColors.Count > MaxNumberOfCustomUserColors)
             throw new InvalidOperationException("Refusing to persist too many custom colors.");
+
+        if (bundle.UserPasswordsData.DeletedPasswords.Count > MaxUserDataTombstonesPerList ||
+            bundle.UserPasswordsData.DeletedCustomColors.Count > MaxUserDataTombstonesPerList ||
+            bundle.UserDevicesData.DeletedDevices.Count > MaxUserDataTombstonesPerList)
+            throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
 
         if (bundle.UserDevicesData.Devices.Any(device =>
                 device.Id == Guid.Empty ||

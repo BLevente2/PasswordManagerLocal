@@ -4,6 +4,7 @@ using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
 using static PasswordManagerLocalBackend.Constants.PasswordConstants;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -53,7 +54,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
     public void DeleteCustomUserColor(Guid customUserColorId, UserPasswordsData passwords)
     {
         using var color = GetAndVerifyCustomUserColorById(customUserColorId, passwords);
-        AddOrUpdateDeletedCustomUserColorData(passwords, color.Id, DateTime.UtcNow);
+        TombstoneCleanupUtil.AddOrUpdateDeletedCustomUserColor(passwords, color.Id, DateTime.UtcNow);
         passwords.CustomColors.Remove(color);
         passwords.GenerateIntegrityHash();
     }
@@ -97,25 +98,6 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         color.VerifyIntegrity();
         return color;
-    }
-
-
-    private static void AddOrUpdateDeletedCustomUserColorData(
-        UserPasswordsData passwords,
-        Guid customUserColorId,
-        DateTime deletedAt)
-    {
-        var tombstone = passwords.DeletedCustomColors.FirstOrDefault(deleted => deleted.Id == customUserColorId);
-        if (tombstone is null)
-        {
-            tombstone = new DeletedCustomUserColorData { Id = customUserColorId };
-            passwords.DeletedCustomColors.Add(tombstone);
-        }
-
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
-        tombstone.GenerateIntegrityHash();
     }
 
 

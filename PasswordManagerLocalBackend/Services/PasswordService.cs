@@ -6,6 +6,7 @@ using PasswordManagerLocalBackend.Responses;
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Constants.PasswordConstants;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -58,7 +59,7 @@ public sealed class PasswordService : IPasswordService
     public void RemovePassword(Guid passwordId, UserPasswordsData passwords)
     {
         using var password = GetAndVerifyPasswordById(passwordId, passwords);
-        AddOrUpdateDeletedPasswordData(passwords, password.Id, DateTime.UtcNow);
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, password.Id, DateTime.UtcNow);
         passwords.Passwords.Remove(password);
         passwords.GenerateIntegrityHash();
     }
@@ -204,22 +205,6 @@ public sealed class PasswordService : IPasswordService
 
             throw;
         }
-    }
-
-
-    private static void AddOrUpdateDeletedPasswordData(UserPasswordsData passwords, Guid passwordId, DateTime deletedAt)
-    {
-        var tombstone = passwords.DeletedPasswords.FirstOrDefault(deleted => deleted.Id == passwordId);
-        if (tombstone is null)
-        {
-            tombstone = new DeletedPasswordData { Id = passwordId };
-            passwords.DeletedPasswords.Add(tombstone);
-        }
-
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
-        tombstone.GenerateIntegrityHash();
     }
 
 
