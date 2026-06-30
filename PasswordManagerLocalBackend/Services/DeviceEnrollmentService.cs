@@ -215,6 +215,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.InvalidCode, ex.Message, ex);
         }
 
+        RejectLocalDeviceEnrollmentCode(parsed);
+
         var directEndpointCandidates = parsed.DirectEndpoints
             .Select(ToEnrollmentEndpoint)
             .Where(endpoint => !IsLocalEndpoint(endpoint))
@@ -650,10 +652,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             using var scope = _scopeFactory.CreateScope();
             DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
+            await RejectIfPrimaryUserAlreadyLinkedToLocalDeviceAsync(scope.ServiceProvider, snapshot.PrimaryUserId, ct);
             await ImportSnapshotAsync(scope.ServiceProvider, snapshot, ct);
             await _syncRuntime.RefreshSyncEnabledAsync(ct);
             await CacheIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
             DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");
+        }
+        catch (DeviceEnrollmentException ex)
+        {
+            DeviceEnrollmentTrace.Error($"Incoming enrollment snapshot import rejected: {ex.Message}", ex);
+            return await RejectIncomingValidationAsync(ex.ErrorCode, ex.Message);
         }
         catch (Exception ex)
         {
@@ -1113,7 +1121,48 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
 
     private bool IsLocalEndpoint(EnrollmentEndpoint endpoint) =>
-        endpoint.DeviceId == _identity.LocalDeviceId || _identity.SignPublicKey.SequenceEqual(endpoint.SignPublicKey);
+        IsLocalDeviceIdentity(endpoint.DeviceId, endpoint.SignPublicKey, endpoint.TlsCertFingerprint);
+
+
+    private void RejectLocalDeviceEnrollmentCode(DeviceEnrollmentParsedCode parsed)
+    {
+        lock (_lock)
+        {
+            if (_currentSession is not null &&
+                string.Equals(_currentSession.SessionId, parsed.SessionId, StringComparison.Ordinal) &&
+                DeviceEnrollmentCode.FixedTimeEquals(_currentSession.Secret, parsed.Secret))
+                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.InvalidCode, "The enrollment code belongs to this local device.");
+        }
+
+        if (parsed.DirectEndpoints.Any(endpoint =>
+                IsLocalDeviceIdentity(endpoint.DeviceId, endpoint.SignPublicKey, endpoint.TlsCertFingerprint)))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.InvalidCode, "The enrollment code belongs to this local device.");
+    }
+
+
+    private bool IsLocalDeviceIdentity(Guid deviceId, byte[] signPublicKey, string tlsCertFingerprint)
+    {
+        if (deviceId != Guid.Empty && deviceId == _identity.LocalDeviceId)
+            return true;
+
+        if (signPublicKey.Length > 0 && _identity.SignPublicKey.SequenceEqual(signPublicKey))
+            return true;
+
+        return FingerprintMatchesLocalDevice(tlsCertFingerprint);
+    }
+
+
+    private bool FingerprintMatchesLocalDevice(string tlsCertFingerprint)
+    {
+        var remoteFingerprint = FingerprintUtil.Normalize(tlsCertFingerprint);
+        var localFingerprint = FingerprintUtil.Normalize(_identity.FingerprintHex);
+
+        if (remoteFingerprint.Length == 0 || localFingerprint.Length == 0)
+            return false;
+
+        return localFingerprint.StartsWith(remoteFingerprint, StringComparison.OrdinalIgnoreCase) ||
+               remoteFingerprint.StartsWith(localFingerprint, StringComparison.OrdinalIgnoreCase);
+    }
 
 
     private void StartAdvertisingLocked(EnrollmentSession session, IReadOnlyList<string> directHosts)
@@ -1617,12 +1666,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var now = DateTimeOffset.UtcNow;
 
-        var device = await devices.GetByIdWithUserDevicesAsync(endpoint.DeviceId, ct);
+        var device = await FindExistingDeviceForEndpointAsync(devices, endpoint, ct);
+        var link = await userDevices.GetAsync(userId, endpoint.DeviceId, ct);
 
-        if (device is not null)
+        if (link is not null)
         {
-            foreach (var existingLink in device.UserDevices)
-                existingLink.VerifyIntegrity();
+            link.VerifyIntegrity();
+            if (!link.IsDeleted)
+                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "This profile is already linked to the selected device.");
         }
 
         if (device is null)
@@ -1645,12 +1696,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
         else
         {
-            if (!device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
-                !device.PublicKey.SequenceEqual(endpoint.AgreementPublicKey) ||
-                !string.Equals(FingerprintUtil.Normalize(device.TlsCertFingerprint), FingerprintUtil.Normalize(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
-                device.DeviceType != endpoint.DeviceType)
-                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different device already uses this device identity.");
-
             device.IsTrusted = true;
             device.IsBlocked = false;
             device.BlockedReason = null;
@@ -1662,7 +1707,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             devices.Update(device);
         }
 
-        var link = await userDevices.GetAsync(userId, endpoint.DeviceId, ct);
         if (link is null)
         {
             link = new UserDevice
@@ -1678,7 +1722,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
         else
         {
-            link.VerifyIntegrity();
             link.Device = device;
             link.IsDeleted = false;
             link.DeletedAt = null;
@@ -1690,6 +1733,60 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         link.GenerateIntegrityHash();
         await EnsureLocalUserDeviceAsync(devices, localUserDevices, userId, ct);
         await unitOfWork.SaveChangesAsync(ct);
+    }
+
+
+    private async Task<Device?> FindExistingDeviceForEndpointAsync(IDeviceRepository devices, EnrollmentEndpoint endpoint, CancellationToken ct)
+    {
+        var matches = new List<Device>();
+
+        var byId = await devices.GetByIdWithUserDevicesAsync(endpoint.DeviceId, ct);
+        if (byId is not null)
+            matches.Add(byId);
+
+        var byFingerprint = await devices.GetByTlsCertFingerprintWithUserDevicesAsync(endpoint.TlsCertFingerprint, ct);
+        if (byFingerprint is not null)
+            matches.Add(byFingerprint);
+
+        var bySignPublicKey = await devices.GetBySignPublicKeyAsync(endpoint.SignPublicKey, ct);
+        if (bySignPublicKey is not null)
+            matches.Add(bySignPublicKey);
+
+        var distinctMatches = matches
+            .GroupBy(device => device.Id)
+            .Select(group => group.First())
+            .ToList();
+
+        if (distinctMatches.Count == 0)
+            return null;
+
+        if (distinctMatches.Count > 1 || distinctMatches[0].Id != endpoint.DeviceId)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A device with the same cryptographic identity already exists under a different device id.");
+
+        var device = distinctMatches[0];
+        foreach (var existingLink in device.UserDevices)
+            existingLink.VerifyIntegrity();
+
+        if (!device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
+            !device.PublicKey.SequenceEqual(endpoint.AgreementPublicKey) ||
+            !string.Equals(FingerprintUtil.Normalize(device.TlsCertFingerprint), FingerprintUtil.Normalize(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
+            device.DeviceType != endpoint.DeviceType)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different device already uses this device identity.");
+
+        return device;
+    }
+
+
+    private async Task RejectIfPrimaryUserAlreadyLinkedToLocalDeviceAsync(IServiceProvider services, Guid userId, CancellationToken ct)
+    {
+        var localUserDevices = services.GetRequiredService<ILocalUserDeviceRepository>();
+        var localLink = await localUserDevices.GetAsync(userId, ct);
+        if (localLink is null)
+            return;
+
+        localLink.VerifyIntegrity();
+        if (localLink.LocalDeviceIdentityId == _identity.LocalDeviceId)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "This profile is already linked to the local device.");
     }
 
 
@@ -2348,7 +2445,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (isLocalDevice)
                 continue;
 
-            var device = await devices.GetByIdAsync(deviceSnapshot.Id, ct);
+            var device = await FindExistingDeviceForSnapshotAsync(devices, deviceSnapshot, ct);
             if (device is null)
             {
                 device = new Device { Id = deviceSnapshot.Id };
@@ -2494,6 +2591,44 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var trustedDevices = await devices.ListTrustedUnblockedAsync(ct);
         foreach (var device in trustedDevices)
             syncIdentities.TryAdd(device);
+    }
+
+
+    private async Task<Device?> FindExistingDeviceForSnapshotAsync(IDeviceRepository devices, DeviceEnrollmentDeviceSnapshot snapshot, CancellationToken ct)
+    {
+        var matches = new List<Device>();
+
+        var byId = await devices.GetByIdAsync(snapshot.Id, ct);
+        if (byId is not null)
+            matches.Add(byId);
+
+        var byFingerprint = await devices.GetByTlsCertFingerprintAsync(snapshot.TlsCertFingerprint, ct);
+        if (byFingerprint is not null)
+            matches.Add(byFingerprint);
+
+        var bySignPublicKey = await devices.GetBySignPublicKeyAsync(snapshot.SignPublicKey, ct);
+        if (bySignPublicKey is not null)
+            matches.Add(bySignPublicKey);
+
+        var distinctMatches = matches
+            .GroupBy(device => device.Id)
+            .Select(group => group.First())
+            .ToList();
+
+        if (distinctMatches.Count == 0)
+            return null;
+
+        if (distinctMatches.Count > 1 || distinctMatches[0].Id != snapshot.Id)
+            throw new InvalidDataException("The enrollment snapshot contains conflicting duplicate device identity data.");
+
+        var device = distinctMatches[0];
+        if (!device.SignPublicKey.SequenceEqual(snapshot.SignPublicKey) ||
+            !device.PublicKey.SequenceEqual(snapshot.PublicKey) ||
+            !string.Equals(FingerprintUtil.Normalize(device.TlsCertFingerprint), FingerprintUtil.Normalize(snapshot.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
+            device.DeviceType != snapshot.DeviceType)
+            throw new InvalidDataException("The enrollment snapshot contains conflicting duplicate device identity data.");
+
+        return device;
     }
 
 
