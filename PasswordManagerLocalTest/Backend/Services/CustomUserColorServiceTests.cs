@@ -4,6 +4,7 @@ using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Services;
 using System.Security.Cryptography;
+using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
@@ -83,6 +84,41 @@ public sealed class CustomUserColorServiceTests
         });
 
         MSTestAssert.HasCount(1, passwords.CustomColors);
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public void AddCustomUserColor_WhenLimitReached_ThrowsAndDoesNotModifyData()
+    {
+        var service = new CustomUserColorService();
+        var passwords = CreateEmptyPasswords();
+
+        for (var i = 0; i < MaxNumberOfCustomUserColors; i++)
+        {
+            var color = new CustomUserColor
+            {
+                Id = Guid.NewGuid(),
+                ColorName = $"Color {i}",
+                ColorCode = $"#FF{i:X6}",
+                LastUpdatedAt = DateTime.UtcNow
+            };
+            color.GenerateIntegrityHash();
+            passwords.CustomColors.Add(color);
+        }
+        passwords.GenerateIntegrityHash();
+
+        ExpectThrows<LimitReachedException>(() =>
+        {
+            service.AddCustomUserColor(new NewCustomUserColorRequest
+            {
+                ColorName = "Overflow",
+                ColorCode = "#FFFFFFFF"
+            }, passwords);
+        });
+
+        MSTestAssert.HasCount(MaxNumberOfCustomUserColors, passwords.CustomColors);
+        MSTestAssert.IsFalse(passwords.CustomColors.Any(color => color.ColorName == "Overflow"));
         passwords.VerifyIntegrity();
     }
 

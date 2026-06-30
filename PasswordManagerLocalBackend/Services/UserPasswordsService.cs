@@ -1,4 +1,5 @@
 ﻿using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
@@ -63,4 +64,34 @@ public sealed class UserPasswordsService : IUserPasswordsService
         await _passwordService.UpdatePasswordAsync(request, bundle.UserPasswordsData);
         await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
+
+    public async Task ExportPasswordsToUserAsync(
+        Guid sourceToken,
+        ExportPasswordsToUserRequest request,
+        CancellationToken ct = default)
+    {
+        if (!request.Validate(out var errors))
+            throw new InvalidInputException(errors);
+
+        var sourceUid = _userService.GetUidFromToken(sourceToken);
+        var targetUid = _userService.GetUidFromToken(request.TargetToken);
+        if (sourceUid == targetUid)
+            throw new InvalidInputException(["TargetToken"]);
+
+        var sourceBundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(sourceToken, ct);
+        var targetBundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.TargetToken, ct);
+
+        await _passwordService.ExportPasswordsAsync(
+            request.PasswordIds!,
+            sourceBundle.UserPasswordsData,
+            targetBundle.UserPasswordsData);
+
+        await _userService.UpdateUserDataBundleAsync(
+            targetBundle,
+            request.TargetToken,
+            UserDataBlobKind.Passwords,
+            true,
+            ct);
+    }
+
 }

@@ -12,6 +12,7 @@ public interface IPasswordService
     SecurePassword GetAndVerifyPasswordById(Guid passwordId, UserPasswordsData passwords);
     Task<byte[]> GetUnsecurePasswordAsync(Guid passwordId, UserPasswordsData passwords);
     Task UpdatePasswordAsync(UpdatePasswordRequest request, UserPasswordsData passwords);
+    Task ExportPasswordsAsync(IReadOnlyList<Guid> passwordIds, UserPasswordsData sourcePasswords, UserPasswordsData targetPasswords);
     Task<byte[]> EncryptPasswordAsync(byte[] raw, UserPasswordsData passwords);
     Task<byte[]> DecryptPasswordAsync(byte[] password, UserPasswordsData passwords);
 }

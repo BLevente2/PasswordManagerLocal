@@ -5,6 +5,7 @@ using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Services;
 using System.Security.Cryptography;
 using System.Text;
+using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
@@ -79,6 +80,107 @@ public sealed class PasswordServiceTests
 
         MSTestAssert.HasCount(1, passwords.Passwords);
     }
+
+    [TestMethod]
+    public async Task AddNewPassword_WhenLimitReached_Throws()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        for (var i = 0; i < MaxNumberOfPasswords; i++)
+        {
+            var password = new SecurePassword
+            {
+                Id = Guid.NewGuid(),
+                Name = $"Password {i}",
+                Password = []
+            };
+            password.GenerateIntegrityHash();
+            passwords.Passwords.Add(password);
+        }
+        passwords.GenerateIntegrityHash();
+
+        await ExpectThrowsAsync<LimitReachedException>(async () =>
+        {
+            await service.AddNewPassword(new NewPasswordRequest
+            {
+                Name = "Too many",
+                Password = Encoding.UTF8.GetBytes("secret")
+            }, passwords);
+        });
+    }
+
+
+    [TestMethod]
+    public async Task ExportPasswordsAsync_WhenTargetLimitWouldBeExceeded_ThrowsAndDoesNotModifyTarget()
+    {
+        var service = new PasswordService();
+        var sourcePasswords = CreateEmptyPasswords();
+        var targetPasswords = CreateEmptyPasswords();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Exported",
+            Password = Encoding.UTF8.GetBytes("source-secret")
+        }, sourcePasswords);
+
+        for (var i = 0; i < MaxNumberOfPasswords; i++)
+        {
+            var password = new SecurePassword
+            {
+                Id = Guid.NewGuid(),
+                Name = $"Target Password {i}",
+                Password = []
+            };
+            password.GenerateIntegrityHash();
+            targetPasswords.Passwords.Add(password);
+        }
+        targetPasswords.GenerateIntegrityHash();
+
+        var sourceId = sourcePasswords.Passwords[0].Id;
+
+        await ExpectThrowsAsync<LimitReachedException>(async () =>
+        {
+            await service.ExportPasswordsAsync([sourceId], sourcePasswords, targetPasswords);
+        });
+
+        MSTestAssert.HasCount(MaxNumberOfPasswords, targetPasswords.Passwords);
+        MSTestAssert.IsFalse(targetPasswords.Passwords.Any(password => password.Name == "Exported"));
+        targetPasswords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public async Task ExportPasswordsAsync_CopiesPasswordWithNewIdAndTargetEncryptionKey()
+    {
+        var service = new PasswordService();
+        var sourcePasswords = CreateEmptyPasswords();
+        var targetPasswords = CreateEmptyPasswords();
+
+        var raw = Encoding.UTF8.GetBytes("source-secret");
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Description = "Description",
+            Color = "#FF010203",
+            Password = raw
+        }, sourcePasswords);
+
+        var sourcePassword = sourcePasswords.Passwords[0];
+
+        await service.ExportPasswordsAsync([sourcePassword.Id], sourcePasswords, targetPasswords);
+
+        MSTestAssert.HasCount(1, sourcePasswords.Passwords);
+        MSTestAssert.HasCount(1, targetPasswords.Passwords);
+        MSTestAssert.AreNotEqual(sourcePassword.Id, targetPasswords.Passwords[0].Id);
+        MSTestAssert.AreEqual("Email", targetPasswords.Passwords[0].Name);
+        MSTestAssert.AreEqual("Description", targetPasswords.Passwords[0].Description);
+        MSTestAssert.AreEqual("#FF010203", targetPasswords.Passwords[0].Color);
+        CollectionAssert.AreEqual(raw, await service.GetUnsecurePasswordAsync(targetPasswords.Passwords[0].Id, targetPasswords));
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+    }
+
 
     [TestMethod]
     public async Task UpdatePassword_DuplicateName_Throws()
