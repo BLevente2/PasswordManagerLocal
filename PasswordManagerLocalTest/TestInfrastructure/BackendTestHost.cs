@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Caching.Memory;
+using PasswordManagerLocalBackend;
+using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
@@ -33,6 +35,7 @@ public sealed class BackendTestHost : IDisposable
         });
 
         sc.AddSingleton<IKeyProtector, TestKeyProtector>();
+        sc.AddSingleton<IEndpoints, Endpoints>();
 
         sc.AddSingleton<IUserRepository, InMemoryUserRepository>();
         sc.AddSingleton<IUserDeviceRepository, FakeUserDeviceRepository>();

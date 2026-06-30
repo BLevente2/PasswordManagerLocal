@@ -117,6 +117,96 @@ public sealed class PasswordService : IPasswordService
     }
 
 
+    public async Task ExportPasswordsAsync(
+        IReadOnlyList<Guid> passwordIds,
+        UserPasswordsData sourcePasswords,
+        UserPasswordsData targetPasswords)
+    {
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+
+        if (passwordIds.Count == 0 || passwordIds.Count > MaxNumberOfPasswords ||
+            passwordIds.Any(id => id == Guid.Empty) ||
+            passwordIds.Distinct().Count() != passwordIds.Count)
+            throw new InvalidInputException(["PasswordIds"]);
+
+        if (targetPasswords.Passwords.Count + passwordIds.Count > MaxNumberOfPasswords)
+            throw new LimitReachedException(MaxNumberOfPasswords, "password");
+
+        var selectedPasswords = new List<SecurePassword>(passwordIds.Count);
+        foreach (var passwordId in passwordIds)
+        {
+            var password = sourcePasswords.Passwords.FirstOrDefault(pw => pw.Id == passwordId);
+            if (password is null)
+                throw new PasswordNotFoundException(passwordId);
+
+            password.VerifyIntegrity();
+            selectedPasswords.Add(password);
+        }
+
+        var targetPasswordNames = new HashSet<string>(
+            targetPasswords.Passwords.Select(password => NormalizePasswordName(password.Name)),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var password in selectedPasswords)
+        {
+            var normalizedName = NormalizePasswordName(password.Name);
+            if (!targetPasswordNames.Add(normalizedName))
+                throw new DuplicatePasswordNameException(normalizedName);
+        }
+
+        var now = DateTime.UtcNow;
+        var copiedPasswords = new List<SecurePassword>(selectedPasswords.Count);
+
+        try
+        {
+            foreach (var sourcePassword in selectedPasswords)
+            {
+                byte[] rawPassword = [];
+                try
+                {
+                    rawPassword = await DecryptPasswordAsync(sourcePassword.Password, sourcePasswords);
+
+                    var copiedPassword = new SecurePassword
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = NormalizePasswordName(sourcePassword.Name),
+                        Description = sourcePassword.Description,
+                        Color = NormalizeColorCode(sourcePassword.Color),
+                        Password = await EncryptPasswordAsync(rawPassword, targetPasswords),
+                        CreatedAt = now,
+                        LastUpdatedAt = now
+                    };
+                    copiedPassword.GenerateIntegrityHash();
+                    copiedPasswords.Add(copiedPassword);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(rawPassword);
+                }
+            }
+
+            foreach (var copiedPassword in copiedPasswords)
+            {
+                targetPasswords.DeletedPasswords.RemoveAll(deleted => deleted.Id == copiedPassword.Id);
+                targetPasswords.Passwords.Add(copiedPassword);
+            }
+
+            targetPasswords.GenerateIntegrityHash();
+        }
+        catch
+        {
+            var copiedIds = copiedPasswords.Select(password => password.Id).ToHashSet();
+            targetPasswords.Passwords.RemoveAll(password => copiedIds.Contains(password.Id));
+
+            foreach (var copiedPassword in copiedPasswords)
+                copiedPassword.Dispose();
+
+            throw;
+        }
+    }
+
+
     private static void AddOrUpdateDeletedPasswordData(UserPasswordsData passwords, Guid passwordId, DateTime deletedAt)
     {
         var tombstone = passwords.DeletedPasswords.FirstOrDefault(deleted => deleted.Id == passwordId);

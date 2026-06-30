@@ -143,6 +143,12 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserPasswordsService>(service => service.UpdatePasswordAsync(token, request, ct));
 
+    public Task ExportPasswordsToUserAsync(
+        Guid sourceToken,
+        ExportPasswordsToUserRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserPasswordsService>(service => service.ExportPasswordsToUserAsync(sourceToken, request, ct));
+
     public Task AddCustomUserColorAsync(
         Guid token,
         NewCustomUserColorRequest request,

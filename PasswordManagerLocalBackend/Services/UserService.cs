@@ -10,6 +10,7 @@ using PasswordManagerLocalBackend.Utils;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Utils.DataCodec;
 using static PasswordManagerLocalBackend.Utils.DataValidationUtil;
+using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -527,6 +528,12 @@ public sealed class UserService : IUserService
 
         if (bundle.UserPasswordsData.PasswordKey.Length == 0 || bundle.UserDevicesData is null)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
+
+        if (bundle.UserPasswordsData.Passwords.Count > MaxNumberOfPasswords)
+            throw new InvalidOperationException("Refusing to persist too many passwords.");
+
+        if (bundle.UserPasswordsData.CustomColors.Count > MaxNumberOfCustomUserColors)
+            throw new InvalidOperationException("Refusing to persist too many custom colors.");
 
         if (bundle.UserDevicesData.Devices.Any(device =>
                 device.Id == Guid.Empty ||

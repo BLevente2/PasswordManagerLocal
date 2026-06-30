@@ -3,6 +3,7 @@ using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalBackend.Responses;
+using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -27,6 +28,9 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
+
+        if (passwords.CustomColors.Count >= MaxNumberOfCustomUserColors)
+            throw new LimitReachedException(MaxNumberOfCustomUserColors, "customUserColor");
 
         var colorCode = NormalizeColorCode(request.ColorCode);
         ThrowIfCustomColorCodeExists(colorCode, passwords);
