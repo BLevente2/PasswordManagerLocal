@@ -208,7 +208,7 @@ public sealed class DeviceService : IDeviceService
         var userDeviceDataChanged = false;
         if (encryptedDevice is not null)
         {
-            AddOrUpdateDeletedDeviceData(userDevicesData, encryptedDevice.Id, now);
+            TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(userDevicesData, encryptedDevice.Id, now);
             encryptedDevice.Dispose();
             userDevicesData.Devices.Remove(encryptedDevice);
             userDeviceDataChanged = true;
@@ -307,22 +307,6 @@ public sealed class DeviceService : IDeviceService
         userDevicesData.Devices.Add(deviceData);
         return true;
     }
-
-    private static void AddOrUpdateDeletedDeviceData(UserDevicesData userDevicesData, Guid deviceId, DateTimeOffset deletedAt)
-    {
-        var tombstone = userDevicesData.DeletedDevices.FirstOrDefault(deleted => deleted.Id == deviceId);
-        if (tombstone is null)
-        {
-            tombstone = new DeletedUserDeviceData { Id = deviceId };
-            userDevicesData.DeletedDevices.Add(tombstone);
-        }
-
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
-        tombstone.GenerateIntegrityHash();
-    }
-
 
     private string BuildUniqueEncryptedDeviceName(UserDevicesData userDevicesData, string requestedName, Guid deviceId)
     {

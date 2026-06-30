@@ -424,12 +424,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         changed |= local.Passwords.Count != mergedPasswords.Count || local.DeletedPasswords.Count != mergedDeleted.Count;
         if (!changed)
-            return false;
+            return TombstoneCleanupUtil.EnforceDeletedPasswordTombstoneLimit(local.DeletedPasswords);
 
         DisposeItemsNotKept(local.Passwords, mergedPasswords);
         DisposeItemsNotKept(local.DeletedPasswords, mergedDeleted);
         local.Passwords = mergedPasswords.OrderBy(password => password.Name, StringComparer.OrdinalIgnoreCase).ThenBy(password => password.Id).ToList();
         local.DeletedPasswords = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        TombstoneCleanupUtil.EnforceDeletedPasswordTombstoneLimit(local.DeletedPasswords);
         return true;
     }
 
@@ -485,7 +486,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         changed |= deduplicatedColors.Count != mergedColors.Count;
         changed |= local.CustomColors.Count != deduplicatedColors.Count || local.DeletedCustomColors.Count != mergedDeleted.Count;
         if (!changed)
-            return false;
+            return TombstoneCleanupUtil.EnforceDeletedCustomUserColorTombstoneLimit(local.DeletedCustomColors);
 
         DisposeItemsNotKept(local.CustomColors, deduplicatedColors);
         DisposeItemsNotKept(local.DeletedCustomColors, mergedDeleted);
@@ -495,6 +496,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             .ThenBy(color => color.Id)
             .ToList();
         local.DeletedCustomColors = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        TombstoneCleanupUtil.EnforceDeletedCustomUserColorTombstoneLimit(local.DeletedCustomColors);
         return true;
     }
 
@@ -666,12 +668,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         changed |= local.Devices.Count != mergedDevices.Count || local.DeletedDevices.Count != mergedDeleted.Count;
         if (!changed)
-            return false;
+            return TombstoneCleanupUtil.EnforceDeletedUserDeviceTombstoneLimit(local.DeletedDevices);
 
         DisposeItemsNotKept(local.Devices, mergedDevices);
         DisposeItemsNotKept(local.DeletedDevices, mergedDeleted);
         local.Devices = ResolveDuplicateDeviceNamesForSync(mergedDevices);
         local.DeletedDevices = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        TombstoneCleanupUtil.EnforceDeletedUserDeviceTombstoneLimit(local.DeletedDevices);
         return true;
     }
 

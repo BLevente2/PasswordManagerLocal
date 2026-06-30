@@ -1,5 +1,6 @@
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Models;
+using static PasswordManagerLocalBackend.Constants.TombstoneConstants;
 
 namespace PasswordManagerLocalTest.Fakes;
 
@@ -14,7 +15,17 @@ public sealed class FakeSyncTombstoneRepository : ISyncTombstoneRepository
 
     public Task UpsertAsync(Guid modelId, SyncModelType modelType, long deletedAtTs, CancellationToken ct = default)
     {
-        _items[(modelId, modelType)] = new SyncTombstone
+        var key = (modelId, modelType);
+        if (_items.TryGetValue(key, out var existing))
+        {
+            if (deletedAtTs > existing.DeletedAtTs)
+                existing.DeletedAtTs = deletedAtTs;
+
+            return Task.CompletedTask;
+        }
+
+        RemoveOldestTombstonesToMakeRoom();
+        _items[key] = new SyncTombstone
         {
             ModelId = modelId,
             ModelType = modelType,
@@ -25,4 +36,18 @@ public sealed class FakeSyncTombstoneRepository : ISyncTombstoneRepository
 
     public void Delete(SyncTombstone tombstone) =>
         _items.Remove((tombstone.ModelId, tombstone.ModelType));
+
+
+    private void RemoveOldestTombstonesToMakeRoom()
+    {
+        if (MaxSyncTombstones < 1 || _items.Count < MaxSyncTombstones)
+            return;
+
+        var oldest = _items.Values
+            .OrderBy(tombstone => tombstone.DeletedAtTs)
+            .ThenBy(tombstone => tombstone.Id)
+            .FirstOrDefault();
+        if (oldest is not null)
+            _items.Remove((oldest.ModelId, oldest.ModelType));
+    }
 }

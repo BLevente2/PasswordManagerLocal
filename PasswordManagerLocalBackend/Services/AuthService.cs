@@ -162,9 +162,11 @@ public sealed class AuthService : IAuthService
         _keys.SetUserKey(token, key);
 
         var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, token, ct);
+        var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, DateTimeOffset.UtcNow);
         UpdateCurrentDeviceLastLoginDate(bundle.UserDevicesData);
+        modifiedBlobs |= UserDataBlobKind.Devices;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        await _userService.UpdateUserDataBundleAsync(bundle, user, key, UserDataBlobKind.Devices, true, ct);
+        await _userService.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
         _keys.SetUserBlobKeys(token, bundle.UserData);
         _cache.SetUserDataBundle(token, bundle);
         return token;
