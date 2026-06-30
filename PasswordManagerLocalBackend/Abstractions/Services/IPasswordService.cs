@@ -6,7 +6,7 @@ namespace PasswordManagerLocalBackend.Abstractions.Services;
 
 public interface IPasswordService
 {
-    IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoRespponses(UserPasswordsData passwords);
+    IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoResponses(UserPasswordsData passwords);
     Task AddNewPassword(NewPasswordRequest request, UserPasswordsData passwords);
     void RemovePassword(Guid passwordId, UserPasswordsData passwords);
     SecurePassword GetAndVerifyPasswordById(Guid passwordId, UserPasswordsData passwords);

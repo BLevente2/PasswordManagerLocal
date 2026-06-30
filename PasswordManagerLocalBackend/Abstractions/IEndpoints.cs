@@ -39,9 +39,12 @@ public interface IEndpoints
     Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default);
 
 
-    Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default);
+    Task<SavedPasswordsResponse> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default);
     Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default);
     Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default);
     Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default);
     Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default);
+    Task AddCustomUserColorAsync(Guid token, NewCustomUserColorRequest request, CancellationToken ct = default);
+    Task DeleteCustomUserColorAsync(Guid token, Guid customUserColorId, CancellationToken ct = default);
+    Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default);
 }

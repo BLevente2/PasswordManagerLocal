@@ -31,10 +31,11 @@ public sealed class UserPasswordsServiceTests
         });
 
         cache.InvalidateToken(token);
-        var list = await svc.GetSavedPasswordsAsync(token);
+        var response = await svc.GetSavedPasswordsAsync(token);
 
-        MSTestAssert.HasCount(1, list);
-        MSTestAssert.AreEqual("Email", list[0].Name);
+        MSTestAssert.HasCount(1, response.Passwords);
+        MSTestAssert.IsEmpty(response.CustomColors);
+        MSTestAssert.AreEqual("Email", response.Passwords[0].Name);
     }
 
 
@@ -63,8 +64,8 @@ public sealed class UserPasswordsServiceTests
             });
         });
 
-        var list = await svc.GetSavedPasswordsAsync(token);
-        MSTestAssert.HasCount(1, list);
+        var response = await svc.GetSavedPasswordsAsync(token);
+        MSTestAssert.HasCount(1, response.Passwords);
     }
 
     [TestMethod]
@@ -84,14 +85,14 @@ public sealed class UserPasswordsServiceTests
             Password = Encoding.UTF8.GetBytes("pw")
         });
 
-        var list = await svc.GetSavedPasswordsAsync(token);
-        var id = list[0].Id;
+        var response = await svc.GetSavedPasswordsAsync(token);
+        var id = response.Passwords[0].Id;
 
         await svc.RemovePasswordAsync(token, id);
 
         cache.InvalidateToken(token);
         var after = await svc.GetSavedPasswordsAsync(token);
-        MSTestAssert.IsEmpty(after);
+        MSTestAssert.IsEmpty(after.Passwords);
     }
 
     [TestMethod]
@@ -112,8 +113,8 @@ public sealed class UserPasswordsServiceTests
             Password = raw
         });
 
-        var list = await svc.GetSavedPasswordsAsync(token);
-        var decrypted = await svc.GetUnsecurePasswordAsync(token, list[0].Id);
+        var response = await svc.GetSavedPasswordsAsync(token);
+        var decrypted = await svc.GetUnsecurePasswordAsync(token, response.Passwords[0].Id);
 
         CollectionAssert.AreEqual(raw, decrypted);
     }
@@ -135,8 +136,8 @@ public sealed class UserPasswordsServiceTests
             Password = Encoding.UTF8.GetBytes("oldpw")
         });
 
-        var list = await svc.GetSavedPasswordsAsync(token);
-        var id = list[0].Id;
+        var response = await svc.GetSavedPasswordsAsync(token);
+        var id = response.Passwords[0].Id;
 
         await svc.UpdatePasswordAsync(token, new UpdatePasswordRequest
         {
@@ -149,10 +150,38 @@ public sealed class UserPasswordsServiceTests
         var updated = await svc.GetSavedPasswordsAsync(token);
         var decrypted = await svc.GetUnsecurePasswordAsync(token, id);
 
-        MSTestAssert.HasCount(1, updated);
-        MSTestAssert.AreEqual("New", updated[0].Name);
+        MSTestAssert.HasCount(1, updated.Passwords);
+        MSTestAssert.AreEqual("New", updated.Passwords[0].Name);
         CollectionAssert.AreEqual(Encoding.UTF8.GetBytes("newpw"), decrypted);
     }
+
+
+    [TestMethod]
+    public async Task CustomUserColors_AreIncludedInSavedPasswordsResponse()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors"));
+
+        await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+        {
+            ColorName = "Work",
+            ColorCode = "#FF123456"
+        });
+
+        cache.InvalidateToken(token);
+        var response = await passwordService.GetSavedPasswordsAsync(token);
+        MSTestAssert.IsEmpty(response.Passwords);
+        MSTestAssert.HasCount(1, response.CustomColors);
+        MSTestAssert.AreEqual("Work", response.CustomColors[0].ColorName);
+        MSTestAssert.AreEqual("#FF123456", response.CustomColors[0].ColorCode);
+    }
+
 
     [TestMethod]
     public async Task InvalidToken_Throws()

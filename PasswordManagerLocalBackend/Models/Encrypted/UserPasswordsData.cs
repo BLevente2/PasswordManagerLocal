@@ -9,6 +9,8 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
 
     public List<SecurePassword> Passwords { get; set; } = [];
     public List<DeletedPasswordData> DeletedPasswords { get; set; } = [];
+    public List<CustomUserColor> CustomColors { get; set; } = [];
+    public List<DeletedCustomUserColorData> DeletedCustomColors { get; set; } = [];
     public byte[] PasswordKey { get; set; } = [];
 
     public void Dispose()
@@ -28,9 +30,13 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
         {
             Passwords.ForEach(pw => pw.Dispose());
             DeletedPasswords.ForEach(deleted => deleted.Dispose());
+            CustomColors.ForEach(color => color.Dispose());
+            DeletedCustomColors.ForEach(deleted => deleted.Dispose());
         }
         Passwords.Clear();
         DeletedPasswords.Clear();
+        CustomColors.Clear();
+        DeletedCustomColors.Clear();
 
         _disposed = true;
     }
@@ -44,6 +50,12 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
                 hash.WriteBytes(password.IntegrityHash);
             hash.Write(DeletedPasswords.Count);
             foreach (var deleted in DeletedPasswords.OrderBy(deleted => deleted.Id))
+                hash.WriteBytes(deleted.IntegrityHash);
+            hash.Write(CustomColors.Count);
+            foreach (var color in CustomColors.OrderBy(color => color.Id))
+                hash.WriteBytes(color.IntegrityHash);
+            hash.Write(DeletedCustomColors.Count);
+            foreach (var deleted in DeletedCustomColors.OrderBy(deleted => deleted.Id))
                 hash.WriteBytes(deleted.IntegrityHash);
         });
 

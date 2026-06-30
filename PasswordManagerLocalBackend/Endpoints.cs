@@ -115,10 +115,10 @@ public sealed class Endpoints : IEndpoints
     public Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default) =>
         RunAsync<IRememberMeService>(service => service.SetRememberMeAsync(token, rememberMe, ct));
 
-    public Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(
+    public Task<SavedPasswordsResponse> GetSavedPasswordsAsync(
         Guid token,
         CancellationToken ct = default) =>
-        RunAsync<IUserPasswordsService, IReadOnlyList<PasswordInfoResponse>>(service =>
+        RunAsync<IUserPasswordsService, SavedPasswordsResponse>(service =>
             service.GetSavedPasswordsAsync(token, ct));
 
     public Task AddNewPasswordAsync(
@@ -142,6 +142,24 @@ public sealed class Endpoints : IEndpoints
         UpdatePasswordRequest request,
         CancellationToken ct = default) =>
         RunAsync<IUserPasswordsService>(service => service.UpdatePasswordAsync(token, request, ct));
+
+    public Task AddCustomUserColorAsync(
+        Guid token,
+        NewCustomUserColorRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserCustomColorService>(service => service.AddCustomUserColorAsync(token, request, ct));
+
+    public Task DeleteCustomUserColorAsync(
+        Guid token,
+        Guid customUserColorId,
+        CancellationToken ct = default) =>
+        RunAsync<IUserCustomColorService>(service => service.DeleteCustomUserColorAsync(token, customUserColorId, ct));
+
+    public Task UpdateCustomUserColorAsync(
+        Guid token,
+        UpdateCustomUserColorRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserCustomColorService>(service => service.UpdateCustomUserColorAsync(token, request, ct));
 
     private async Task RunAsync<TService>(Func<TService, Task> action)
         where TService : notnull

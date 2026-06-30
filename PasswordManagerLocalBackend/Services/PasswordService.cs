@@ -11,12 +11,15 @@ namespace PasswordManagerLocalBackend.Services;
 
 public sealed class PasswordService : IPasswordService
 {
-    public IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoRespponses(UserPasswordsData passwords)
+    public IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoResponses(UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
-        var passwordInfos = new List<PasswordInfoResponse>();
-        passwords.Passwords.ForEach(pw => passwordInfos.Add(PasswordInfoResponse.ConvertToPasswordInfoResponse(pw)));
-        return passwordInfos;
+
+        return passwords.Passwords
+            .OrderBy(password => password.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(password => password.Id)
+            .Select(PasswordInfoResponse.ConvertToPasswordInfoResponse)
+            .ToList();
     }
 
 
@@ -33,15 +36,16 @@ public sealed class PasswordService : IPasswordService
         var normalizedName = NormalizePasswordName(request.Name);
         ThrowIfPasswordNameExists(normalizedName, passwords);
 
+        var now = DateTime.UtcNow;
         var securePassword = new SecurePassword
         {
             Id = Guid.NewGuid(),
             Name = normalizedName,
             Description = request.Description,
-            Color = request.Color,
+            Color = NormalizeColorCode(request.Color),
             Password = await EncryptPasswordAsync(request.Password, passwords),
-            CreatedAt = DateTime.UtcNow,
-            LastUpdatedAt = DateTime.UtcNow
+            CreatedAt = now,
+            LastUpdatedAt = now
         };
         securePassword.GenerateIntegrityHash();
 
@@ -98,7 +102,7 @@ public sealed class PasswordService : IPasswordService
             password.Description = request.Description;
 
         if (request.Color is not null)
-            password.Color = request.Color;
+            password.Color = NormalizeColorCode(request.Color);
 
         if (request.Password is not null)
         {
@@ -129,10 +133,13 @@ public sealed class PasswordService : IPasswordService
     }
 
 
-    private string NormalizePasswordName(string name) => name.Trim();
+    private static string NormalizePasswordName(string name) => name.Trim();
 
 
-    private void ThrowIfPasswordNameExists(string name, UserPasswordsData passwords, Guid? ignoredPasswordId = null)
+    private static string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
+
+
+    private static void ThrowIfPasswordNameExists(string name, UserPasswordsData passwords, Guid? ignoredPasswordId = null)
     {
         var exists = passwords.Passwords.Any(password =>
             (!ignoredPasswordId.HasValue || password.Id != ignoredPasswordId.Value)

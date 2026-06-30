@@ -483,6 +483,10 @@ public sealed class UserService : IUserService
             password.GenerateIntegrityHash();
         foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
             deleted.GenerateIntegrityHash();
+        foreach (var color in bundle.UserPasswordsData.CustomColors)
+            color.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
+            deleted.GenerateIntegrityHash();
         bundle.UserPasswordsData.GenerateIntegrityHash();
 
         foreach (var device in bundle.UserDevicesData.Devices)
@@ -539,6 +543,22 @@ public sealed class UserService : IUserService
             .GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
             .Any(group => group.Count() != 1))
             throw new InvalidOperationException("Refusing to persist duplicate device names.");
+
+        if (bundle.UserPasswordsData.CustomColors.Any(color =>
+                color.Id == Guid.Empty ||
+                !IsValidARGBColor(color.ColorCode) ||
+                !IsValidCustomUserColorName(color.ColorName)))
+            throw new InvalidOperationException("Refusing to persist invalid custom color data.");
+
+        if (bundle.UserPasswordsData.CustomColors
+            .GroupBy(color => color.Id)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate custom color data.");
+
+        if (bundle.UserPasswordsData.CustomColors
+            .GroupBy(color => color.ColorCode.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate custom color codes.");
     }
 
     private void VerifyUserDataIntegrity(UserData userData) =>
@@ -556,6 +576,10 @@ public sealed class UserService : IUserService
         foreach (var password in bundle.UserPasswordsData.Passwords)
             password.VerifyIntegrity();
         foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.VerifyIntegrity();
+        foreach (var color in bundle.UserPasswordsData.CustomColors)
+            color.VerifyIntegrity();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
             deleted.VerifyIntegrity();
         VerifyStoredChildHash(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));
 
