@@ -9,5 +9,7 @@ namespace PasswordManagerLocalBackend.Utils;
 [JsonSerializable(typeof(UserPasswordsData))]
 [JsonSerializable(typeof(UserDevicesData))]
 [JsonSerializable(typeof(DeletedPasswordData))]
+[JsonSerializable(typeof(CustomUserColor))]
+[JsonSerializable(typeof(DeletedCustomUserColorData))]
 [JsonSerializable(typeof(DeletedUserDeviceData))]
 internal partial class BackendJsonSerializerContext : JsonSerializerContext;

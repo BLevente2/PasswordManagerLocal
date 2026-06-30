@@ -27,4 +27,6 @@ public static class DataLengthConstants
 
     public const int UserDeviceNameMinLength = 1;
     public const int UserDeviceNameMaxLength = 64;
+
+    public const int CustomUserColorNameMaxLength = 50;
 }

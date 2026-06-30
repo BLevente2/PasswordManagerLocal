@@ -148,12 +148,13 @@ public sealed class PasswordServiceTests
 
         passwords.Passwords.Add(pw);
         passwords.GenerateIntegrityHash();
+        var passwordId = pw.Id;
 
-        service.RemovePassword(pw.Id, passwords);
+        service.RemovePassword(passwordId, passwords);
 
         MSTestAssert.IsEmpty(passwords.Passwords);
         MSTestAssert.HasCount(1, passwords.DeletedPasswords);
-        MSTestAssert.AreEqual(pw.Id, passwords.DeletedPasswords[0].Id);
+        MSTestAssert.AreEqual(passwordId, passwords.DeletedPasswords[0].Id);
         passwords.VerifyIntegrity();
     }
 
@@ -242,6 +243,7 @@ public sealed class PasswordServiceTests
         await ExpectThrowsAsync<InvalidDataIntegrityException>(() =>
             service.GetUnsecurePasswordAsync(stored.Id, passwords));
     }
+
 
     [TestMethod]
     public async Task EncryptDecrypt_Roundtrip_Works()

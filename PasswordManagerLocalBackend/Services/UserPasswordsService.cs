@@ -9,19 +9,28 @@ public sealed class UserPasswordsService : IUserPasswordsService
 {
     private readonly IUserService _userService;
     private readonly IPasswordService _passwordService;
+    private readonly ICustomUserColorService _customUserColorService;
 
-    public UserPasswordsService(IUserService userService, IPasswordService passwordService)
+    public UserPasswordsService(
+        IUserService userService,
+        IPasswordService passwordService,
+        ICustomUserColorService customUserColorService)
     {
         _userService = userService;
         _passwordService = passwordService;
+        _customUserColorService = customUserColorService;
     }
 
 
 
-    public async Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
+    public async Task<SavedPasswordsResponse> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
     {
         var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
-        return _passwordService.ConvertToPasswordInfoRespponses(bundle.UserPasswordsData);
+        return new SavedPasswordsResponse
+        {
+            Passwords = _passwordService.ConvertToPasswordInfoResponses(bundle.UserPasswordsData),
+            CustomColors = _customUserColorService.ConvertToCustomUserColorInfoResponses(bundle.UserPasswordsData)
+        };
     }
 
 

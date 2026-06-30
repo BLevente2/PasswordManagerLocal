@@ -178,11 +178,13 @@ public sealed class DataCachingService : IDataCachingService
         if (TryGetUserData(token, out var cached))
             return cached;
 
-        var loaded = await loader(ct);
-        if (loaded is not null)
-            SetUserData(token, loaded);
+        var key = UserKey(token);
+        var result = await _cache.GetOrCreateAsync(key, () => loader(ct), EntryOptions(token, _userTtl));
 
-        return loaded;
+        if (result != null)
+            _currentByKey[key] = result;
+
+        return result;
     }
 
     public Task<UserData?> GetOrLoadUserDataAsync(Guid token, Func<Task<UserData?>> loader)

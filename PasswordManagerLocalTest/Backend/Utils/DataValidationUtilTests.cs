@@ -59,6 +59,31 @@ public sealed class DataValidationUtilTests
         MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("#GGFF7FA0"));
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void CustomUserColorRequests_ValidateOptionalNameAndMandatoryArgbColor()
+    {
+        var valid = new NewCustomUserColorRequest
+        {
+            ColorName = null,
+            ColorCode = "#FF112233"
+        };
+
+        MSTestAssert.IsTrue(valid.Validate(out var validErrors));
+        MSTestAssert.IsEmpty(validErrors);
+
+        var invalid = new NewCustomUserColorRequest
+        {
+            ColorName = string.Empty,
+            ColorCode = "112233"
+        };
+
+        MSTestAssert.IsFalse(invalid.Validate(out var invalidErrors));
+        CollectionAssert.AreEquivalent(new[] { "ColorName", "ColorCode" }, invalidErrors);
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]

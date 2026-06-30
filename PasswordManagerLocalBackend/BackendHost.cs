@@ -190,7 +190,9 @@ namespace PasswordManagerLocalBackend
                     services.AddScoped<IDeviceIdentityRepository, DeviceIdentityRepository>();
 
                     services.AddScoped<IUserPasswordsService, UserPasswordsService>();
+                    services.AddScoped<IUserCustomColorService, UserCustomColorService>();
                     services.AddScoped<IPasswordService, PasswordService>();
+                    services.AddScoped<ICustomUserColorService, CustomUserColorService>();
                     services.AddScoped<IGroupService, GroupService>();
                     services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
                     services.AddScoped<IAuthService, AuthService>();

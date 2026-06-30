@@ -62,6 +62,16 @@ public static class DataValidationUtil
     }
 
 
+    public static bool IsValidCustomUserColorName(string? colorName)
+    {
+        if (colorName is null)
+            return true;
+
+        var n = colorName.Trim();
+        return n.Length > 0 && n.Length <= CustomUserColorNameMaxLength;
+    }
+
+
     public static bool IsValidARGBColor(string color)
     {
         if (color.Length != ARGBColorLength)

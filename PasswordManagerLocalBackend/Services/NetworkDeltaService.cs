@@ -365,6 +365,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (!local.PasswordKey.SequenceEqual(incoming.PasswordKey))
             return false;
 
+        var passwordEntriesChanged = MergePasswordEntriesForSync(local, incoming);
+        var customColorsChanged = MergeCustomColorsForSync(local, incoming);
+        return passwordEntriesChanged || customColorsChanged;
+    }
+
+
+    private static bool MergePasswordEntriesForSync(UserPasswordsData local, UserPasswordsData incoming)
+    {
         var changed = false;
         var localPasswords = local.Passwords.ToDictionary(password => password.Id);
         var incomingPasswords = incoming.Passwords.ToDictionary(password => password.Id);
@@ -419,6 +427,143 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         return true;
     }
 
+
+    private static bool MergeCustomColorsForSync(UserPasswordsData local, UserPasswordsData incoming)
+    {
+        var changed = false;
+        var localColors = local.CustomColors.ToDictionary(color => color.Id);
+        var incomingColors = incoming.CustomColors.ToDictionary(color => color.Id);
+        var localDeleted = local.DeletedCustomColors.ToDictionary(deleted => deleted.Id);
+        var incomingDeleted = incoming.DeletedCustomColors.ToDictionary(deleted => deleted.Id);
+        var ids = localColors.Keys
+            .Concat(incomingColors.Keys)
+            .Concat(localDeleted.Keys)
+            .Concat(incomingDeleted.Keys)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        var mergedColors = new List<CustomUserColor>();
+        var mergedDeleted = new List<DeletedCustomUserColorData>();
+        foreach (var id in ids)
+        {
+            localColors.TryGetValue(id, out var localColor);
+            incomingColors.TryGetValue(id, out var incomingColor);
+            localDeleted.TryGetValue(id, out var localDeletion);
+            incomingDeleted.TryGetValue(id, out var incomingDeletion);
+
+            var newestColor = NewerCustomColor(localColor, incomingColor);
+            var newestDeletion = NewerDeletedCustomColor(localDeletion, incomingDeletion);
+            var colorTime = newestColor?.LastUpdatedAt ?? DateTime.MinValue;
+            var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+
+            if (newestDeletion is not null && deletionTime >= colorTime)
+            {
+                mergedDeleted.Add(newestDeletion);
+                if (localColor is not null || !ReferenceEquals(localDeletion, newestDeletion))
+                    changed = true;
+                continue;
+            }
+
+            if (newestColor is not null)
+            {
+                newestColor.ColorCode = NormalizeCustomColorCodeForSync(newestColor.ColorCode);
+                newestColor.ColorName = NormalizeCustomColorNameForSync(newestColor.ColorName);
+                mergedColors.Add(newestColor);
+                if (!ReferenceEquals(localColor, newestColor) || localDeletion is not null)
+                    changed = true;
+            }
+        }
+
+        var deduplicatedColors = ResolveDuplicateCustomColorCodesForSync(mergedColors);
+        changed |= deduplicatedColors.Count != mergedColors.Count;
+        changed |= local.CustomColors.Count != deduplicatedColors.Count || local.DeletedCustomColors.Count != mergedDeleted.Count;
+        if (!changed)
+            return false;
+
+        DisposeItemsNotKept(local.CustomColors, deduplicatedColors);
+        DisposeItemsNotKept(local.DeletedCustomColors, mergedDeleted);
+        local.CustomColors = deduplicatedColors
+            .OrderBy(color => color.ColorName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(color => color.ColorCode, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(color => color.Id)
+            .ToList();
+        local.DeletedCustomColors = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        return true;
+    }
+
+
+    private static CustomUserColor? NewerCustomColor(CustomUserColor? first, CustomUserColor? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.LastUpdatedAt > first.LastUpdatedAt)
+            return second;
+        return first;
+    }
+
+
+    private static DeletedCustomUserColorData? NewerDeletedCustomColor(DeletedCustomUserColorData? first, DeletedCustomUserColorData? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.DeletedAt > first.DeletedAt)
+            return second;
+        return first;
+    }
+
+
+    private static List<CustomUserColor> ResolveDuplicateCustomColorCodesForSync(List<CustomUserColor> colors)
+    {
+        var keptByCode = new Dictionary<string, CustomUserColor>(StringComparer.OrdinalIgnoreCase);
+        foreach (var color in colors.OrderByDescending(color => color.LastUpdatedAt).ThenBy(color => color.Id))
+        {
+            var normalizedCode = NormalizeCustomColorCodeForSync(color.ColorCode);
+            if (normalizedCode.Length == 0)
+                continue;
+
+            color.ColorCode = normalizedCode;
+            color.ColorName = NormalizeCustomColorNameForSync(color.ColorName);
+
+            if (!keptByCode.ContainsKey(normalizedCode))
+                keptByCode[normalizedCode] = color;
+        }
+
+        var kept = keptByCode.Values.ToList();
+        foreach (var color in colors)
+        {
+            if (!kept.Any(keptColor => ReferenceEquals(keptColor, color)))
+                color.Dispose();
+        }
+
+        return kept;
+    }
+
+
+    private static string NormalizeCustomColorCodeForSync(string colorCode)
+    {
+        var normalized = colorCode.Trim().ToUpperInvariant();
+        if (normalized.Length != ARGBColorLength || normalized[0] != '#')
+            return string.Empty;
+
+        return uint.TryParse(normalized.AsSpan(1), System.Globalization.NumberStyles.HexNumber, null, out _)
+            ? normalized
+            : string.Empty;
+    }
+
+
+    private static string? NormalizeCustomColorNameForSync(string? colorName)
+    {
+        if (colorName is null)
+            return null;
+
+        var trimmed = colorName.Trim();
+        return trimmed.Length == 0 ? null : trimmed;
+    }
 
 
 
@@ -668,6 +813,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             password.GenerateIntegrityHash();
         foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
             deleted.GenerateIntegrityHash();
+        foreach (var color in bundle.UserPasswordsData.CustomColors)
+            color.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
+            deleted.GenerateIntegrityHash();
         bundle.UserPasswordsData.GenerateIntegrityHash();
 
         foreach (var device in bundle.UserDevicesData.Devices)
@@ -695,6 +844,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         foreach (var password in bundle.UserPasswordsData.Passwords)
             password.VerifyIntegrity();
         foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
+            deleted.VerifyIntegrity();
+        foreach (var color in bundle.UserPasswordsData.CustomColors)
+            color.VerifyIntegrity();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
             deleted.VerifyIntegrity();
         bundle.UserPasswordsData.VerifyIntegrity();
         VerifyStoredUserBlobHashForSync(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));
