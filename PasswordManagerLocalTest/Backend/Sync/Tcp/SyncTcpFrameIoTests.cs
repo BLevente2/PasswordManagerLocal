@@ -21,7 +21,8 @@ public sealed class SyncTcpFrameIoTests
             UserId = Guid.NewGuid().ToString("N"),
             DeviceId = Guid.NewGuid().ToString("N"),
             DatasetHash = Google.Protobuf.ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
-            SignPub = Google.Protobuf.ByteString.CopyFrom(Enumerable.Repeat((byte)4, 32).ToArray())
+            SignPub = Google.Protobuf.ByteString.CopyFrom(Enumerable.Repeat((byte)4, 32).ToArray()),
+            DatabaseVersion = DatabaseConstants.CurrentDbVersion
         };
         await using var stream = new MemoryStream();
 
@@ -36,6 +37,7 @@ public sealed class SyncTcpFrameIoTests
         MSTestAssert.AreEqual(message.DeviceId, restored.DeviceId);
         CollectionAssert.AreEqual(message.DatasetHash.ToByteArray(), restored.DatasetHash.ToByteArray());
         CollectionAssert.AreEqual(message.SignPub.ToByteArray(), restored.SignPub.ToByteArray());
+        MSTestAssert.AreEqual(DatabaseConstants.CurrentDbVersion, restored.DatabaseVersion);
     }
 
     [TestMethod]

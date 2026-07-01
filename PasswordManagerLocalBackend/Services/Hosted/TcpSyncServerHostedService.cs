@@ -231,10 +231,14 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                 switch (frame.Type)
                 {
                     case SyncTcpMessageType.HelloRequest:
-                        await HandleHelloAsync(stream, frame, context, ct);
+                        if (!await HandleHelloAsync(stream, frame, context, ct))
+                            return;
                         break;
 
                     case SyncTcpMessageType.PushDeltaStart:
+                        if (!context.SyncHelloAccepted)
+                            throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "A successful sync hello is required before sending deltas.");
+
                         await HandlePushDeltaAsync(stream, context, ct);
                         return;
 
@@ -243,7 +247,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                         return;
 
                     case SyncTcpMessageType.CompleteDeviceEnrollmentStart:
-                        await HandleCompleteDeviceEnrollmentAsync(stream, context, ct);
+                        await HandleCompleteDeviceEnrollmentAsync(stream, frame, context, ct);
                         return;
 
                     default:
@@ -265,11 +269,18 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     }
 
 
-    private async Task HandleHelloAsync(Stream stream, SyncTcpFrame frame, PeerConnectionContext context, CancellationToken ct)
+    private async Task<bool> HandleHelloAsync(Stream stream, SyncTcpFrame frame, PeerConnectionContext context, CancellationToken ct)
     {
         var request = frame.Parse(HelloRequest.Parser);
         var reply = await _handler.HelloAsync(request, context, ct);
+        if (reply.Ok)
+        {
+            context.RemoteDatabaseVersion = request.DatabaseVersion;
+            context.SyncHelloAccepted = true;
+        }
+
         await WriteFrameAsync(stream, SyncTcpMessageType.HelloReply, reply, ct);
+        return reply.Ok;
     }
 
 
@@ -304,9 +315,10 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     }
 
 
-    private async Task HandleCompleteDeviceEnrollmentAsync(Stream stream, PeerConnectionContext context, CancellationToken ct)
+    private async Task HandleCompleteDeviceEnrollmentAsync(Stream stream, SyncTcpFrame startFrame, PeerConnectionContext context, CancellationToken ct)
     {
-        var reply = await _handler.CompleteDeviceEnrollmentStreamAsync(ReadEnrollmentChunksAsync(stream, ct), context, ct);
+        var request = startFrame.Parse(CompleteDeviceEnrollmentStartRequest.Parser);
+        var reply = await _handler.CompleteDeviceEnrollmentStreamAsync(ReadEnrollmentChunksAsync(stream, ct), context, request.SourceDatabaseVersion, ct);
         await WriteFrameAsync(stream, SyncTcpMessageType.CompleteDeviceEnrollmentReply, reply, ct);
     }
 

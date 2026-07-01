@@ -33,6 +33,7 @@ public sealed class SyncPeerProtocolHandler
 
         try
         {
+            ValidateIncomingDatabaseVersionForSync(request.DatabaseVersion);
             remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, request.DeviceId, request.SignPub.ToByteArray(), ct);
             return new HelloReply { Ok = true };
         }
@@ -55,6 +56,10 @@ public sealed class SyncPeerProtocolHandler
 
         try
         {
+            if (!context.RemoteDatabaseVersion.HasValue)
+                throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "Remote database version was not received before sync deltas.");
+
+            ValidateIncomingDatabaseVersionForSync(context.RemoteDatabaseVersion.Value);
             remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
             var applier = scope.ServiceProvider.GetRequiredService<IIncomingDeltaApplierService>();
             var deviceSecurity = scope.ServiceProvider.GetRequiredService<IDeviceSecurityService>();
@@ -143,6 +148,16 @@ public sealed class SyncPeerProtocolHandler
         try
         {
             DeviceEnrollmentTrace.Info($"Incoming GetDeviceEnrollmentInfo request. Session={request.SessionId}.");
+            if (!DatabaseVersionCompatibilityUtil.IsIncomingDatabaseVersionSupported(request.SourceDatabaseVersion))
+            {
+                return new GetDeviceEnrollmentInfoReply
+                {
+                    Ok = false,
+                    Error = DatabaseVersionCompatibilityUtil.BuildIncomingDatabaseVersionUnsupportedMessage(request.SourceDatabaseVersion),
+                    ErrorCode = DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion.ToString()
+                };
+            }
+
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
             var enrollmentState = scope.ServiceProvider.GetRequiredService<IEnrollmentRuntimeState>();
             if (!identity.IsSyncOn && !enrollmentState.IsActive)
@@ -186,7 +201,7 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
-    public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, CancellationToken ct)
+    public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, int sourceDatabaseVersion, CancellationToken ct)
     {
         using var scope = _root.CreateScope();
         var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
@@ -194,6 +209,16 @@ public sealed class SyncPeerProtocolHandler
         try
         {
             DeviceEnrollmentTrace.Info("Incoming streaming CompleteDeviceEnrollment request started.");
+
+            if (!DatabaseVersionCompatibilityUtil.IsIncomingDatabaseVersionSupported(sourceDatabaseVersion))
+            {
+                return new CompleteDeviceEnrollmentReply
+                {
+                    Ok = false,
+                    Error = DatabaseVersionCompatibilityUtil.BuildIncomingDatabaseVersionUnsupportedMessage(sourceDatabaseVersion),
+                    ErrorCode = DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion.ToString()
+                };
+            }
 
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
             var enrollmentState = scope.ServiceProvider.GetRequiredService<IEnrollmentRuntimeState>();
@@ -217,6 +242,7 @@ public sealed class SyncPeerProtocolHandler
             var snapshotEncryptionVersion = 0;
             byte[]? snapshotEncryptionNonce = null;
             byte[]? snapshotEncryptionTag = null;
+            var chunkSourceDatabaseVersion = 0;
             var totalBytes = 0L;
 
             await using var snapshotStream = new MemoryStream();
@@ -247,6 +273,21 @@ public sealed class SyncPeerProtocolHandler
                 if (chunk.SnapshotEncryptionTag.Length > 0)
                     snapshotEncryptionTag = chunk.SnapshotEncryptionTag.ToByteArray();
 
+                if (chunk.SourceDatabaseVersion > 0)
+                {
+                    if (chunkSourceDatabaseVersion > 0 && chunkSourceDatabaseVersion != chunk.SourceDatabaseVersion)
+                    {
+                        return new CompleteDeviceEnrollmentReply
+                        {
+                            Ok = false,
+                            Error = "The enrollment transfer database version metadata is inconsistent.",
+                            ErrorCode = DeviceEnrollmentErrorCode.ProfileDataInvalid.ToString()
+                        };
+                    }
+
+                    chunkSourceDatabaseVersion = chunk.SourceDatabaseVersion;
+                }
+
                 var bytes = chunk.SnapshotChunk.ToByteArray();
                 totalBytes += bytes.Length;
 
@@ -272,7 +313,8 @@ public sealed class SyncPeerProtocolHandler
                 codeProof is null ||
                 string.IsNullOrWhiteSpace(sourceDeviceId) ||
                 sourceSignPublicKey is null ||
-                string.IsNullOrWhiteSpace(sourceTlsCertFingerprint))
+                string.IsNullOrWhiteSpace(sourceTlsCertFingerprint) ||
+                chunkSourceDatabaseVersion <= 0)
             {
                 var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(
                     DeviceEnrollmentErrorCode.ProfileDataInvalid,
@@ -285,6 +327,20 @@ public sealed class SyncPeerProtocolHandler
                     ErrorCode = DeviceEnrollmentErrorCode.ProfileDataInvalid.ToString()
                 };
             }
+            if (chunkSourceDatabaseVersion != sourceDatabaseVersion)
+            {
+                var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(
+                    DeviceEnrollmentErrorCode.ProfileDataInvalid,
+                    "The enrollment transfer database version does not match the stream header.",
+                    ct);
+                return new CompleteDeviceEnrollmentReply
+                {
+                    Ok = false,
+                    Error = error,
+                    ErrorCode = DeviceEnrollmentErrorCode.ProfileDataInvalid.ToString()
+                };
+            }
+
             var result = await enrollment.CompleteIncomingEnrollmentAsync(
                 sessionId,
                 codeProof,
@@ -335,14 +391,28 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
+    private void ValidateIncomingDatabaseVersionForSync(int databaseVersion)
+    {
+        if (DatabaseVersionCompatibilityUtil.IsIncomingDatabaseVersionSupported(databaseVersion))
+            return;
+
+        throw new SyncProtocolException(
+            SyncProtocolStatusCode.FailedPrecondition,
+            DatabaseVersionCompatibilityUtil.BuildIncomingDatabaseVersionUnsupportedMessage(databaseVersion));
+    }
+
+
     private bool ShouldRecordHelloFailure(Exception exception) =>
         exception is not SyncProtocolException
         {
             StatusCode: SyncProtocolStatusCode.Unavailable
         } &&
         !(exception is SyncProtocolException protocolException &&
-          protocolException.StatusCode == SyncProtocolStatusCode.PermissionDenied &&
-          string.Equals(protocolException.Message, "Remote device is not linked to an enabled local user.", StringComparison.Ordinal));
+          protocolException.StatusCode == SyncProtocolStatusCode.FailedPrecondition &&
+          protocolException.Message.Contains("Database version", StringComparison.OrdinalIgnoreCase)) &&
+        !(exception is SyncProtocolException protocolException2 &&
+          protocolException2.StatusCode == SyncProtocolStatusCode.PermissionDenied &&
+          string.Equals(protocolException2.Message, "Remote device is not linked to an enabled local user.", StringComparison.Ordinal));
 
 
     private async Task<Device?> TryFindRemoteDeviceForInvalidAttemptAsync(IServiceProvider services, PeerConnectionContext context, CancellationToken ct)

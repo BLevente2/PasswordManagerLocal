@@ -43,7 +43,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             await WriteFrameAsync(connection.Stream, SyncTcpMessageType.HelloRequest, new HelloRequest
             {
                 DeviceId = _identity.DeviceIdHex,
-                SignPub = ByteString.CopyFrom(_identity.SignPublicKey)
+                SignPub = ByteString.CopyFrom(_identity.SignPublicKey),
+                DatabaseVersion = DatabaseConstants.CurrentDbVersion
             }, ct);
 
             var helloFrame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.HelloReply, ct);
@@ -112,7 +113,10 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     {
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
 
-        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentStart, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentStart, new CompleteDeviceEnrollmentStartRequest
+        {
+            SourceDatabaseVersion = DatabaseConstants.CurrentDbVersion
+        }, ct);
 
         await foreach (var chunk in chunks.WithCancellation(ct))
             await WriteFrameAsync(connection.Stream, SyncTcpMessageType.CompleteDeviceEnrollmentChunk, chunk, ct);
