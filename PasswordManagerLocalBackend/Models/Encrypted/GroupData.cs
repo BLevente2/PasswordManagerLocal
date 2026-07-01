@@ -1,5 +1,6 @@
 ﻿using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -29,8 +30,8 @@ public sealed class GroupData : IntegrityCheckableBase, IDisposable
         Id = Guid.Empty;
         Name = string.Empty;
         Description = string.Empty;
-        CreatedAt = DateTime.MinValue;
-        LastUpdatedAt = DateTime.MinValue;
+        CreatedAt = UtcDateTimeUtil.MinDateTime;
+        LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
         CryptographicOperations.ZeroMemory(IntegrityHash);
 
         if (disposing)

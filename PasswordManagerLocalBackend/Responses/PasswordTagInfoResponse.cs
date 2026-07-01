@@ -1,4 +1,5 @@
 using PasswordManagerLocalBackend.Models.Encrypted;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Responses;
 
@@ -15,6 +16,6 @@ public sealed class PasswordTagInfoResponse
             Id = tag.Id,
             Name = tag.Name,
             Color = tag.Color,
-            LastUpdatedAt = tag.LastUpdatedAt
+            LastUpdatedAt = UtcDateTimeUtil.ToUtc(tag.LastUpdatedAt)
         };
 }

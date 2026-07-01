@@ -1,4 +1,5 @@
 using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -13,7 +14,7 @@ internal sealed class KeyVaultEntry : IDisposable
     public KeyVaultEntry(EncryptionKey key, DateTimeOffset exp)
     {
         Key = key;
-        ExpiresAt = exp;
+        ExpiresAt = UtcDateTimeUtil.ToUtc(exp);
     }
 
     public void Dispose()

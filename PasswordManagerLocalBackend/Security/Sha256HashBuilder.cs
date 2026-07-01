@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Security;
 
@@ -46,11 +47,11 @@ public sealed class Sha256HashBuilder : IDisposable
         _hash.AppendData(buffer);
     }
 
-    public void Write(DateTime value) => Write(value.ToBinary());
+    public void Write(DateTime value) => Write(UtcDateTimeUtil.ToUtc(value).Ticks);
 
-    public void Write(DateTimeOffset value) => Write(value.ToUnixTimeMilliseconds());
+    public void Write(DateTimeOffset value) => Write(UtcDateTimeUtil.ToUtc(value).ToUnixTimeMilliseconds());
 
-    public void Write(DateTimeOffset? value) => Write(value?.ToUnixTimeMilliseconds() ?? 0);
+    public void Write(DateTimeOffset? value) => Write(value.HasValue ? UtcDateTimeUtil.ToUtc(value.Value).ToUnixTimeMilliseconds() : 0);
 
     public void WriteBytes(byte[]? value)
     {

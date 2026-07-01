@@ -1,6 +1,7 @@
 using PasswordManagerLocalBackend.Security;
 using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 using System.Security.Cryptography;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -33,8 +34,8 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
         Name = string.Empty;
         Description = string.Empty;
         Color = string.Empty;
-        CreatedAt = DateTime.MinValue;
-        LastUpdatedAt = DateTime.MinValue;
+        CreatedAt = UtcDateTimeUtil.MinDateTime;
+        LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
         CryptographicOperations.ZeroMemory(Password);
         TagIds.Clear();
         CryptographicOperations.ZeroMemory(IntegrityHash);

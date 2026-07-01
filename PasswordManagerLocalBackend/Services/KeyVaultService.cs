@@ -1,6 +1,7 @@
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models.Encrypted;
 using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Utils;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Constants.TokenConstants;
@@ -19,7 +20,7 @@ public sealed class KeyVaultService : IKeyVaultService
         var raw = key.ExportCopy();
         try
         {
-            var exp = expiresAt ?? DateTimeOffset.UtcNow.Add(LoginTokenExpirationTime);
+            var exp = UtcDateTimeUtil.ToUtc(expiresAt ?? DateTimeOffset.UtcNow.Add(LoginTokenExpirationTime));
 
             while (true)
             {
@@ -75,7 +76,7 @@ public sealed class KeyVaultService : IKeyVaultService
         try
         {
             var owned = EncryptionKey.FromRaw(raw);
-            var exp = newExpiresAt ?? entry.ExpiresAt;
+            var exp = UtcDateTimeUtil.ToUtc(newExpiresAt ?? entry.ExpiresAt);
             var replacement = new KeyVaultEntry(owned, exp);
             CopyBlobKeys(entry, replacement);
 

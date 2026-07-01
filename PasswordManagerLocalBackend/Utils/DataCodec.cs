@@ -6,7 +6,7 @@ namespace PasswordManagerLocalBackend.Utils;
 
 internal static class DataCodec
 {
-    private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions { WriteIndented = false };
+    internal static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions { WriteIndented = false };
 
 
 
@@ -19,6 +19,7 @@ internal static class DataCodec
 
         await using (var comp = await CompressionUtil.OpenWriteAsync(producer, level, leaveOpen: true))
         {
+            UtcDateTimeUtil.NormalizeObjectGraph(value);
             await JsonSerializer.SerializeAsync(comp, value, JsonOpts, ct);
             await comp.FlushAsync(ct);
         }
@@ -42,6 +43,7 @@ internal static class DataCodec
 
         await using (var comp = await CompressionUtil.OpenWriteAsync(producer, level, leaveOpen: true))
         {
+            UtcDateTimeUtil.NormalizeObjectGraph(value);
             await JsonSerializer.SerializeAsync(comp, value, typeInfo, ct);
             await comp.FlushAsync(ct);
         }
@@ -69,7 +71,8 @@ internal static class DataCodec
         try
         {
             await using var decStream = await CompressionUtil.OpenReadAsync(plainPipe, leaveOpen: false);
-            return await JsonSerializer.DeserializeAsync<T>(decStream, JsonOpts, ct);
+            var value = await JsonSerializer.DeserializeAsync<T>(decStream, JsonOpts, ct);
+            return value is null ? null : UtcDateTimeUtil.NormalizeObjectGraph(value);
         }
         catch
         {
@@ -96,7 +99,8 @@ internal static class DataCodec
         try
         {
             await using var decStream = await CompressionUtil.OpenReadAsync(plainPipe, leaveOpen: false);
-            return await JsonSerializer.DeserializeAsync(decStream, typeInfo, ct);
+            var value = await JsonSerializer.DeserializeAsync(decStream, typeInfo, ct);
+            return value is null ? null : UtcDateTimeUtil.NormalizeObjectGraph(value);
         }
         catch
         {

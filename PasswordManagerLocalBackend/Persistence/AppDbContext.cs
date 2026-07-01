@@ -1,10 +1,22 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Persistence;
 
 public class AppDbContext : DbContext
 {
+    private static readonly ValueConverter<DateTime, DateTime> UtcDateTimeConverter = new(
+        value => UtcDateTimeUtil.ToUtc(value),
+        value => UtcDateTimeUtil.ToUtc(value));
+
+
+    private static readonly ValueConverter<DateTimeOffset, DateTimeOffset> UtcDateTimeOffsetConverter = new(
+        value => UtcDateTimeUtil.ToUtc(value),
+        value => UtcDateTimeUtil.ToUtc(value));
+
+
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
     public DbSet<User> Users => Set<User>();
@@ -43,6 +55,8 @@ public class AppDbContext : DbContext
 
     private void GenerateDerivedValuesAndRelationshipIntegrityHashes()
     {
+        NormalizeTrackedUtcDateTimes();
+
         foreach (var entry in ChangeTracker.Entries<Device>()
                      .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
         {
@@ -62,6 +76,29 @@ public class AppDbContext : DbContext
         foreach (var entry in ChangeTracker.Entries<LocalUserDevice>()
                      .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
             entry.Entity.GenerateIntegrityHash();
+    }
+
+
+    private void NormalizeTrackedUtcDateTimes()
+    {
+        foreach (var entry in ChangeTracker.Entries()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
+            UtcDateTimeUtil.NormalizeDateTimeProperties(entry.Entity);
+    }
+
+
+    private static void ApplyUtcDateTimeConverters(ModelBuilder model)
+    {
+        foreach (var entityType in model.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                if (property.ClrType == typeof(DateTime))
+                    property.SetValueConverter(UtcDateTimeConverter);
+                else if (property.ClrType == typeof(DateTimeOffset))
+                    property.SetValueConverter(UtcDateTimeOffsetConverter);
+            }
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -173,5 +210,7 @@ public class AppDbContext : DbContext
         ldi.Property(x => x.DeviceType).HasConversion<byte>().IsRequired();
         ldi.Property(x => x.IsSyncOn).IsRequired().HasDefaultValue(false);
         ldi.Property(x => x.CreatedAt).IsRequired();
+
+        ApplyUtcDateTimeConverters(model);
     }
 }

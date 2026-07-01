@@ -1,4 +1,5 @@
 ﻿using PasswordManagerLocalBackend.Models.Encrypted;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Responses;
 
@@ -22,7 +23,7 @@ public sealed class PasswordInfoResponse
             Description = password.Description,
             Color = password.Color,
             TagIds = password.TagIds.ToList(),
-            CreatedAt = password.CreatedAt,
-            LastUpdatedAt = password.LastUpdatedAt
+            CreatedAt = UtcDateTimeUtil.ToUtc(password.CreatedAt),
+            LastUpdatedAt = UtcDateTimeUtil.ToUtc(password.LastUpdatedAt)
         };
 }

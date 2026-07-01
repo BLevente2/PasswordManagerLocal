@@ -466,8 +466,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
             var newestPassword = NewerPassword(localPassword, incomingPassword);
             var newestDeletion = NewerDeletedPassword(localDeletion, incomingDeletion);
-            var passwordTime = newestPassword?.LastUpdatedAt ?? DateTime.MinValue;
-            var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+            var passwordTime = newestPassword?.LastUpdatedAt ?? UtcDateTimeUtil.MinDateTime;
+            var deletionTime = newestDeletion?.DeletedAt ?? UtcDateTimeUtil.MinDateTime;
 
             if (newestDeletion is not null && deletionTime >= passwordTime)
             {
@@ -559,8 +559,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         CustomUserColor? newestColor,
         DeletedCustomUserColorData? newestDeletion)
     {
-        var colorTime = newestColor?.LastUpdatedAt ?? DateTime.MinValue;
-        var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+        var colorTime = newestColor?.LastUpdatedAt ?? UtcDateTimeUtil.MinDateTime;
+        var deletionTime = newestDeletion?.DeletedAt ?? UtcDateTimeUtil.MinDateTime;
         return newestDeletion is not null && deletionTime >= colorTime;
     }
 
@@ -677,8 +677,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
     private bool ShouldKeepPasswordTagDeletion(PasswordTag? newestTag, DeletedPasswordTagData? newestDeletion)
     {
-        var tagTime = newestTag?.LastUpdatedAt ?? DateTime.MinValue;
-        var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+        var tagTime = newestTag?.LastUpdatedAt ?? UtcDateTimeUtil.MinDateTime;
+        var deletionTime = newestDeletion?.DeletedAt ?? UtcDateTimeUtil.MinDateTime;
         return newestDeletion is not null && deletionTime >= tagTime;
     }
 
@@ -1336,7 +1336,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             {
                 existing.IsDeleted = true;
                 existing.IsSyncOn = false;
-                existing.DeletedAt = payload.DeletedAt ?? modifiedAt;
+                existing.DeletedAt = UtcDateTimeUtil.ToUtc(payload.DeletedAt ?? modifiedAt);
                 existing.LastModifiedAt = modifiedAt;
                 existing.GenerateIntegrityHash();
                 _userDevices.Update(existing);
@@ -1845,14 +1845,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             TlsCertFingerprint = device.TlsCertFingerprint,
             DeviceType = device.DeviceType,
             LastKnownHash = device.LastKnownHash,
-            LastSync = device.LastSync,
-            LastSeen = device.LastSeen,
+            LastSync = UtcDateTimeUtil.ToUtc(device.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(device.LastSeen),
             IsTrusted = device.IsTrusted,
             IsBlocked = device.IsBlocked,
             BlockedReason = device.BlockedReason,
-            BlockedAt = device.BlockedAt,
+            BlockedAt = UtcDateTimeUtil.ToUtc(device.BlockedAt),
             InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
-            LastInvalidSyncAttemptAt = device.LastInvalidSyncAttemptAt,
+            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(device.LastInvalidSyncAttemptAt),
             UserIds = device.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
         };
 
@@ -2035,14 +2035,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (isNew)
         {
-            target.LastSync = source.LastSync;
-            target.LastSeen = source.LastSeen;
+            target.LastSync = UtcDateTimeUtil.ToUtc(source.LastSync);
+            target.LastSeen = UtcDateTimeUtil.ToUtc(source.LastSeen);
             target.IsTrusted = source.IsTrusted;
             target.IsBlocked = source.IsBlocked;
             target.BlockedReason = source.BlockedReason;
-            target.BlockedAt = source.BlockedAt;
+            target.BlockedAt = UtcDateTimeUtil.ToUtc(source.BlockedAt);
             target.InvalidSyncAttemptCount = source.InvalidSyncAttemptCount;
-            target.LastInvalidSyncAttemptAt = source.LastInvalidSyncAttemptAt;
+            target.LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(source.LastInvalidSyncAttemptAt);
             return;
         }
 
@@ -2050,7 +2050,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         {
             target.IsBlocked = true;
             target.BlockedReason = source.BlockedReason;
-            target.BlockedAt = source.BlockedAt ?? DateTimeOffset.UtcNow;
+            target.BlockedAt = UtcDateTimeUtil.ToUtc(source.BlockedAt ?? DateTimeOffset.UtcNow);
         }
     }
 
@@ -2092,11 +2092,11 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         RejectSensitiveLocalOnlyPayload(plaintextPayload);
 
-        var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintextPayload);
+        var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintextPayload, DataCodec.JsonOpts);
         if (payload is null)
             throw new InvalidDataException("Network delta payload is invalid.");
 
-        return payload;
+        return UtcDateTimeUtil.NormalizeObjectGraph(payload);
     }
 
 

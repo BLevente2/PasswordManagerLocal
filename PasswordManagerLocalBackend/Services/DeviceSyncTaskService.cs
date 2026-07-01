@@ -291,15 +291,15 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         targetDevice.SignPublicKey = freshDevice.SignPublicKey.ToArray();
         targetDevice.TlsCertFingerprint = freshDevice.TlsCertFingerprint;
         targetDevice.LastKnownHash = freshDevice.LastKnownHash.ToArray();
-        targetDevice.LastSync = freshDevice.LastSync;
-        targetDevice.LastSeen = freshDevice.LastSeen;
+        targetDevice.LastSync = UtcDateTimeUtil.ToUtc(freshDevice.LastSync);
+        targetDevice.LastSeen = UtcDateTimeUtil.ToUtc(freshDevice.LastSeen);
         targetDevice.IsTrusted = freshDevice.IsTrusted;
         targetDevice.IsBlocked = freshDevice.IsBlocked;
         targetDevice.BlockedReason = freshDevice.BlockedReason;
-        targetDevice.BlockedAt = freshDevice.BlockedAt;
+        targetDevice.BlockedAt = UtcDateTimeUtil.ToUtc(freshDevice.BlockedAt);
         targetDevice.InvalidSyncAttemptCount = freshDevice.InvalidSyncAttemptCount;
-        targetDevice.LastInvalidSyncAttemptAt = freshDevice.LastInvalidSyncAttemptAt;
-        targetDevice.LastModifiedAt = freshDevice.LastModifiedAt;
+        targetDevice.LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(freshDevice.LastInvalidSyncAttemptAt);
+        targetDevice.LastModifiedAt = UtcDateTimeUtil.ToUtc(freshDevice.LastModifiedAt);
         targetDevice.IntegrityHash = freshDevice.IntegrityHash.ToArray();
 
         return true;
@@ -407,15 +407,15 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             TlsCertFingerprint = source.TlsCertFingerprint,
             DeviceType = source.DeviceType,
             LastKnownHash = source.LastKnownHash.ToArray(),
-            LastSync = source.LastSync,
-            LastSeen = source.LastSeen,
+            LastSync = UtcDateTimeUtil.ToUtc(source.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(source.LastSeen),
             IsTrusted = source.IsTrusted,
             IsBlocked = source.IsBlocked,
             BlockedReason = source.BlockedReason,
-            BlockedAt = source.BlockedAt,
+            BlockedAt = UtcDateTimeUtil.ToUtc(source.BlockedAt),
             InvalidSyncAttemptCount = source.InvalidSyncAttemptCount,
-            LastInvalidSyncAttemptAt = source.LastInvalidSyncAttemptAt,
+            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(source.LastInvalidSyncAttemptAt),
             IntegrityHash = source.IntegrityHash.ToArray(),
-            LastModifiedAt = source.LastModifiedAt
+            LastModifiedAt = UtcDateTimeUtil.ToUtc(source.LastModifiedAt)
         };
 }

@@ -1,4 +1,5 @@
 using PasswordManagerLocalBackend.Models.Encrypted;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Responses;
 
@@ -15,6 +16,6 @@ public sealed class CustomUserColorInfoResponse
             Id = color.Id,
             ColorName = color.ColorName,
             ColorCode = color.ColorCode,
-            LastUpdatedAt = color.LastUpdatedAt
+            LastUpdatedAt = UtcDateTimeUtil.ToUtc(color.LastUpdatedAt)
         };
 }

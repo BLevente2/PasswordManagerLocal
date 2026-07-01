@@ -348,15 +348,15 @@ public sealed class SyncDeviceIdentityService : ISyncDeviceIdentityService, IDis
             TlsCertFingerprint = source.TlsCertFingerprint,
             DeviceType = source.DeviceType,
             LastKnownHash = source.LastKnownHash.ToArray(),
-            LastSync = source.LastSync,
-            LastSeen = source.LastSeen,
+            LastSync = UtcDateTimeUtil.ToUtc(source.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(source.LastSeen),
             IsTrusted = source.IsTrusted,
             IsBlocked = source.IsBlocked,
             BlockedReason = source.BlockedReason,
-            BlockedAt = source.BlockedAt,
+            BlockedAt = UtcDateTimeUtil.ToUtc(source.BlockedAt),
             InvalidSyncAttemptCount = source.InvalidSyncAttemptCount,
-            LastInvalidSyncAttemptAt = source.LastInvalidSyncAttemptAt,
-            LastModifiedAt = source.LastModifiedAt,
+            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(source.LastInvalidSyncAttemptAt),
+            LastModifiedAt = UtcDateTimeUtil.ToUtc(source.LastModifiedAt),
             IntegrityHash = source.IntegrityHash.ToArray()
         };
 

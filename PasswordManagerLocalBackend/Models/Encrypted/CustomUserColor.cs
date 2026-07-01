@@ -1,5 +1,6 @@
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -20,7 +21,7 @@ public sealed class CustomUserColor : IntegrityCheckableBase, IDisposable
         Id = Guid.Empty;
         ColorName = null;
         ColorCode = string.Empty;
-        LastUpdatedAt = DateTime.MinValue;
+        LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
