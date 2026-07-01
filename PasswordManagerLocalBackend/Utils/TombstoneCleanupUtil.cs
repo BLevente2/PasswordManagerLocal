@@ -73,6 +73,8 @@ public static class TombstoneCleanupUtil
 
     public static void AddOrUpdateDeletedPassword(UserPasswordsData passwords, Guid passwordId, DateTime deletedAt)
     {
+        deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
+
         var tombstone = passwords.DeletedPasswords.FirstOrDefault(deleted => deleted.Id == passwordId);
         if (tombstone is null)
         {
@@ -90,6 +92,8 @@ public static class TombstoneCleanupUtil
 
     public static void AddOrUpdateDeletedCustomUserColor(UserPasswordsData passwords, Guid customUserColorId, DateTime deletedAt)
     {
+        deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
+
         var tombstone = passwords.DeletedCustomColors.FirstOrDefault(deleted => deleted.Id == customUserColorId);
         if (tombstone is null)
         {
@@ -107,6 +111,8 @@ public static class TombstoneCleanupUtil
 
     public static void AddOrUpdateDeletedPasswordTag(UserPasswordsData passwords, Guid passwordTagId, DateTime deletedAt)
     {
+        deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
+
         var tombstone = passwords.DeletedTags.FirstOrDefault(deleted => deleted.Id == passwordTagId);
         if (tombstone is null)
         {
@@ -124,6 +130,8 @@ public static class TombstoneCleanupUtil
 
     public static void AddOrUpdateDeletedUserDevice(UserDevicesData devices, Guid deviceId, DateTimeOffset deletedAt)
     {
+        deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
+
         var tombstone = devices.DeletedDevices.FirstOrDefault(deleted => deleted.Id == deviceId);
         if (tombstone is null)
         {
@@ -195,12 +203,7 @@ public static class TombstoneCleanupUtil
 
     private static DateTimeOffset ToUtcDateTimeOffset(DateTime value)
     {
-        var utc = value.Kind switch
-        {
-            DateTimeKind.Utc => value,
-            DateTimeKind.Local => value.ToUniversalTime(),
-            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
-        };
+        var utc = UtcDateTimeUtil.ToUtc(value);
 
         return new DateTimeOffset(utc);
     }

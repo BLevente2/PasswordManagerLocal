@@ -631,7 +631,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         try
         {
             RejectSensitiveLocalOnlySnapshotPayload(plaintextSnapshotBytes);
-            snapshot = JsonSerializer.Deserialize<DeviceEnrollmentSnapshot>(plaintextSnapshotBytes);
+            snapshot = JsonSerializer.Deserialize<DeviceEnrollmentSnapshot>(plaintextSnapshotBytes, DataCodec.JsonOpts);
+            if (snapshot is not null)
+                UtcDateTimeUtil.NormalizeObjectGraph(snapshot);
         }
         catch (JsonException ex)
         {
@@ -1879,15 +1881,15 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             TlsCertFingerprint = d.TlsCertFingerprint,
             DeviceType = d.DeviceType,
             LastKnownHash = d.LastKnownHash,
-            LastSync = d.LastSync,
-            LastSeen = d.LastSeen,
+            LastSync = UtcDateTimeUtil.ToUtc(d.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(d.LastSeen),
             IsTrusted = d.IsTrusted,
             IsBlocked = d.IsBlocked,
             BlockedReason = d.BlockedReason,
-            BlockedAt = d.BlockedAt,
+            BlockedAt = UtcDateTimeUtil.ToUtc(d.BlockedAt),
             InvalidSyncAttemptCount = d.InvalidSyncAttemptCount,
-            LastInvalidSyncAttemptAt = d.LastInvalidSyncAttemptAt,
-            LastModifiedAt = d.LastModifiedAt,
+            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(d.LastInvalidSyncAttemptAt),
+            LastModifiedAt = UtcDateTimeUtil.ToUtc(d.LastModifiedAt),
             IntegrityHash = d.IntegrityHash,
             UserIds = d.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
         }).ToList();
@@ -1925,11 +1927,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             TlsCertFingerprint = localDevice.TlsCertFingerprint,
             DeviceType = localDevice.DeviceType,
             LastKnownHash = localDevice.LastKnownHash,
-            LastSync = localDevice.LastSync,
-            LastSeen = localDevice.LastSeen,
+            LastSync = UtcDateTimeUtil.ToUtc(localDevice.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(localDevice.LastSeen),
             IsTrusted = true,
             IsBlocked = false,
-            LastModifiedAt = localDevice.LastModifiedAt,
+            LastModifiedAt = UtcDateTimeUtil.ToUtc(localDevice.LastModifiedAt),
             IntegrityHash = localDevice.IntegrityHash,
             UserIds = [userId]
         });
@@ -1949,11 +1951,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
                     EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
                     EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
-                    LastModifiedAt = user.LastModifiedAt,
-                    UserDataLastModifiedAt = user.UserDataLastModifiedAt,
-                    GeneralUserDataLastModifiedAt = user.GeneralUserDataLastModifiedAt,
-                    UserPasswordsDataLastModifiedAt = user.UserPasswordsDataLastModifiedAt,
-                    UserDevicesDataLastModifiedAt = user.UserDevicesDataLastModifiedAt,
+                    LastModifiedAt = UtcDateTimeUtil.ToUtc(user.LastModifiedAt),
+                    UserDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.UserDataLastModifiedAt),
+                    GeneralUserDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.GeneralUserDataLastModifiedAt),
+                    UserPasswordsDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.UserPasswordsDataLastModifiedAt),
+                    UserDevicesDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.UserDevicesDataLastModifiedAt),
                     IntegrityHash = user.IntegrityHash,
                     GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList()
                 }
@@ -1962,7 +1964,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             {
                 Id = g.Id,
                 EncryptedPayload = g.EncryptedPayload,
-                LastModifiedAt = g.LastModifiedAt,
+                LastModifiedAt = UtcDateTimeUtil.ToUtc(g.LastModifiedAt),
                 IntegrityHash = g.IntegrityHash,
                 UserIds = g.Users.Select(u => u.UId).Distinct().ToList()
             }).ToList(),
@@ -1973,8 +1975,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 DeviceId = ud.DeviceId,
                 IsSyncOn = ud.IsSyncOn,
                 IsDeleted = ud.IsDeleted,
-                DeletedAt = ud.DeletedAt,
-                LastModifiedAt = ud.LastModifiedAt,
+                DeletedAt = UtcDateTimeUtil.ToUtc(ud.DeletedAt),
+                LastModifiedAt = UtcDateTimeUtil.ToUtc(ud.LastModifiedAt),
                 IntegrityHash = ud.IntegrityHash.ToArray()
             }).Append(new DeviceEnrollmentUserDeviceSnapshot
             {
@@ -1982,8 +1984,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 DeviceId = localUserDeviceSnapshotSource.DeviceId,
                 IsSyncOn = localUserDeviceSnapshotSource.IsSyncOn,
                 IsDeleted = localUserDeviceSnapshotSource.IsDeleted,
-                DeletedAt = localUserDeviceSnapshotSource.DeletedAt,
-                LastModifiedAt = localUserDeviceSnapshotSource.LastModifiedAt,
+                DeletedAt = UtcDateTimeUtil.ToUtc(localUserDeviceSnapshotSource.DeletedAt),
+                LastModifiedAt = UtcDateTimeUtil.ToUtc(localUserDeviceSnapshotSource.LastModifiedAt),
                 IntegrityHash = localUserDeviceSnapshotSource.IntegrityHash.ToArray()
             }).ToList()
         };
@@ -2167,7 +2169,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         byte[] snapshotBytes;
         try
         {
-            snapshotBytes = JsonSerializer.SerializeToUtf8Bytes(snapshot);
+            UtcDateTimeUtil.NormalizeObjectGraph(snapshot);
+            snapshotBytes = JsonSerializer.SerializeToUtf8Bytes(snapshot, DataCodec.JsonOpts);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
@@ -2461,15 +2464,15 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             device.TlsCertFingerprint = FingerprintUtil.Normalize(deviceSnapshot.TlsCertFingerprint);
             device.DeviceType = deviceSnapshot.DeviceType;
             device.LastKnownHash = deviceSnapshot.LastKnownHash;
-            device.LastSync = deviceSnapshot.LastSync;
-            device.LastSeen = deviceSnapshot.LastSeen;
+            device.LastSync = UtcDateTimeUtil.ToUtc(deviceSnapshot.LastSync);
+            device.LastSeen = UtcDateTimeUtil.ToUtc(deviceSnapshot.LastSeen);
             device.IsTrusted = true;
             device.IsBlocked = deviceSnapshot.IsBlocked;
             device.BlockedReason = deviceSnapshot.BlockedReason;
-            device.BlockedAt = deviceSnapshot.BlockedAt;
+            device.BlockedAt = UtcDateTimeUtil.ToUtc(deviceSnapshot.BlockedAt);
             device.InvalidSyncAttemptCount = deviceSnapshot.InvalidSyncAttemptCount;
-            device.LastInvalidSyncAttemptAt = deviceSnapshot.LastInvalidSyncAttemptAt;
-            device.LastModifiedAt = deviceSnapshot.LastModifiedAt == default ? now : deviceSnapshot.LastModifiedAt;
+            device.LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(deviceSnapshot.LastInvalidSyncAttemptAt);
+            device.LastModifiedAt = UtcDateTimeUtil.ToUtc(deviceSnapshot.LastModifiedAt == default ? now : deviceSnapshot.LastModifiedAt);
             device.GenerateIntegrityHash();
         }
 
@@ -2499,11 +2502,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             user.EncryptedUserPasswordsDataPayload = userSnapshot.EncryptedUserPasswordsDataPayload;
             user.EncryptedUserDevicesDataPayload = userSnapshot.EncryptedUserDevicesDataPayload;
             user.SavedKey = null;
-            user.LastModifiedAt = userSnapshot.LastModifiedAt == default ? now : userSnapshot.LastModifiedAt;
-            user.UserDataLastModifiedAt = userSnapshot.UserDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserDataLastModifiedAt;
-            user.GeneralUserDataLastModifiedAt = userSnapshot.GeneralUserDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.GeneralUserDataLastModifiedAt;
-            user.UserPasswordsDataLastModifiedAt = userSnapshot.UserPasswordsDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserPasswordsDataLastModifiedAt;
-            user.UserDevicesDataLastModifiedAt = userSnapshot.UserDevicesDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserDevicesDataLastModifiedAt;
+            user.LastModifiedAt = UtcDateTimeUtil.ToUtc(userSnapshot.LastModifiedAt == default ? now : userSnapshot.LastModifiedAt);
+            user.UserDataLastModifiedAt = UtcDateTimeUtil.ToUtc(userSnapshot.UserDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserDataLastModifiedAt);
+            user.GeneralUserDataLastModifiedAt = UtcDateTimeUtil.ToUtc(userSnapshot.GeneralUserDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.GeneralUserDataLastModifiedAt);
+            user.UserPasswordsDataLastModifiedAt = UtcDateTimeUtil.ToUtc(userSnapshot.UserPasswordsDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserPasswordsDataLastModifiedAt);
+            user.UserDevicesDataLastModifiedAt = UtcDateTimeUtil.ToUtc(userSnapshot.UserDevicesDataLastModifiedAt == default ? user.LastModifiedAt : userSnapshot.UserDevicesDataLastModifiedAt);
             user.GenerateIntegrityHash();
             if (!Hashing.Verify(userSnapshot.IntegrityHash, user.IntegrityHash))
                 throw new InvalidDataException("The enrollment snapshot contains invalid user integrity data.");
@@ -2519,7 +2522,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             }
 
             group.EncryptedPayload = groupSnapshot.EncryptedPayload;
-            group.LastModifiedAt = groupSnapshot.LastModifiedAt == default ? now : groupSnapshot.LastModifiedAt;
+            group.LastModifiedAt = UtcDateTimeUtil.ToUtc(groupSnapshot.LastModifiedAt == default ? now : groupSnapshot.LastModifiedAt);
             group.IntegrityHash = groupSnapshot.IntegrityHash;
         }
 
@@ -2562,8 +2565,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 DeviceId = linkSnapshot.DeviceId,
                 IsSyncOn = linkSnapshot.IsSyncOn,
                 IsDeleted = linkSnapshot.IsDeleted,
-                DeletedAt = linkSnapshot.DeletedAt,
-                LastModifiedAt = linkSnapshot.LastModifiedAt
+                DeletedAt = UtcDateTimeUtil.ToUtc(linkSnapshot.DeletedAt),
+                LastModifiedAt = UtcDateTimeUtil.ToUtc(linkSnapshot.LastModifiedAt)
             };
             verifiedSnapshotLink.GenerateIntegrityHash();
             if (!Hashing.Verify(linkSnapshot.IntegrityHash, verifiedSnapshotLink.IntegrityHash))
@@ -2580,8 +2583,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             link.Device = remoteDevice;
             link.IsSyncOn = linkSnapshot.IsSyncOn;
             link.IsDeleted = linkSnapshot.IsDeleted;
-            link.DeletedAt = linkSnapshot.DeletedAt;
-            link.LastModifiedAt = linkSnapshot.LastModifiedAt;
+            link.DeletedAt = UtcDateTimeUtil.ToUtc(linkSnapshot.DeletedAt);
+            link.LastModifiedAt = UtcDateTimeUtil.ToUtc(linkSnapshot.LastModifiedAt);
             link.IntegrityHash = verifiedSnapshotLink.IntegrityHash.ToArray();
         }
 

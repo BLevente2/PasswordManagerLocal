@@ -1,5 +1,6 @@
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -23,8 +24,8 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
         FirstName = string.Empty;
         LastName = string.Empty;
         Email = string.Empty;
-        RegistrationDate = DateTime.MinValue;
-        LastUpdatedAt = DateTime.MinValue;
+        RegistrationDate = UtcDateTimeUtil.MinDateTime;
+        LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);

@@ -1,5 +1,6 @@
 using PasswordManagerLocalBackend.Security;
 using System.Security.Cryptography;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -16,7 +17,7 @@ public sealed class DeletedCustomUserColorData : IntegrityCheckableBase, IDispos
             return;
 
         Id = Guid.Empty;
-        DeletedAt = DateTime.MinValue;
+        DeletedAt = UtcDateTimeUtil.MinDateTime;
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);

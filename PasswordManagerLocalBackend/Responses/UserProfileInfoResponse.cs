@@ -1,4 +1,5 @@
 using PasswordManagerLocalBackend.Models.Encrypted;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Responses;
 
@@ -28,8 +29,8 @@ public sealed class UserProfileInfoResponse
             FirstName = generalUserData.FirstName,
             LastName = generalUserData.LastName,
             Email = generalUserData.Email,
-            RegistrationDate = generalUserData.RegistrationDate,
-            LastLoginDate = userDevicesData.Devices.FirstOrDefault(device => device.Id == currentDeviceId)?.LastLoginDate ?? DateTime.MinValue,
+            RegistrationDate = UtcDateTimeUtil.ToUtc(generalUserData.RegistrationDate),
+            LastLoginDate = UtcDateTimeUtil.ToUtc(userDevicesData.Devices.FirstOrDefault(device => device.Id == currentDeviceId)?.LastLoginDate ?? UtcDateTimeUtil.MinDateTime),
             IsRememberMeEnabled = isRememberMeEnabled
         };
 }

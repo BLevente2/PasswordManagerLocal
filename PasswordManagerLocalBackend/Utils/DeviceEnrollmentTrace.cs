@@ -54,7 +54,7 @@ public static class DeviceEnrollmentTrace
                 RotateIfNeeded(path);
 
                 var builder = new StringBuilder();
-                builder.Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz"));
+                builder.Append(DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff zzz"));
                 builder.Append(" [");
                 builder.Append(level);
                 builder.Append("] ");

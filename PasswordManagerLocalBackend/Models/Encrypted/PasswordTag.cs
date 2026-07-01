@@ -1,6 +1,7 @@
 using PasswordManagerLocalBackend.Security;
 using static PasswordManagerLocalBackend.Constants.PasswordConstants;
 using System.Security.Cryptography;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -21,7 +22,7 @@ public sealed class PasswordTag : IntegrityCheckableBase, IDisposable
         Id = Guid.Empty;
         Name = string.Empty;
         Color = string.Empty;
-        LastUpdatedAt = DateTime.MinValue;
+        LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);

@@ -62,7 +62,8 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         var payload = await BuildPayloadAsync(item, device.Id, ts, ct);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, ts);
 
-        var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(payload);
+        UtcDateTimeUtil.NormalizeObjectGraph(payload);
+        var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(payload, DataCodec.JsonOpts);
         try
         {
             if (plaintextPayload.Length == 0 || plaintextPayload.Length > SyncConstants.MaxIncomingDeltaPayloadBytes)
@@ -229,14 +230,14 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             TlsCertFingerprint = device.TlsCertFingerprint,
             DeviceType = device.DeviceType,
             LastKnownHash = device.LastKnownHash,
-            LastSync = device.LastSync,
-            LastSeen = device.LastSeen,
+            LastSync = UtcDateTimeUtil.ToUtc(device.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(device.LastSeen),
             IsTrusted = device.IsTrusted,
             IsBlocked = device.IsBlocked,
             BlockedReason = device.BlockedReason,
-            BlockedAt = device.BlockedAt,
+            BlockedAt = UtcDateTimeUtil.ToUtc(device.BlockedAt),
             InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
-            LastInvalidSyncAttemptAt = device.LastInvalidSyncAttemptAt,
+            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(device.LastInvalidSyncAttemptAt),
             UserIds = userIds
         };
 
@@ -254,7 +255,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             DeviceId = userDevice.DeviceId,
             IsSyncOn = userDevice.IsSyncOn,
             IsDeleted = userDevice.IsDeleted,
-            DeletedAt = userDevice.DeletedAt,
+            DeletedAt = UtcDateTimeUtil.ToUtc(userDevice.DeletedAt),
             IntegrityHash = userDevice.IntegrityHash.ToArray()
         };
     }

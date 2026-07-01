@@ -1,4 +1,5 @@
 using PasswordManagerLocalBackend.Security;
+using PasswordManagerLocalBackend.Utils;
 
 namespace PasswordManagerLocalBackend.Models.Encrypted;
 
@@ -9,7 +10,7 @@ public sealed class UserDeviceData : IntegrityCheckableBase, IDisposable
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public DateTimeOffset LinkedAt { get; set; } = DateTimeOffset.UtcNow;
-    public DateTime LastLoginDate { get; set; } = DateTime.MinValue;
+    public DateTime LastLoginDate { get; set; } = UtcDateTimeUtil.MinDateTime;
     public DateTimeOffset LastUpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public void Dispose()
@@ -20,7 +21,7 @@ public sealed class UserDeviceData : IntegrityCheckableBase, IDisposable
         Id = Guid.Empty;
         Name = string.Empty;
         LinkedAt = default;
-        LastLoginDate = DateTime.MinValue;
+        LastLoginDate = UtcDateTimeUtil.MinDateTime;
         LastUpdatedAt = default;
         System.Security.Cryptography.CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
