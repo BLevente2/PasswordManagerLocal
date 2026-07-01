@@ -48,4 +48,7 @@ public interface IEndpoints
     Task AddCustomUserColorAsync(Guid token, NewCustomUserColorRequest request, CancellationToken ct = default);
     Task DeleteCustomUserColorAsync(Guid token, Guid customUserColorId, CancellationToken ct = default);
     Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default);
+    Task AddPasswordTagAsync(Guid token, NewPasswordTagRequest request, CancellationToken ct = default);
+    Task DeletePasswordTagAsync(Guid token, Guid passwordTagId, CancellationToken ct = default);
+    Task UpdatePasswordTagAsync(Guid token, UpdatePasswordTagRequest request, CancellationToken ct = default);
 }

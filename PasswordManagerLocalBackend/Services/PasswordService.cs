@@ -37,6 +37,8 @@ public sealed class PasswordService : IPasswordService
         var normalizedName = NormalizePasswordName(request.Name);
         ThrowIfPasswordNameExists(normalizedName, passwords);
 
+        EnsureTagIdsExist(request.TagIds, passwords);
+
         var now = DateTime.UtcNow;
         var securePassword = new SecurePassword
         {
@@ -45,6 +47,7 @@ public sealed class PasswordService : IPasswordService
             Description = request.Description,
             Color = NormalizeColorCode(request.Color),
             Password = await EncryptPasswordAsync(request.Password, passwords),
+            TagIds = NormalizeTagIds(request.TagIds),
             CreatedAt = now,
             LastUpdatedAt = now
         };
@@ -52,7 +55,7 @@ public sealed class PasswordService : IPasswordService
 
         passwords.DeletedPasswords.RemoveAll(deleted => deleted.Id == securePassword.Id);
         passwords.Passwords.Add(securePassword);
-        passwords.GenerateIntegrityHash();
+        passwords.GeneratePasswordsIntegrityHash();
     }
 
 
@@ -61,7 +64,7 @@ public sealed class PasswordService : IPasswordService
         using var password = GetAndVerifyPasswordById(passwordId, passwords);
         TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, password.Id, DateTime.UtcNow);
         passwords.Passwords.Remove(password);
-        passwords.GenerateIntegrityHash();
+        passwords.GeneratePasswordsIntegrityHash();
     }
 
 
@@ -111,10 +114,16 @@ public sealed class PasswordService : IPasswordService
             password.Password = await EncryptPasswordAsync(request.Password, passwords);
         }
 
+        if (request.TagIds is not null)
+        {
+            EnsureTagIdsExist(request.TagIds, passwords);
+            password.TagIds = NormalizeTagIds(request.TagIds);
+        }
+
         passwords.DeletedPasswords.RemoveAll(deleted => deleted.Id == password.Id);
         password.LastUpdatedAt = DateTime.UtcNow;
         password.GenerateIntegrityHash();
-        passwords.GenerateIntegrityHash();
+        passwords.GeneratePasswordsIntegrityHash();
     }
 
 
@@ -175,6 +184,7 @@ public sealed class PasswordService : IPasswordService
                         Description = sourcePassword.Description,
                         Color = NormalizeColorCode(sourcePassword.Color),
                         Password = await EncryptPasswordAsync(rawPassword, targetPasswords),
+                        TagIds = [],
                         CreatedAt = now,
                         LastUpdatedAt = now
                     };
@@ -193,7 +203,7 @@ public sealed class PasswordService : IPasswordService
                 targetPasswords.Passwords.Add(copiedPassword);
             }
 
-            targetPasswords.GenerateIntegrityHash();
+            targetPasswords.GeneratePasswordsIntegrityHash();
         }
         catch
         {
@@ -212,6 +222,24 @@ public sealed class PasswordService : IPasswordService
 
 
     private static string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
+
+
+    private static List<Guid> NormalizeTagIds(IReadOnlyList<Guid>? tagIds) =>
+        tagIds is null ? [] : tagIds.Distinct().Order().ToList();
+
+
+    private static void EnsureTagIdsExist(IReadOnlyList<Guid>? tagIds, UserPasswordsData passwords)
+    {
+        if (tagIds is null || tagIds.Count == 0)
+            return;
+
+        var existingTagIds = passwords.Tags.Select(tag => tag.Id).ToHashSet();
+        foreach (var tagId in tagIds)
+        {
+            if (!existingTagIds.Contains(tagId))
+                throw new PasswordTagNotFoundException(tagId);
+        }
+    }
 
 
     private static void ThrowIfPasswordNameExists(string name, UserPasswordsData passwords, Guid? ignoredPasswordId = null)

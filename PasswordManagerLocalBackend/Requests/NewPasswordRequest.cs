@@ -9,6 +9,7 @@ public sealed class NewPasswordRequest
     public string Description { get; set; } = string.Empty;
     public string Color { get; set; } = DefaultPasswordColor;
     public byte[] Password { get; set; } = [];
+    public List<Guid>? TagIds { get; set; } = [];
 
 
 
@@ -27,6 +28,9 @@ public sealed class NewPasswordRequest
 
         if (!IsValidPassword(Password))
             errors.Add("Password");
+
+        if (TagIds is null || TagIds.Any(id => id == Guid.Empty) || TagIds.Distinct().Count() != TagIds.Count)
+            errors.Add("TagIds");
 
         return errors.Count == 0;
     }

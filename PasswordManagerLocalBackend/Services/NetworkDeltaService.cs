@@ -434,7 +434,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         var passwordEntriesChanged = MergePasswordEntriesForSync(local, incoming);
         var customColorsChanged = MergeCustomColorsForSync(local, incoming);
-        return passwordEntriesChanged || customColorsChanged;
+        var tagsChanged = MergePasswordTagsForSync(local, incoming);
+        var tagReferencesChanged = RemoveInvalidPasswordTagReferencesForSync(local);
+        return passwordEntriesChanged || customColorsChanged || tagsChanged || tagReferencesChanged;
     }
 
 
@@ -564,6 +566,173 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         local.DeletedCustomColors = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
         TombstoneCleanupUtil.EnforceDeletedCustomUserColorTombstoneLimit(local.DeletedCustomColors);
         return true;
+    }
+
+
+    private static bool MergePasswordTagsForSync(UserPasswordsData local, UserPasswordsData incoming)
+    {
+        var changed = false;
+        var localTags = local.Tags.ToDictionary(tag => tag.Id);
+        var incomingTags = incoming.Tags.ToDictionary(tag => tag.Id);
+        var localDeleted = local.DeletedTags.ToDictionary(deleted => deleted.Id);
+        var incomingDeleted = incoming.DeletedTags.ToDictionary(deleted => deleted.Id);
+        var ids = localTags.Keys
+            .Concat(incomingTags.Keys)
+            .Concat(localDeleted.Keys)
+            .Concat(incomingDeleted.Keys)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        var mergedTags = new List<PasswordTag>();
+        var mergedDeleted = new List<DeletedPasswordTagData>();
+        foreach (var id in ids)
+        {
+            localTags.TryGetValue(id, out var localTag);
+            incomingTags.TryGetValue(id, out var incomingTag);
+            localDeleted.TryGetValue(id, out var localDeletion);
+            incomingDeleted.TryGetValue(id, out var incomingDeletion);
+
+            var newestTag = NewerPasswordTag(localTag, incomingTag);
+            var newestDeletion = NewerDeletedPasswordTag(localDeletion, incomingDeletion);
+            var tagTime = newestTag?.LastUpdatedAt ?? DateTime.MinValue;
+            var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+
+            if (newestDeletion is not null && deletionTime >= tagTime)
+            {
+                mergedDeleted.Add(newestDeletion);
+                if (localTag is not null || !ReferenceEquals(localDeletion, newestDeletion))
+                    changed = true;
+                continue;
+            }
+
+            if (newestTag is not null)
+            {
+                var normalizedName = NormalizePasswordTagNameForSync(newestTag.Name);
+                var normalizedColor = NormalizePasswordTagColorForSync(newestTag.Color);
+                if (newestTag.Name != normalizedName || newestTag.Color != normalizedColor)
+                    changed = true;
+
+                newestTag.Name = normalizedName;
+                newestTag.Color = normalizedColor;
+                mergedTags.Add(newestTag);
+                if (!ReferenceEquals(localTag, newestTag) || localDeletion is not null)
+                    changed = true;
+            }
+        }
+
+        var deduplicatedTags = ResolveDuplicatePasswordTagsForSync(mergedTags);
+        changed |= deduplicatedTags.Count != mergedTags.Count;
+        changed |= local.Tags.Count != deduplicatedTags.Count || local.DeletedTags.Count != mergedDeleted.Count;
+        if (!changed)
+            return TombstoneCleanupUtil.EnforceDeletedPasswordTagTombstoneLimit(local.DeletedTags);
+
+        DisposeItemsNotKept(local.Tags, deduplicatedTags);
+        DisposeItemsNotKept(local.DeletedTags, mergedDeleted);
+        local.Tags = deduplicatedTags
+            .OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(tag => tag.Id)
+            .ToList();
+        local.DeletedTags = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
+        TombstoneCleanupUtil.EnforceDeletedPasswordTagTombstoneLimit(local.DeletedTags);
+        return true;
+    }
+
+
+    private static bool RemoveInvalidPasswordTagReferencesForSync(UserPasswordsData data)
+    {
+        var validTagIds = data.Tags.Select(tag => tag.Id).ToHashSet();
+        var changed = false;
+
+        foreach (var password in data.Passwords)
+        {
+            var cleanedTagIds = password.TagIds
+                .Where(tagId => tagId != Guid.Empty && validTagIds.Contains(tagId))
+                .Distinct()
+                .Order()
+                .ToList();
+
+            if (password.TagIds.SequenceEqual(cleanedTagIds))
+                continue;
+
+            password.TagIds = cleanedTagIds;
+            password.LastUpdatedAt = DateTime.UtcNow;
+            password.GenerateIntegrityHash();
+            changed = true;
+        }
+
+        return changed;
+    }
+
+
+    private static PasswordTag? NewerPasswordTag(PasswordTag? first, PasswordTag? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.LastUpdatedAt > first.LastUpdatedAt)
+            return second;
+        return first;
+    }
+
+
+    private static DeletedPasswordTagData? NewerDeletedPasswordTag(DeletedPasswordTagData? first, DeletedPasswordTagData? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        if (second.DeletedAt > first.DeletedAt)
+            return second;
+        return first;
+    }
+
+
+    private static List<PasswordTag> ResolveDuplicatePasswordTagsForSync(List<PasswordTag> tags)
+    {
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var kept = new List<PasswordTag>();
+
+        foreach (var tag in tags.OrderByDescending(tag => tag.LastUpdatedAt).ThenBy(tag => tag.Id))
+        {
+            var normalizedName = NormalizePasswordTagNameForSync(tag.Name);
+            var normalizedColor = NormalizePasswordTagColorForSync(tag.Color);
+            if (normalizedName.Length == 0 || normalizedColor.Length == 0 || usedNames.Contains(normalizedName))
+                continue;
+
+            tag.Name = normalizedName;
+            tag.Color = normalizedColor;
+            usedNames.Add(normalizedName);
+            kept.Add(tag);
+        }
+
+        foreach (var tag in tags)
+        {
+            if (!kept.Any(keptTag => ReferenceEquals(keptTag, tag)))
+                tag.Dispose();
+        }
+
+        return kept;
+    }
+
+
+    private static string NormalizePasswordTagNameForSync(string tagName)
+    {
+        var normalized = tagName.Trim();
+        return normalized.Length <= PasswordTagNameMaxLength ? normalized : string.Empty;
+    }
+
+
+    private static string NormalizePasswordTagColorForSync(string color)
+    {
+        var normalized = color.Trim().ToUpperInvariant();
+        if (normalized.Length != ARGBColorLength || normalized[0] != '#')
+            return string.Empty;
+
+        return uint.TryParse(normalized.AsSpan(1), System.Globalization.NumberStyles.HexNumber, null, out _)
+            ? normalized
+            : string.Empty;
     }
 
 
@@ -899,6 +1068,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             color.GenerateIntegrityHash();
         foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
             deleted.GenerateIntegrityHash();
+        foreach (var tag in bundle.UserPasswordsData.Tags)
+            tag.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
+            deleted.GenerateIntegrityHash();
         bundle.UserPasswordsData.GenerateIntegrityHash();
 
         foreach (var device in bundle.UserDevicesData.Devices)
@@ -930,6 +1103,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         foreach (var color in bundle.UserPasswordsData.CustomColors)
             color.VerifyIntegrity();
         foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
+            deleted.VerifyIntegrity();
+        foreach (var tag in bundle.UserPasswordsData.Tags)
+            tag.VerifyIntegrity();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
             deleted.VerifyIntegrity();
         bundle.UserPasswordsData.VerifyIntegrity();
         VerifyStoredUserBlobHashForSync(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));

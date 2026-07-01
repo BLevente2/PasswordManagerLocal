@@ -72,6 +72,16 @@ public static class DataValidationUtil
     }
 
 
+    public static bool IsValidPasswordTagName(string tagName)
+    {
+        if (string.IsNullOrWhiteSpace(tagName))
+            return false;
+
+        var n = tagName.Trim();
+        return n.Length > 0 && n.Length <= PasswordTagNameMaxLength;
+    }
+
+
     public static bool IsValidARGBColor(string color)
     {
         if (color.Length != ARGBColorLength)

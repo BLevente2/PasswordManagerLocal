@@ -8,6 +8,7 @@ public sealed class PasswordInfoResponse
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
+    public IReadOnlyList<Guid> TagIds { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
 
@@ -20,6 +21,7 @@ public sealed class PasswordInfoResponse
             Name = password.Name,
             Description = password.Description,
             Color = password.Color,
+            TagIds = password.TagIds.ToList(),
             CreatedAt = password.CreatedAt,
             LastUpdatedAt = password.LastUpdatedAt
         };

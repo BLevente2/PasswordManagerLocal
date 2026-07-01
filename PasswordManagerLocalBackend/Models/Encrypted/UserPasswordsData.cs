@@ -11,7 +11,12 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
     public List<DeletedPasswordData> DeletedPasswords { get; set; } = [];
     public List<CustomUserColor> CustomColors { get; set; } = [];
     public List<DeletedCustomUserColorData> DeletedCustomColors { get; set; } = [];
+    public List<PasswordTag> Tags { get; set; } = [];
+    public List<DeletedPasswordTagData> DeletedTags { get; set; } = [];
     public byte[] PasswordKey { get; set; } = [];
+    public byte[] PasswordsIntegrityHash { get; set; } = [];
+    public byte[] CustomColorsIntegrityHash { get; set; } = [];
+    public byte[] PasswordTagsIntegrityHash { get; set; } = [];
 
     public void Dispose()
     {
@@ -25,6 +30,9 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
             return;
 
         CryptographicOperations.ZeroMemory(PasswordKey);
+        CryptographicOperations.ZeroMemory(PasswordsIntegrityHash);
+        CryptographicOperations.ZeroMemory(CustomColorsIntegrityHash);
+        CryptographicOperations.ZeroMemory(PasswordTagsIntegrityHash);
         CryptographicOperations.ZeroMemory(IntegrityHash);
         if (disposing)
         {
@@ -32,16 +40,78 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
             DeletedPasswords.ForEach(deleted => deleted.Dispose());
             CustomColors.ForEach(color => color.Dispose());
             DeletedCustomColors.ForEach(deleted => deleted.Dispose());
+            Tags.ForEach(tag => tag.Dispose());
+            DeletedTags.ForEach(deleted => deleted.Dispose());
         }
         Passwords.Clear();
         DeletedPasswords.Clear();
         CustomColors.Clear();
         DeletedCustomColors.Clear();
+        Tags.Clear();
+        DeletedTags.Clear();
 
         _disposed = true;
     }
 
     public override byte[] CalculateIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.WriteBytes(PasswordsIntegrityHash);
+            hash.WriteBytes(CustomColorsIntegrityHash);
+            hash.WriteBytes(PasswordTagsIntegrityHash);
+        });
+
+
+    public override bool IsIntegrityValid()
+    {
+        if (!IsSha256Hash(IntegrityHash) ||
+            !IsSha256Hash(PasswordsIntegrityHash) ||
+            !IsSha256Hash(CustomColorsIntegrityHash) ||
+            !IsSha256Hash(PasswordTagsIntegrityHash))
+            return false;
+
+        var calculatedPasswordsIntegrityHash = CalculatePasswordsIntegrityHash();
+        var calculatedCustomColorsIntegrityHash = CalculateCustomColorsIntegrityHash();
+        var calculatedPasswordTagsIntegrityHash = CalculatePasswordTagsIntegrityHash();
+
+        return Hashing.Verify(PasswordsIntegrityHash, calculatedPasswordsIntegrityHash) &&
+               Hashing.Verify(CustomColorsIntegrityHash, calculatedCustomColorsIntegrityHash) &&
+               Hashing.Verify(PasswordTagsIntegrityHash, calculatedPasswordTagsIntegrityHash) &&
+               Hashing.Verify(IntegrityHash, CalculateIntegrityHash());
+    }
+
+
+    public override void GenerateIntegrityHash()
+    {
+        PasswordsIntegrityHash = ReplaceHash(PasswordsIntegrityHash, CalculatePasswordsIntegrityHash());
+        CustomColorsIntegrityHash = ReplaceHash(CustomColorsIntegrityHash, CalculateCustomColorsIntegrityHash());
+        PasswordTagsIntegrityHash = ReplaceHash(PasswordTagsIntegrityHash, CalculatePasswordTagsIntegrityHash());
+        GenerateRootIntegrityHash();
+    }
+
+
+    public void GeneratePasswordsIntegrityHash()
+    {
+        PasswordsIntegrityHash = ReplaceHash(PasswordsIntegrityHash, CalculatePasswordsIntegrityHash());
+        GenerateRootIntegrityHash();
+    }
+
+
+    public void GenerateCustomColorsIntegrityHash()
+    {
+        CustomColorsIntegrityHash = ReplaceHash(CustomColorsIntegrityHash, CalculateCustomColorsIntegrityHash());
+        GenerateRootIntegrityHash();
+    }
+
+
+    public void GeneratePasswordTagsIntegrityHash()
+    {
+        PasswordTagsIntegrityHash = ReplaceHash(PasswordTagsIntegrityHash, CalculatePasswordTagsIntegrityHash());
+        GenerateRootIntegrityHash();
+    }
+
+
+    public byte[] CalculatePasswordsIntegrityHash() =>
         Hashing.SHA256Hash(hash =>
         {
             hash.WriteBytes(PasswordKey);
@@ -51,6 +121,12 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
             hash.Write(DeletedPasswords.Count);
             foreach (var deleted in DeletedPasswords.OrderBy(deleted => deleted.Id))
                 hash.WriteBytes(deleted.IntegrityHash);
+        });
+
+
+    public byte[] CalculateCustomColorsIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
             hash.Write(CustomColors.Count);
             foreach (var color in CustomColors.OrderBy(color => color.Id))
                 hash.WriteBytes(color.IntegrityHash);
@@ -58,5 +134,34 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
             foreach (var deleted in DeletedCustomColors.OrderBy(deleted => deleted.Id))
                 hash.WriteBytes(deleted.IntegrityHash);
         });
+
+
+    public byte[] CalculatePasswordTagsIntegrityHash() =>
+        Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(Tags.Count);
+            foreach (var tag in Tags.OrderBy(tag => tag.Id))
+                hash.WriteBytes(tag.IntegrityHash);
+            hash.Write(DeletedTags.Count);
+            foreach (var deleted in DeletedTags.OrderBy(deleted => deleted.Id))
+                hash.WriteBytes(deleted.IntegrityHash);
+        });
+
+
+    private void GenerateRootIntegrityHash() =>
+        base.GenerateIntegrityHash();
+
+
+    private static bool IsSha256Hash(byte[]? hash) =>
+        hash is { Length: Hashing.SHA256HashSizeInBytes };
+
+
+    private static byte[] ReplaceHash(byte[]? target, byte[] value)
+    {
+        if (target is not null)
+            CryptographicOperations.ZeroMemory(target);
+
+        return value;
+    }
 
 }

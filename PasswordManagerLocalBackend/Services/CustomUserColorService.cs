@@ -49,7 +49,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         passwords.DeletedCustomColors.RemoveAll(deleted => deleted.Id == customColor.Id);
         passwords.CustomColors.Add(customColor);
-        passwords.GenerateIntegrityHash();
+        passwords.GenerateCustomColorsIntegrityHash();
     }
 
 
@@ -58,7 +58,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
         using var color = GetAndVerifyCustomUserColorById(customUserColorId, passwords);
         TombstoneCleanupUtil.AddOrUpdateDeletedCustomUserColor(passwords, color.Id, DateTime.UtcNow);
         passwords.CustomColors.Remove(color);
-        passwords.GenerateIntegrityHash();
+        passwords.GenerateCustomColorsIntegrityHash();
     }
 
 
@@ -89,7 +89,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
         passwords.DeletedCustomColors.RemoveAll(deleted => deleted.Id == color.Id);
         color.LastUpdatedAt = DateTime.UtcNow;
         color.GenerateIntegrityHash();
-        passwords.GenerateIntegrityHash();
+        passwords.GenerateCustomColorsIntegrityHash();
     }
 
 

@@ -167,6 +167,25 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserCustomColorService>(service => service.UpdateCustomUserColorAsync(token, request, ct));
 
+
+    public Task AddPasswordTagAsync(
+        Guid token,
+        NewPasswordTagRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserPasswordTagService>(service => service.AddPasswordTagAsync(token, request, ct));
+
+    public Task DeletePasswordTagAsync(
+        Guid token,
+        Guid passwordTagId,
+        CancellationToken ct = default) =>
+        RunAsync<IUserPasswordTagService>(service => service.DeletePasswordTagAsync(token, passwordTagId, ct));
+
+    public Task UpdatePasswordTagAsync(
+        Guid token,
+        UpdatePasswordTagRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserPasswordTagService>(service => service.UpdatePasswordTagAsync(token, request, ct));
+
     private async Task RunAsync<TService>(Func<TService, Task> action)
         where TService : notnull
     {
