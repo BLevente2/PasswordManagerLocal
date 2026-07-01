@@ -112,7 +112,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         var request = new GetDeviceEnrollmentInfoRequest
         {
             SessionId = session.SessionId,
-            CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(session.SessionId, session.Secret))
+            CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(session.SessionId, session.Secret)),
+            SourceDatabaseVersion = DatabaseConstants.CurrentDbVersion
         };
 
         foreach (var host in hosts)
@@ -2097,7 +2098,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             var reply = await _syncTransport.GetDeviceEnrollmentInfoAsync(endpoint.Host, endpoint.Port, endpoint.TlsCertFingerprint, new GetDeviceEnrollmentInfoRequest
             {
                 SessionId = parsed.SessionId,
-                CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(parsed.SessionId, parsed.Secret))
+                CodeProof = ByteString.CopyFrom(DeviceEnrollmentCode.BuildEnrollmentInfoProof(parsed.SessionId, parsed.Secret)),
+                SourceDatabaseVersion = DatabaseConstants.CurrentDbVersion
             }, ct);
 
             var errorCode = Enum.TryParse<DeviceEnrollmentErrorCode>(reply.ErrorCode, out var parsedErrorCode)
@@ -2259,6 +2261,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SnapshotEncryptionVersion = offset == 0 ? SyncConstants.EnrollmentSnapshotEncryptionVersion : 0,
                 SnapshotEncryptionNonce = offset == 0 ? ByteString.CopyFrom(snapshotNonce) : ByteString.Empty,
                 SnapshotEncryptionTag = offset == 0 ? ByteString.CopyFrom(snapshotTag) : ByteString.Empty,
+                SourceDatabaseVersion = offset == 0 ? DatabaseConstants.CurrentDbVersion : 0,
                 SnapshotChunk = ByteString.CopyFrom(snapshotBytes, offset, count)
             };
 
@@ -2277,6 +2280,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 SnapshotEncryptionVersion = SyncConstants.EnrollmentSnapshotEncryptionVersion,
                 SnapshotEncryptionNonce = ByteString.CopyFrom(snapshotNonce),
                 SnapshotEncryptionTag = ByteString.CopyFrom(snapshotTag),
+                SourceDatabaseVersion = DatabaseConstants.CurrentDbVersion,
                 SnapshotChunk = ByteString.Empty
             };
         }
