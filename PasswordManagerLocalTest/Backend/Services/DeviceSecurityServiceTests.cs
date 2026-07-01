@@ -100,6 +100,7 @@ public sealed class DeviceSecurityServiceTests
         var device = CreateDevice();
         device.InvalidSyncAttemptCount = 3;
         device.LastInvalidSyncAttemptAt = DateTimeOffset.UtcNow;
+        devices.Seed(device);
 
         await service.ResetInvalidIncomingSyncAsync(device);
 

@@ -118,9 +118,67 @@ public sealed class SyncQueueService : ISyncQueueService
                 await _syncQueue.EnqueueAsync(queueItems, ct);
         }
 
+        if (touchLocalSyncState &&
+            syncItem.ModelType == SyncModelType.User &&
+            syncItem.ChangeType == SyncChangeType.Deleted)
+            await RemoveSyncItemsForDeletedUserAsync(syncItem.ModelId, syncItem.Id, ct);
+
         await _uow.SaveChangesAsync(ct);
 
         RefreshDiscoveryCache(targetDevices);
+    }
+
+
+    private async Task RemoveSyncItemsForDeletedUserAsync(Guid deletedUserId, Guid protectedSyncItemId, CancellationToken ct)
+    {
+        var syncItems = (await _syncItems.ListAllAsync(ct))
+            .Where(syncItem => syncItem.Id != protectedSyncItemId)
+            .DistinctBy(syncItem => syncItem.Id)
+            .ToList();
+
+        var syncItemIdsToDelete = new List<Guid>();
+        foreach (var syncItem in syncItems)
+        {
+            if (await IsSyncItemOnlyForDeletedUserAsync(syncItem, deletedUserId, ct))
+                syncItemIdsToDelete.Add(syncItem.Id);
+        }
+
+        foreach (var syncItemId in syncItemIdsToDelete)
+        {
+            var trackedSyncItem = await _syncItems.GetByIdAsync(syncItemId, ct);
+            if (trackedSyncItem is not null)
+                _syncItems.Delete(trackedSyncItem);
+        }
+    }
+
+
+    private async Task<bool> IsSyncItemOnlyForDeletedUserAsync(SyncItem item, Guid deletedUserId, CancellationToken ct)
+    {
+        if (item.ModelType == SyncModelType.User)
+            return item.ModelId == deletedUserId;
+
+        if (item.ModelType == SyncModelType.UserDevice)
+        {
+            var link = await _userDevices.GetByModelIdAsync(item.ModelId, ct);
+            return link?.UserId == deletedUserId;
+        }
+
+        if (item.ModelType == SyncModelType.Group)
+        {
+            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
+            return group is not null &&
+                   group.Users.Any(user => user.UId == deletedUserId) &&
+                   group.Users.All(user => user.UId == deletedUserId);
+        }
+
+        if (item.ModelType == SyncModelType.Device)
+        {
+            var links = await _userDevices.ListByDeviceAsync(item.ModelId, ct);
+            return links.Any(link => link.UserId == deletedUserId) &&
+                   links.Where(link => !link.IsDeleted).All(link => link.UserId == deletedUserId);
+        }
+
+        return false;
     }
 
 

@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Models;
+using PasswordManagerLocalBackend.Models;
 
 namespace PasswordManagerLocalBackend.Abstractions.Repositories;
 

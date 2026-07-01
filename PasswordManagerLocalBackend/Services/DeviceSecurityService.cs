@@ -62,6 +62,9 @@ public sealed class DeviceSecurityService : IDeviceSecurityService
 
     public async Task ResetInvalidIncomingSyncAsync(Device device, CancellationToken ct = default)
     {
+        if (!await _devices.ExistsAsync(device.Id, ct))
+            return;
+
         if (device.InvalidSyncAttemptCount == 0 && device.LastInvalidSyncAttemptAt is null)
             return;
 

@@ -100,6 +100,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         ValidateEnvelope(delta, payload);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);
         await ValidateDeviceIdentityImmutabilityAsync(sourceDevice, payload, ct);
+
+        if (await TryAcknowledgeAlreadyDeletedUserAsync(payload, sourceDevice, delta.Ts, ct))
+        {
+            await _uow.SaveChangesAsync(ct);
+            return delta.Ts;
+        }
+
         if (!await _authorization.CanReceiveAsync(payload, sourceDevice.Id, ct))
             throw new SyncRouteDisabledException("Synchronization is disabled for this user and device route.");
         await ValidateSourceCanApplyPayloadAsync(sourceDevice, payload, ct);
@@ -120,15 +127,20 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         var applied = payload.ModelType switch
         {
-            SyncModelType.User => await ApplyUserAsync(payload, delta.Ts, ct),
+            SyncModelType.User => await ApplyUserAsync(payload, sourceDevice.Id, delta.Ts, ct),
             SyncModelType.Group => await ApplyGroupAsync(payload, delta.Ts, ct),
             SyncModelType.Device => await ApplyDeviceAsync(payload, delta.Ts, ct),
             SyncModelType.UserDevice => await ApplyUserDeviceAsync(payload, delta.Ts, ct),
             _ => throw new InvalidOperationException("Unknown sync model type.")
         };
 
-        if (!DeletesSourceDevice(payload, sourceDevice) && !DeletesLocalUserProfile(payload))
+        var deletesUserProfile = IsDeletedUserPayload(payload);
+
+        if (!DeletesSourceDevice(payload, sourceDevice) && !DeletesLocalUserProfile(payload) && !deletesUserProfile)
             await TouchSourceDeviceAsync(sourceDevice, ct);
+
+        if (applied && deletesUserProfile)
+            await CleanupSourceDeviceAfterUserDeletionAsync(payload.ModelId, sourceDevice, ct);
 
         await _uow.SaveChangesAsync(ct);
 
@@ -179,7 +191,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private async Task<bool> ApplyUserAsync(SyncDeltaPayload delta, long ts, CancellationToken ct)
+    private async Task<bool> ApplyUserAsync(SyncDeltaPayload delta, Guid sourceDeviceId, long ts, CancellationToken ct)
     {
         var existing = await _users.GetByIdWithRelationsAsync(delta.ModelId, ct);
 
@@ -187,6 +199,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         {
             if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
                 return false;
+
+            if (existing is not null)
+                await PropagateDeletedUserBeforeLocalRemovalAsync(existing, sourceDeviceId, ts, ct);
 
             if (existing is not null)
                 _users.Delete(existing);
@@ -222,6 +237,52 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         user.GenerateIntegrityHash();
         await RemoveTombstoneAsync(delta, ct);
         return true;
+    }
+
+
+    private async Task PropagateDeletedUserBeforeLocalRemovalAsync(User user, Guid sourceDeviceId, long ts, CancellationToken ct)
+    {
+        await _syncQueueService.EnqueuePropagationAsync(new SyncItem
+        {
+            ModelId = user.UId,
+            ModelType = SyncModelType.User,
+            ChangeType = SyncChangeType.Deleted,
+            ChangedAtTs = ts
+        }, sourceDeviceId, ts, ct);
+    }
+
+
+    private async Task<bool> TryAcknowledgeAlreadyDeletedUserAsync(SyncDeltaPayload payload, Device sourceDevice, long ts, CancellationToken ct)
+    {
+        if (!IsDeletedUserPayload(payload))
+            return false;
+
+        var existing = await _users.GetByIdAsync(payload.ModelId, ct);
+        if (existing is not null)
+            return false;
+
+        var tombstone = await _tombstones.GetAsync(payload.ModelId, SyncModelType.User, ct);
+        if (tombstone is null)
+            return false;
+
+        if (ts > tombstone.DeletedAtTs)
+            await _tombstones.UpsertAsync(payload.ModelId, SyncModelType.User, ts, ct);
+
+        await CleanupSourceDeviceAfterUserDeletionAsync(payload.ModelId, sourceDevice, ct);
+        return true;
+    }
+
+
+    private async Task CleanupSourceDeviceAfterUserDeletionAsync(Guid deletedUserId, Device sourceDevice, CancellationToken ct)
+    {
+        if (await _userDevices.HasAnyActiveLinkForDeviceExceptUserAsync(sourceDevice.Id, deletedUserId, ct))
+        {
+            await TouchSourceDeviceAsync(sourceDevice, ct);
+            return;
+        }
+
+        _syncDeviceIdentities.TryRemove(sourceDevice);
+        _devices.Delete(sourceDevice);
     }
 
 
@@ -1292,10 +1353,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (sourceDevice.IsBlocked || !sourceDevice.IsTrusted)
             throw new UnauthorizedAccessException("Sync source device is not allowed.");
 
-        if (!await _authorization.HasEligibleUserForDeviceAsync(sourceDevice.Id, ct) &&
-            !await _userDevices.HasAnyDeletedLinkForDeviceAsync(sourceDevice.Id, ct))
-            throw new SyncRouteDisabledException("Sync source device is not linked to an enabled local user.");
-
         if (!string.Equals(delta.DeviceId, BuildDeviceId(delta.SignPub), StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Sync source device id is invalid.");
 
@@ -1447,8 +1504,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
 
     private bool ShouldPropagate(SyncDeltaPayload payload) =>
+        !IsDeletedUserPayload(payload) &&
         !DeletesLocalUserProfile(payload) &&
         !IsLocalDevicePayload(payload);
+
+
+    private static bool IsDeletedUserPayload(SyncDeltaPayload payload) =>
+        payload.ModelType == SyncModelType.User &&
+        payload.ChangeType == SyncChangeType.Deleted;
 
 
     private bool DeletesLocalUserProfile(SyncDeltaPayload payload) =>

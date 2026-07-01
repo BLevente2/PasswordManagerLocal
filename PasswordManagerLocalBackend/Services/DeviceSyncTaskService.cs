@@ -261,7 +261,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         await uow.SaveChangesAsync(ct);
 
         foreach (var item in sendItems)
-            await CleanupDetachedDeviceIfSyncCompletedAsync(scope.ServiceProvider, item.SyncItem, ct);
+            await CleanupDetachedDeviceIfSyncCompletedAsync(scope.ServiceProvider, item.SyncItem, targetDevice.Id, ct);
 
         return true;
     }
@@ -308,8 +308,14 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
 
 
-    private async Task CleanupDetachedDeviceIfSyncCompletedAsync(IServiceProvider services, SyncItem syncItem, CancellationToken ct)
+    private async Task CleanupDetachedDeviceIfSyncCompletedAsync(IServiceProvider services, SyncItem syncItem, Guid targetDeviceId, CancellationToken ct)
     {
+        if (syncItem.ModelType == SyncModelType.User && syncItem.ChangeType == SyncChangeType.Deleted)
+        {
+            await CleanupDeviceIfNoActiveLinksAsync(services, targetDeviceId, ct);
+            return;
+        }
+
         if (syncItem.ModelType != SyncModelType.UserDevice || syncItem.ChangeType != SyncChangeType.Deleted)
             return;
 
@@ -342,6 +348,27 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             userDevices.Delete(userDevice);
         }
 
+        await uow.SaveChangesAsync(ct);
+    }
+
+
+    private async Task CleanupDeviceIfNoActiveLinksAsync(IServiceProvider services, Guid deviceId, CancellationToken ct)
+    {
+        if (deviceId == Guid.Empty || deviceId == _identity.LocalDeviceId)
+            return;
+
+        var userDevices = services.GetRequiredService<IUserDeviceRepository>();
+        if (await userDevices.HasAnyActiveLinkForDeviceAsync(deviceId, ct))
+            return;
+
+        var devices = services.GetRequiredService<IDeviceRepository>();
+        var uow = services.GetRequiredService<IUnitOfWork>();
+        var device = await devices.GetByIdWithUserDevicesAsync(deviceId, ct);
+        if (device is null)
+            return;
+
+        _syncDeviceIdentities.TryRemove(device);
+        devices.Delete(device);
         await uow.SaveChangesAsync(ct);
     }
 

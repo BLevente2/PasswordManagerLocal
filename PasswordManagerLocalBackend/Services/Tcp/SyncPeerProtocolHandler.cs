@@ -398,10 +398,6 @@ public sealed class SyncPeerProtocolHandler
         if (remoteDevice.IsBlocked)
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not allowed to sync.");
 
-        var authorization = services.GetRequiredService<ISyncAuthorizationService>();
-        if (!await authorization.HasEligibleUserForDeviceAsync(remoteDevice.Id, ct))
-            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not linked to an enabled local user.");
-
         if (remoteDevice.SignPublicKey.Length == 0)
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device signing key is missing.");
 
