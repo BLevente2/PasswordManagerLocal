@@ -106,10 +106,10 @@ public sealed class CustomUserColorService : ICustomUserColorService
     }
 
 
-    private static string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
+    private string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
 
 
-    private static string? NormalizeOptionalColorName(string? colorName)
+    private string? NormalizeOptionalColorName(string? colorName)
     {
         if (colorName is null)
             return null;
@@ -119,7 +119,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
     }
 
 
-    private static void ThrowIfCustomColorNameExists(
+    private void ThrowIfCustomColorNameExists(
         string? colorName,
         UserPasswordsData passwords,
         Guid? ignoredCustomColorId = null)
@@ -138,7 +138,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
     }
 
 
-    private static void ThrowIfCustomColorCodeExists(
+    private void ThrowIfCustomColorCodeExists(
         string colorCode,
         UserPasswordsData passwords,
         Guid? ignoredCustomColorId = null)

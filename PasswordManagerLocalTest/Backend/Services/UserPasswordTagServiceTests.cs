@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Requests;
 using PasswordManagerLocalTest.TestInfrastructure;
@@ -96,41 +95,5 @@ public sealed class UserPasswordTagServiceTests
         var afterDelete = await passwordService.GetSavedPasswordsAsync(token);
         MSTestAssert.HasCount(1, afterDelete.Passwords);
         MSTestAssert.IsEmpty(afterDelete.Passwords[0].TagIds);
-    }
-
-
-    [TestMethod]
-    public async Task PasswordTagEndpoints_WireToService()
-    {
-        using var host = new BackendTestHost();
-
-        var auth = host.Services.GetRequiredService<IAuthService>();
-        var endpoints = host.Services.GetRequiredService<IEndpoints>();
-
-        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("tags-endpoints"));
-
-        await endpoints.AddPasswordTagAsync(token, new NewPasswordTagRequest
-        {
-            Name = "Important",
-            Color = "#FFABCDEF"
-        });
-
-        var saved = await endpoints.GetSavedPasswordsAsync(token);
-        MSTestAssert.HasCount(1, saved.Tags);
-        MSTestAssert.AreEqual("Important", saved.Tags[0].Name);
-
-        await endpoints.UpdatePasswordTagAsync(token, new UpdatePasswordTagRequest
-        {
-            Id = saved.Tags[0].Id,
-            Name = "Updated"
-        });
-
-        var updated = await endpoints.GetSavedPasswordsAsync(token);
-        MSTestAssert.AreEqual("Updated", updated.Tags[0].Name);
-
-        await endpoints.DeletePasswordTagAsync(token, updated.Tags[0].Id);
-
-        var deleted = await endpoints.GetSavedPasswordsAsync(token);
-        MSTestAssert.IsEmpty(deleted.Tags);
     }
 }

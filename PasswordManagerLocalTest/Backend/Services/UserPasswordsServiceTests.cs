@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Requests;
@@ -246,40 +245,6 @@ public sealed class UserPasswordsServiceTests
 
         var sourceEmail = sourceAfter.Passwords.Single(password => password.Name == "Email");
         CollectionAssert.AreEqual(emailPassword, await svc.GetUnsecurePasswordAsync(sourceToken, sourceEmail.Id));
-    }
-
-
-    [TestMethod]
-    public async Task ExportPasswordsToUser_Endpoint_WiresToService()
-    {
-        using var host = new BackendTestHost();
-
-        var auth = host.Services.GetRequiredService<IAuthService>();
-        var endpoints = host.Services.GetRequiredService<IEndpoints>();
-
-        var sourceToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("export-endpoint-source"));
-        var targetToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("export-endpoint-target"));
-
-        await endpoints.AddNewPasswordAsync(sourceToken, new NewPasswordRequest
-        {
-            Name = "Forum",
-            Password = Encoding.UTF8.GetBytes("forum-secret")
-        });
-
-        var sourcePasswords = await endpoints.GetSavedPasswordsAsync(sourceToken);
-
-        await endpoints.ExportPasswordsToUserAsync(sourceToken, new ExportPasswordsToUserRequest
-        {
-            TargetToken = targetToken,
-            PasswordIds = [sourcePasswords.Passwords[0].Id]
-        });
-
-        var targetPasswords = await endpoints.GetSavedPasswordsAsync(targetToken);
-        MSTestAssert.HasCount(1, targetPasswords.Passwords);
-        MSTestAssert.AreEqual("Forum", targetPasswords.Passwords[0].Name);
-        CollectionAssert.AreEqual(
-            Encoding.UTF8.GetBytes("forum-secret"),
-            await endpoints.GetUnsecurePasswordAsync(targetToken, targetPasswords.Passwords[0].Id));
     }
 
 

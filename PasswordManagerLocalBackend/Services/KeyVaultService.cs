@@ -172,20 +172,20 @@ public sealed class KeyVaultService : IKeyVaultService
         return n;
     }
 
-    private static void ReplaceBlobKey(ref EncryptionKey? target, byte[] raw)
+    private void ReplaceBlobKey(ref EncryptionKey? target, byte[] raw)
     {
         target?.Dispose();
         target = raw.Length == 0 ? null : EncryptionKey.FromRaw(raw);
     }
 
-    private static void CopyBlobKeys(KeyVaultEntry source, KeyVaultEntry target)
+    private void CopyBlobKeys(KeyVaultEntry source, KeyVaultEntry target)
     {
         CopyBlobKey(source.GeneralUserDataKey, ref target.GeneralUserDataKey);
         CopyBlobKey(source.UserPasswordsDataKey, ref target.UserPasswordsDataKey);
         CopyBlobKey(source.UserDevicesDataKey, ref target.UserDevicesDataKey);
     }
 
-    private static void CopyBlobKey(EncryptionKey? source, ref EncryptionKey? target)
+    private void CopyBlobKey(EncryptionKey? source, ref EncryptionKey? target)
     {
         if (source is null)
             return;

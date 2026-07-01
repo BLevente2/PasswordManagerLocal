@@ -288,7 +288,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
 
 
-    private static bool IncomingUserPayloadDominatesExistingBlobs(UserSyncPayload incoming, User existing) =>
+    private bool IncomingUserPayloadDominatesExistingBlobs(UserSyncPayload incoming, User existing) =>
         incoming.GeneralUserDataLastModifiedAt >= existing.GeneralUserDataLastModifiedAt &&
         incoming.UserPasswordsDataLastModifiedAt >= existing.UserPasswordsDataLastModifiedAt &&
         incoming.UserDevicesDataLastModifiedAt >= existing.UserDevicesDataLastModifiedAt;
@@ -405,7 +405,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool MergeGeneralUserDataForSync(UserDataBundle local, UserDataBundle incoming, User existingUser, UserSyncPayload incomingUser)
+    private bool MergeGeneralUserDataForSync(UserDataBundle local, UserDataBundle incoming, User existingUser, UserSyncPayload incomingUser)
     {
         var localUpdatedAt = local.GeneralUserData.LastUpdatedAt;
         var incomingUpdatedAt = incoming.GeneralUserData.LastUpdatedAt;
@@ -427,7 +427,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool MergeUserPasswordsDataForSync(UserPasswordsData local, UserPasswordsData incoming)
+    private bool MergeUserPasswordsDataForSync(UserPasswordsData local, UserPasswordsData incoming)
     {
         if (!local.PasswordKey.SequenceEqual(incoming.PasswordKey))
             return false;
@@ -440,7 +440,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool MergePasswordEntriesForSync(UserPasswordsData local, UserPasswordsData incoming)
+    private bool MergePasswordEntriesForSync(UserPasswordsData local, UserPasswordsData incoming)
     {
         var changed = false;
         var localPasswords = local.Passwords.ToDictionary(password => password.Id);
@@ -498,14 +498,31 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool MergeCustomColorsForSync(UserPasswordsData local, UserPasswordsData incoming)
+    private bool MergeCustomColorsForSync(UserPasswordsData local, UserPasswordsData incoming)
     {
-        var changed = false;
         var localColors = local.CustomColors.ToDictionary(color => color.Id);
         var incomingColors = incoming.CustomColors.ToDictionary(color => color.Id);
         var localDeleted = local.DeletedCustomColors.ToDictionary(deleted => deleted.Id);
         var incomingDeleted = incoming.DeletedCustomColors.ToDictionary(deleted => deleted.Id);
-        var ids = localColors.Keys
+        var ids = GetCustomColorMergeIds(localColors, incomingColors, localDeleted, incomingDeleted);
+
+        var changed = false;
+        var mergedColors = new List<CustomUserColor>();
+        var mergedDeleted = new List<DeletedCustomUserColorData>();
+        foreach (var id in ids)
+            changed |= MergeCustomColorEntryForSync(
+                id, localColors, incomingColors, localDeleted, incomingDeleted, mergedColors, mergedDeleted);
+
+        return ApplyMergedCustomColorsForSync(local, mergedColors, mergedDeleted, changed);
+    }
+
+
+    private List<Guid> GetCustomColorMergeIds(
+        Dictionary<Guid, CustomUserColor> localColors,
+        Dictionary<Guid, CustomUserColor> incomingColors,
+        Dictionary<Guid, DeletedCustomUserColorData> localDeleted,
+        Dictionary<Guid, DeletedCustomUserColorData> incomingDeleted) =>
+        localColors.Keys
             .Concat(incomingColors.Keys)
             .Concat(localDeleted.Keys)
             .Concat(incomingDeleted.Keys)
@@ -513,43 +530,75 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             .Distinct()
             .ToList();
 
-        var mergedColors = new List<CustomUserColor>();
-        var mergedDeleted = new List<DeletedCustomUserColorData>();
-        foreach (var id in ids)
-        {
-            localColors.TryGetValue(id, out var localColor);
-            incomingColors.TryGetValue(id, out var incomingColor);
-            localDeleted.TryGetValue(id, out var localDeletion);
-            incomingDeleted.TryGetValue(id, out var incomingDeletion);
 
-            var newestColor = NewerCustomColor(localColor, incomingColor);
-            var newestDeletion = NewerDeletedCustomColor(localDeletion, incomingDeletion);
-            var colorTime = newestColor?.LastUpdatedAt ?? DateTime.MinValue;
-            var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+    private bool MergeCustomColorEntryForSync(
+        Guid id,
+        Dictionary<Guid, CustomUserColor> localColors,
+        Dictionary<Guid, CustomUserColor> incomingColors,
+        Dictionary<Guid, DeletedCustomUserColorData> localDeleted,
+        Dictionary<Guid, DeletedCustomUserColorData> incomingDeleted,
+        List<CustomUserColor> mergedColors,
+        List<DeletedCustomUserColorData> mergedDeleted)
+    {
+        localColors.TryGetValue(id, out var localColor);
+        incomingColors.TryGetValue(id, out var incomingColor);
+        localDeleted.TryGetValue(id, out var localDeletion);
+        incomingDeleted.TryGetValue(id, out var incomingDeletion);
 
-            if (newestDeletion is not null && deletionTime >= colorTime)
-            {
-                mergedDeleted.Add(newestDeletion);
-                if (localColor is not null || !ReferenceEquals(localDeletion, newestDeletion))
-                    changed = true;
-                continue;
-            }
+        var newestColor = NewerCustomColor(localColor, incomingColor);
+        var newestDeletion = NewerDeletedCustomColor(localDeletion, incomingDeletion);
+        if (ShouldKeepCustomColorDeletion(newestColor, newestDeletion))
+            return AddMergedCustomColorDeletion(localColor, localDeletion, newestDeletion!, mergedDeleted);
 
-            if (newestColor is not null)
-            {
-                var normalizedCode = NormalizeCustomColorCodeForSync(newestColor.ColorCode);
-                var normalizedName = NormalizeCustomColorNameForSync(newestColor.ColorName);
-                if (newestColor.ColorCode != normalizedCode || newestColor.ColorName != normalizedName)
-                    changed = true;
+        return newestColor is not null
+            && AddMergedCustomColor(localColor, localDeletion, newestColor, mergedColors);
+    }
 
-                newestColor.ColorCode = normalizedCode;
-                newestColor.ColorName = normalizedName;
-                mergedColors.Add(newestColor);
-                if (!ReferenceEquals(localColor, newestColor) || localDeletion is not null)
-                    changed = true;
-            }
-        }
 
+    private bool ShouldKeepCustomColorDeletion(
+        CustomUserColor? newestColor,
+        DeletedCustomUserColorData? newestDeletion)
+    {
+        var colorTime = newestColor?.LastUpdatedAt ?? DateTime.MinValue;
+        var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+        return newestDeletion is not null && deletionTime >= colorTime;
+    }
+
+
+    private bool AddMergedCustomColorDeletion(
+        CustomUserColor? localColor,
+        DeletedCustomUserColorData? localDeletion,
+        DeletedCustomUserColorData newestDeletion,
+        List<DeletedCustomUserColorData> mergedDeleted)
+    {
+        mergedDeleted.Add(newestDeletion);
+        return localColor is not null || !ReferenceEquals(localDeletion, newestDeletion);
+    }
+
+
+    private bool AddMergedCustomColor(
+        CustomUserColor? localColor,
+        DeletedCustomUserColorData? localDeletion,
+        CustomUserColor newestColor,
+        List<CustomUserColor> mergedColors)
+    {
+        var normalizedCode = NormalizeCustomColorCodeForSync(newestColor.ColorCode);
+        var normalizedName = NormalizeCustomColorNameForSync(newestColor.ColorName);
+        var changed = newestColor.ColorCode != normalizedCode || newestColor.ColorName != normalizedName;
+
+        newestColor.ColorCode = normalizedCode;
+        newestColor.ColorName = normalizedName;
+        mergedColors.Add(newestColor);
+        return changed || !ReferenceEquals(localColor, newestColor) || localDeletion is not null;
+    }
+
+
+    private bool ApplyMergedCustomColorsForSync(
+        UserPasswordsData local,
+        List<CustomUserColor> mergedColors,
+        List<DeletedCustomUserColorData> mergedDeleted,
+        bool changed)
+    {
         var deduplicatedColors = ResolveDuplicateCustomColorsForSync(mergedColors);
         changed |= deduplicatedColors.Count != mergedColors.Count;
         changed |= local.CustomColors.Count != deduplicatedColors.Count || local.DeletedCustomColors.Count != mergedDeleted.Count;
@@ -569,14 +618,31 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool MergePasswordTagsForSync(UserPasswordsData local, UserPasswordsData incoming)
+    private bool MergePasswordTagsForSync(UserPasswordsData local, UserPasswordsData incoming)
     {
-        var changed = false;
         var localTags = local.Tags.ToDictionary(tag => tag.Id);
         var incomingTags = incoming.Tags.ToDictionary(tag => tag.Id);
         var localDeleted = local.DeletedTags.ToDictionary(deleted => deleted.Id);
         var incomingDeleted = incoming.DeletedTags.ToDictionary(deleted => deleted.Id);
-        var ids = localTags.Keys
+        var ids = GetPasswordTagMergeIds(localTags, incomingTags, localDeleted, incomingDeleted);
+
+        var changed = false;
+        var mergedTags = new List<PasswordTag>();
+        var mergedDeleted = new List<DeletedPasswordTagData>();
+        foreach (var id in ids)
+            changed |= MergePasswordTagEntryForSync(
+                id, localTags, incomingTags, localDeleted, incomingDeleted, mergedTags, mergedDeleted);
+
+        return ApplyMergedPasswordTagsForSync(local, mergedTags, mergedDeleted, changed);
+    }
+
+
+    private List<Guid> GetPasswordTagMergeIds(
+        Dictionary<Guid, PasswordTag> localTags,
+        Dictionary<Guid, PasswordTag> incomingTags,
+        Dictionary<Guid, DeletedPasswordTagData> localDeleted,
+        Dictionary<Guid, DeletedPasswordTagData> incomingDeleted) =>
+        localTags.Keys
             .Concat(incomingTags.Keys)
             .Concat(localDeleted.Keys)
             .Concat(incomingDeleted.Keys)
@@ -584,43 +650,73 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             .Distinct()
             .ToList();
 
-        var mergedTags = new List<PasswordTag>();
-        var mergedDeleted = new List<DeletedPasswordTagData>();
-        foreach (var id in ids)
-        {
-            localTags.TryGetValue(id, out var localTag);
-            incomingTags.TryGetValue(id, out var incomingTag);
-            localDeleted.TryGetValue(id, out var localDeletion);
-            incomingDeleted.TryGetValue(id, out var incomingDeletion);
 
-            var newestTag = NewerPasswordTag(localTag, incomingTag);
-            var newestDeletion = NewerDeletedPasswordTag(localDeletion, incomingDeletion);
-            var tagTime = newestTag?.LastUpdatedAt ?? DateTime.MinValue;
-            var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+    private bool MergePasswordTagEntryForSync(
+        Guid id,
+        Dictionary<Guid, PasswordTag> localTags,
+        Dictionary<Guid, PasswordTag> incomingTags,
+        Dictionary<Guid, DeletedPasswordTagData> localDeleted,
+        Dictionary<Guid, DeletedPasswordTagData> incomingDeleted,
+        List<PasswordTag> mergedTags,
+        List<DeletedPasswordTagData> mergedDeleted)
+    {
+        localTags.TryGetValue(id, out var localTag);
+        incomingTags.TryGetValue(id, out var incomingTag);
+        localDeleted.TryGetValue(id, out var localDeletion);
+        incomingDeleted.TryGetValue(id, out var incomingDeletion);
 
-            if (newestDeletion is not null && deletionTime >= tagTime)
-            {
-                mergedDeleted.Add(newestDeletion);
-                if (localTag is not null || !ReferenceEquals(localDeletion, newestDeletion))
-                    changed = true;
-                continue;
-            }
+        var newestTag = NewerPasswordTag(localTag, incomingTag);
+        var newestDeletion = NewerDeletedPasswordTag(localDeletion, incomingDeletion);
+        if (ShouldKeepPasswordTagDeletion(newestTag, newestDeletion))
+            return AddMergedPasswordTagDeletion(localTag, localDeletion, newestDeletion!, mergedDeleted);
 
-            if (newestTag is not null)
-            {
-                var normalizedName = NormalizePasswordTagNameForSync(newestTag.Name);
-                var normalizedColor = NormalizePasswordTagColorForSync(newestTag.Color);
-                if (newestTag.Name != normalizedName || newestTag.Color != normalizedColor)
-                    changed = true;
+        return newestTag is not null
+            && AddMergedPasswordTag(localTag, localDeletion, newestTag, mergedTags);
+    }
 
-                newestTag.Name = normalizedName;
-                newestTag.Color = normalizedColor;
-                mergedTags.Add(newestTag);
-                if (!ReferenceEquals(localTag, newestTag) || localDeletion is not null)
-                    changed = true;
-            }
-        }
 
+    private bool ShouldKeepPasswordTagDeletion(PasswordTag? newestTag, DeletedPasswordTagData? newestDeletion)
+    {
+        var tagTime = newestTag?.LastUpdatedAt ?? DateTime.MinValue;
+        var deletionTime = newestDeletion?.DeletedAt ?? DateTime.MinValue;
+        return newestDeletion is not null && deletionTime >= tagTime;
+    }
+
+
+    private bool AddMergedPasswordTagDeletion(
+        PasswordTag? localTag,
+        DeletedPasswordTagData? localDeletion,
+        DeletedPasswordTagData newestDeletion,
+        List<DeletedPasswordTagData> mergedDeleted)
+    {
+        mergedDeleted.Add(newestDeletion);
+        return localTag is not null || !ReferenceEquals(localDeletion, newestDeletion);
+    }
+
+
+    private bool AddMergedPasswordTag(
+        PasswordTag? localTag,
+        DeletedPasswordTagData? localDeletion,
+        PasswordTag newestTag,
+        List<PasswordTag> mergedTags)
+    {
+        var normalizedName = NormalizePasswordTagNameForSync(newestTag.Name);
+        var normalizedColor = NormalizePasswordTagColorForSync(newestTag.Color);
+        var changed = newestTag.Name != normalizedName || newestTag.Color != normalizedColor;
+
+        newestTag.Name = normalizedName;
+        newestTag.Color = normalizedColor;
+        mergedTags.Add(newestTag);
+        return changed || !ReferenceEquals(localTag, newestTag) || localDeletion is not null;
+    }
+
+
+    private bool ApplyMergedPasswordTagsForSync(
+        UserPasswordsData local,
+        List<PasswordTag> mergedTags,
+        List<DeletedPasswordTagData> mergedDeleted,
+        bool changed)
+    {
         var deduplicatedTags = ResolveDuplicatePasswordTagsForSync(mergedTags);
         changed |= deduplicatedTags.Count != mergedTags.Count;
         changed |= local.Tags.Count != deduplicatedTags.Count || local.DeletedTags.Count != mergedDeleted.Count;
@@ -639,7 +735,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool RemoveInvalidPasswordTagReferencesForSync(UserPasswordsData data)
+    private bool RemoveInvalidPasswordTagReferencesForSync(UserPasswordsData data)
     {
         var validTagIds = data.Tags.Select(tag => tag.Id).ToHashSet();
         var changed = false;
@@ -665,7 +761,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static PasswordTag? NewerPasswordTag(PasswordTag? first, PasswordTag? second)
+    private PasswordTag? NewerPasswordTag(PasswordTag? first, PasswordTag? second)
     {
         if (first is null)
             return second;
@@ -677,7 +773,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static DeletedPasswordTagData? NewerDeletedPasswordTag(DeletedPasswordTagData? first, DeletedPasswordTagData? second)
+    private DeletedPasswordTagData? NewerDeletedPasswordTag(DeletedPasswordTagData? first, DeletedPasswordTagData? second)
     {
         if (first is null)
             return second;
@@ -689,7 +785,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static List<PasswordTag> ResolveDuplicatePasswordTagsForSync(List<PasswordTag> tags)
+    private List<PasswordTag> ResolveDuplicatePasswordTagsForSync(List<PasswordTag> tags)
     {
         var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var kept = new List<PasswordTag>();
@@ -717,14 +813,14 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static string NormalizePasswordTagNameForSync(string tagName)
+    private string NormalizePasswordTagNameForSync(string tagName)
     {
         var normalized = tagName.Trim();
         return normalized.Length <= PasswordTagNameMaxLength ? normalized : string.Empty;
     }
 
 
-    private static string NormalizePasswordTagColorForSync(string color)
+    private string NormalizePasswordTagColorForSync(string color)
     {
         var normalized = color.Trim().ToUpperInvariant();
         if (normalized.Length != ARGBColorLength || normalized[0] != '#')
@@ -736,7 +832,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static CustomUserColor? NewerCustomColor(CustomUserColor? first, CustomUserColor? second)
+    private CustomUserColor? NewerCustomColor(CustomUserColor? first, CustomUserColor? second)
     {
         if (first is null)
             return second;
@@ -748,7 +844,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static DeletedCustomUserColorData? NewerDeletedCustomColor(DeletedCustomUserColorData? first, DeletedCustomUserColorData? second)
+    private DeletedCustomUserColorData? NewerDeletedCustomColor(DeletedCustomUserColorData? first, DeletedCustomUserColorData? second)
     {
         if (first is null)
             return second;
@@ -760,7 +856,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static List<CustomUserColor> ResolveDuplicateCustomColorsForSync(List<CustomUserColor> colors)
+    private List<CustomUserColor> ResolveDuplicateCustomColorsForSync(List<CustomUserColor> colors)
     {
         var usedCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -794,7 +890,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static string NormalizeCustomColorCodeForSync(string colorCode)
+    private string NormalizeCustomColorCodeForSync(string colorCode)
     {
         var normalized = colorCode.Trim().ToUpperInvariant();
         if (normalized.Length != ARGBColorLength || normalized[0] != '#')
@@ -806,7 +902,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static string? NormalizeCustomColorNameForSync(string? colorName)
+    private string? NormalizeCustomColorNameForSync(string? colorName)
     {
         if (colorName is null)
             return null;
@@ -817,7 +913,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
 
 
-    private static void DisposeItemsNotKept<T>(IEnumerable<T> currentItems, IReadOnlyCollection<T> keptItems) where T : class, IDisposable
+    private void DisposeItemsNotKept<T>(IEnumerable<T> currentItems, IReadOnlyCollection<T> keptItems) where T : class, IDisposable
     {
         foreach (var current in currentItems)
         {
@@ -827,7 +923,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static SecurePassword? NewerPassword(SecurePassword? first, SecurePassword? second)
+    private SecurePassword? NewerPassword(SecurePassword? first, SecurePassword? second)
     {
         if (first is null)
             return second;
@@ -839,7 +935,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static DeletedPasswordData? NewerDeletedPassword(DeletedPasswordData? first, DeletedPasswordData? second)
+    private DeletedPasswordData? NewerDeletedPassword(DeletedPasswordData? first, DeletedPasswordData? second)
     {
         if (first is null)
             return second;
@@ -851,7 +947,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static bool MergeUserDevicesDataForSync(UserDevicesData local, UserDevicesData incoming)
+    private bool MergeUserDevicesDataForSync(UserDevicesData local, UserDevicesData incoming)
     {
         var changed = false;
         var localDevices = local.Devices.ToDictionary(device => device.Id);
@@ -921,7 +1017,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static UserDeviceData? NewerDevice(UserDeviceData? first, UserDeviceData? second)
+    private UserDeviceData? NewerDevice(UserDeviceData? first, UserDeviceData? second)
     {
         if (first is null)
             return second;
@@ -933,7 +1029,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static DeletedUserDeviceData? NewerDeletedDevice(DeletedUserDeviceData? first, DeletedUserDeviceData? second)
+    private DeletedUserDeviceData? NewerDeletedDevice(DeletedUserDeviceData? first, DeletedUserDeviceData? second)
     {
         if (first is null)
             return second;
@@ -945,7 +1041,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static List<UserDeviceData> ResolveDuplicateDeviceNamesForSync(List<UserDeviceData> devices)
+    private List<UserDeviceData> ResolveDuplicateDeviceNamesForSync(List<UserDeviceData> devices)
     {
         var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var device in devices.OrderByDescending(device => device.LastUpdatedAt).ThenBy(device => device.Id))
@@ -959,7 +1055,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static string BuildUniqueDeviceNameForSync(string requestedName, HashSet<string> usedNames, Guid deviceId)
+    private string BuildUniqueDeviceNameForSync(string requestedName, HashSet<string> usedNames, Guid deviceId)
     {
         var baseName = requestedName.Trim();
         if (baseName.Length == 0)
@@ -1010,7 +1106,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static async Task<T> DecryptEncryptedUserBlobAsync<T>(byte[] encryptedBlob, byte[] rawKey, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, CancellationToken ct) where T : class
+    private async Task<T> DecryptEncryptedUserBlobAsync<T>(byte[] encryptedBlob, byte[] rawKey, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, CancellationToken ct) where T : class
     {
         if (encryptedBlob.Length == 0 || rawKey.Length == 0)
             throw new UnauthorizedAccessException();
@@ -1056,7 +1152,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void GenerateAndCopyUserBundleHashesForSync(UserDataBundle bundle)
+    private void GenerateAndCopyUserBundleHashesForSync(UserDataBundle bundle)
     {
         bundle.GeneralUserData.GenerateIntegrityHash();
 
@@ -1090,7 +1186,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void VerifyUserDataBundleForSync(UserDataBundle bundle)
+    private void VerifyUserDataBundleForSync(UserDataBundle bundle)
     {
         bundle.UserData.VerifyIntegrity();
         bundle.GeneralUserData.VerifyIntegrity();
@@ -1120,7 +1216,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static void VerifyStoredUserBlobHashForSync(byte[] expected, byte[] actual, Type type)
+    private void VerifyStoredUserBlobHashForSync(byte[] expected, byte[] actual, Type type)
     {
         if (expected.Length != Hashing.SHA256HashSizeInBytes ||
             actual.Length != Hashing.SHA256HashSizeInBytes ||
@@ -1129,7 +1225,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static DateTimeOffset MaxDateTimeOffset(params DateTimeOffset[] values)
+    private DateTimeOffset MaxDateTimeOffset(params DateTimeOffset[] values)
     {
         var max = DateTimeOffset.MinValue;
         foreach (var value in values)
@@ -1698,7 +1794,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         !IsLocalDevicePayload(payload);
 
 
-    private static bool IsDeletedUserPayload(SyncDeltaPayload payload) =>
+    private bool IsDeletedUserPayload(SyncDeltaPayload payload) =>
         payload.ModelType == SyncModelType.User &&
         payload.ChangeType == SyncChangeType.Deleted;
 
@@ -2109,7 +2205,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static readonly string[] SensitiveLocalOnlyPropertyNames =
+    private readonly string[] SensitiveLocalOnlyPropertyNames =
     [
         "SavedKey",
         "LocalDeviceIdentity",

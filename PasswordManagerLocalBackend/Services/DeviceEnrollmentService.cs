@@ -2378,7 +2378,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private static readonly string[] SensitiveLocalOnlySnapshotPropertyNames =
+    private readonly string[] SensitiveLocalOnlySnapshotPropertyNames =
     [
         "SavedKey",
         "LocalDeviceIdentity",

@@ -435,51 +435,11 @@ public sealed class UserService : IUserService
     }
 
 
-    public static byte[] GenerateBlobKey()
-    {
-        using var key = EncryptionKey.Create();
-        return key.ExportCopy();
-    }
+    private void ReplaceUserBlobKeys(UserData userData) =>
+        UserDataKeyUtil.ReplaceUserBlobKeys(userData);
 
 
-    public static void InitializeUserDataKeys(UserData userData)
-    {
-        ReplaceGeneralUserDataKey(userData);
-        ReplaceUserPasswordsDataKey(userData);
-        ReplaceUserDevicesDataKey(userData);
-    }
-
-
-    private static void ReplaceUserBlobKeys(UserData userData)
-    {
-        ReplaceGeneralUserDataKey(userData);
-        ReplaceUserPasswordsDataKey(userData);
-        ReplaceUserDevicesDataKey(userData);
-    }
-
-
-    private static void ReplaceGeneralUserDataKey(UserData userData)
-    {
-        CryptographicOperations.ZeroMemory(userData.GeneralUserDataKey);
-        userData.GeneralUserDataKey = GenerateBlobKey();
-    }
-
-
-    private static void ReplaceUserPasswordsDataKey(UserData userData)
-    {
-        CryptographicOperations.ZeroMemory(userData.UserPasswordsDataKey);
-        userData.UserPasswordsDataKey = GenerateBlobKey();
-    }
-
-
-    private static void ReplaceUserDevicesDataKey(UserData userData)
-    {
-        CryptographicOperations.ZeroMemory(userData.UserDevicesDataKey);
-        userData.UserDevicesDataKey = GenerateBlobKey();
-    }
-
-
-    private static void GenerateAndCopyChildIntegrityHashes(UserDataBundle bundle)
+    private void GenerateAndCopyChildIntegrityHashes(UserDataBundle bundle)
     {
         foreach (var password in bundle.UserPasswordsData.Passwords)
             password.GenerateIntegrityHash();
@@ -530,85 +490,111 @@ public sealed class UserService : IUserService
     private void EnsureUserDataBundleCanBePersisted(UserDataBundle bundle, User user)
     {
         EnsureUserDataCanBePersisted(bundle.UserData, user);
+        EnsurePasswordDataCanBePersisted(bundle.UserPasswordsData);
+        EnsureUserDeviceDataCanBePersisted(bundle.UserDevicesData);
+        EnsureCustomColorsCanBePersisted(bundle.UserPasswordsData);
+        EnsurePasswordTagsCanBePersisted(bundle.UserPasswordsData);
+        EnsurePasswordTagReferencesCanBePersisted(bundle.UserPasswordsData);
+    }
 
-        if (bundle.UserPasswordsData.PasswordKey.Length == 0 || bundle.UserDevicesData is null)
+
+    private void EnsurePasswordDataCanBePersisted(UserPasswordsData passwordsData)
+    {
+        if (passwordsData.PasswordKey.Length == 0)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
 
-        if (bundle.UserPasswordsData.Passwords.Count > MaxNumberOfPasswords)
+        if (passwordsData.Passwords.Count > MaxNumberOfPasswords)
             throw new InvalidOperationException("Refusing to persist too many passwords.");
 
-        if (bundle.UserPasswordsData.CustomColors.Count > MaxNumberOfCustomUserColors)
+        if (passwordsData.CustomColors.Count > MaxNumberOfCustomUserColors)
             throw new InvalidOperationException("Refusing to persist too many custom colors.");
 
-        if (bundle.UserPasswordsData.Tags.Count > MaxNumberOfPasswordTags)
+        if (passwordsData.Tags.Count > MaxNumberOfPasswordTags)
             throw new InvalidOperationException("Refusing to persist too many password tags.");
 
-        if (bundle.UserPasswordsData.DeletedPasswords.Count > MaxUserDataTombstonesPerList ||
-            bundle.UserPasswordsData.DeletedCustomColors.Count > MaxUserDataTombstonesPerList ||
-            bundle.UserPasswordsData.DeletedTags.Count > MaxUserDataTombstonesPerList ||
-            bundle.UserDevicesData.DeletedDevices.Count > MaxUserDataTombstonesPerList)
+        if (passwordsData.DeletedPasswords.Count > MaxUserDataTombstonesPerList ||
+            passwordsData.DeletedCustomColors.Count > MaxUserDataTombstonesPerList ||
+            passwordsData.DeletedTags.Count > MaxUserDataTombstonesPerList)
+            throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
+    }
+
+
+    private void EnsureUserDeviceDataCanBePersisted(UserDevicesData? userDevicesData)
+    {
+        if (userDevicesData is null)
+            throw new InvalidOperationException("Refusing to persist incomplete user data.");
+
+        if (userDevicesData.DeletedDevices.Count > MaxUserDataTombstonesPerList)
             throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
 
-        if (bundle.UserDevicesData.Devices.Any(device =>
+        if (userDevicesData.Devices.Any(device =>
                 device.Id == Guid.Empty ||
                 device.LinkedAt == default ||
                 !IsValidUserDeviceName(device.Name)))
             throw new InvalidOperationException("Refusing to persist invalid device data.");
 
-        if (bundle.UserDevicesData.Devices
-            .GroupBy(device => device.Id)
-            .Any(group => group.Count() != 1))
+        if (HasDuplicates(userDevicesData.Devices, device => device.Id))
             throw new InvalidOperationException("Refusing to persist duplicate device data.");
 
-        if (bundle.UserDevicesData.Devices
-            .GroupBy(device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Any(group => group.Count() != 1))
+        if (HasDuplicates(userDevicesData.Devices, device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Refusing to persist duplicate device names.");
+    }
 
-        if (bundle.UserPasswordsData.CustomColors.Any(color =>
+
+    private void EnsureCustomColorsCanBePersisted(UserPasswordsData passwordsData)
+    {
+        if (passwordsData.CustomColors.Any(color =>
                 color.Id == Guid.Empty ||
                 !IsValidARGBColor(color.ColorCode) ||
                 !IsValidCustomUserColorName(color.ColorName)))
             throw new InvalidOperationException("Refusing to persist invalid custom color data.");
 
-        if (bundle.UserPasswordsData.CustomColors
-            .GroupBy(color => color.Id)
-            .Any(group => group.Count() != 1))
+        if (HasDuplicates(passwordsData.CustomColors, color => color.Id))
             throw new InvalidOperationException("Refusing to persist duplicate custom color data.");
 
-        if (bundle.UserPasswordsData.CustomColors
-            .GroupBy(color => color.ColorCode.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Any(group => group.Count() != 1))
+        if (HasDuplicates(passwordsData.CustomColors, color => color.ColorCode.Trim(), StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Refusing to persist duplicate custom color codes.");
 
-        if (bundle.UserPasswordsData.CustomColors
-            .Where(color => color.ColorName is not null)
-            .GroupBy(color => color.ColorName!.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Any(group => group.Count() != 1))
+        var namedColors = passwordsData.CustomColors.Where(color => color.ColorName is not null);
+        if (HasDuplicates(namedColors, color => color.ColorName!.Trim(), StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Refusing to persist duplicate custom color names.");
+    }
 
-        if (bundle.UserPasswordsData.Tags.Any(tag =>
+
+    private void EnsurePasswordTagsCanBePersisted(UserPasswordsData passwordsData)
+    {
+        if (passwordsData.Tags.Any(tag =>
                 tag.Id == Guid.Empty ||
                 !IsValidPasswordTagName(tag.Name) ||
                 !IsValidARGBColor(tag.Color)))
             throw new InvalidOperationException("Refusing to persist invalid password tag data.");
 
-        if (bundle.UserPasswordsData.Tags
-            .GroupBy(tag => tag.Id)
-            .Any(group => group.Count() != 1))
+        if (HasDuplicates(passwordsData.Tags, tag => tag.Id))
             throw new InvalidOperationException("Refusing to persist duplicate password tag data.");
 
-        if (bundle.UserPasswordsData.Tags
-            .GroupBy(tag => tag.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Any(group => group.Count() != 1))
+        if (HasDuplicates(passwordsData.Tags, tag => tag.Name.Trim(), StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Refusing to persist duplicate password tag names.");
+    }
 
-        var existingTagIds = bundle.UserPasswordsData.Tags.Select(tag => tag.Id).ToHashSet();
-        if (bundle.UserPasswordsData.Passwords.Any(password =>
-                password.TagIds.Any(tagId => tagId == Guid.Empty || !existingTagIds.Contains(tagId)) ||
-                password.TagIds.Distinct().Count() != password.TagIds.Count))
+
+    private void EnsurePasswordTagReferencesCanBePersisted(UserPasswordsData passwordsData)
+    {
+        var existingTagIds = passwordsData.Tags.Select(tag => tag.Id).ToHashSet();
+        var hasInvalidReferences = passwordsData.Passwords.Any(password =>
+            password.TagIds.Any(tagId => tagId == Guid.Empty || !existingTagIds.Contains(tagId)) ||
+            password.TagIds.Distinct().Count() != password.TagIds.Count);
+
+        if (hasInvalidReferences)
             throw new InvalidOperationException("Refusing to persist invalid password tag references.");
     }
+
+
+    private bool HasDuplicates<TItem, TKey>(
+        IEnumerable<TItem> items,
+        Func<TItem, TKey> keySelector,
+        IEqualityComparer<TKey>? comparer = null) =>
+        items.GroupBy(keySelector, comparer).Any(group => group.Count() != 1);
+
 
     private void VerifyUserDataIntegrity(UserData userData) =>
         userData.VerifyIntegrity();
@@ -645,7 +631,7 @@ public sealed class UserService : IUserService
     }
 
 
-    private static void VerifyStoredChildHash(byte[] expected, byte[] actual, Type type)
+    private void VerifyStoredChildHash(byte[] expected, byte[] actual, Type type)
     {
         if (expected.Length != Hashing.SHA256HashSizeInBytes ||
             actual.Length != Hashing.SHA256HashSizeInBytes ||
@@ -654,7 +640,7 @@ public sealed class UserService : IUserService
     }
 
 
-    private static void EnsureBlobTimestamps(User user, DateTimeOffset value)
+    private void EnsureBlobTimestamps(User user, DateTimeOffset value)
     {
         if (user.UserDataLastModifiedAt == default)
             user.UserDataLastModifiedAt = value;

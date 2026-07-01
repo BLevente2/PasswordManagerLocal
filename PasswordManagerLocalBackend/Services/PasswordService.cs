@@ -135,14 +135,42 @@ public sealed class PasswordService : IPasswordService
         sourcePasswords.VerifyIntegrity();
         targetPasswords.VerifyIntegrity();
 
-        if (passwordIds.Count == 0 || passwordIds.Count > MaxNumberOfPasswords ||
-            passwordIds.Any(id => id == Guid.Empty) ||
-            passwordIds.Distinct().Count() != passwordIds.Count)
+        ValidatePasswordExportRequest(passwordIds, targetPasswords);
+
+        var selectedPasswords = GetPasswordsToExport(passwordIds, sourcePasswords);
+        EnsureTargetPasswordNamesAreAvailable(selectedPasswords, targetPasswords);
+
+        var copiedPasswords = await CopyPasswordsForExportAsync(selectedPasswords, sourcePasswords, targetPasswords);
+        try
+        {
+            AddCopiedPasswordsToTarget(copiedPasswords, targetPasswords);
+            targetPasswords.GeneratePasswordsIntegrityHash();
+        }
+        catch
+        {
+            RollBackCopiedPasswords(copiedPasswords, targetPasswords);
+            throw;
+        }
+    }
+
+
+    private void ValidatePasswordExportRequest(IReadOnlyList<Guid> passwordIds, UserPasswordsData targetPasswords)
+    {
+        var hasInvalidInput = passwordIds.Count == 0
+            || passwordIds.Count > MaxNumberOfPasswords
+            || passwordIds.Any(id => id == Guid.Empty)
+            || passwordIds.Distinct().Count() != passwordIds.Count;
+
+        if (hasInvalidInput)
             throw new InvalidInputException(["PasswordIds"]);
 
         if (targetPasswords.Passwords.Count + passwordIds.Count > MaxNumberOfPasswords)
             throw new LimitReachedException(MaxNumberOfPasswords, "password");
+    }
 
+
+    private List<SecurePassword> GetPasswordsToExport(IReadOnlyList<Guid> passwordIds, UserPasswordsData sourcePasswords)
+    {
         var selectedPasswords = new List<SecurePassword>(passwordIds.Count);
         foreach (var passwordId in passwordIds)
         {
@@ -154,6 +182,14 @@ public sealed class PasswordService : IPasswordService
             selectedPasswords.Add(password);
         }
 
+        return selectedPasswords;
+    }
+
+
+    private void EnsureTargetPasswordNamesAreAvailable(
+        IReadOnlyList<SecurePassword> selectedPasswords,
+        UserPasswordsData targetPasswords)
+    {
         var targetPasswordNames = new HashSet<string>(
             targetPasswords.Passwords.Select(password => NormalizePasswordName(password.Name)),
             StringComparer.OrdinalIgnoreCase);
@@ -164,71 +200,104 @@ public sealed class PasswordService : IPasswordService
             if (!targetPasswordNames.Add(normalizedName))
                 throw new DuplicatePasswordNameException(normalizedName);
         }
+    }
 
+
+    private async Task<List<SecurePassword>> CopyPasswordsForExportAsync(
+        IReadOnlyList<SecurePassword> selectedPasswords,
+        UserPasswordsData sourcePasswords,
+        UserPasswordsData targetPasswords)
+    {
         var now = DateTime.UtcNow;
         var copiedPasswords = new List<SecurePassword>(selectedPasswords.Count);
 
         try
         {
             foreach (var sourcePassword in selectedPasswords)
-            {
-                byte[] rawPassword = [];
-                try
-                {
-                    rawPassword = await DecryptPasswordAsync(sourcePassword.Password, sourcePasswords);
+                copiedPasswords.Add(await CopyPasswordForExportAsync(sourcePassword, sourcePasswords, targetPasswords, now));
 
-                    var copiedPassword = new SecurePassword
-                    {
-                        Id = Guid.NewGuid(),
-                        Name = NormalizePasswordName(sourcePassword.Name),
-                        Description = sourcePassword.Description,
-                        Color = NormalizeColorCode(sourcePassword.Color),
-                        Password = await EncryptPasswordAsync(rawPassword, targetPasswords),
-                        TagIds = [],
-                        CreatedAt = now,
-                        LastUpdatedAt = now
-                    };
-                    copiedPassword.GenerateIntegrityHash();
-                    copiedPasswords.Add(copiedPassword);
-                }
-                finally
-                {
-                    CryptographicOperations.ZeroMemory(rawPassword);
-                }
-            }
-
-            foreach (var copiedPassword in copiedPasswords)
-            {
-                targetPasswords.DeletedPasswords.RemoveAll(deleted => deleted.Id == copiedPassword.Id);
-                targetPasswords.Passwords.Add(copiedPassword);
-            }
-
-            targetPasswords.GeneratePasswordsIntegrityHash();
+            return copiedPasswords;
         }
         catch
         {
-            var copiedIds = copiedPasswords.Select(password => password.Id).ToHashSet();
-            targetPasswords.Passwords.RemoveAll(password => copiedIds.Contains(password.Id));
-
-            foreach (var copiedPassword in copiedPasswords)
-                copiedPassword.Dispose();
-
+            DisposeCopiedPasswords(copiedPasswords);
             throw;
         }
     }
 
 
-    private static string NormalizePasswordName(string name) => name.Trim();
+    private async Task<SecurePassword> CopyPasswordForExportAsync(
+        SecurePassword sourcePassword,
+        UserPasswordsData sourcePasswords,
+        UserPasswordsData targetPasswords,
+        DateTime now)
+    {
+        byte[] rawPassword = [];
+        try
+        {
+            rawPassword = await DecryptPasswordAsync(sourcePassword.Password, sourcePasswords);
+
+            var copiedPassword = new SecurePassword
+            {
+                Id = Guid.NewGuid(),
+                Name = NormalizePasswordName(sourcePassword.Name),
+                Description = sourcePassword.Description,
+                Color = NormalizeColorCode(sourcePassword.Color),
+                Password = await EncryptPasswordAsync(rawPassword, targetPasswords),
+                TagIds = [],
+                CreatedAt = now,
+                LastUpdatedAt = now
+            };
+            copiedPassword.GenerateIntegrityHash();
+            return copiedPassword;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(rawPassword);
+        }
+    }
 
 
-    private static string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
+    private void AddCopiedPasswordsToTarget(
+        IReadOnlyList<SecurePassword> copiedPasswords,
+        UserPasswordsData targetPasswords)
+    {
+        foreach (var copiedPassword in copiedPasswords)
+        {
+            targetPasswords.DeletedPasswords.RemoveAll(deleted => deleted.Id == copiedPassword.Id);
+            targetPasswords.Passwords.Add(copiedPassword);
+        }
+    }
 
 
-    private static List<Guid> NormalizeTagIds(IReadOnlyList<Guid>? tagIds) =>
+    private void RollBackCopiedPasswords(
+        IReadOnlyList<SecurePassword> copiedPasswords,
+        UserPasswordsData targetPasswords)
+    {
+        var copiedIds = copiedPasswords.Select(password => password.Id).ToHashSet();
+        targetPasswords.Passwords.RemoveAll(password => copiedIds.Contains(password.Id));
+        DisposeCopiedPasswords(copiedPasswords);
+    }
+
+
+    private void DisposeCopiedPasswords(IEnumerable<SecurePassword> copiedPasswords)
+    {
+        foreach (var copiedPassword in copiedPasswords)
+            copiedPassword.Dispose();
+    }
+
+
+    private string NormalizePasswordName(string name) => name.Trim();
+
+
+    private string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
+
+
+    private List<Guid> NormalizeTagIds(IReadOnlyList<Guid>? tagIds) =>
         tagIds is null ? [] : tagIds.Distinct().Order().ToList();
 
 
-    private static void EnsureTagIdsExist(IReadOnlyList<Guid>? tagIds, UserPasswordsData passwords)
+    private void EnsureTagIdsExist(IReadOnlyList<Guid>? tagIds, UserPasswordsData passwords)
     {
         if (tagIds is null || tagIds.Count == 0)
             return;
@@ -242,7 +311,7 @@ public sealed class PasswordService : IPasswordService
     }
 
 
-    private static void ThrowIfPasswordNameExists(string name, UserPasswordsData passwords, Guid? ignoredPasswordId = null)
+    private void ThrowIfPasswordNameExists(string name, UserPasswordsData passwords, Guid? ignoredPasswordId = null)
     {
         var exists = passwords.Passwords.Any(password =>
             (!ignoredPasswordId.HasValue || password.Id != ignoredPasswordId.Value)

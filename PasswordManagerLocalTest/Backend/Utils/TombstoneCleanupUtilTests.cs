@@ -74,42 +74,47 @@ public sealed class TombstoneCleanupUtilTests
 
 
     [TestMethod]
-    public void AddOrUpdateDeletedPassword_WhenLimitReached_KeepsNewTombstoneAndRemovesOldest()
+    public void AddOrUpdateDeletedPasswordAndPasswordTag_WhenLimitReached_KeepsNewTombstoneAndRemovesOldest()
     {
         var now = DateTime.UtcNow;
         var passwords = new UserPasswordsData();
+
+        var oldestPasswordId = FillDeletedPasswordsToLimit(passwords, now);
+        var newPasswordId = Guid.NewGuid();
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, newPasswordId, now);
+
+        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList, passwords.DeletedPasswords);
+        MSTestAssert.IsFalse(passwords.DeletedPasswords.Any(deleted => deleted.Id == oldestPasswordId));
+        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == newPasswordId));
+
+        var oldestTagId = FillDeletedPasswordTagsToLimit(passwords, now);
+        var newTagId = Guid.NewGuid();
+        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, newTagId, now);
+
+        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList, passwords.DeletedTags);
+        MSTestAssert.IsFalse(passwords.DeletedTags.Any(deleted => deleted.Id == oldestTagId));
+        MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == newTagId));
+    }
+
+    private static Guid FillDeletedPasswordsToLimit(UserPasswordsData passwords, DateTime now)
+    {
         var oldestId = Guid.NewGuid();
         TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, oldestId, now.AddDays(-1));
 
         for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
             TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, Guid.NewGuid(), now.AddMinutes(-i));
 
-        var newId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, newId, now);
-
-        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList, passwords.DeletedPasswords);
-        MSTestAssert.IsFalse(passwords.DeletedPasswords.Any(deleted => deleted.Id == oldestId));
-        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == newId));
+        return oldestId;
     }
 
-
-    [TestMethod]
-    public void AddOrUpdateDeletedPasswordTag_WhenLimitReached_KeepsNewTombstoneAndRemovesOldest()
+    private static Guid FillDeletedPasswordTagsToLimit(UserPasswordsData passwords, DateTime now)
     {
-        var now = DateTime.UtcNow;
-        var passwords = new UserPasswordsData();
         var oldestId = Guid.NewGuid();
         TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, oldestId, now.AddDays(-1));
 
         for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
             TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, Guid.NewGuid(), now.AddMinutes(-i));
 
-        var newId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, newId, now);
-
-        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList, passwords.DeletedTags);
-        MSTestAssert.IsFalse(passwords.DeletedTags.Any(deleted => deleted.Id == oldestId));
-        MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == newId));
+        return oldestId;
     }
-
 }
