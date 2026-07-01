@@ -879,10 +879,10 @@ public sealed class PasswordsViewModel : ViewModelBase
 
         try
         {
-            var passwords = await _endpoints.GetSavedPasswordsAsync(_token);
+            var response = await _endpoints.GetSavedPasswordsAsync(_token);
             _allPasswords.Clear();
 
-            foreach (var password in passwords)
+            foreach (var password in response.Passwords)
             {
                 _allPasswords.Add(PasswordItemViewModel.Create(password, EditPasswordLabel, DeletePasswordLabel, BeginViewPasswordAsync, BeginEditPasswordAsync, BeginDeletePasswordAsync));
             }
@@ -1169,7 +1169,8 @@ public sealed class PasswordsViewModel : ViewModelBase
                 Name = EditorName.Trim(),
                 Description = EditorDescription.Trim(),
                 Color = EditorColor,
-                Password = rawPassword
+                Password = rawPassword,
+                TagIds = []
             });
         }
         finally
@@ -1192,7 +1193,8 @@ public sealed class PasswordsViewModel : ViewModelBase
                 Name = EditorName.Trim(),
                 Description = EditorDescription.Trim(),
                 Color = EditorColor,
-                Password = rawPassword
+                Password = rawPassword,
+                TagIds = []
             });
         }
         finally

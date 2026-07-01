@@ -18,6 +18,7 @@ public sealed class DeviceItemLocalization
     public required string DisconnectLabel { get; init; }
     public required string DeviceNameLabel { get; init; }
     public required string DeviceLastSeenLabel { get; init; }
+    public required string DeviceLastLoginDateLabel { get; init; }
     public required string DeviceLastSyncLabel { get; init; }
     public required string DeviceLinkedAtLabel { get; init; }
     public required string DeviceBlockedReasonLabel { get; init; }

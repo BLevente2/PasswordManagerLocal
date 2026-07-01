@@ -55,7 +55,6 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(LastNameLabel),
         nameof(EmailLabel),
         nameof(RegistrationDateLabel),
-        nameof(LastLoginDateLabel),
         nameof(SaveProfileLabel),
         nameof(ChangeUsernameLabel),
         nameof(ChangeMasterPasswordLabel),
@@ -115,6 +114,7 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(AndroidMobileDeviceTypeLabel),
         nameof(UnknownDeviceTypeLabel),
         nameof(DeviceLastSeenLabel),
+        nameof(DeviceLastLoginDateLabel),
         nameof(DeviceLastSyncLabel),
         nameof(DeviceLinkedAtLabel),
         nameof(DeviceBlockedReasonLabel),
@@ -129,7 +129,6 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(LocalSyncDialogWarning),
         nameof(LocalSyncConfirmLabel),
         nameof(RegistrationDateText),
-        nameof(LastLoginDateText),
     ];
 
     private readonly IEndpoints _endpoints;
@@ -144,7 +143,6 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _lastName = string.Empty;
     private string _email = string.Empty;
     private DateTime _registrationDate;
-    private DateTime _lastLoginDate;
     private string _editFirstName = string.Empty;
     private string _editLastName = string.Empty;
     private string _editEmail = string.Empty;
@@ -262,16 +260,6 @@ public sealed class ProfileViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _registrationDate, value);
             this.RaisePropertyChanged(nameof(RegistrationDateText));
-        }
-    }
-
-    public DateTime LastLoginDate
-    {
-        get => _lastLoginDate;
-        private set
-        {
-            this.RaiseAndSetIfChanged(ref _lastLoginDate, value);
-            this.RaisePropertyChanged(nameof(LastLoginDateText));
         }
     }
 
@@ -605,8 +593,6 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string RegistrationDateText => RegistrationDate.ToLocalTime().ToString("f");
 
-    public string LastLoginDateText => LastLoginDate.ToLocalTime().ToString("f");
-
     public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ChangeUsernameCommand { get; }
@@ -710,8 +696,6 @@ public sealed class ProfileViewModel : ViewModelBase
     public string EmailLabel => GetTranslation("Register_Email_Label");
 
     public string RegistrationDateLabel => GetTranslation("Profile_RegistrationDate");
-
-    public string LastLoginDateLabel => GetTranslation("Profile_LastLoginDate");
 
     public string SaveProfileLabel => GetTranslation("Common_Save");
 
@@ -828,6 +812,8 @@ public sealed class ProfileViewModel : ViewModelBase
     public string UnknownDeviceTypeLabel => GetTranslation("Profile_Device_Type_Unknown");
 
     public string DeviceLastSeenLabel => GetTranslation("Profile_Device_LastSeen");
+
+    public string DeviceLastLoginDateLabel => GetTranslation("Profile_LastLoginDate");
 
     public string DeviceLastSyncLabel => GetTranslation("Profile_Device_LastSync");
 
@@ -993,7 +979,6 @@ public sealed class ProfileViewModel : ViewModelBase
         LastName = profile.LastName;
         Email = profile.Email;
         RegistrationDate = profile.RegistrationDate;
-        LastLoginDate = profile.LastLoginDate;
         EditUsername = profile.Username;
         EditFirstName = profile.FirstName;
         EditLastName = profile.LastName;
@@ -1022,7 +1007,6 @@ public sealed class ProfileViewModel : ViewModelBase
         LastName = string.Empty;
         Email = string.Empty;
         RegistrationDate = DateTime.MinValue;
-        LastLoginDate = DateTime.MinValue;
         EditUsername = string.Empty;
         EditFirstName = string.Empty;
         EditLastName = string.Empty;
@@ -1306,6 +1290,7 @@ public sealed class ProfileViewModel : ViewModelBase
             DisconnectLabel = DisconnectDeviceLabel,
             DeviceNameLabel = DeviceNameLabel,
             DeviceLastSeenLabel = DeviceLastSeenLabel,
+            DeviceLastLoginDateLabel = DeviceLastLoginDateLabel,
             DeviceLastSyncLabel = DeviceLastSyncLabel,
             DeviceLinkedAtLabel = DeviceLinkedAtLabel,
             DeviceBlockedReasonLabel = DeviceBlockedReasonLabel,

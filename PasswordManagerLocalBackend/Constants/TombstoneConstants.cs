@@ -2,8 +2,8 @@ namespace PasswordManagerLocalBackend.Constants;
 
 public static class TombstoneConstants
 {
-    public const int TombstoneRetentionMonths = 1;
+    public static readonly int TombstoneRetentionMonths = 1;
 
-    public const int MaxSyncTombstones = 4096;
-    public const int MaxUserDataTombstonesPerList = 1024;
+    public static readonly int MaxSyncTombstones = 4096;
+    public static readonly int MaxUserDataTombstonesPerList = 1024;
 }

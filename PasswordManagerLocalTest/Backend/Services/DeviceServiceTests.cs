@@ -83,6 +83,7 @@ public sealed class DeviceServiceTests
         MSTestAssert.IsTrue(remoteResponse.IsSyncOn);
         MSTestAssert.AreEqual(remote.TlsCertFingerprint, remoteResponse.TlsCertFingerprint);
         MSTestAssert.IsFalse(string.IsNullOrWhiteSpace(remoteResponse.Name));
+        MSTestAssert.IsTrue(result.Single(item => item.IsCurrentDevice).LastLoginDate > DateTime.MinValue);
 
         var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
         MSTestAssert.IsTrue(bundle.UserDevicesData.Devices.Any(device => device.Id == remote.Id));

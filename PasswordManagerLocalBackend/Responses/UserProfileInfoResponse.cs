@@ -11,7 +11,6 @@ public sealed class UserProfileInfoResponse
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public DateTime RegistrationDate { get; set; }
-    public DateTime LastLoginDate { get; set; }
     public bool IsRememberMeEnabled { get; set; }
 
 
@@ -19,8 +18,6 @@ public sealed class UserProfileInfoResponse
     public static UserProfileInfoResponse ConvertToUserProfileInfoResponse(
         UserData userData,
         GeneralUserData generalUserData,
-        UserDevicesData userDevicesData,
-        Guid currentDeviceId,
         bool isRememberMeEnabled = false) =>
         new UserProfileInfoResponse
         {
@@ -30,7 +27,6 @@ public sealed class UserProfileInfoResponse
             LastName = generalUserData.LastName,
             Email = generalUserData.Email,
             RegistrationDate = UtcDateTimeUtil.ToUtc(generalUserData.RegistrationDate),
-            LastLoginDate = UtcDateTimeUtil.ToUtc(userDevicesData.Devices.FirstOrDefault(device => device.Id == currentDeviceId)?.LastLoginDate ?? UtcDateTimeUtil.MinDateTime),
             IsRememberMeEnabled = isRememberMeEnabled
         };
 }
