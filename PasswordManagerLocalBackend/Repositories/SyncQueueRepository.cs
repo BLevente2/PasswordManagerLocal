@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Persistence;
@@ -65,6 +65,7 @@ public sealed class SyncQueueRepository : ISyncQueueRepository
             .Where(x => x.DeviceId == deviceId && x.ProcessedAt == null)
             .OrderBy(x => x.QueueId)
             .ToListAsync(ct);
+
 
 
     public async Task<IReadOnlyList<Guid>> ListQueuedDeviceIdsAsync(Guid syncItemId, IReadOnlyList<Guid> deviceIds, CancellationToken ct = default)
