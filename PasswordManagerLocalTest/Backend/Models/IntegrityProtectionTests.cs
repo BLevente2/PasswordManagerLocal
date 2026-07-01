@@ -164,6 +164,74 @@ public sealed class IntegrityProtectionTests
         MSTestAssert.IsEmpty(passwords.Passwords);
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void UserPasswordsData_GenerateIntegrityHashCreatesCategoryHashes()
+    {
+        using var data = CreateUserPasswordsDataWithCategories();
+
+        data.GenerateIntegrityHash();
+
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.PasswordsIntegrityHash);
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.CustomColorsIntegrityHash);
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.PasswordTagsIntegrityHash);
+        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.IntegrityHash);
+        MSTestAssert.IsTrue(data.IsIntegrityValid());
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void UserPasswordsData_IncrementalCategoryHashKeepsUnchangedCategoriesStable()
+    {
+        using var data = CreateUserPasswordsDataWithCategories();
+        data.GenerateIntegrityHash();
+        var originalPasswordsHash = data.PasswordsIntegrityHash.ToArray();
+        var originalCustomColorsHash = data.CustomColorsIntegrityHash.ToArray();
+        var originalPasswordTagsHash = data.PasswordTagsIntegrityHash.ToArray();
+        var originalRootHash = data.IntegrityHash.ToArray();
+
+        data.Tags[0].Name = "Urgent";
+        data.Tags[0].GenerateIntegrityHash();
+        data.GeneratePasswordTagsIntegrityHash();
+
+        CollectionAssert.AreEqual(originalPasswordsHash, data.PasswordsIntegrityHash);
+        CollectionAssert.AreEqual(originalCustomColorsHash, data.CustomColorsIntegrityHash);
+        MSTestAssert.IsFalse(originalPasswordTagsHash.SequenceEqual(data.PasswordTagsIntegrityHash));
+        MSTestAssert.IsFalse(originalRootHash.SequenceEqual(data.IntegrityHash));
+        MSTestAssert.IsTrue(data.IsIntegrityValid());
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void UserPasswordsData_CategoryHashTamperingIsDetected()
+    {
+        using var data = CreateUserPasswordsDataWithCategories();
+        data.GenerateIntegrityHash();
+
+        data.PasswordTagsIntegrityHash[0] ^= 0x10;
+
+        MSTestAssert.IsFalse(data.IsIntegrityValid());
+        ExpectThrows<InvalidDataIntegrityException>(data.VerifyIntegrity);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void UserPasswordsData_ChildHashTamperingIsDetectedByCategoryHash()
+    {
+        using var data = CreateUserPasswordsDataWithCategories();
+        data.GenerateIntegrityHash();
+
+        data.CustomColors[0].IntegrityHash[0] ^= 0x10;
+
+        MSTestAssert.IsFalse(data.IsIntegrityValid());
+        ExpectThrows<InvalidDataIntegrityException>(data.VerifyIntegrity);
+    }
+
     private static SecurePassword CreateSecurePassword() =>
         new()
         {
@@ -175,6 +243,63 @@ public sealed class IntegrityProtectionTests
             CreatedAt = new DateTime(2026, 1, 1, 1, 2, 3, DateTimeKind.Utc),
             LastUpdatedAt = new DateTime(2026, 1, 1, 2, 3, 4, DateTimeKind.Utc)
         };
+
+
+    private static UserPasswordsData CreateUserPasswordsDataWithCategories()
+    {
+        var password = CreateSecurePassword();
+        password.GenerateIntegrityHash();
+
+        var deletedPassword = new DeletedPasswordData
+        {
+            Id = Guid.Parse("A4B3E9A1-622B-4EF7-9C35-6C0D5C274D30"),
+            DeletedAt = new DateTime(2026, 1, 1, 3, 4, 5, DateTimeKind.Utc)
+        };
+        deletedPassword.GenerateIntegrityHash();
+
+        var customColor = new CustomUserColor
+        {
+            Id = Guid.Parse("D38904A9-1900-4C6E-83A0-E56B97D4B71B"),
+            ColorName = "Ocean",
+            ColorCode = "#FF006699",
+            LastUpdatedAt = new DateTime(2026, 1, 1, 4, 5, 6, DateTimeKind.Utc)
+        };
+        customColor.GenerateIntegrityHash();
+
+        var deletedCustomColor = new DeletedCustomUserColorData
+        {
+            Id = Guid.Parse("85C6B3A8-A1E1-4940-A393-DB20BD7F91D0"),
+            DeletedAt = new DateTime(2026, 1, 1, 5, 6, 7, DateTimeKind.Utc)
+        };
+        deletedCustomColor.GenerateIntegrityHash();
+
+        var tag = new PasswordTag
+        {
+            Id = Guid.Parse("809C286C-519D-4F5B-9162-6419EC5CA79E"),
+            Name = "Work",
+            Color = PasswordConstants.DefaultPasswordColor,
+            LastUpdatedAt = new DateTime(2026, 1, 1, 6, 7, 8, DateTimeKind.Utc)
+        };
+        tag.GenerateIntegrityHash();
+
+        var deletedTag = new DeletedPasswordTagData
+        {
+            Id = Guid.Parse("E900AF42-4BB5-42CB-BE0E-10B105E7BB37"),
+            DeletedAt = new DateTime(2026, 1, 1, 7, 8, 9, DateTimeKind.Utc)
+        };
+        deletedTag.GenerateIntegrityHash();
+
+        return new UserPasswordsData
+        {
+            PasswordKey = Enumerable.Repeat((byte)9, 32).ToArray(),
+            Passwords = [password],
+            DeletedPasswords = [deletedPassword],
+            CustomColors = [customColor],
+            DeletedCustomColors = [deletedCustomColor],
+            Tags = [tag],
+            DeletedTags = [deletedTag]
+        };
+    }
 
     private static UserData CreateUserData()
     {

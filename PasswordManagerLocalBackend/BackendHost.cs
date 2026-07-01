@@ -191,8 +191,10 @@ namespace PasswordManagerLocalBackend
 
                     services.AddScoped<IUserPasswordsService, UserPasswordsService>();
                     services.AddScoped<IUserCustomColorService, UserCustomColorService>();
+                    services.AddScoped<IUserPasswordTagService, UserPasswordTagService>();
                     services.AddScoped<IPasswordService, PasswordService>();
                     services.AddScoped<ICustomUserColorService, CustomUserColorService>();
+                    services.AddScoped<IPasswordTagService, PasswordTagService>();
                     services.AddScoped<IGroupService, GroupService>();
                     services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
                     services.AddScoped<IAuthService, AuthService>();

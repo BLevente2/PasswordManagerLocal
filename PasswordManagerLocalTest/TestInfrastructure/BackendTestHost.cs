@@ -55,8 +55,10 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IAuthService, AuthService>();
         sc.AddSingleton<IPasswordService, PasswordService>();
         sc.AddSingleton<ICustomUserColorService, CustomUserColorService>();
+        sc.AddSingleton<IPasswordTagService, PasswordTagService>();
         sc.AddSingleton<IUserPasswordsService, UserPasswordsService>();
         sc.AddSingleton<IUserCustomColorService, UserCustomColorService>();
+        sc.AddSingleton<IUserPasswordTagService, UserPasswordTagService>();
         sc.AddSingleton<IDeviceService, DeviceService>();
 
         _sp = sc.BuildServiceProvider(new ServiceProviderOptions

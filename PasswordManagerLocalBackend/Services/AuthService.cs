@@ -376,6 +376,10 @@ public sealed class AuthService : IAuthService
             color.GenerateIntegrityHash();
         foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
             deleted.GenerateIntegrityHash();
+        foreach (var tag in bundle.UserPasswordsData.Tags)
+            tag.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
+            deleted.GenerateIntegrityHash();
         bundle.UserPasswordsData.GenerateIntegrityHash();
 
         foreach (var device in bundle.UserDevicesData.Devices)

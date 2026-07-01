@@ -25,6 +25,7 @@ public static class TombstoneCleanupUtil
         var changed = false;
         changed |= RemoveExpired(passwords.DeletedPasswords, deleted => ToUtcDateTimeOffset(deleted.DeletedAt), cutoff);
         changed |= RemoveExpired(passwords.DeletedCustomColors, deleted => ToUtcDateTimeOffset(deleted.DeletedAt), cutoff);
+        changed |= RemoveExpired(passwords.DeletedTags, deleted => ToUtcDateTimeOffset(deleted.DeletedAt), cutoff);
         changed |= EnforceUserPasswordsDataTombstoneLimits(passwords);
         return changed;
     }
@@ -45,6 +46,7 @@ public static class TombstoneCleanupUtil
         var changed = false;
         changed |= EnforceDeletedPasswordTombstoneLimit(passwords.DeletedPasswords);
         changed |= EnforceDeletedCustomUserColorTombstoneLimit(passwords.DeletedCustomColors);
+        changed |= EnforceDeletedPasswordTagTombstoneLimit(passwords.DeletedTags);
         return changed;
     }
 
@@ -58,6 +60,10 @@ public static class TombstoneCleanupUtil
 
 
     public static bool EnforceDeletedCustomUserColorTombstoneLimit(List<DeletedCustomUserColorData> tombstones, Guid? protectedId = null) =>
+        TrimOldest(tombstones, deleted => ToUtcDateTimeOffset(deleted.DeletedAt), deleted => deleted.Id, protectedId);
+
+
+    public static bool EnforceDeletedPasswordTagTombstoneLimit(List<DeletedPasswordTagData> tombstones, Guid? protectedId = null) =>
         TrimOldest(tombstones, deleted => ToUtcDateTimeOffset(deleted.DeletedAt), deleted => deleted.Id, protectedId);
 
 
@@ -96,6 +102,23 @@ public static class TombstoneCleanupUtil
 
         tombstone.GenerateIntegrityHash();
         EnforceDeletedCustomUserColorTombstoneLimit(passwords.DeletedCustomColors, customUserColorId);
+    }
+
+
+    public static void AddOrUpdateDeletedPasswordTag(UserPasswordsData passwords, Guid passwordTagId, DateTime deletedAt)
+    {
+        var tombstone = passwords.DeletedTags.FirstOrDefault(deleted => deleted.Id == passwordTagId);
+        if (tombstone is null)
+        {
+            tombstone = new DeletedPasswordTagData { Id = passwordTagId };
+            passwords.DeletedTags.Add(tombstone);
+        }
+
+        if (deletedAt > tombstone.DeletedAt)
+            tombstone.DeletedAt = deletedAt;
+
+        tombstone.GenerateIntegrityHash();
+        EnforceDeletedPasswordTagTombstoneLimit(passwords.DeletedTags, passwordTagId);
     }
 
 

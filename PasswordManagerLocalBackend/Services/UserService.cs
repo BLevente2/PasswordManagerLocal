@@ -489,6 +489,10 @@ public sealed class UserService : IUserService
             color.GenerateIntegrityHash();
         foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
             deleted.GenerateIntegrityHash();
+        foreach (var tag in bundle.UserPasswordsData.Tags)
+            tag.GenerateIntegrityHash();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
+            deleted.GenerateIntegrityHash();
         bundle.UserPasswordsData.GenerateIntegrityHash();
 
         foreach (var device in bundle.UserDevicesData.Devices)
@@ -536,8 +540,12 @@ public sealed class UserService : IUserService
         if (bundle.UserPasswordsData.CustomColors.Count > MaxNumberOfCustomUserColors)
             throw new InvalidOperationException("Refusing to persist too many custom colors.");
 
+        if (bundle.UserPasswordsData.Tags.Count > MaxNumberOfPasswordTags)
+            throw new InvalidOperationException("Refusing to persist too many password tags.");
+
         if (bundle.UserPasswordsData.DeletedPasswords.Count > MaxUserDataTombstonesPerList ||
             bundle.UserPasswordsData.DeletedCustomColors.Count > MaxUserDataTombstonesPerList ||
+            bundle.UserPasswordsData.DeletedTags.Count > MaxUserDataTombstonesPerList ||
             bundle.UserDevicesData.DeletedDevices.Count > MaxUserDataTombstonesPerList)
             throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
 
@@ -578,6 +586,28 @@ public sealed class UserService : IUserService
             .GroupBy(color => color.ColorName!.Trim(), StringComparer.OrdinalIgnoreCase)
             .Any(group => group.Count() != 1))
             throw new InvalidOperationException("Refusing to persist duplicate custom color names.");
+
+        if (bundle.UserPasswordsData.Tags.Any(tag =>
+                tag.Id == Guid.Empty ||
+                !IsValidPasswordTagName(tag.Name) ||
+                !IsValidARGBColor(tag.Color)))
+            throw new InvalidOperationException("Refusing to persist invalid password tag data.");
+
+        if (bundle.UserPasswordsData.Tags
+            .GroupBy(tag => tag.Id)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate password tag data.");
+
+        if (bundle.UserPasswordsData.Tags
+            .GroupBy(tag => tag.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate password tag names.");
+
+        var existingTagIds = bundle.UserPasswordsData.Tags.Select(tag => tag.Id).ToHashSet();
+        if (bundle.UserPasswordsData.Passwords.Any(password =>
+                password.TagIds.Any(tagId => tagId == Guid.Empty || !existingTagIds.Contains(tagId)) ||
+                password.TagIds.Distinct().Count() != password.TagIds.Count))
+            throw new InvalidOperationException("Refusing to persist invalid password tag references.");
     }
 
     private void VerifyUserDataIntegrity(UserData userData) =>
@@ -599,6 +629,10 @@ public sealed class UserService : IUserService
         foreach (var color in bundle.UserPasswordsData.CustomColors)
             color.VerifyIntegrity();
         foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
+            deleted.VerifyIntegrity();
+        foreach (var tag in bundle.UserPasswordsData.Tags)
+            tag.VerifyIntegrity();
+        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
             deleted.VerifyIntegrity();
         VerifyStoredChildHash(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));
 

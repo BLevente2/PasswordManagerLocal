@@ -361,6 +361,111 @@ public sealed class PasswordServiceTests
         CollectionAssert.AreEqual(raw, dec);
     }
 
+
+    [TestMethod]
+    public async Task AddNewPassword_WithTagIds_PersistsTagIds()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+        var tag = new PasswordTag
+        {
+            Id = Guid.NewGuid(),
+            Name = "Work",
+            Color = "#FF123456",
+            LastUpdatedAt = DateTime.UtcNow
+        };
+        tag.GenerateIntegrityHash();
+        passwords.Tags.Add(tag);
+        passwords.GenerateIntegrityHash();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = Encoding.UTF8.GetBytes("secret"),
+            TagIds = [tag.Id]
+        }, passwords);
+
+        MSTestAssert.HasCount(1, passwords.Passwords);
+        MSTestAssert.HasCount(1, passwords.Passwords[0].TagIds);
+        MSTestAssert.AreEqual(tag.Id, passwords.Passwords[0].TagIds[0]);
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public async Task AddNewPassword_WithMissingTag_ThrowsAndDoesNotModifyData()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+        var originalHash = passwords.IntegrityHash.ToArray();
+
+        await ExpectThrowsAsync<PasswordTagNotFoundException>(async () =>
+        {
+            await service.AddNewPassword(new NewPasswordRequest
+            {
+                Name = "Email",
+                Password = Encoding.UTF8.GetBytes("secret"),
+                TagIds = [Guid.NewGuid()]
+            }, passwords);
+        });
+
+        MSTestAssert.IsEmpty(passwords.Passwords);
+        CollectionAssert.AreEqual(originalHash, passwords.IntegrityHash);
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public async Task UpdatePassword_CanReplaceAndClearTagIds()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+        var workTag = new PasswordTag
+        {
+            Id = Guid.NewGuid(),
+            Name = "Work",
+            Color = "#FF123456",
+            LastUpdatedAt = DateTime.UtcNow
+        };
+        var personalTag = new PasswordTag
+        {
+            Id = Guid.NewGuid(),
+            Name = "Personal",
+            Color = "#FF654321",
+            LastUpdatedAt = DateTime.UtcNow
+        };
+        workTag.GenerateIntegrityHash();
+        personalTag.GenerateIntegrityHash();
+        passwords.Tags.Add(workTag);
+        passwords.Tags.Add(personalTag);
+        passwords.GenerateIntegrityHash();
+
+        await service.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = Encoding.UTF8.GetBytes("secret"),
+            TagIds = [workTag.Id]
+        }, passwords);
+
+        var passwordId = passwords.Passwords[0].Id;
+        await service.UpdatePasswordAsync(new UpdatePasswordRequest
+        {
+            Id = passwordId,
+            TagIds = [personalTag.Id]
+        }, passwords);
+
+        CollectionAssert.AreEqual(new[] { personalTag.Id }, passwords.Passwords[0].TagIds);
+
+        await service.UpdatePasswordAsync(new UpdatePasswordRequest
+        {
+            Id = passwordId,
+            TagIds = []
+        }, passwords);
+
+        MSTestAssert.IsEmpty(passwords.Passwords[0].TagIds);
+        passwords.VerifyIntegrity();
+    }
+
     private static void ExpectThrows<TException>(Action action) where TException : Exception
     {
         try

@@ -11,15 +11,18 @@ public sealed class UserPasswordsService : IUserPasswordsService
     private readonly IUserService _userService;
     private readonly IPasswordService _passwordService;
     private readonly ICustomUserColorService _customUserColorService;
+    private readonly IPasswordTagService _passwordTagService;
 
     public UserPasswordsService(
         IUserService userService,
         IPasswordService passwordService,
-        ICustomUserColorService customUserColorService)
+        ICustomUserColorService customUserColorService,
+        IPasswordTagService passwordTagService)
     {
         _userService = userService;
         _passwordService = passwordService;
         _customUserColorService = customUserColorService;
+        _passwordTagService = passwordTagService;
     }
 
 
@@ -30,7 +33,8 @@ public sealed class UserPasswordsService : IUserPasswordsService
         return new SavedPasswordsResponse
         {
             Passwords = _passwordService.ConvertToPasswordInfoResponses(bundle.UserPasswordsData),
-            CustomColors = _customUserColorService.ConvertToCustomUserColorInfoResponses(bundle.UserPasswordsData)
+            CustomColors = _customUserColorService.ConvertToCustomUserColorInfoResponses(bundle.UserPasswordsData),
+            Tags = _passwordTagService.ConvertToPasswordTagInfoResponses(bundle.UserPasswordsData)
         };
     }
 
