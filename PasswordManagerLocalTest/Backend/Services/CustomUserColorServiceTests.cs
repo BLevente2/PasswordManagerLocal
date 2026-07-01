@@ -89,6 +89,54 @@ public sealed class CustomUserColorServiceTests
 
 
     [TestMethod]
+    public void AddCustomUserColor_DuplicateColorName_ThrowsCaseInsensitively()
+    {
+        var service = new CustomUserColorService();
+        var passwords = CreateEmptyPasswords();
+
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "Personal",
+            ColorCode = "#FF000001"
+        }, passwords);
+
+        ExpectThrows<DuplicateCustomUserColorNameException>(() =>
+        {
+            service.AddCustomUserColor(new NewCustomUserColorRequest
+            {
+                ColorName = "  personal  ",
+                ColorCode = "#FF000002"
+            }, passwords);
+        });
+
+        MSTestAssert.HasCount(1, passwords.CustomColors);
+        MSTestAssert.AreEqual("Personal", passwords.CustomColors[0].ColorName);
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public void AddCustomUserColor_MultipleUnnamedColors_AreAllowed()
+    {
+        var service = new CustomUserColorService();
+        var passwords = CreateEmptyPasswords();
+
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorCode = "#FF000001"
+        }, passwords);
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorCode = "#FF000002"
+        }, passwords);
+
+        MSTestAssert.HasCount(2, passwords.CustomColors);
+        MSTestAssert.IsTrue(passwords.CustomColors.All(color => color.ColorName is null));
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
     public void AddCustomUserColor_WhenLimitReached_ThrowsAndDoesNotModifyData()
     {
         var service = new CustomUserColorService();
@@ -176,6 +224,42 @@ public sealed class CustomUserColorServiceTests
             {
                 Id = secondary.Id,
                 ColorCode = "#ff000001"
+            }, passwords);
+        });
+
+        MSTestAssert.AreEqual("Secondary", secondary.ColorName);
+        MSTestAssert.AreEqual("#FF000002", secondary.ColorCode);
+        CollectionAssert.AreEqual(originalHash, passwords.IntegrityHash);
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public void UpdateCustomUserColor_DuplicateColorName_ThrowsAndKeepsOriginalValues()
+    {
+        var service = new CustomUserColorService();
+        var passwords = CreateEmptyPasswords();
+
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "Primary",
+            ColorCode = "#FF000001"
+        }, passwords);
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "Secondary",
+            ColorCode = "#FF000002"
+        }, passwords);
+
+        var secondary = passwords.CustomColors.Single(color => color.ColorName == "Secondary");
+        var originalHash = passwords.IntegrityHash.ToArray();
+
+        ExpectThrows<DuplicateCustomUserColorNameException>(() =>
+        {
+            service.UpdateCustomUserColor(new UpdateCustomUserColorRequest
+            {
+                Id = secondary.Id,
+                ColorName = "  primary  "
             }, passwords);
         });
 

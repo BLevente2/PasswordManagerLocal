@@ -535,15 +535,20 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
             if (newestColor is not null)
             {
-                newestColor.ColorCode = NormalizeCustomColorCodeForSync(newestColor.ColorCode);
-                newestColor.ColorName = NormalizeCustomColorNameForSync(newestColor.ColorName);
+                var normalizedCode = NormalizeCustomColorCodeForSync(newestColor.ColorCode);
+                var normalizedName = NormalizeCustomColorNameForSync(newestColor.ColorName);
+                if (newestColor.ColorCode != normalizedCode || newestColor.ColorName != normalizedName)
+                    changed = true;
+
+                newestColor.ColorCode = normalizedCode;
+                newestColor.ColorName = normalizedName;
                 mergedColors.Add(newestColor);
                 if (!ReferenceEquals(localColor, newestColor) || localDeletion is not null)
                     changed = true;
             }
         }
 
-        var deduplicatedColors = ResolveDuplicateCustomColorCodesForSync(mergedColors);
+        var deduplicatedColors = ResolveDuplicateCustomColorsForSync(mergedColors);
         changed |= deduplicatedColors.Count != mergedColors.Count;
         changed |= local.CustomColors.Count != deduplicatedColors.Count || local.DeletedCustomColors.Count != mergedDeleted.Count;
         if (!changed)
@@ -586,23 +591,30 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private static List<CustomUserColor> ResolveDuplicateCustomColorCodesForSync(List<CustomUserColor> colors)
+    private static List<CustomUserColor> ResolveDuplicateCustomColorsForSync(List<CustomUserColor> colors)
     {
-        var keptByCode = new Dictionary<string, CustomUserColor>(StringComparer.OrdinalIgnoreCase);
+        var usedCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var kept = new List<CustomUserColor>();
+
         foreach (var color in colors.OrderByDescending(color => color.LastUpdatedAt).ThenBy(color => color.Id))
         {
             var normalizedCode = NormalizeCustomColorCodeForSync(color.ColorCode);
-            if (normalizedCode.Length == 0)
+            if (normalizedCode.Length == 0 || usedCodes.Contains(normalizedCode))
+                continue;
+
+            var normalizedName = NormalizeCustomColorNameForSync(color.ColorName);
+            if (normalizedName is not null && usedNames.Contains(normalizedName))
                 continue;
 
             color.ColorCode = normalizedCode;
-            color.ColorName = NormalizeCustomColorNameForSync(color.ColorName);
-
-            if (!keptByCode.ContainsKey(normalizedCode))
-                keptByCode[normalizedCode] = color;
+            color.ColorName = normalizedName;
+            usedCodes.Add(normalizedCode);
+            if (normalizedName is not null)
+                usedNames.Add(normalizedName);
+            kept.Add(color);
         }
 
-        var kept = keptByCode.Values.ToList();
         foreach (var color in colors)
         {
             if (!kept.Any(keptColor => ReferenceEquals(keptColor, color)))
