@@ -38,7 +38,6 @@ public sealed class UserProfileServiceTests
         MSTestAssert.AreEqual("Liddell", info.LastName);
         MSTestAssert.AreEqual("alice@example.com", info.Email);
         MSTestAssert.IsTrue(info.RegistrationDate > DateTime.MinValue);
-        MSTestAssert.IsTrue(info.LastLoginDate > DateTime.MinValue);
     }
 
     [TestMethod]

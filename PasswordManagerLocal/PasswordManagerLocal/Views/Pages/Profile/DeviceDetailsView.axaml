@@ -82,6 +82,10 @@
             <TextBlock Text="{Binding SelectedDevice.LastSeenText}" TextWrapping="Wrap" />
           </StackPanel>
         </Grid>
+        <StackPanel Spacing="4">
+          <TextBlock Text="{Binding SelectedDevice.DeviceLastLoginDateLabel}" Classes="subtleText" />
+          <TextBlock Text="{Binding SelectedDevice.LastLoginDateText}" TextWrapping="Wrap" />
+        </StackPanel>
         <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
           <StackPanel Spacing="4">
             <TextBlock Text="{Binding DeviceLastSyncLabel}" Classes="subtleText" />

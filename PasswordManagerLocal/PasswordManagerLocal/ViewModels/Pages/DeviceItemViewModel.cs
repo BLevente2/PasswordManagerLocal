@@ -30,6 +30,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
     private string _disconnectLabel = string.Empty;
     private string _deviceNameLabel = string.Empty;
     private string _deviceLastSeenLabel = string.Empty;
+    private string _deviceLastLoginDateLabel = string.Empty;
     private string _deviceLastSyncLabel = string.Empty;
     private string _deviceLinkedAtLabel = string.Empty;
     private string _deviceBlockedReasonLabel = string.Empty;
@@ -51,6 +52,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         EditableName = device.Name;
         LastSync = device.LastSync;
         LastSeen = device.LastSeen;
+        LastLoginDate = device.LastLoginDate;
         IsTrusted = device.IsTrusted;
         IsBlocked = device.IsBlocked;
         BlockedReason = device.BlockedReason;
@@ -87,6 +89,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
     public DateTime LastSync { get; }
 
     public DateTime LastSeen { get; }
+
+    public DateTime LastLoginDate { get; }
 
     public bool IsTrusted { get; }
 
@@ -155,6 +159,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string DeviceLastSeenLabel => _deviceLastSeenLabel;
 
+    public string DeviceLastLoginDateLabel => _deviceLastLoginDateLabel;
+
     public string DeviceLastSyncLabel => _deviceLastSyncLabel;
 
     public string DeviceLinkedAtLabel => _deviceLinkedAtLabel;
@@ -172,6 +178,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
     public string LastSyncText => LastSync.ToLocalTime().ToString("g");
 
     public string LastSeenText => LastSeen.ToLocalTime().ToString("g");
+
+    public string LastLoginDateText => LastLoginDate.ToLocalTime().ToString("g");
 
     public string LinkedAtText => LinkedAt.ToLocalTime().ToString("g");
 
@@ -221,6 +229,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         _disconnectLabel = localization.DisconnectLabel;
         _deviceNameLabel = localization.DeviceNameLabel;
         _deviceLastSeenLabel = localization.DeviceLastSeenLabel;
+        _deviceLastLoginDateLabel = localization.DeviceLastLoginDateLabel;
         _deviceLastSyncLabel = localization.DeviceLastSyncLabel;
         _deviceLinkedAtLabel = localization.DeviceLinkedAtLabel;
         _deviceBlockedReasonLabel = localization.DeviceBlockedReasonLabel;
@@ -244,6 +253,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(DisconnectLabel));
         this.RaisePropertyChanged(nameof(DeviceNameLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
+        this.RaisePropertyChanged(nameof(DeviceLastLoginDateLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
         this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
         this.RaisePropertyChanged(nameof(DeviceBlockedReasonLabel));

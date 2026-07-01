@@ -190,7 +190,7 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task<IReadOnlyList<PasswordInfoResponse>> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
+    public async Task<SavedPasswordsResponse> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
         return await endpoints.GetSavedPasswordsAsync(token, ct);
@@ -222,6 +222,54 @@ public sealed class DeferredEndpoints : IEndpoints
     {
         var endpoints = await GetEndpointsAsync(ct);
         await endpoints.UpdatePasswordAsync(token, request, ct);
+    }
+
+    public async Task ExportPasswordsToUserAsync(Guid sourceToken, ExportPasswordsToUserRequest request, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.ExportPasswordsToUserAsync(sourceToken, request, ct);
+    }
+
+
+    public async Task AddCustomUserColorAsync(Guid token, NewCustomUserColorRequest request, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.AddCustomUserColorAsync(token, request, ct);
+    }
+
+
+    public async Task DeleteCustomUserColorAsync(Guid token, Guid customUserColorId, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.DeleteCustomUserColorAsync(token, customUserColorId, ct);
+    }
+
+
+    public async Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.UpdateCustomUserColorAsync(token, request, ct);
+    }
+
+
+    public async Task AddPasswordTagAsync(Guid token, NewPasswordTagRequest request, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.AddPasswordTagAsync(token, request, ct);
+    }
+
+
+    public async Task DeletePasswordTagAsync(Guid token, Guid passwordTagId, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.DeletePasswordTagAsync(token, passwordTagId, ct);
+    }
+
+
+    public async Task UpdatePasswordTagAsync(Guid token, UpdatePasswordTagRequest request, CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.UpdatePasswordTagAsync(token, request, ct);
     }
 
 

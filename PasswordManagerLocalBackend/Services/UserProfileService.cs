@@ -15,13 +15,11 @@ public class UserProfileService : IUserProfileService
 {
     private readonly IUserService _userService;
     private readonly IAuthService _authService;
-    private readonly IDeviceIdentityService _identity;
 
-    public UserProfileService(IUserService userService, IAuthService authService, IDeviceIdentityService identity)
+    public UserProfileService(IUserService userService, IAuthService authService)
     {
         _userService = userService;
         _authService = authService;
-        _identity = identity;
     }
 
 
@@ -33,8 +31,6 @@ public class UserProfileService : IUserProfileService
         return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(
             bundle.UserData,
             bundle.GeneralUserData,
-            bundle.UserDevicesData,
-            _identity.LocalDeviceId,
             user.SavedKey is not null);
     }
 
