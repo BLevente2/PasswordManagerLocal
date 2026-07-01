@@ -572,6 +572,12 @@ public sealed class UserService : IUserService
             .GroupBy(color => color.ColorCode.Trim(), StringComparer.OrdinalIgnoreCase)
             .Any(group => group.Count() != 1))
             throw new InvalidOperationException("Refusing to persist duplicate custom color codes.");
+
+        if (bundle.UserPasswordsData.CustomColors
+            .Where(color => color.ColorName is not null)
+            .GroupBy(color => color.ColorName!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Any(group => group.Count() != 1))
+            throw new InvalidOperationException("Refusing to persist duplicate custom color names.");
     }
 
     private void VerifyUserDataIntegrity(UserData userData) =>

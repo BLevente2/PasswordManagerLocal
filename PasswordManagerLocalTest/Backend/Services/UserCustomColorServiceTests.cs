@@ -91,6 +91,38 @@ public sealed class UserCustomColorServiceTests
 
 
     [TestMethod]
+    public async Task AddCustomUserColor_DuplicateName_ThrowsAndKeepsExistingColor()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-duplicate-name"));
+
+        await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+        {
+            ColorName = "Original",
+            ColorCode = "#FF010203"
+        });
+
+        await ExpectThrowsAsync<DuplicateCustomUserColorNameException>(async () =>
+        {
+            await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+            {
+                ColorName = "  original  ",
+                ColorCode = "#FF010204"
+            });
+        });
+
+        var response = await passwordService.GetSavedPasswordsAsync(token);
+        MSTestAssert.HasCount(1, response.CustomColors);
+        MSTestAssert.AreEqual("Original", response.CustomColors[0].ColorName);
+    }
+
+
+    [TestMethod]
     public async Task UpdateCustomUserColor_InvalidRequest_Throws()
     {
         using var host = new BackendTestHost();

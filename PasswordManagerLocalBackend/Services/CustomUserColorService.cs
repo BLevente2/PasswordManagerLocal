@@ -33,13 +33,15 @@ public sealed class CustomUserColorService : ICustomUserColorService
         if (passwords.CustomColors.Count >= MaxNumberOfCustomUserColors)
             throw new LimitReachedException(MaxNumberOfCustomUserColors, "customUserColor");
 
+        var colorName = NormalizeOptionalColorName(request.ColorName);
         var colorCode = NormalizeColorCode(request.ColorCode);
+        ThrowIfCustomColorNameExists(colorName, passwords);
         ThrowIfCustomColorCodeExists(colorCode, passwords);
 
         var customColor = new CustomUserColor
         {
             Id = Guid.NewGuid(),
-            ColorName = NormalizeOptionalColorName(request.ColorName),
+            ColorName = colorName,
             ColorCode = colorCode,
             LastUpdatedAt = DateTime.UtcNow
         };
@@ -69,18 +71,21 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         var color = GetAndVerifyCustomUserColorById(request.Id, passwords);
 
+        var newColorName = color.ColorName;
         if (request.ClearColorName)
-            color.ColorName = null;
+            newColorName = null;
         else if (request.ColorName is not null)
-            color.ColorName = NormalizeOptionalColorName(request.ColorName);
+            newColorName = NormalizeOptionalColorName(request.ColorName);
 
+        var newColorCode = color.ColorCode;
         if (request.ColorCode is not null)
-        {
-            var normalizedColorCode = NormalizeColorCode(request.ColorCode);
-            ThrowIfCustomColorCodeExists(normalizedColorCode, passwords, color.Id);
-            color.ColorCode = normalizedColorCode;
-        }
+            newColorCode = NormalizeColorCode(request.ColorCode);
 
+        ThrowIfCustomColorNameExists(newColorName, passwords, color.Id);
+        ThrowIfCustomColorCodeExists(newColorCode, passwords, color.Id);
+
+        color.ColorName = newColorName;
+        color.ColorCode = newColorCode;
         passwords.DeletedCustomColors.RemoveAll(deleted => deleted.Id == color.Id);
         color.LastUpdatedAt = DateTime.UtcNow;
         color.GenerateIntegrityHash();
@@ -111,6 +116,25 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         var trimmed = colorName.Trim();
         return trimmed.Length == 0 ? null : trimmed;
+    }
+
+
+    private static void ThrowIfCustomColorNameExists(
+        string? colorName,
+        UserPasswordsData passwords,
+        Guid? ignoredCustomColorId = null)
+    {
+        if (colorName is null)
+            return;
+
+        var normalizedColorName = colorName.Trim();
+        var exists = passwords.CustomColors.Any(color =>
+            color.ColorName is not null
+            && (!ignoredCustomColorId.HasValue || color.Id != ignoredCustomColorId.Value)
+            && string.Equals(color.ColorName.Trim(), normalizedColorName, StringComparison.OrdinalIgnoreCase));
+
+        if (exists)
+            throw new DuplicateCustomUserColorNameException(normalizedColorName);
     }
 
 
