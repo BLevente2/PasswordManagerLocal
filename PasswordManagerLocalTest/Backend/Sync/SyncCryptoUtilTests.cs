@@ -19,7 +19,17 @@ public sealed class SyncCryptoUtilTests
         var localDeviceId = Guid.NewGuid();
         var delta = CreateValidEnvelope(localDeviceId);
 
-        SyncCryptoUtil.ValidateEncryptedEnvelope(delta, localDeviceId);
+        Exception? validationException = null;
+        try
+        {
+            SyncCryptoUtil.ValidateEncryptedEnvelope(delta, localDeviceId);
+        }
+        catch (Exception ex)
+        {
+            validationException = ex;
+        }
+
+        MSTestAssert.IsNull(validationException);
     }
 
     [TestMethod]

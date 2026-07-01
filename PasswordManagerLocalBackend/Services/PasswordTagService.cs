@@ -114,13 +114,13 @@ public sealed class PasswordTagService : IPasswordTagService
     }
 
 
-    private static string NormalizeTagName(string name) => name.Trim();
+    private string NormalizeTagName(string name) => name.Trim();
 
 
-    private static string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
+    private string NormalizeColorCode(string colorCode) => colorCode.Trim().ToUpperInvariant();
 
 
-    private static void ThrowIfPasswordTagNameExists(
+    private void ThrowIfPasswordTagNameExists(
         string tagName,
         UserPasswordsData passwords,
         Guid? ignoredPasswordTagId = null)
