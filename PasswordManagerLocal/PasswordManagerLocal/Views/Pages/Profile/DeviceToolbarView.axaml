@@ -18,7 +18,45 @@
               Grid.Column="0"
               MinWidth="0">
         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" MinWidth="0">
-          <PathIcon Classes="smallUiIcon" Data="{StaticResource SearchIconGeometry}" VerticalAlignment="Center" />
+          <Button
+              Classes="ghost searchModeButton"
+              ToolTip.Tip="{Binding DeviceSearchModeLabel}">
+            <PathIcon Classes="smallUiIcon" Data="{StaticResource SearchIconGeometry}" VerticalAlignment="Center" />
+            <Button.Flyout>
+              <Flyout>
+                <Border Classes="card" Padding="10" MinWidth="210">
+                  <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <TextBlock
+                          Text="{Binding DeviceSearchModeNameLabel}"
+                          VerticalAlignment="Center" />
+                      <ToggleSwitch
+                          Grid.Column="1"
+                          IsChecked="{Binding IsDeviceSearchNameEnabled, Mode=TwoWay}"
+                          IsEnabled="{Binding CanToggleDeviceSearchName}"
+                          MinWidth="0"
+                          OnContent="{Binding DeviceSwitchOnLabel}"
+                          OffContent="{Binding DeviceSwitchOffLabel}"
+                          AutomationProperties.Name="{Binding DeviceSearchModeNameLabel}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                      <TextBlock
+                          Text="{Binding DeviceSearchModeTypeLabel}"
+                          VerticalAlignment="Center" />
+                      <ToggleSwitch
+                          Grid.Column="1"
+                          IsChecked="{Binding IsDeviceSearchTypeEnabled, Mode=TwoWay}"
+                          IsEnabled="{Binding CanToggleDeviceSearchType}"
+                          MinWidth="0"
+                          OnContent="{Binding DeviceSwitchOnLabel}"
+                          OffContent="{Binding DeviceSwitchOffLabel}"
+                          AutomationProperties.Name="{Binding DeviceSearchModeTypeLabel}" />
+                    </Grid>
+                  </StackPanel>
+                </Border>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
           <controls:WatermarkWidthTextBox
               Grid.Column="1"
               Text="{Binding DeviceSearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"

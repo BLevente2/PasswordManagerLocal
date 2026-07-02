@@ -12,6 +12,7 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     private PasswordItemViewModel(
         PasswordInfoResponse password,
+        IReadOnlyList<string> tagNames,
         string editLabel,
         string deleteLabel,
         Func<PasswordItemViewModel, Task> viewAsync,
@@ -21,6 +22,7 @@ public sealed class PasswordItemViewModel : ReactiveObject
         Id = password.Id;
         Name = password.Name;
         Description = password.Description;
+        TagNames = tagNames;
         Color = password.Color;
         CreatedAt = password.CreatedAt;
         LastUpdatedAt = password.LastUpdatedAt;
@@ -38,6 +40,8 @@ public sealed class PasswordItemViewModel : ReactiveObject
     public string Name { get; }
 
     public string Description { get; }
+
+    public IReadOnlyList<string> TagNames { get; }
 
     public string Color { get; }
 
@@ -92,6 +96,9 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public string LastUpdatedAtText => LastUpdatedAt.ToLocalTime().ToString("g");
 
+    public bool HasTagMatching(string searchTerm) =>
+        TagNames.Any(tagName => tagName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+
     public void ApplyActionLabels(string editLabel, string deleteLabel)
     {
         EditLabel = editLabel;
@@ -100,12 +107,13 @@ public sealed class PasswordItemViewModel : ReactiveObject
 
     public static PasswordItemViewModel Create(
         PasswordInfoResponse password,
+        IReadOnlyList<string> tagNames,
         string editLabel,
         string deleteLabel,
         Func<PasswordItemViewModel, Task> viewAsync,
         Func<PasswordItemViewModel, Task> editAsync,
         Func<PasswordItemViewModel, Task> deleteAsync) =>
-        new(password, editLabel, deleteLabel, viewAsync, editAsync, deleteAsync);
+        new(password, tagNames, editLabel, deleteLabel, viewAsync, editAsync, deleteAsync);
 
     private static IBrush ParseBrush(string color) =>
         PasswordColorUtility.ParseBrush(color);
