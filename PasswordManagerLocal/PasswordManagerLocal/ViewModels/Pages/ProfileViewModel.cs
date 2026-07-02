@@ -81,6 +81,11 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(AddDeviceIconLabel),
         nameof(DeviceSearchLabel),
         nameof(DeviceSearchPlaceholder),
+        nameof(DeviceSearchModeLabel),
+        nameof(DeviceSearchModeNameLabel),
+        nameof(DeviceSearchModeTypeLabel),
+        nameof(DeviceSwitchOnLabel),
+        nameof(DeviceSwitchOffLabel),
         nameof(DeviceSortLabel),
         nameof(DeviceSearchEmptyTitle),
         nameof(DeviceSearchEmptyDescription),
@@ -162,6 +167,8 @@ public sealed class ProfileViewModel : ViewModelBase
     private bool _isAddingDevice;
     private string _deviceEnrollmentCodeInput = string.Empty;
     private string _deviceSearchQuery = string.Empty;
+    private bool _isDeviceSearchNameEnabled = true;
+    private bool _isDeviceSearchTypeEnabled = true;
     private string _currentMainPage = MainProfilePage;
     private string _currentProfilePane = ProfileTabsPane;
     private string _currentDevicePane = DeviceListPane;
@@ -396,6 +403,22 @@ public sealed class ProfileViewModel : ViewModelBase
             ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
         }
     }
+
+    public bool IsDeviceSearchNameEnabled
+    {
+        get => _isDeviceSearchNameEnabled;
+        set => SetDeviceSearchMode(ref _isDeviceSearchNameEnabled, value, nameof(IsDeviceSearchNameEnabled));
+    }
+
+    public bool IsDeviceSearchTypeEnabled
+    {
+        get => _isDeviceSearchTypeEnabled;
+        set => SetDeviceSearchMode(ref _isDeviceSearchTypeEnabled, value, nameof(IsDeviceSearchTypeEnabled));
+    }
+
+    public bool CanToggleDeviceSearchName => CanToggleDeviceSearchMode(_isDeviceSearchNameEnabled);
+
+    public bool CanToggleDeviceSearchType => CanToggleDeviceSearchMode(_isDeviceSearchTypeEnabled);
 
     public PasswordSortOptionViewModel? SelectedDeviceSortOption
     {
@@ -741,6 +764,16 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string DeviceSearchPlaceholder => GetTranslation("Profile_Device_Search_Placeholder");
 
+    public string DeviceSearchModeLabel => GetTranslation("Profile_Device_SearchMode_Label");
+
+    public string DeviceSearchModeNameLabel => GetTranslation("Common_Name");
+
+    public string DeviceSearchModeTypeLabel => GetTranslation("Profile_Device_Type");
+
+    public string DeviceSwitchOnLabel => GetTranslation("Common_On");
+
+    public string DeviceSwitchOffLabel => GetTranslation("Common_Off");
+
     public string DeviceSortLabel => GetTranslation("Passwords_Sort_Label");
 
     public string DeviceSortNameAscMenuLabel => BuildDeviceSortMenuLabel("name-asc", "Passwords_Sort_NameAsc");
@@ -849,6 +882,7 @@ public sealed class ProfileViewModel : ViewModelBase
         RaisePropertiesChanged(DeviceLocalizedPropertyNames);
         ApplyLocalizationToDeviceItems();
         RebuildLocalizedDeviceSortOptions();
+        ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
     }
 
     
@@ -1692,10 +1726,8 @@ public sealed class ProfileViewModel : ViewModelBase
         {
             var searchTerm = DeviceSearchQuery.Trim();
             query = query.Where(item =>
-                item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
-                || item.DeviceTypeText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
-                || item.TrustStateText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
-                || item.SyncStateText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+                IsDeviceSearchNameEnabled && item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || IsDeviceSearchTypeEnabled && item.DeviceTypeText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
         }
 
         query = SelectedDeviceSortOption?.Key switch
@@ -1725,6 +1757,37 @@ public sealed class ProfileViewModel : ViewModelBase
 
     private void SelectDefaultDeviceSortOption() =>
         SelectedDeviceSortOption = DeviceSortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? DeviceSortOptions.FirstOrDefault();
+
+    private void SetDeviceSearchMode(ref bool field, bool value, string propertyName)
+    {
+        if (field == value)
+        {
+            return;
+        }
+
+        if (!value && EnabledDeviceSearchModeCount <= 1)
+        {
+            this.RaisePropertyChanged(propertyName);
+            RaiseDeviceSearchModeToggleProperties();
+            return;
+        }
+
+        this.RaiseAndSetIfChanged(ref field, value, propertyName);
+        RaiseDeviceSearchModeToggleProperties();
+        ApplyDeviceFiltersAndSorting(SelectedDevice?.DeviceId, preserveSelection: true);
+    }
+
+    private bool CanToggleDeviceSearchMode(bool isEnabled) => !isEnabled || EnabledDeviceSearchModeCount > 1;
+
+    private void RaiseDeviceSearchModeToggleProperties()
+    {
+        this.RaisePropertyChanged(nameof(CanToggleDeviceSearchName));
+        this.RaisePropertyChanged(nameof(CanToggleDeviceSearchType));
+    }
+
+    private int EnabledDeviceSearchModeCount =>
+        (_isDeviceSearchNameEnabled ? 1 : 0)
+        + (_isDeviceSearchTypeEnabled ? 1 : 0);
 
     private void UpdateDeviceSortOptionSelectionMarks()
     {

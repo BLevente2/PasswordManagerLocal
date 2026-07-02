@@ -72,6 +72,12 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(EditorPasswordVisibilityToggleText),
         nameof(SearchLabel),
         nameof(SearchPlaceholder),
+        nameof(SearchModeLabel),
+        nameof(SearchModeNameLabel),
+        nameof(SearchModeDescriptionLabel),
+        nameof(SearchModeTagLabel),
+        nameof(SwitchOnLabel),
+        nameof(SwitchOffLabel),
         nameof(SortLabel),
         nameof(ClearSelectionLabel),
         nameof(PasswordRevealHint),
@@ -122,6 +128,9 @@ public sealed class PasswordsViewModel : ViewModelBase
     private double _customBlue = 166;
     private bool _isUpdatingColorFields;
     private string _searchQuery = string.Empty;
+    private bool _isPasswordSearchNameEnabled = true;
+    private bool _isPasswordSearchDescriptionEnabled = true;
+    private bool _isPasswordSearchTagEnabled = true;
     private PasswordColorOptionViewModel? _selectedEditorColorOption;
     private PasswordSortOptionViewModel? _selectedSortOption;
 
@@ -533,6 +542,30 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
     }
 
+    public bool IsPasswordSearchNameEnabled
+    {
+        get => _isPasswordSearchNameEnabled;
+        set => SetPasswordSearchMode(ref _isPasswordSearchNameEnabled, value, nameof(IsPasswordSearchNameEnabled));
+    }
+
+    public bool IsPasswordSearchDescriptionEnabled
+    {
+        get => _isPasswordSearchDescriptionEnabled;
+        set => SetPasswordSearchMode(ref _isPasswordSearchDescriptionEnabled, value, nameof(IsPasswordSearchDescriptionEnabled));
+    }
+
+    public bool IsPasswordSearchTagEnabled
+    {
+        get => _isPasswordSearchTagEnabled;
+        set => SetPasswordSearchMode(ref _isPasswordSearchTagEnabled, value, nameof(IsPasswordSearchTagEnabled));
+    }
+
+    public bool CanTogglePasswordSearchName => CanTogglePasswordSearchMode(_isPasswordSearchNameEnabled);
+
+    public bool CanTogglePasswordSearchDescription => CanTogglePasswordSearchMode(_isPasswordSearchDescriptionEnabled);
+
+    public bool CanTogglePasswordSearchTag => CanTogglePasswordSearchMode(_isPasswordSearchTagEnabled);
+
     public PasswordSortOptionViewModel? SelectedSortOption
     {
         get => _selectedSortOption;
@@ -700,6 +733,18 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string SearchPlaceholder => GetTranslation("Passwords_Search_Placeholder");
 
+    public string SearchModeLabel => GetTranslation("Passwords_SearchMode_Label");
+
+    public string SearchModeNameLabel => GetTranslation("Common_Name");
+
+    public string SearchModeDescriptionLabel => GetTranslation("Common_Description");
+
+    public string SearchModeTagLabel => GetTranslation("Passwords_SearchMode_Tag");
+
+    public string SwitchOnLabel => GetTranslation("Common_On");
+
+    public string SwitchOffLabel => GetTranslation("Common_Off");
+
     public string SortLabel => GetTranslation("Passwords_Sort_Label");
 
     public string SortNameAscMenuLabel => BuildSortMenuLabel("name-asc", "Passwords_Sort_NameAsc");
@@ -750,6 +795,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             ?? SortOptions.FirstOrDefault();
         UpdateSortOptionSelectionMarks();
         RaiseSortMenuLabelProperties();
+        ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
     }
 
     public async Task<bool> LoadAsync(Guid token)
@@ -880,11 +926,18 @@ public sealed class PasswordsViewModel : ViewModelBase
         try
         {
             var response = await _endpoints.GetSavedPasswordsAsync(_token);
+            var tagNameById = response.Tags.ToDictionary(tag => tag.Id, tag => tag.Name);
             _allPasswords.Clear();
 
             foreach (var password in response.Passwords)
             {
-                _allPasswords.Add(PasswordItemViewModel.Create(password, EditPasswordLabel, DeletePasswordLabel, BeginViewPasswordAsync, BeginEditPasswordAsync, BeginDeletePasswordAsync));
+                var tagNames = password.TagIds
+                    .Select(tagId => tagNameById.TryGetValue(tagId, out var tagName) ? tagName : null)
+                    .Where(tagName => !string.IsNullOrWhiteSpace(tagName))
+                    .Select(tagName => tagName!)
+                    .ToList();
+
+                _allPasswords.Add(PasswordItemViewModel.Create(password, tagNames, EditPasswordLabel, DeletePasswordLabel, BeginViewPasswordAsync, BeginEditPasswordAsync, BeginDeletePasswordAsync));
             }
 
             ApplyFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
@@ -1272,8 +1325,9 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             var searchTerm = SearchQuery.Trim();
             query = query.Where(item =>
-                item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
-                || item.Description.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+                IsPasswordSearchNameEnabled && item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || IsPasswordSearchDescriptionEnabled && item.Description.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                || IsPasswordSearchTagEnabled && item.HasTagMatching(searchTerm));
         }
 
         query = SelectedSortOption?.Key switch
@@ -1342,6 +1396,39 @@ public sealed class PasswordsViewModel : ViewModelBase
     private void SelectDefaultPresetColor() => ApplyEditorColor(PasswordColorUtility.DefaultColor);
 
     private void SelectDefaultSortOption() => SelectedSortOption = SortOptions.FirstOrDefault(item => item.Key == "name-asc") ?? SortOptions.FirstOrDefault();
+
+    private void SetPasswordSearchMode(ref bool field, bool value, string propertyName)
+    {
+        if (field == value)
+        {
+            return;
+        }
+
+        if (!value && EnabledPasswordSearchModeCount <= 1)
+        {
+            this.RaisePropertyChanged(propertyName);
+            RaisePasswordSearchModeToggleProperties();
+            return;
+        }
+
+        this.RaiseAndSetIfChanged(ref field, value, propertyName);
+        RaisePasswordSearchModeToggleProperties();
+        ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
+    }
+
+    private bool CanTogglePasswordSearchMode(bool isEnabled) => !isEnabled || EnabledPasswordSearchModeCount > 1;
+
+    private void RaisePasswordSearchModeToggleProperties()
+    {
+        this.RaisePropertyChanged(nameof(CanTogglePasswordSearchName));
+        this.RaisePropertyChanged(nameof(CanTogglePasswordSearchDescription));
+        this.RaisePropertyChanged(nameof(CanTogglePasswordSearchTag));
+    }
+
+    private int EnabledPasswordSearchModeCount =>
+        (_isPasswordSearchNameEnabled ? 1 : 0)
+        + (_isPasswordSearchDescriptionEnabled ? 1 : 0)
+        + (_isPasswordSearchTagEnabled ? 1 : 0);
 
     private void UpdateSortOptionSelectionMarks()
     {
