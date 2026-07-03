@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.Sync.Enrollment;
 
 internal sealed class LocalEnrollmentHostCandidate
 {

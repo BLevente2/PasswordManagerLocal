@@ -1,13 +1,15 @@
-﻿using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using static PasswordManagerLocalBackend.Constants.EntryExpirationConstants;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class ExpiredEntriesPurgeHostedService : BackgroundService
+public sealed class ExpiredEntriesPurgeHostedService : IBackendHostedService
 {
     private readonly ITokenService _tokens;
     private readonly IKeyVaultService _keys;
+    private readonly object _lifecycleLock = new();
+    private CancellationTokenSource? _lifetimeCancellation;
+    private Task? _executeTask;
 
     public ExpiredEntriesPurgeHostedService(ITokenService tokens, IKeyVaultService keys)
     {
@@ -15,13 +17,58 @@ public sealed class ExpiredEntriesPurgeHostedService : BackgroundService
         _keys = keys;
     }
 
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
 
+        lock (_lifecycleLock)
+        {
+            if (_executeTask is not null)
+                return Task.CompletedTask;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+            _lifetimeCancellation = new CancellationTokenSource();
+            _executeTask = ExecuteAsync(_lifetimeCancellation.Token);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        CancellationTokenSource? lifetimeCancellation;
+        Task? executeTask;
+
+        lock (_lifecycleLock)
+        {
+            lifetimeCancellation = _lifetimeCancellation;
+            executeTask = _executeTask;
+            _lifetimeCancellation = null;
+            _executeTask = null;
+        }
+
+        if (lifetimeCancellation is null || executeTask is null)
+            return;
+
+        lifetimeCancellation.Cancel();
+
+        try
+        {
+            await executeTask.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            lifetimeCancellation.Dispose();
+        }
+    }
+
+    private async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(PurgeExpiredPeriod);
 
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        while (await timer.WaitForNextTickAsync(cancellationToken))
         {
             _tokens.PurgeExpired();
             _keys.PurgeExpired();

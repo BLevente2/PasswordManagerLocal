@@ -1,4 +1,4 @@
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.State;
 
 internal readonly struct TokenEntry
 {

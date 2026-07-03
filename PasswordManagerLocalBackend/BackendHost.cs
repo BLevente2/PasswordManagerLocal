@@ -1,29 +1,34 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using PasswordManagerLocalBackend.Abstractions;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Security;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Constants;
+using PasswordManagerLocalBackend.Hosting;
 using PasswordManagerLocalBackend.Persistence;
 using PasswordManagerLocalBackend.Repositories;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalBackend.Services.Hosted;
-using PasswordManagerLocalBackend.Services.Tcp;
 using PasswordManagerLocalBackend.Utils;
 using SQLitePCL;
+using System.Text;
+using PasswordManagerLocalBackend.Abstractions.Caching;
+using PasswordManagerLocalBackend.Abstractions.Providers;
+using PasswordManagerLocalBackend.Abstractions.State;
+using PasswordManagerLocalBackend.Caching;
+using PasswordManagerLocalBackend.Providers;
+using PasswordManagerLocalBackend.State;
+using PasswordManagerLocalBackend.Sync.Tcp;
 
 namespace PasswordManagerLocalBackend
 {
     public static class BackendHost
     {
-        private static IHost? _host;
+        private static BackendServiceHost? _host;
         private static Task? _initTask;
         private static readonly object _lock = new();
         private static IKeyProtector? _platformKeyProtector;
@@ -123,144 +128,35 @@ namespace PasswordManagerLocalBackend
         {
             Batteries_V2.Init();
             DeviceEnrollmentTrace.InitializeForCurrentBuild();
-            IHost? host = null;
+            BackendServiceHost? host = null;
 
             try
             {
-                host = Host.CreateDefaultBuilder(Array.Empty<string>())
-                .ConfigureLogging(logging =>
+                var services = new ServiceCollection();
+                ConfigureServices(services, platformKeyProtector);
+                host = new BackendServiceHost(services.BuildServiceProvider());
+
+                using (var scope = host.Services.CreateScope())
                 {
-#if !DEBUG
-                    logging.ClearProviders();
-#endif
-                })
-                .ConfigureServices((context, services) =>
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    await AppDatabaseInitializer.InitializeAsync(db);
+                }
+
+                var deviceKeyStore = host.Services.GetRequiredService<IDeviceIdentityService>();
+                await deviceKeyStore.InitializeAsync();
+
+                bool shouldEnableSync;
+                using (var scope = host.Services.CreateScope())
                 {
-                    var dbFolder = PathConstants.AppRootFolder;
-                    var dbPath = Path.Combine(dbFolder, PathConstants.DbFileName);
+                    var localUserDevices = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
+                    shouldEnableSync = await localUserDevices.AnySyncOnAsync();
+                }
 
-                    if (platformKeyProtector is not null)
-                    {
-                        services.AddSingleton<IKeyProtector>(platformKeyProtector);
-                    }
-                    else
-                    {
-                        services.AddSingleton<IKeyProtector>(sp =>
-                        {
-                            var cfg = sp.GetRequiredService<IConfiguration>();
-                            var passphrase =
-                                cfg["Db:MasterPassphrase"] ??
-                                Environment.GetEnvironmentVariable("APP_DB_MASTER_PASSPHRASE") ??
-                                throw new InvalidOperationException(
-                                    "Provide master passphrase via config (Db:MasterPassphrase) or env (APP_DB_MASTER_PASSPHRASE).");
+                if (deviceKeyStore.IsSyncOn != shouldEnableSync)
+                    await deviceKeyStore.SetSyncOnAsync(shouldEnableSync);
 
-                            return new PassphraseKeyProtector(System.Text.Encoding.UTF8.GetBytes(passphrase));
-                        });
-                    }
-
-                    services.AddSingleton<RelationshipIntegrityMaterializationInterceptor>();
-
-                    services.AddDbContextPool<AppDbContext>((sp, opts) =>
-                    {
-                        var protector = sp.GetRequiredService<IKeyProtector>();
-                        var dbPassword = DbConfigManager.GetOrCreateSqlCipherPassword(protector);
-
-                        var connStr = new SqliteConnectionStringBuilder
-                        {
-                            DataSource = dbPath,
-                            Password = dbPassword
-                        }.ToString();
-
-                        opts.UseSqlite(connStr);
-                        opts.AddInterceptors(sp.GetRequiredService<RelationshipIntegrityMaterializationInterceptor>());
-                    });
-
-                    services.AddSingleton<IEndpoints, Endpoints>();
-
-                    services.AddScoped<IUnitOfWork, AppUnitOfWork>();
-
-                    services.AddScoped<IUserRepository, UserRepository>();
-                    services.AddScoped<IDeviceRepository, DeviceRepository>();
-                    services.AddScoped<IUserDeviceRepository, UserDeviceRepository>();
-                    services.AddScoped<ILocalUserDeviceRepository, LocalUserDeviceRepository>();
-                    services.AddScoped<IGroupRepository, GroupRepository>();
-                    services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
-                    services.AddScoped<ISyncItemRepository, SyncItemRepository>();
-                    services.AddScoped<ISyncTombstoneRepository, SyncTombstoneRepository>();
-                    services.AddScoped<IDeviceIdentityRepository, DeviceIdentityRepository>();
-
-                    services.AddScoped<IUserPasswordsService, UserPasswordsService>();
-                    services.AddScoped<IUserCustomColorService, UserCustomColorService>();
-                    services.AddScoped<IUserPasswordTagService, UserPasswordTagService>();
-                    services.AddScoped<IPasswordService, PasswordService>();
-                    services.AddScoped<ICustomUserColorService, CustomUserColorService>();
-                    services.AddScoped<IPasswordTagService, PasswordTagService>();
-                    services.AddScoped<IGroupService, GroupService>();
-                    services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
-                    services.AddScoped<IAuthService, AuthService>();
-                    services.AddScoped<IUserService, UserService>();
-                    services.AddScoped<IRememberMeService, RememberMeService>();
-                    services.AddScoped<IUserProfileService, UserProfileService>();
-                    services.AddScoped<IDeviceService, DeviceService>();
-                    services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
-
-                    services.AddSingleton<IKeyVaultService, KeyVaultService>();
-                    services.AddMemoryCache();
-                    services.AddSingleton<SafeMemoryCache>();
-                    services.AddSingleton<IDataCachingService, DataCachingService>();
-                    services.AddSingleton<ITokenService, TokenService>();
-
-                    services.AddSingleton<ILocalDeviceTypeProvider, LocalDeviceTypeProvider>();
-                    services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
-                    services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
-                    services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
-                    services.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
-                    services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
-                    services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
-                    services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
-                    services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
-                    services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
-                    services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
-                    services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
-                    services.AddScoped<ISyncAuthorizationService, SyncAuthorizationService>();
-                    services.AddScoped<ISyncQueueService, SyncQueueService>();
-                    services.AddScoped<ISyncService, SyncService>();
-
-                    services.AddSingleton<MdnsPublisherHostedService>();
-                    services.AddSingleton<MdnsBrowserHostedService>();
-
-                    services.AddHostedService<ExpiredEntriesPurgeHostedService>();
-                    services.AddHostedService<LocalDeviceCleanupHostedService>();
-                    services.AddHostedService<SyncDeviceIdentityWarmupHostedService>();
-                    services.AddSingleton<SyncPeerProtocolHandler>();
-                    services.AddSingleton<TcpSyncServerHostedService>();
-                    services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<TcpSyncServerHostedService>());
-                    services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MdnsPublisherHostedService>());
-                    services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<MdnsBrowserHostedService>());
-                    services.AddHostedService<SyncNetworkRefreshHostedService>();
-                })
-                .Build();
-
-            using (var scope = host.Services.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                await AppDatabaseInitializer.InitializeAsync(db);
-            }
-
-            var deviceKeyStore = host.Services.GetRequiredService<IDeviceIdentityService>();
-            await deviceKeyStore.InitializeAsync();
-
-            bool shouldEnableSync;
-            using (var scope = host.Services.CreateScope())
-            {
-                var localUserDevices = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
-                shouldEnableSync = await localUserDevices.AnySyncOnAsync();
-            }
-            if (deviceKeyStore.IsSyncOn != shouldEnableSync)
-                await deviceKeyStore.SetSyncOnAsync(shouldEnableSync);
-
-            await host.StartAsync();
-            await host.Services.GetRequiredService<ISyncRuntimeService>().RefreshSyncEnabledAsync();
+                await host.StartAsync();
+                await host.Services.GetRequiredService<ISyncRuntimeService>().RefreshSyncEnabledAsync();
 
                 lock (_lock)
                 {
@@ -269,16 +165,129 @@ namespace PasswordManagerLocalBackend
             }
             catch
             {
-                try
+                if (host is not null)
                 {
-                    host?.Dispose();
-                }
-                catch
-                {
+                    try
+                    {
+                        await host.DisposeAsync();
+                    }
+                    catch
+                    {
+                    }
                 }
 
                 throw;
             }
+        }
+
+        private static void ConfigureServices(IServiceCollection services, IKeyProtector? platformKeyProtector)
+        {
+            var dbFolder = PathConstants.AppRootFolder;
+            var dbPath = Path.Combine(dbFolder, PathConstants.DbFileName);
+
+            if (platformKeyProtector is not null)
+            {
+                services.AddSingleton<IKeyProtector>(platformKeyProtector);
+            }
+            else
+            {
+                services.AddSingleton<IKeyProtector>(_ =>
+                {
+                    var passphrase =
+                        Environment.GetEnvironmentVariable("APP_DB_MASTER_PASSPHRASE") ??
+                        Environment.GetEnvironmentVariable("Db__MasterPassphrase") ??
+                        throw new InvalidOperationException(
+                            "Provide the master passphrase via APP_DB_MASTER_PASSPHRASE or Db__MasterPassphrase.");
+
+                    return new PassphraseKeyProtector(Encoding.UTF8.GetBytes(passphrase));
+                });
+            }
+
+            services.AddSingleton<RelationshipIntegrityMaterializationInterceptor>();
+
+            services.AddDbContextPool<AppDbContext>((sp, opts) =>
+            {
+                var protector = sp.GetRequiredService<IKeyProtector>();
+                var dbPassword = DbConfigManager.GetOrCreateSqlCipherPassword(protector);
+
+                var connStr = new SqliteConnectionStringBuilder
+                {
+                    DataSource = dbPath,
+                    Password = dbPassword
+                }.ToString();
+
+                opts.UseSqlite(connStr);
+                opts.AddInterceptors(sp.GetRequiredService<RelationshipIntegrityMaterializationInterceptor>());
+            });
+
+            services.AddSingleton<IEndpoints, Endpoints>();
+
+            services.AddScoped<IUnitOfWork, AppUnitOfWork>();
+
+            services.AddScoped<IUserRepository, UserRepository>();
+            services.AddScoped<IDeviceRepository, DeviceRepository>();
+            services.AddScoped<IUserDeviceRepository, UserDeviceRepository>();
+            services.AddScoped<ILocalUserDeviceRepository, LocalUserDeviceRepository>();
+            services.AddScoped<IGroupRepository, GroupRepository>();
+            services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
+            services.AddScoped<ISyncItemRepository, SyncItemRepository>();
+            services.AddScoped<ISyncTombstoneRepository, SyncTombstoneRepository>();
+            services.AddScoped<IDeviceIdentityRepository, DeviceIdentityRepository>();
+
+            services.AddScoped<IUserPasswordsService, UserPasswordsService>();
+            services.AddScoped<IUserCustomColorService, UserCustomColorService>();
+            services.AddScoped<IUserPasswordTagService, UserPasswordTagService>();
+            services.AddScoped<IPasswordService, PasswordService>();
+            services.AddScoped<ICustomUserColorService, CustomUserColorService>();
+            services.AddScoped<IPasswordTagService, PasswordTagService>();
+            services.AddScoped<IGroupService, GroupService>();
+            services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
+            services.AddScoped<IAuthService, AuthService>();
+            services.AddScoped<IUserService, UserService>();
+            services.AddScoped<IRememberMeService, RememberMeService>();
+            services.AddScoped<IUserProfileService, UserProfileService>();
+            services.AddScoped<IDeviceService, DeviceService>();
+            services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
+
+            services.AddSingleton<IKeyVaultService, KeyVaultService>();
+            services.AddMemoryCache();
+            services.AddSingleton<SafeMemoryCache>();
+            services.AddSingleton<IDataCachingService, DataCachingService>();
+            services.AddSingleton<ITokenService, TokenService>();
+
+            services.AddSingleton<ILocalDeviceTypeProvider, LocalDeviceTypeProvider>();
+            services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
+            services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
+            services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
+            services.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
+            services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
+            services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
+            services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
+            services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
+            services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
+            services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
+            services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
+            services.AddScoped<ISyncAuthorizationService, SyncAuthorizationService>();
+            services.AddScoped<ISyncQueueService, SyncQueueService>();
+            services.AddScoped<ISyncService, SyncService>();
+
+            services.AddSingleton<ExpiredEntriesPurgeHostedService>();
+            services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<ExpiredEntriesPurgeHostedService>());
+            services.AddSingleton<LocalDeviceCleanupHostedService>();
+            services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<LocalDeviceCleanupHostedService>());
+
+            services.AddSingleton<SyncPeerProtocolHandler>();
+            services.AddSingleton<SyncDeviceIdentityWarmupHostedService>();
+            services.AddSingleton<TcpSyncServerHostedService>();
+            services.AddSingleton<MdnsPublisherHostedService>();
+            services.AddSingleton<MdnsBrowserHostedService>();
+            services.AddSingleton<SyncNetworkRefreshHostedService>();
+
+            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<SyncDeviceIdentityWarmupHostedService>());
+            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<TcpSyncServerHostedService>());
+            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<MdnsPublisherHostedService>());
+            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<MdnsBrowserHostedService>());
+            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<SyncNetworkRefreshHostedService>());
         }
 
         private static void DeleteDatabaseFiles()

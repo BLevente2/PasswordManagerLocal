@@ -1,4 +1,4 @@
-using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Providers;
 using PasswordManagerLocalBackend.Models;
 
 namespace PasswordManagerLocalTest.Fakes;

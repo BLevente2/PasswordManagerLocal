@@ -1,8 +1,8 @@
-using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Utils;
+using PasswordManagerLocalBackend.Abstractions.Providers;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.Providers;
 
 public sealed class LocalDeviceTypeProvider : ILocalDeviceTypeProvider
 {

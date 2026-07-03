@@ -13,6 +13,7 @@ using PasswordManagerLocalTest.TestInfrastructure;
 using System.Text.Json;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+using PasswordManagerLocalBackend.Abstractions.Providers;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 

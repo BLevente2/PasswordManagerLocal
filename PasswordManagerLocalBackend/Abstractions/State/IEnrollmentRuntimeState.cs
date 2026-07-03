@@ -1,4 +1,4 @@
-namespace PasswordManagerLocalBackend.Abstractions.Services;
+namespace PasswordManagerLocalBackend.Abstractions.State;
 
 public interface IEnrollmentRuntimeState
 {

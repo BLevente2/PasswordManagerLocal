@@ -1,6 +1,6 @@
 using System.Net.Security;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.Sync.Tcp;
 
 internal sealed class TcpSyncClientConnection : IAsyncDisposable
 {

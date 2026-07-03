@@ -18,6 +18,9 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
+using PasswordManagerLocalBackend.Abstractions.Caching;
+using PasswordManagerLocalBackend.State;
+using PasswordManagerLocalBackend.Sync.Enrollment;
 
 namespace PasswordManagerLocalBackend.Services;
 

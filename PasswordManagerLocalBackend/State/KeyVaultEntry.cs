@@ -1,7 +1,7 @@
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Utils;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.State;
 
 internal sealed class KeyVaultEntry : IDisposable
 {

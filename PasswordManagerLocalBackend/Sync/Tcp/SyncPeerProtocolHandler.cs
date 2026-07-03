@@ -10,8 +10,9 @@ using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Sync.Tcp;
 using PasswordManagerLocalBackend.Utils;
 using System.Collections.Concurrent;
+using PasswordManagerLocalBackend.Abstractions.State;
 
-namespace PasswordManagerLocalBackend.Services.Tcp;
+namespace PasswordManagerLocalBackend.Sync.Tcp;
 
 public sealed class SyncPeerProtocolHandler
 {

@@ -1,9 +1,9 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Services;
-using PasswordManagerLocalBackend.Sync;
+﻿using PasswordManagerLocalBackend.Sync;
 using System.Collections.Concurrent;
 using PasswordManagerLocalBackend.Utils;
+using PasswordManagerLocalBackend.Abstractions.Caching;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.Caching;
 
 public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCache
 {

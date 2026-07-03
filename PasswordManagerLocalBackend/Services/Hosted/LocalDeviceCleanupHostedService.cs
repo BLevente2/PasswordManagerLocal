@@ -1,12 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class LocalDeviceCleanupHostedService : IHostedService
+public sealed class LocalDeviceCleanupHostedService : IBackendHostedService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;

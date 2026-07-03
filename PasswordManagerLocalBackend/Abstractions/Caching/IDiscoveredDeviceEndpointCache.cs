@@ -1,6 +1,6 @@
 ﻿using PasswordManagerLocalBackend.Sync;
 
-namespace PasswordManagerLocalBackend.Abstractions.Services;
+namespace PasswordManagerLocalBackend.Abstractions.Caching;
 
 public interface IDiscoveredDeviceEndpointCache
 {

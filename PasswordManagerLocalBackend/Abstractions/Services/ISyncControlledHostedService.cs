@@ -1,8 +1,6 @@
-﻿using Microsoft.Extensions.Hosting;
-
 namespace PasswordManagerLocalBackend.Abstractions.Services;
 
-public interface ISyncControlledHostedService : IHostedService
+public interface ISyncControlledHostedService : IBackendHostedService
 {
     int StartOrder { get; }
 }

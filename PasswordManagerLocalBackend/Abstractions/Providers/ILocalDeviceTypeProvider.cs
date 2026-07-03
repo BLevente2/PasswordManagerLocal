@@ -1,6 +1,6 @@
 using PasswordManagerLocalBackend.Models;
 
-namespace PasswordManagerLocalBackend.Abstractions.Services;
+namespace PasswordManagerLocalBackend.Abstractions.Providers;
 
 public interface ILocalDeviceTypeProvider
 {
