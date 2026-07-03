@@ -8,6 +8,7 @@ using PasswordManagerLocalBackend.Sync;
 using System.Collections.Concurrent;
 
 using PasswordManagerLocalBackend.Utils;
+using PasswordManagerLocalBackend.Abstractions.Caching;
 
 namespace PasswordManagerLocalBackend.Services;
 

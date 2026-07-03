@@ -1,10 +1,10 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocalBackend.Services;
+using PasswordManagerLocalBackend.Caching;
 using PasswordManagerLocalBackend.Sync;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
-namespace PasswordManagerLocalTest.Backend.Services;
+namespace PasswordManagerLocalTest.Backend.Caching;
 
 [TestClass]
 public sealed class DiscoveredDeviceEndpointCacheTests

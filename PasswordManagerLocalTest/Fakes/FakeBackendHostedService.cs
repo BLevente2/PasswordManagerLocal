@@ -2,23 +2,20 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 
 namespace PasswordManagerLocalTest.Fakes;
 
-public sealed class FakeControlledHostedService : ISyncControlledHostedService
+public sealed class FakeBackendHostedService : IBackendHostedService
 {
     private readonly string _name;
     private readonly IList<string> _calls;
     private readonly bool _throwOnStart;
 
-    public FakeControlledHostedService(string name, int startOrder, IList<string> calls, bool throwOnStart = false)
+    public FakeBackendHostedService(string name, IList<string> calls, bool throwOnStart = false)
     {
         _name = name;
-        StartOrder = startOrder;
         _calls = calls;
         _throwOnStart = throwOnStart;
     }
 
-    public int StartOrder { get; }
-
-    public Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken = default)
     {
         _calls.Add($"start:{_name}");
 
@@ -28,7 +25,7 @@ public sealed class FakeControlledHostedService : ISyncControlledHostedService
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken = default)
     {
         _calls.Add($"stop:{_name}");
         return Task.CompletedTask;

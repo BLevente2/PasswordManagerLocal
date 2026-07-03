@@ -1,8 +1,9 @@
-using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Utils;
 using System.Net.NetworkInformation;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
+using PasswordManagerLocalBackend.Abstractions.Caching;
+using PasswordManagerLocalBackend.Abstractions.State;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 

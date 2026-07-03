@@ -1,7 +1,6 @@
 using Google.Protobuf;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Constants;
-using PasswordManagerLocalBackend.Services.Tcp;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Sync.Tcp;
 using System.Collections.Concurrent;
@@ -11,6 +10,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
+using PasswordManagerLocalBackend.Abstractions.State;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 

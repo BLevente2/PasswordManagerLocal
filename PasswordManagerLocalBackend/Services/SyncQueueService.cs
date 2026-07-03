@@ -4,6 +4,7 @@ using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Utils;
+using PasswordManagerLocalBackend.Abstractions.Caching;
 
 namespace PasswordManagerLocalBackend.Services;
 

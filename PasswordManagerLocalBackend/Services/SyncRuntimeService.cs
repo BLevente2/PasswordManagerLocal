@@ -1,7 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
 using PasswordManagerLocalBackend.Abstractions.Services;
+using PasswordManagerLocalBackend.Abstractions.Caching;
+using PasswordManagerLocalBackend.Abstractions.State;
 
 namespace PasswordManagerLocalBackend.Services;
 
@@ -13,7 +14,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
-    private readonly IEnumerable<IHostedService> _hostedServices;
+    private readonly IEnumerable<ISyncControlledHostedService> _controlledServices;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public SyncRuntimeService(
@@ -23,7 +24,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceSyncTaskService deviceSyncTasks,
-        IEnumerable<IHostedService> hostedServices)
+        IEnumerable<ISyncControlledHostedService> controlledServices)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
@@ -31,7 +32,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         _syncDeviceIdentities = syncDeviceIdentities;
         _endpointCache = endpointCache;
         _deviceSyncTasks = deviceSyncTasks;
-        _hostedServices = hostedServices;
+        _controlledServices = controlledServices;
     }
 
     public async Task RefreshSyncEnabledAsync(CancellationToken ct = default)
@@ -120,8 +121,24 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         if (!_identity.IsSyncOn && !_enrollmentState.IsActive)
             return;
 
-        foreach (var hostedService in ListControlledServices().OrderBy(s => s.StartOrder))
-            await hostedService.StartAsync(ct);
+        try
+        {
+            foreach (var hostedService in ListControlledServices().OrderBy(s => s.StartOrder))
+                await hostedService.StartAsync(ct);
+        }
+        catch (Exception startException)
+        {
+            try
+            {
+                await StopCoreAsync(CancellationToken.None);
+            }
+            catch (Exception stopException)
+            {
+                throw new AggregateException(startException, stopException);
+            }
+
+            throw;
+        }
     }
 
     private async Task StopCoreAsync(CancellationToken ct)
@@ -136,7 +153,5 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     }
 
     private IReadOnlyList<ISyncControlledHostedService> ListControlledServices() =>
-        _hostedServices
-            .OfType<ISyncControlledHostedService>()
-            .ToList();
+        _controlledServices.ToList();
 }

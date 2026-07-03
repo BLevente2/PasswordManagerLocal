@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace PasswordManagerLocalBackend.Services.Hosted;
+namespace PasswordManagerLocalBackend.Sync.Discovery;
 
 internal sealed class LocalSyncHostCandidate
 {

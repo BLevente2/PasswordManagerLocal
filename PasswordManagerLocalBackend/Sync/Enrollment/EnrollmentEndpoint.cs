@@ -1,6 +1,6 @@
 using PasswordManagerLocalBackend.Models;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.Sync.Enrollment;
 
 internal sealed class EnrollmentEndpoint
 {

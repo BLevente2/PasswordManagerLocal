@@ -1,6 +1,7 @@
-using PasswordManagerLocalBackend.Abstractions.Services;
 
-namespace PasswordManagerLocalBackend.Services;
+using PasswordManagerLocalBackend.Abstractions.State;
+
+namespace PasswordManagerLocalBackend.State;
 
 public sealed class EnrollmentRuntimeState : IEnrollmentRuntimeState
 {

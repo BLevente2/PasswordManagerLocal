@@ -13,6 +13,7 @@ using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
+using PasswordManagerLocalBackend.Abstractions.Providers;
 
 namespace PasswordManagerLocalBackend.Services;
 

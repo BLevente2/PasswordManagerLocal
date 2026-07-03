@@ -4,6 +4,7 @@ using PasswordManagerLocalBackend.Models;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using static PasswordManagerLocalBackend.Constants.TokenConstants;
+using PasswordManagerLocalBackend.State;
 
 namespace PasswordManagerLocalBackend.Services;
 

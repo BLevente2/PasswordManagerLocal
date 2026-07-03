@@ -1,5 +1,4 @@
 using Makaretu.Dns;
-using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Sync;
 using System.Collections.Concurrent;
@@ -8,6 +7,8 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
 using PasswordManagerLocalBackend.Utils;
+using PasswordManagerLocalBackend.Abstractions.Caching;
+using PasswordManagerLocalBackend.Sync.Discovery;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 

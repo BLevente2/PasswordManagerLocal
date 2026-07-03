@@ -2,7 +2,7 @@ using Makaretu.Dns;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Responses;
 
-namespace PasswordManagerLocalBackend.Services;
+namespace PasswordManagerLocalBackend.State;
 
 internal sealed class EnrollmentSession
 {

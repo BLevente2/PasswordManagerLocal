@@ -7,6 +7,7 @@ using PasswordManagerLocalTest.Fakes;
 using PasswordManagerLocalTest.TestInfrastructure;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+using PasswordManagerLocalBackend.Caching;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 

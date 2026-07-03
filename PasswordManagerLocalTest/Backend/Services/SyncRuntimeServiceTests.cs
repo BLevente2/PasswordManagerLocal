@@ -1,13 +1,15 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
+using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Models;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalTest.Fakes;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+using PasswordManagerLocalBackend.Caching;
+using PasswordManagerLocalBackend.State;
 
 namespace PasswordManagerLocalTest.Backend.Services;
 
@@ -100,6 +102,43 @@ public sealed class SyncRuntimeServiceTests
         MSTestAssert.HasCount(0, calls);
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task Start_WhenControlledServiceFails_StopsControlledServicesInReverseOrder()
+    {
+        var calls = new List<string>();
+        var localUsers = new FakeLocalUserDeviceRepository();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILocalUserDeviceRepository>(localUsers);
+        using var provider = services.BuildServiceProvider();
+        var identity = new FakeDeviceIdentityService { IsSyncOn = true };
+        var syncIdentities = new FakeSyncDeviceIdentityService();
+        var endpoints = new DiscoveredDeviceEndpointCache();
+        var tasks = new FakeDeviceSyncTaskService();
+        ISyncControlledHostedService[] controlledServices =
+        [
+            new FakeControlledHostedService("early", 10, calls),
+            new FakeControlledHostedService("failing", 20, calls, throwOnStart: true)
+        ];
+        var service = new SyncRuntimeService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            identity,
+            new EnrollmentRuntimeState(),
+            syncIdentities,
+            endpoints,
+            tasks,
+            controlledServices);
+
+        await ExpectThrowsAsync<InvalidOperationException>(() => service.StartAsync());
+
+        CollectionAssert.AreEqual(
+            new[] { "start:early", "start:failing", "stop:failing", "stop:early" },
+            calls);
+        MSTestAssert.AreEqual(1, tasks.StopAllCalls);
+    }
+
     private static SyncRuntimeService CreateService(
         FakeLocalUserDeviceRepository localUsers,
         FakeDeviceIdentityService identity,
@@ -114,7 +153,7 @@ public sealed class SyncRuntimeServiceTests
         syncIdentities = new FakeSyncDeviceIdentityService();
         endpoints = new DiscoveredDeviceEndpointCache();
         tasks = new FakeDeviceSyncTaskService();
-        IHostedService[] hostedServices =
+        ISyncControlledHostedService[] hostedServices =
         [
             new FakeControlledHostedService("late", 30, calls),
             new FakeControlledHostedService("early", 10, calls)
@@ -129,4 +168,16 @@ public sealed class SyncRuntimeServiceTests
             tasks,
             hostedServices);
     }
+    private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
+    {
+        try
+        {
+            await action();
+            MSTestAssert.Fail($"Expected {typeof(TException).Name}.");
+        }
+        catch (TException)
+        {
+        }
+    }
+
 }

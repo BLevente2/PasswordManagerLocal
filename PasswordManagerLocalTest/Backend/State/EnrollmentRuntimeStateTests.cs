@@ -1,9 +1,9 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocalBackend.Services;
+using PasswordManagerLocalBackend.State;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
-namespace PasswordManagerLocalTest.Backend.Services;
+namespace PasswordManagerLocalTest.Backend.State;
 
 [TestClass]
 public sealed class EnrollmentRuntimeStateTests

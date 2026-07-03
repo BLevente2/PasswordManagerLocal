@@ -1,11 +1,11 @@
 using Makaretu.Dns;
-using Microsoft.Extensions.Hosting;
 using PasswordManagerLocalBackend.Abstractions.Services;
 using PasswordManagerLocalBackend.Utils;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using static PasswordManagerLocalBackend.Constants.SyncConstants;
+using PasswordManagerLocalBackend.Sync.Discovery;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
