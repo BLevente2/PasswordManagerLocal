@@ -20,6 +20,7 @@ public sealed class DeviceService : IDeviceService
     private readonly IGroupRepository _groups;
     private readonly IUserDeviceRepository _userDevices;
     private readonly ILocalUserDeviceRepository _localUserDevices;
+    private readonly ISyncRouteRepository _syncRoutes;
     private readonly ISyncQueueService _syncQueue;
     private readonly ISyncQueueRepository _syncQueueItems;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
@@ -34,6 +35,7 @@ public sealed class DeviceService : IDeviceService
         IGroupRepository groups,
         IUserDeviceRepository userDevices,
         ILocalUserDeviceRepository localUserDevices,
+        ISyncRouteRepository syncRoutes,
         ISyncQueueService syncQueue,
         ISyncQueueRepository syncQueueItems,
         ISyncDeviceIdentityService syncDeviceIdentities,
@@ -47,6 +49,7 @@ public sealed class DeviceService : IDeviceService
         _groups = groups;
         _userDevices = userDevices;
         _localUserDevices = localUserDevices;
+        _syncRoutes = syncRoutes;
         _syncQueue = syncQueue;
         _syncQueueItems = syncQueueItems;
         _syncDeviceIdentities = syncDeviceIdentities;
@@ -112,7 +115,7 @@ public sealed class DeviceService : IDeviceService
         var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var userDevicesData = bundle.UserDevicesData;
         var localLink = await EnsureLocalUserDeviceAsync(user.UId, ct);
-        var links = await _userDevices.ListByUserAsync(user.UId, ct);
+        var links = await _userDevices.ListByUserWithDevicesAsync(user.UId, ct);
 
         var changed = EnsureEncryptedDeviceData(userDevicesData, _identity.LocalDeviceId, DateTimeOffset.UtcNow);
         foreach (var link in links.Where(x => !x.IsDeleted))
@@ -400,15 +403,11 @@ public sealed class DeviceService : IDeviceService
 
         if (item.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
-            if (group is null || group.Users.All(user => user.UId != removedUserId))
+            var userIds = await _groups.ListUserIdsAsync(item.ModelId, ct);
+            if (!userIds.Contains(removedUserId))
                 return false;
 
-            return !await AnyOtherUserCanStillSyncToTargetAsync(
-                group.Users.Select(user => user.UId),
-                removedUserId,
-                targetDeviceId,
-                ct);
+            return !await AnyOtherUserCanStillSyncToTargetAsync(userIds, removedUserId, targetDeviceId, ct);
         }
 
         if (item.ModelType == SyncModelType.Device)
@@ -427,16 +426,17 @@ public sealed class DeviceService : IDeviceService
         return false;
     }
 
-    private async Task<bool> AnyOtherUserCanStillSyncToTargetAsync(IEnumerable<Guid> userIds, Guid removedUserId, Guid targetDeviceId, CancellationToken ct)
+    private Task<bool> AnyOtherUserCanStillSyncToTargetAsync(
+        IEnumerable<Guid> userIds,
+        Guid removedUserId,
+        Guid targetDeviceId,
+        CancellationToken ct)
     {
-        foreach (var otherUserId in userIds.Where(id => id != Guid.Empty && id != removedUserId).Distinct())
-        {
-            if (await _localUserDevices.IsSyncOnAsync(otherUserId, ct) &&
-                await _userDevices.HasActiveLinkAsync(otherUserId, targetDeviceId, ct))
-                return true;
-        }
-
-        return false;
+        var candidateUserIds = userIds
+            .Where(id => id != Guid.Empty && id != removedUserId)
+            .Distinct()
+            .ToArray();
+        return _syncRoutes.HasAnyEligibleAsync(candidateUserIds, targetDeviceId, ct);
     }
 
     private async Task RemoveCachedDeviceIfNoPendingAsync(UserDevice userDevice, CancellationToken ct)
@@ -444,12 +444,8 @@ public sealed class DeviceService : IDeviceService
         if (userDevice.Device is null || await _syncQueueItems.HasPendingForDeviceAsync(userDevice.DeviceId, ct))
             return;
 
-        var links = await _userDevices.ListActiveByDeviceAsync(userDevice.DeviceId, ct);
-        foreach (var link in links)
-        {
-            if (link.IsSyncOn && await _localUserDevices.IsSyncOnAsync(link.UserId, ct))
-                return;
-        }
+        if (await _syncRoutes.HasEligibleUserForDeviceAsync(userDevice.DeviceId, ct))
+            return;
 
         _syncDeviceIdentities.TryRemove(userDevice.Device);
     }
@@ -463,7 +459,7 @@ public sealed class DeviceService : IDeviceService
     private async Task<UserDevice> GetActiveRemoteUserDeviceAsync(Guid userId, Guid deviceId, CancellationToken ct)
     {
         if (deviceId == Guid.Empty || deviceId == _identity.LocalDeviceId) throw new InvalidInputException();
-        var userDevice = await _userDevices.GetAsync(userId, deviceId, ct);
+        var userDevice = await _userDevices.GetWithDeviceAsync(userId, deviceId, ct);
         if (userDevice is null || userDevice.IsDeleted || userDevice.Device is null) throw new InvalidInputException();
         return userDevice;
     }

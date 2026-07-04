@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Abstractions.Repositories;
+﻿using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Sync;
@@ -11,6 +11,7 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
     private readonly ILocalUserDeviceRepository _localUsers;
+    private readonly ISyncRouteRepository _syncRoutes;
     private readonly IDeviceIdentityService _identity;
 
     public SyncAuthorizationService(
@@ -18,12 +19,14 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
         ILocalUserDeviceRepository localUsers,
+        ISyncRouteRepository syncRoutes,
         IDeviceIdentityService identity)
     {
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
         _localUsers = localUsers;
+        _syncRoutes = syncRoutes;
         _identity = identity;
     }
 
@@ -33,7 +36,7 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
             return false;
 
         if (item.ModelType == SyncModelType.User)
-            return item.ChangeType == SyncChangeType.Deleted || await IsUserRouteEnabledAsync(item.ModelId, targetDeviceId, ct);
+            return item.ChangeType == SyncChangeType.Deleted || await _syncRoutes.IsEligibleAsync(item.ModelId, targetDeviceId, ct);
 
         if (item.ModelType == SyncModelType.UserDevice)
         {
@@ -44,19 +47,19 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
             if (link.DeviceId == targetDeviceId)
                 return item.ChangeType == SyncChangeType.Deleted && link.IsDeleted;
 
-            return await IsUserRouteEnabledAsync(link.UserId, targetDeviceId, ct);
+            return await _syncRoutes.IsEligibleAsync(link.UserId, targetDeviceId, ct);
         }
 
         if (item.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
-            return group is not null && await AnyUserRouteEnabledAsync(group.Users.Select(u => u.UId), targetDeviceId, ct);
+            var userIds = await _groups.ListUserIdsAsync(item.ModelId, ct);
+            return await _syncRoutes.HasAnyEligibleAsync(userIds, targetDeviceId, ct);
         }
 
         if (item.ModelType == SyncModelType.Device)
         {
-            var device = await _devices.GetByIdWithUsersAsync(item.ModelId, ct);
-            return device is not null && await AnyUserRouteEnabledAsync(device.UserDevices.Where(x => !x.IsDeleted).Select(x => x.UserId), targetDeviceId, ct);
+            var userIds = await _devices.ListActiveUserIdsAsync(item.ModelId, ct);
+            return await _syncRoutes.HasAnyEligibleAsync(userIds, targetDeviceId, ct);
         }
 
         return false;
@@ -68,7 +71,7 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
             return false;
 
         if (payload.ModelType == SyncModelType.User)
-            return await IsUserRouteEnabledAsync(payload.ModelId, sourceDeviceId, ct);
+            return await _syncRoutes.IsEligibleAsync(payload.ModelId, sourceDeviceId, ct);
 
         if (payload.ModelType == SyncModelType.UserDevice)
         {
@@ -78,59 +81,30 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
             if (payload.UserDevice.DeviceId == _identity.LocalDeviceId)
                 return payload.ChangeType == SyncChangeType.Deleted || payload.UserDevice.IsDeleted;
 
-            return await IsUserRouteEnabledAsync(payload.UserDevice.UserId, sourceDeviceId, ct);
+            return await _syncRoutes.IsEligibleAsync(payload.UserDevice.UserId, sourceDeviceId, ct);
         }
 
         if (payload.ModelType == SyncModelType.Group)
         {
-            var ids = payload.Group?.UserIds ?? [];
-            if (ids.Count == 0)
-            {
-                var group = await _groups.GetByIdWithUsersAsync(payload.ModelId, ct);
-                ids = group?.Users.Select(u => u.UId).ToList() ?? [];
-            }
-            return await AnyUserRouteEnabledAsync(ids, sourceDeviceId, ct);
+            IReadOnlyCollection<Guid> userIds = payload.Group?.UserIds ?? [];
+            if (userIds.Count == 0)
+                userIds = await _groups.ListUserIdsAsync(payload.ModelId, ct);
+
+            return await _syncRoutes.HasAnyEligibleAsync(userIds, sourceDeviceId, ct);
         }
 
         if (payload.ModelType == SyncModelType.Device)
         {
-            var ids = payload.Device?.UserIds ?? [];
-            if (ids.Count == 0)
-            {
-                var device = await _devices.GetByIdWithUsersAsync(payload.ModelId, ct);
-                ids = device?.UserDevices.Where(x => !x.IsDeleted).Select(x => x.UserId).ToList() ?? [];
-            }
-            return await AnyUserRouteEnabledAsync(ids, sourceDeviceId, ct);
+            IReadOnlyCollection<Guid> userIds = payload.Device?.UserIds ?? [];
+            if (userIds.Count == 0)
+                userIds = await _devices.ListActiveUserIdsAsync(payload.ModelId, ct);
+
+            return await _syncRoutes.HasAnyEligibleAsync(userIds, sourceDeviceId, ct);
         }
 
         return false;
     }
 
-    public async Task<bool> HasEligibleUserForDeviceAsync(Guid deviceId, CancellationToken ct = default)
-    {
-        var links = await _userDevices.ListActiveByDeviceAsync(deviceId, ct);
-        foreach (var link in links)
-        {
-            if (link.IsSyncOn && await _localUsers.IsSyncOnAsync(link.UserId, ct))
-                return true;
-        }
-        return false;
-    }
-
-    private async Task<bool> IsUserRouteEnabledAsync(Guid userId, Guid remoteDeviceId, CancellationToken ct)
-    {
-        if (!await _localUsers.IsSyncOnAsync(userId, ct))
-            return false;
-        return await _userDevices.HasActiveLinkAsync(userId, remoteDeviceId, ct);
-    }
-
-    private async Task<bool> AnyUserRouteEnabledAsync(IEnumerable<Guid> userIds, Guid remoteDeviceId, CancellationToken ct)
-    {
-        foreach (var userId in userIds.Where(x => x != Guid.Empty).Distinct())
-        {
-            if (await IsUserRouteEnabledAsync(userId, remoteDeviceId, ct))
-                return true;
-        }
-        return false;
-    }
+    public Task<bool> HasEligibleUserForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
+        _syncRoutes.HasEligibleUserForDeviceAsync(deviceId, ct);
 }

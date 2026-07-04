@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Buffers.Binary;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
 using System.Text;
@@ -91,6 +92,34 @@ public sealed class HashingTests
         MSTestAssert.IsFalse(first.SequenceEqual(second));
         ExpectThrows<ArgumentOutOfRangeException>(() => Hashing.GenerateSalt(0));
         ExpectThrows<ArgumentOutOfRangeException>(() => Hashing.GenerateSalt(-1));
+    }
+
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void WriteString_PreservesLengthPrefixedUtf8HashFormat()
+    {
+        string?[] values =
+        [
+            null,
+            string.Empty,
+            "árvíztűrő tükörfúrógép 🚀",
+            new string('x', 1024) + "終"
+        ];
+
+        foreach (var value in values)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(value ?? string.Empty);
+            var legacyMaterial = new byte[sizeof(int) + utf8.Length];
+            BinaryPrimitives.WriteInt32LittleEndian(legacyMaterial.AsSpan(0, sizeof(int)), utf8.Length);
+            utf8.CopyTo(legacyMaterial, sizeof(int));
+
+            var expected = SHA256.HashData(legacyMaterial);
+            var actual = Hashing.SHA256Hash(hash => hash.WriteString(value));
+
+            CollectionAssert.AreEqual(expected, actual, $"Hash format changed for value length {value?.Length ?? 0}.");
+        }
     }
 
     private static void ExpectThrows<TException>(Action action) where TException : Exception

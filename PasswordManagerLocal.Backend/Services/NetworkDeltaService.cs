@@ -4,6 +4,7 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Projections;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
@@ -22,7 +23,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly IGroupRepository _groups;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
-    private readonly ILocalUserDeviceRepository _localUserDevices;
+    private readonly ISyncRouteRepository _syncRoutes;
     private readonly ISyncTombstoneRepository _tombstones;
     private readonly ISyncQueueRepository _syncQueue;
     private readonly ISyncQueueService _syncQueueService;
@@ -41,7 +42,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
-        ILocalUserDeviceRepository localUserDevices,
+        ISyncRouteRepository syncRoutes,
         ISyncTombstoneRepository tombstones,
         ISyncQueueRepository syncQueue,
         ISyncQueueService syncQueueService,
@@ -59,7 +60,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
-        _localUserDevices = localUserDevices;
+        _syncRoutes = syncRoutes;
         _tombstones = tombstones;
         _syncQueue = syncQueue;
         _syncQueueService = syncQueueService;
@@ -1313,7 +1314,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (IsLocalDevicePayload(delta))
             return false;
 
-        var existing = await _devices.GetByIdWithUsersAsync(delta.ModelId, ct);
+        var existing = await _devices.GetByIdWithUserDevicesAsync(delta.ModelId, ct);
 
         if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
             return false;
@@ -1468,15 +1469,11 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (item.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
-            if (group is null || group.Users.All(user => user.UId != removedUserId))
+            var userIds = await _groups.ListUserIdsAsync(item.ModelId, ct);
+            if (!userIds.Contains(removedUserId))
                 return false;
 
-            return !await AnyOtherUserCanStillSyncToTargetAsync(
-                group.Users.Select(user => user.UId),
-                removedUserId,
-                targetDeviceId,
-                ct);
+            return !await AnyOtherUserCanStillSyncToTargetAsync(userIds, removedUserId, targetDeviceId, ct);
         }
 
         if (item.ModelType == SyncModelType.Device)
@@ -1495,16 +1492,17 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         return false;
     }
 
-    private async Task<bool> AnyOtherUserCanStillSyncToTargetAsync(IEnumerable<Guid> userIds, Guid removedUserId, Guid targetDeviceId, CancellationToken ct)
+    private Task<bool> AnyOtherUserCanStillSyncToTargetAsync(
+        IEnumerable<Guid> userIds,
+        Guid removedUserId,
+        Guid targetDeviceId,
+        CancellationToken ct)
     {
-        foreach (var otherUserId in userIds.Where(id => id != Guid.Empty && id != removedUserId).Distinct())
-        {
-            if (await _localUserDevices.IsSyncOnAsync(otherUserId, ct) &&
-                await _userDevices.HasActiveLinkAsync(otherUserId, targetDeviceId, ct))
-                return true;
-        }
-
-        return false;
+        var candidateUserIds = userIds
+            .Where(id => id != Guid.Empty && id != removedUserId)
+            .Distinct()
+            .ToArray();
+        return _syncRoutes.HasAnyEligibleAsync(candidateUserIds, targetDeviceId, ct);
     }
 
 
@@ -1744,19 +1742,12 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         if (payload.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdWithUsersAsync(payload.ModelId, ct);
-            var userIds = group is not null
-                ? group.Users.Select(u => u.UId).ToList()
-                : payload.Group?.UserIds ?? [];
-
+            IReadOnlyCollection<Guid> userIds = await _groups.ListUserIdsAsync(payload.ModelId, ct);
             if (userIds.Count == 0)
-                throw new UnauthorizedAccessException("Source device cannot modify this group.");
+                userIds = payload.Group?.UserIds ?? [];
 
-            foreach (var userId in userIds)
-            {
-                if (await _userDevices.HasActiveLinkAsync(userId, sourceDevice.Id, ct))
-                    return;
-            }
+            if (await _userDevices.HasAnyActiveLinkAsync(userIds, sourceDevice.Id, ct))
+                return;
 
             throw new UnauthorizedAccessException("Source device cannot modify this group.");
         }
@@ -1772,14 +1763,9 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (await _userDevices.SharesActiveUserAsync(sourceDevice.Id, payload.ModelId, ct))
                 return;
 
-            if (payload.Device is not null)
-            {
-                foreach (var userId in payload.Device.UserIds.Where(id => id != Guid.Empty).Distinct())
-                {
-                    if (await _userDevices.HasActiveLinkAsync(userId, sourceDevice.Id, ct))
-                        return;
-                }
-            }
+            if (payload.Device is not null &&
+                await _userDevices.HasAnyActiveLinkAsync(payload.Device.UserIds, sourceDevice.Id, ct))
+                return;
 
             throw new UnauthorizedAccessException("Source device cannot modify this device.");
         }
@@ -1864,12 +1850,12 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         };
 
 
-    private GroupSyncPayload CreateGroupSyncPayloadForHash(Group group) =>
+    private GroupSyncPayload CreateGroupSyncPayloadForHash(GroupWithUserIdsData group) =>
         new()
         {
             Id = group.Id,
             EncryptedPayload = group.EncryptedPayload,
-            UserIds = group.Users.Select(u => u.UId).Distinct().ToList()
+            UserIds = group.UserIds
         };
 
 
@@ -1948,7 +1934,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (payload.Group is null || payload.Group.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 return false;
 
-            var existing = await _groups.GetByIdWithUsersAsync(payload.ModelId, ct);
+            var existing = await _groups.GetWithUserIdsAsNoTrackingAsync(payload.ModelId, ct);
             if (existing is null)
                 return false;
 
@@ -1962,7 +1948,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             if (payload.Device is null || payload.Device.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
                 return false;
 
-            var existing = await _devices.GetByIdWithUsersAsync(payload.ModelId, ct);
+            var existing = await _devices.GetByIdWithUserDevicesAsync(payload.ModelId, ct);
             if (existing is null)
                 return false;
 

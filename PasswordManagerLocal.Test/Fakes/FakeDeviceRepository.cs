@@ -31,17 +31,19 @@ public sealed class FakeDeviceRepository : IDeviceRepository
     public Task<Device?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(_items.GetValueOrDefault(id));
 
-    public Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        GetByIdAsync(id, ct);
-
     public Task<Device?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
-        GetByIdAsync(id, ct);
-
-    public Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default) =>
         GetByIdAsync(id, ct);
 
     public Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default) =>
         GetByIdAsync(id, ct);
+
+    public Task<Device?> GetByIdAsNoTrackingWithUserDevicesAsync(Guid id, CancellationToken ct = default) =>
+        GetByIdAsync(id, ct);
+
+    public Task<IReadOnlyList<Guid>> ListActiveUserIdsAsync(Guid deviceId, CancellationToken ct = default) =>
+        Task.FromResult((IReadOnlyList<Guid>)(_items.TryGetValue(deviceId, out var device)
+            ? device.UserDevices.Where(link => !link.IsDeleted).Select(link => link.UserId).Distinct().ToList()
+            : []));
 
     public Task<Device?> GetBySignPublicKeyAsync(byte[] signPublicKey, CancellationToken ct = default) =>
         Task.FromResult(_items.Values.FirstOrDefault(device => device.SignPublicKey.SequenceEqual(signPublicKey)));

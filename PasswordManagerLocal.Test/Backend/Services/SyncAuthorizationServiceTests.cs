@@ -192,8 +192,9 @@ public sealed class SyncAuthorizationServiceTests
         var devices = new FakeDeviceRepository();
         var userDevices = new FakeUserDeviceRepository();
         var localUsers = new FakeLocalUserDeviceRepository();
+        var syncRoutes = new FakeSyncRouteRepository(userDevices, localUsers);
         var identity = new FakeDeviceIdentityService { LocalDeviceId = Guid.NewGuid() };
-        var service = new SyncAuthorizationService(groups, devices, userDevices, localUsers, identity);
+        var service = new SyncAuthorizationService(groups, devices, userDevices, localUsers, syncRoutes, identity);
         return new SyncAuthorizationSetup(service, groups, userDevices, localUsers, identity);
     }
 

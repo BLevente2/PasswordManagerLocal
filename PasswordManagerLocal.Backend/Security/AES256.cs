@@ -13,6 +13,8 @@ internal static class AES256
 
     private const uint Magic = 0x4D434741;
     private const byte Version = 1;
+    private const int HeaderSize = 4 + 1 + 8 + 4;
+    private const int FrameMetadataSize = 8;
 
     internal static byte[] GenerateKey()
     {
@@ -21,7 +23,11 @@ internal static class AES256
         return key;
     }
 
-    internal static async Task<byte[]> EncryptAsync(byte[] data, EncryptionKey key, byte[]? associatedData = null, int frameSize = DefaultFrameSize)
+    internal static async Task<byte[]> EncryptAsync(
+        byte[] data,
+        EncryptionKey key,
+        byte[]? associatedData = null,
+        int frameSize = DefaultFrameSize)
     {
         var effectiveFrameSize = data.Length == 0 ? 1 : Math.Min(frameSize, data.Length);
         using var input = new MemoryStream(data, writable: false);
@@ -38,7 +44,11 @@ internal static class AES256
         return output.ToArray();
     }
 
-    internal static async Task<Stream> EncryptAsync(Stream input, EncryptionKey key, byte[]? associatedData = null, int frameSize = DefaultFrameSize)
+    internal static async Task<Stream> EncryptAsync(
+        Stream input,
+        EncryptionKey key,
+        byte[]? associatedData = null,
+        int frameSize = DefaultFrameSize)
     {
         var output = new MemoryStream();
         await EncryptToStreamAsync(input, output, key, associatedData, frameSize);
@@ -54,66 +64,59 @@ internal static class AES256
         return output;
     }
 
-    internal static async Task EncryptToStreamAsync(Stream input, Stream output, EncryptionKey key, byte[]? associatedData = null, int frameSize = DefaultFrameSize)
+    internal static async Task EncryptToStreamAsync(
+        Stream input,
+        Stream output,
+        EncryptionKey key,
+        byte[]? associatedData = null,
+        int frameSize = DefaultFrameSize)
     {
-        if (frameSize <= 0) throw new ArgumentOutOfRangeException(nameof(frameSize));
+        if (frameSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(frameSize));
 
-        var header = new byte[4 + 1 + 8 + 4];
+        var header = new byte[HeaderSize];
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0, 4), Magic);
         header[4] = Version;
-
-        var noncePrefix = new byte[8];
-        RandomNumberGenerator.Fill(noncePrefix);
-        Buffer.BlockCopy(noncePrefix, 0, header, 5, 8);
+        RandomNumberGenerator.Fill(header.AsSpan(5, 8));
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(13, 4), frameSize);
-
         await output.WriteAsync(header, 0, header.Length);
 
         var buffer = ArrayPool<byte>.Shared.Rent(frameSize);
         var cipher = ArrayPool<byte>.Shared.Rent(frameSize);
+        var aadLength = HeaderSize + FrameMetadataSize + (associatedData?.Length ?? 0);
+        var aadBuffer = ArrayPool<byte>.Shared.Rent(aadLength);
         var tag = new byte[TagSizeInBytes];
         var nonce = new byte[NonceSizeInBytes];
-        Buffer.BlockCopy(noncePrefix, 0, nonce, 0, 8);
+        header.AsSpan(5, 8).CopyTo(nonce);
+        InitializeAadBuffer(aadBuffer, header, associatedData);
 
-        var lenBuf = new byte[4];
-        int frameIndex = 0;
-
+        var lengthBuffer = new byte[sizeof(int)];
+        var frameIndex = 0;
         var keyBytes = key.ExportCopy();
+
         try
         {
-            using (var gcm = new AesGcm(keyBytes, TagSizeInBytes))
+            using var gcm = new AesGcm(keyBytes, TagSizeInBytes);
+            while (true)
             {
-                while (true)
-                {
-                    int read = await input.ReadAsync(buffer, 0, buffer.Length);
-                    if (read <= 0) break;
+                var read = await input.ReadAsync(buffer, 0, buffer.Length);
+                if (read <= 0)
+                    break;
 
-                    BinaryPrimitives.WriteInt32LittleEndian(nonce.AsSpan(8, 4), frameIndex);
+                BinaryPrimitives.WriteInt32LittleEndian(nonce.AsSpan(8, 4), frameIndex);
+                WriteFrameMetadata(aadBuffer, frameIndex, read);
+                gcm.Encrypt(
+                    nonce,
+                    buffer.AsSpan(0, read),
+                    cipher.AsSpan(0, read),
+                    tag,
+                    aadBuffer.AsSpan(0, aadLength));
 
-                    int aadLen = header.Length + 8 + (associatedData?.Length ?? 0);
-                    var aadBuf = ArrayPool<byte>.Shared.Rent(aadLen);
-                    try
-                    {
-                        Buffer.BlockCopy(header, 0, aadBuf, 0, header.Length);
-                        BinaryPrimitives.WriteInt32LittleEndian(aadBuf.AsSpan(header.Length, 4), frameIndex);
-                        BinaryPrimitives.WriteInt32LittleEndian(aadBuf.AsSpan(header.Length + 4, 4), read);
-                        if (associatedData != null)
-                            Buffer.BlockCopy(associatedData, 0, aadBuf, header.Length + 8, associatedData.Length);
-
-                        gcm.Encrypt(nonce, buffer.AsSpan(0, read), cipher.AsSpan(0, read), tag, aadBuf.AsSpan(0, aadLen));
-                    }
-                    finally
-                    {
-                        ArrayPool<byte>.Shared.Return(aadBuf, clearArray: true);
-                    }
-
-                    BinaryPrimitives.WriteInt32LittleEndian(lenBuf, read);
-                    await output.WriteAsync(lenBuf, 0, 4);
-                    await output.WriteAsync(cipher, 0, read);
-                    await output.WriteAsync(tag, 0, TagSizeInBytes);
-
-                    frameIndex++;
-                }
+                BinaryPrimitives.WriteInt32LittleEndian(lengthBuffer, read);
+                await output.WriteAsync(lengthBuffer, 0, lengthBuffer.Length);
+                await output.WriteAsync(cipher, 0, read);
+                await output.WriteAsync(tag, 0, TagSizeInBytes);
+                frameIndex++;
             }
         }
         finally
@@ -121,74 +124,75 @@ internal static class AES256
             CryptographicOperations.ZeroMemory(keyBytes);
             CryptographicOperations.ZeroMemory(nonce);
             CryptographicOperations.ZeroMemory(tag);
+            ArrayPool<byte>.Shared.Return(aadBuffer, clearArray: true);
             ArrayPool<byte>.Shared.Return(cipher, clearArray: true);
             ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
         }
     }
 
-    internal static async Task DecryptToStreamAsync(Stream input, Stream output, EncryptionKey key, byte[]? associatedData = null)
+    internal static async Task DecryptToStreamAsync(
+        Stream input,
+        Stream output,
+        EncryptionKey key,
+        byte[]? associatedData = null)
     {
-        var header = new byte[4 + 1 + 8 + 4];
+        var header = new byte[HeaderSize];
         await ReadExactAsync(input, header, 0, header.Length);
 
         var magic = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0, 4));
-        if (magic != Magic) throw new CryptographicException("Invalid header.");
+        if (magic != Magic)
+            throw new CryptographicException("Invalid header.");
 
         var version = header[4];
-        if (version != Version) throw new CryptographicException("Unsupported version.");
+        if (version != Version)
+            throw new CryptographicException("Unsupported version.");
 
-        var noncePrefix = header.AsSpan(5, 8).ToArray();
         var frameSize = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(13, 4));
-        if (frameSize <= 0) throw new CryptographicException("Invalid frame size.");
+        if (frameSize <= 0)
+            throw new CryptographicException("Invalid frame size.");
 
         var cipher = ArrayPool<byte>.Shared.Rent(frameSize);
-        var plain = ArrayPool<byte>.Shared.Rent(frameSize);
+        var plaintext = ArrayPool<byte>.Shared.Rent(frameSize);
+        var aadLength = HeaderSize + FrameMetadataSize + (associatedData?.Length ?? 0);
+        var aadBuffer = ArrayPool<byte>.Shared.Rent(aadLength);
         var tag = new byte[TagSizeInBytes];
         var nonce = new byte[NonceSizeInBytes];
-        Buffer.BlockCopy(noncePrefix, 0, nonce, 0, 8);
+        header.AsSpan(5, 8).CopyTo(nonce);
+        InitializeAadBuffer(aadBuffer, header, associatedData);
 
-        var lenBuf = new byte[4];
-        int frameIndex = 0;
-
+        var lengthBuffer = new byte[sizeof(int)];
+        var frameIndex = 0;
         var keyBytes = key.ExportCopy();
+
         try
         {
-            using (var gcm = new AesGcm(keyBytes, TagSizeInBytes))
+            using var gcm = new AesGcm(keyBytes, TagSizeInBytes);
+            while (true)
             {
-                while (true)
-                {
-                    int lenRead = await input.ReadAsync(lenBuf, 0, 4);
-                    if (lenRead == 0) break;
-                    if (lenRead != 4) throw new CryptographicException("Corrupted stream.");
+                var lengthRead = await input.ReadAsync(lengthBuffer, 0, lengthBuffer.Length);
+                if (lengthRead == 0)
+                    break;
+                if (lengthRead != lengthBuffer.Length)
+                    throw new CryptographicException("Corrupted stream.");
 
-                    int chunkLen = BinaryPrimitives.ReadInt32LittleEndian(lenBuf);
-                    if (chunkLen < 0 || chunkLen > frameSize) throw new CryptographicException("Invalid chunk length.");
+                var chunkLength = BinaryPrimitives.ReadInt32LittleEndian(lengthBuffer);
+                if (chunkLength < 0 || chunkLength > frameSize)
+                    throw new CryptographicException("Invalid chunk length.");
 
-                    await ReadExactAsync(input, cipher, 0, chunkLen);
-                    await ReadExactAsync(input, tag, 0, TagSizeInBytes);
+                await ReadExactAsync(input, cipher, 0, chunkLength);
+                await ReadExactAsync(input, tag, 0, TagSizeInBytes);
 
-                    BinaryPrimitives.WriteInt32LittleEndian(nonce.AsSpan(8, 4), frameIndex);
+                BinaryPrimitives.WriteInt32LittleEndian(nonce.AsSpan(8, 4), frameIndex);
+                WriteFrameMetadata(aadBuffer, frameIndex, chunkLength);
+                gcm.Decrypt(
+                    nonce,
+                    cipher.AsSpan(0, chunkLength),
+                    tag,
+                    plaintext.AsSpan(0, chunkLength),
+                    aadBuffer.AsSpan(0, aadLength));
 
-                    int aadLen = header.Length + 8 + (associatedData?.Length ?? 0);
-                    var aadBuf = ArrayPool<byte>.Shared.Rent(aadLen);
-                    try
-                    {
-                        Buffer.BlockCopy(header, 0, aadBuf, 0, header.Length);
-                        BinaryPrimitives.WriteInt32LittleEndian(aadBuf.AsSpan(header.Length, 4), frameIndex);
-                        BinaryPrimitives.WriteInt32LittleEndian(aadBuf.AsSpan(header.Length + 4, 4), chunkLen);
-                        if (associatedData != null)
-                            Buffer.BlockCopy(associatedData, 0, aadBuf, header.Length + 8, associatedData.Length);
-
-                        gcm.Decrypt(nonce, cipher.AsSpan(0, chunkLen), tag, plain.AsSpan(0, chunkLen), aadBuf.AsSpan(0, aadLen));
-                    }
-                    finally
-                    {
-                        ArrayPool<byte>.Shared.Return(aadBuf, clearArray: true);
-                    }
-
-                    await output.WriteAsync(plain, 0, chunkLen);
-                    frameIndex++;
-                }
+                await output.WriteAsync(plaintext, 0, chunkLength);
+                frameIndex++;
             }
         }
         finally
@@ -196,19 +200,34 @@ internal static class AES256
             CryptographicOperations.ZeroMemory(keyBytes);
             CryptographicOperations.ZeroMemory(nonce);
             CryptographicOperations.ZeroMemory(tag);
-            ArrayPool<byte>.Shared.Return(plain, clearArray: true);
+            ArrayPool<byte>.Shared.Return(aadBuffer, clearArray: true);
+            ArrayPool<byte>.Shared.Return(plaintext, clearArray: true);
             ArrayPool<byte>.Shared.Return(cipher, clearArray: true);
         }
     }
 
-    private static async Task ReadExactAsync(Stream s, byte[] buf, int offset, int count)
+    private static void InitializeAadBuffer(byte[] aadBuffer, byte[] header, byte[]? associatedData)
     {
-        int readTotal = 0;
-        while (readTotal < count)
+        header.CopyTo(aadBuffer, 0);
+        if (associatedData is not null)
+            associatedData.CopyTo(aadBuffer, HeaderSize + FrameMetadataSize);
+    }
+
+    private static void WriteFrameMetadata(byte[] aadBuffer, int frameIndex, int chunkLength)
+    {
+        BinaryPrimitives.WriteInt32LittleEndian(aadBuffer.AsSpan(HeaderSize, sizeof(int)), frameIndex);
+        BinaryPrimitives.WriteInt32LittleEndian(aadBuffer.AsSpan(HeaderSize + sizeof(int), sizeof(int)), chunkLength);
+    }
+
+    private static async Task ReadExactAsync(Stream stream, byte[] buffer, int offset, int count)
+    {
+        var totalRead = 0;
+        while (totalRead < count)
         {
-            int r = await s.ReadAsync(buf, offset + readTotal, count - readTotal);
-            if (r <= 0) throw new EndOfStreamException();
-            readTotal += r;
+            var read = await stream.ReadAsync(buffer, offset + totalRead, count - totalRead);
+            if (read <= 0)
+                throw new EndOfStreamException();
+            totalRead += read;
         }
     }
 }

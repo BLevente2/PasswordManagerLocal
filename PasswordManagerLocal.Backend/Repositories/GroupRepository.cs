@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Projections;
 using PasswordManagerLocal.Backend.Persistence;
 
 namespace PasswordManagerLocal.Backend.Repositories;
@@ -10,38 +11,61 @@ public sealed class GroupRepository : GenericRepositoryBase<Group>, IGroupReposi
     public GroupRepository(AppDbContext context) : base(context.Groups) { }
 
     public override Task<bool> ExistsAsync(Guid id, CancellationToken ct = default) =>
-        Set.AsNoTracking().AnyAsync(g => g.Id == id, ct);
+        Set.AsNoTracking().AnyAsync(group => group.Id == id, ct);
 
-    public override async Task<Group?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
-        await Set.FirstOrDefaultAsync(g => g.Id == id, ct);
+    public override Task<Group?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Set.FirstOrDefaultAsync(group => group.Id == id, ct);
 
     public async Task<IReadOnlyList<Group>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default)
     {
         if (ids.Count == 0)
             return [];
 
-        return await Set.Where(g => ids.Contains(g.Id)).ToListAsync(ct);
+        return await Set.Where(group => ids.Contains(group.Id)).ToListAsync(ct);
     }
 
-    public async Task<Group?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        await Set
-            .Include(g => g.Users)
-            .FirstOrDefaultAsync(g => g.Id == id, ct);
+    public Task<Group?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
+        Set.Include(group => group.Users)
+            .FirstOrDefaultAsync(group => group.Id == id, ct);
 
-    public async Task<Group?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        await Set.AsNoTracking()
-            .Include(g => g.Users)
-            .FirstOrDefaultAsync(g => g.Id == id, ct);
+    public Task<GroupWithUserIdsData?> GetWithUserIdsAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
+        Set.AsNoTracking()
+            .Where(group => group.Id == id)
+            .Select(group => new GroupWithUserIdsData
+            {
+                Id = group.Id,
+                EncryptedPayload = group.EncryptedPayload,
+                LastModifiedAt = group.LastModifiedAt,
+                IntegrityHash = group.IntegrityHash,
+                UserIds = group.Users.Select(user => user.UId).ToList()
+            })
+            .FirstOrDefaultAsync(ct);
 
-    public async Task<IReadOnlyList<Group>> ListByUserWithUsersAsNoTrackingAsync(Guid userId, CancellationToken ct = default) =>
+    public async Task<IReadOnlyList<GroupWithUserIdsData>> ListByUserWithUserIdsAsNoTrackingAsync(
+        Guid userId,
+        CancellationToken ct = default) =>
         await Set.AsNoTracking()
-            .Include(g => g.Users)
-            .Where(g => g.Users.Any(u => u.UId == userId))
+            .Where(group => group.Users.Any(user => user.UId == userId))
+            .Select(group => new GroupWithUserIdsData
+            {
+                Id = group.Id,
+                EncryptedPayload = group.EncryptedPayload,
+                LastModifiedAt = group.LastModifiedAt,
+                IntegrityHash = group.IntegrityHash,
+                UserIds = group.Users.Select(user => user.UId).ToList()
+            })
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Guid>> ListUserIdsAsync(Guid groupId, CancellationToken ct = default) =>
+        await Set.AsNoTracking()
+            .Where(group => group.Id == groupId)
+            .SelectMany(group => group.Users.Select(user => user.UId))
+            .Distinct()
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<Guid>> ListIdsByUserAsync(Guid userId, CancellationToken ct = default) =>
         await Set.AsNoTracking()
-            .Where(g => g.Users.Any(u => u.UId == userId))
-            .Select(g => g.Id)
+            .Where(group => group.Users.Any(user => user.UId == userId))
+            .Select(group => group.Id)
             .ToListAsync(ct);
 }

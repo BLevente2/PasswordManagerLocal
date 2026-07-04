@@ -7,6 +7,8 @@ public sealed class FakeLocalUserDeviceRepository : ILocalUserDeviceRepository
 {
     private readonly Dictionary<Guid, LocalUserDevice> _items = [];
 
+    internal IReadOnlyCollection<LocalUserDevice> Items => _items.Values;
+
     public Task<LocalUserDevice?> GetAsync(Guid userId, CancellationToken ct = default) =>
         Task.FromResult(_items.TryGetValue(userId, out var item) ? Clone(item) : null);
 

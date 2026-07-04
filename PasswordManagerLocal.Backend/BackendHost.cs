@@ -229,6 +229,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IDeviceRepository, DeviceRepository>();
             services.AddScoped<IUserDeviceRepository, UserDeviceRepository>();
             services.AddScoped<ILocalUserDeviceRepository, LocalUserDeviceRepository>();
+            services.AddScoped<ISyncRouteRepository, SyncRouteRepository>();
             services.AddScoped<IGroupRepository, GroupRepository>();
             services.AddScoped<ISyncQueueRepository, SyncQueueRepository>();
             services.AddScoped<ISyncItemRepository, SyncItemRepository>();

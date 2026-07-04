@@ -39,19 +39,23 @@ public sealed class DeviceRepository : GenericRepositoryBase<Device>, IDeviceRep
     public Task<Device?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
         Set.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct);
 
-    public Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        Set.Include(d => d.UserDevices)
-            .ThenInclude(ud => ud.User)
-            .FirstOrDefaultAsync(d => d.Id == id, ct);
-
-    public Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        Set.AsNoTracking()
-            .Include(d => d.UserDevices)
-            .ThenInclude(ud => ud.User)
-            .FirstOrDefaultAsync(d => d.Id == id, ct);
-
     public Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default) =>
-        Set.Include(d => d.UserDevices).FirstOrDefaultAsync(d => d.Id == id, ct);
+        Set.Include(device => device.UserDevices)
+            .FirstOrDefaultAsync(device => device.Id == id, ct);
+
+    public Task<Device?> GetByIdAsNoTrackingWithUserDevicesAsync(Guid id, CancellationToken ct = default) =>
+        Set.AsNoTracking()
+            .Include(device => device.UserDevices)
+            .FirstOrDefaultAsync(device => device.Id == id, ct);
+
+    public async Task<IReadOnlyList<Guid>> ListActiveUserIdsAsync(Guid deviceId, CancellationToken ct = default) =>
+        await Set.AsNoTracking()
+            .Where(device => device.Id == deviceId)
+            .SelectMany(device => device.UserDevices
+                .Where(link => !link.IsDeleted)
+                .Select(link => link.UserId))
+            .Distinct()
+            .ToListAsync(ct);
 
     public async Task<Device?> GetBySignPublicKeyAsync(byte[] signPublicKey, CancellationToken ct = default)
     {
