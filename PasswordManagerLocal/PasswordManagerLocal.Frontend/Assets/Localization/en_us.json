@@ -242,7 +242,7 @@
   "Common_Red": "Red",
   "Common_Green": "Green",
   "Common_Blue": "Blue",
-  "Passwords_Color_More": "Other…",
+  "Passwords_Color_More": "Manage colors",
   "Passwords_ColorPicker_Title": "More colors",
   "Passwords_ColorPicker_Description": "Set the password color with sliders or by entering an ARGB/RGB hex color code manually. Examples: #FF14B8A6, #14B8A6, or #1BA.",
   "Passwords_ColorPicker_CurrentColor": "Currently selected color code",

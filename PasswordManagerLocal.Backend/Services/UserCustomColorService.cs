@@ -16,10 +16,13 @@ public sealed class UserCustomColorService : IUserCustomColorService
     }
 
 
-    public async Task AddCustomUserColorAsync(Guid token, NewCustomUserColorRequest request, CancellationToken ct = default)
+    public async Task AddCustomUserColorsAsync(
+        Guid token,
+        IReadOnlyList<NewCustomUserColorRequest> requests,
+        CancellationToken ct = default)
     {
         var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
-        _customUserColorService.AddCustomUserColor(request, bundle.UserPasswordsData);
+        _customUserColorService.AddCustomUserColors(requests, bundle.UserPasswordsData);
         await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 

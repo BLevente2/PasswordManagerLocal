@@ -149,11 +149,11 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserPasswordsService>(service => service.ExportPasswordsToUserAsync(sourceToken, request, ct));
 
-    public Task AddCustomUserColorAsync(
+    public Task AddCustomUserColorsAsync(
         Guid token,
-        NewCustomUserColorRequest request,
+        IReadOnlyList<NewCustomUserColorRequest> requests,
         CancellationToken ct = default) =>
-        RunAsync<IUserCustomColorService>(service => service.AddCustomUserColorAsync(token, request, ct));
+        RunAsync<IUserCustomColorService>(service => service.AddCustomUserColorsAsync(token, requests, ct));
 
     public Task DeleteCustomUserColorAsync(
         Guid token,

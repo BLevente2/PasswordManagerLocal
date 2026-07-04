@@ -231,10 +231,13 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task AddCustomUserColorAsync(Guid token, NewCustomUserColorRequest request, CancellationToken ct = default)
+    public async Task AddCustomUserColorsAsync(
+        Guid token,
+        IReadOnlyList<NewCustomUserColorRequest> requests,
+        CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.AddCustomUserColorAsync(token, request, ct);
+        await endpoints.AddCustomUserColorsAsync(token, requests, ct);
     }
 
 

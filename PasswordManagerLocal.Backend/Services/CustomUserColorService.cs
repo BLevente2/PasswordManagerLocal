@@ -23,32 +23,36 @@ public sealed class CustomUserColorService : ICustomUserColorService
     }
 
 
-    public void AddCustomUserColor(NewCustomUserColorRequest request, UserPasswordsData passwords)
+    public void AddCustomUserColor(NewCustomUserColorRequest request, UserPasswordsData passwords) =>
+        AddCustomUserColors([request], passwords);
+
+
+    public void AddCustomUserColors(IReadOnlyList<NewCustomUserColorRequest> requests, UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
 
-        if (!request.Validate(out var errors))
-            throw new InvalidInputException(errors);
+        if (requests.Count == 0)
+            return;
 
-        if (passwords.CustomColors.Count >= MaxNumberOfCustomUserColors)
+        if (passwords.CustomColors.Count + requests.Count > MaxNumberOfCustomUserColors)
             throw new LimitReachedException(MaxNumberOfCustomUserColors, "customUserColor");
 
-        var colorName = NormalizeOptionalColorName(request.ColorName);
-        var colorCode = NormalizeColorCode(request.ColorCode);
-        ThrowIfCustomColorNameExists(colorName, passwords);
-        ThrowIfCustomColorCodeExists(colorCode, passwords);
+        var normalizedColors = NormalizeAndValidateNewCustomColors(requests, passwords);
+        var now = DateTime.UtcNow;
 
-        var customColor = new CustomUserColor
+        foreach (var (colorName, colorCode) in normalizedColors)
         {
-            Id = Guid.NewGuid(),
-            ColorName = colorName,
-            ColorCode = colorCode,
-            LastUpdatedAt = DateTime.UtcNow
-        };
-        customColor.GenerateIntegrityHash();
+            var customColor = new CustomUserColor
+            {
+                Id = Guid.NewGuid(),
+                ColorName = colorName,
+                ColorCode = colorCode,
+                LastUpdatedAt = now
+            };
+            customColor.GenerateIntegrityHash();
+            passwords.CustomColors.Add(customColor);
+        }
 
-        passwords.DeletedCustomColors.RemoveAll(deleted => deleted.Id == customColor.Id);
-        passwords.CustomColors.Add(customColor);
         passwords.GenerateCustomColorsIntegrityHash();
     }
 
@@ -103,6 +107,40 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         color.VerifyIntegrity();
         return color;
+    }
+
+
+    private List<(string? ColorName, string ColorCode)> NormalizeAndValidateNewCustomColors(
+        IReadOnlyList<NewCustomUserColorRequest> requests,
+        UserPasswordsData passwords)
+    {
+        var usedNames = passwords.CustomColors
+            .Where(color => color.ColorName is not null)
+            .Select(color => color.ColorName!.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var usedCodes = passwords.CustomColors
+            .Select(color => NormalizeColorCode(color.ColorCode))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var normalizedColors = new List<(string? ColorName, string ColorCode)>(requests.Count);
+
+        foreach (var request in requests)
+        {
+            if (!request.Validate(out var errors))
+                throw new InvalidInputException(errors);
+
+            var colorName = NormalizeOptionalColorName(request.ColorName);
+            var colorCode = NormalizeColorCode(request.ColorCode);
+
+            if (colorName is not null && !usedNames.Add(colorName))
+                throw new DuplicateCustomUserColorNameException(colorName);
+
+            if (!usedCodes.Add(colorCode))
+                throw new DuplicateCustomUserColorCodeException(colorCode);
+
+            normalizedColors.Add((colorName, colorCode));
+        }
+
+        return normalizedColors;
     }
 
 
