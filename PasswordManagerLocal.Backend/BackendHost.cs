@@ -270,7 +270,23 @@ namespace PasswordManagerLocal.Backend
             services.AddSingleton<LocalDiscoveryHostedService>();
             services.AddSingleton<ILocalDiscoveryService>(sp => sp.GetRequiredService<LocalDiscoveryHostedService>());
             services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
+            services.AddSingleton<IDeviceEnrollmentEndpointService, DeviceEnrollmentEndpointService>();
+            services.AddSingleton<IDeviceEnrollmentLocalLinkService, DeviceEnrollmentLocalLinkService>();
+            services.AddSingleton<IDeviceEnrollmentRegistrationService, DeviceEnrollmentRegistrationService>();
+            services.AddSingleton<IDeviceEnrollmentSnapshotService, DeviceEnrollmentSnapshotService>();
+            services.AddSingleton<IDeviceEnrollmentSnapshotTransferService, DeviceEnrollmentSnapshotTransferService>();
+            services.AddSingleton<IDeviceEnrollmentSnapshotImporterService, DeviceEnrollmentSnapshotImporterService>();
             services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
+
+            services.AddScoped<IUserPasswordsDataMergeService, UserPasswordsDataMergeService>();
+            services.AddScoped<IUserDevicesDataMergeService, UserDevicesDataMergeService>();
+            services.AddScoped<ISyncRelationshipReconciliationService, SyncRelationshipReconciliationService>();
+            services.AddScoped<IUserDataBundleSyncService, UserDataBundleSyncService>();
+            services.AddScoped<IUserDeltaApplierService, UserDeltaApplierService>();
+            services.AddScoped<INetworkDeltaProtocolService, NetworkDeltaProtocolService>();
+            services.AddScoped<INetworkDeltaReplayService, NetworkDeltaReplayService>();
+            services.AddScoped<INetworkDeltaPayloadApplierService, NetworkDeltaPayloadApplierService>();
+            services.AddScoped<INetworkDeltaLifecycleService, NetworkDeltaLifecycleService>();
             services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
             services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
             services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();

@@ -67,26 +67,70 @@ public sealed class NetworkDeltaServiceTests
 
     private static NetworkDeltaService CreateService(IDeviceIdentityService identity, FakeDeviceRepository devices)
     {
+        var users = new InMemoryUserRepository();
+        var groups = new FakeGroupRepository();
         var userDevices = new FakeUserDeviceRepository();
         var localUsers = new FakeLocalUserDeviceRepository();
-        return new NetworkDeltaService(
-            new FakeOutgoingDeltaBuilderService(),
-            new InMemoryUserRepository(),
-            new FakeGroupRepository(),
-            devices,
-            userDevices,
-            new FakeSyncRouteRepository(userDevices, localUsers),
-            new FakeSyncTombstoneRepository(),
-            new FakeSyncQueueRepository(),
-            new FakeSyncQueueService(),
-            new FakeSyncDeviceIdentityService(),
-            identity,
-            new FakeSyncAuthorizationService(),
-            new FakeSyncRuntimeService(),
-            new FakeAuthService(),
+        var syncRoutes = new FakeSyncRouteRepository(userDevices, localUsers);
+        var tombstones = new FakeSyncTombstoneRepository();
+        var syncQueue = new FakeSyncQueueRepository();
+        var syncQueueService = new FakeSyncQueueService();
+        var syncDeviceIdentities = new FakeSyncDeviceIdentityService();
+        var authorization = new FakeSyncAuthorizationService();
+        var runtime = new FakeSyncRuntimeService();
+        var auth = new FakeAuthService();
+        var unitOfWork = new FakeUnitOfWork();
+
+        var relationships = new SyncRelationshipReconciliationService(users, groups, devices, userDevices, identity);
+        var passwordsMerge = new UserPasswordsDataMergeService();
+        var devicesMerge = new UserDevicesDataMergeService();
+        var bundleSync = new UserDataBundleSyncService(
+            users,
+            auth,
             new TestKeyProtector(),
             new UserDataBundleIntegrityService(),
-            new FakeUnitOfWork());
+            passwordsMerge,
+            devicesMerge,
+            relationships);
+        var userDeltaApplier = new UserDeltaApplierService(users, tombstones, syncQueueService, bundleSync, relationships);
+        var protocol = new NetworkDeltaProtocolService(devices, groups, userDevices, authorization, identity);
+        var replay = new NetworkDeltaReplayService(users, groups, devices, userDevices, tombstones, identity);
+        var payloadApplier = new NetworkDeltaPayloadApplierService(
+            userDeltaApplier,
+            users,
+            groups,
+            devices,
+            userDevices,
+            syncRoutes,
+            tombstones,
+            syncQueue,
+            syncDeviceIdentities,
+            identity,
+            authorization,
+            auth,
+            relationships);
+        var lifecycle = new NetworkDeltaLifecycleService(
+            users,
+            devices,
+            userDevices,
+            tombstones,
+            syncQueue,
+            syncQueueService,
+            syncDeviceIdentities,
+            identity,
+            authorization,
+            runtime,
+            auth,
+            unitOfWork);
+
+        return new NetworkDeltaService(
+            new FakeOutgoingDeltaBuilderService(),
+            protocol,
+            replay,
+            payloadApplier,
+            lifecycle,
+            identity,
+            unitOfWork);
     }
 
     private static async Task<ValidDeltaSetup> CreateValidDeltaAsync()

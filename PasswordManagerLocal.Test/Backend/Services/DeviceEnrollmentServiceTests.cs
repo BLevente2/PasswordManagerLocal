@@ -43,14 +43,23 @@ public sealed class DeviceEnrollmentServiceTests
     {
         var provider = new ServiceCollection().BuildServiceProvider();
         var runtime = new FakeSyncRuntimeService();
+        var identity = new FakeDeviceIdentityService();
+        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var transport = new FakeSyncTransportClientService();
+        var networkAddresses = new FakeLocalNetworkAddressService();
+        var snapshotService = new DeviceEnrollmentSnapshotService(identity);
+        var localLinks = new DeviceEnrollmentLocalLinkService(identity);
         var service = new DeviceEnrollmentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            new FakeDeviceIdentityService(),
-            new DiscoveredDeviceEndpointCache(),
-            new FakeSyncTransportClientService(),
+            identity,
+            endpointCache,
             runtime,
             new FakeLocalDiscoveryService(),
-            new FakeLocalNetworkAddressService());
+            new DeviceEnrollmentEndpointService(identity, transport, networkAddresses),
+            new DeviceEnrollmentRegistrationService(identity, endpointCache, networkAddresses, localLinks),
+            snapshotService,
+            new DeviceEnrollmentSnapshotTransferService(identity, transport, snapshotService),
+            new DeviceEnrollmentSnapshotImporterService(identity, localLinks));
         return new EnrollmentServiceSetup(service, provider, runtime);
     }
 
