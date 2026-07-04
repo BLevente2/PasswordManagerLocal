@@ -168,11 +168,14 @@ public sealed class UserPasswordsServiceTests
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors"));
 
-        await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
-        {
-            ColorName = "Work",
-            ColorCode = "#FF123456"
-        });
+        await customColorService.AddCustomUserColorsAsync(token,
+        [
+            new NewCustomUserColorRequest
+            {
+                ColorName = "Work",
+                ColorCode = "#FF123456"
+            }
+        ]);
 
         cache.InvalidateToken(token);
         var response = await passwordService.GetSavedPasswordsAsync(token);

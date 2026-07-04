@@ -13,6 +13,58 @@ namespace PasswordManagerLocal.Test.Backend.Services;
 public sealed class UserCustomColorServiceTests
 {
     [TestMethod]
+    public async Task AddCustomUserColors_AddsEveryColorInSingleBatch()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-batch"));
+
+        await customColorService.AddCustomUserColorsAsync(token,
+        [
+            new NewCustomUserColorRequest { ColorName = "Blue", ColorCode = "#FF010203" },
+            new NewCustomUserColorRequest { ColorName = "Green", ColorCode = "#FF040506" },
+            new NewCustomUserColorRequest { ColorName = "Red", ColorCode = "#FF070809" }
+        ]);
+
+        var response = await passwordService.GetSavedPasswordsAsync(token);
+        MSTestAssert.HasCount(3, response.CustomColors);
+        CollectionAssert.AreEquivalent(
+            new[] { "Blue", "Green", "Red" },
+            response.CustomColors.Select(color => color.ColorName).ToArray());
+    }
+
+
+    [TestMethod]
+    public async Task AddCustomUserColors_DuplicateWithinBatch_ThrowsWithoutAddingAnyColor()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-batch-atomic"));
+
+        await ExpectThrowsAsync<DuplicateCustomUserColorNameException>(async () =>
+        {
+            await customColorService.AddCustomUserColorsAsync(token,
+            [
+                new NewCustomUserColorRequest { ColorName = "Duplicate", ColorCode = "#FF010203" },
+                new NewCustomUserColorRequest { ColorName = " duplicate ", ColorCode = "#FF040506" }
+            ]);
+        });
+
+        var response = await passwordService.GetSavedPasswordsAsync(token);
+        MSTestAssert.IsEmpty(response.CustomColors);
+    }
+
+
+
+    [TestMethod]
     public async Task AddUpdateDeleteCustomUserColor_PersistsThroughEncryptedUserPasswordsBlob()
     {
         using var host = new BackendTestHost();
@@ -24,7 +76,7 @@ public sealed class UserCustomColorServiceTests
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-crud"));
 
-        await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+        await AddColorAsync(customColorService, token, new NewCustomUserColorRequest
         {
             ColorName = "Work",
             ColorCode = "#ff123456"
@@ -69,7 +121,7 @@ public sealed class UserCustomColorServiceTests
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-duplicate"));
 
-        await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+        await AddColorAsync(customColorService, token, new NewCustomUserColorRequest
         {
             ColorName = "Original",
             ColorCode = "#FF010203"
@@ -77,7 +129,7 @@ public sealed class UserCustomColorServiceTests
 
         await ExpectThrowsAsync<DuplicateCustomUserColorCodeException>(async () =>
         {
-            await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+            await AddColorAsync(customColorService, token, new NewCustomUserColorRequest
             {
                 ColorName = "Duplicate",
                 ColorCode = "#ff010203"
@@ -101,7 +153,7 @@ public sealed class UserCustomColorServiceTests
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-duplicate-name"));
 
-        await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+        await AddColorAsync(customColorService, token, new NewCustomUserColorRequest
         {
             ColorName = "Original",
             ColorCode = "#FF010203"
@@ -109,7 +161,7 @@ public sealed class UserCustomColorServiceTests
 
         await ExpectThrowsAsync<DuplicateCustomUserColorNameException>(async () =>
         {
-            await customColorService.AddCustomUserColorAsync(token, new NewCustomUserColorRequest
+            await AddColorAsync(customColorService, token, new NewCustomUserColorRequest
             {
                 ColorName = "  original  ",
                 ColorCode = "#FF010204"
@@ -167,12 +219,19 @@ public sealed class UserCustomColorServiceTests
 
         await ExpectThrowsAsync<InvalidTokenException>(async () =>
         {
-            await customColorService.AddCustomUserColorAsync(Guid.NewGuid(), new NewCustomUserColorRequest
+            await AddColorAsync(customColorService, Guid.NewGuid(), new NewCustomUserColorRequest
             {
                 ColorCode = "#FF000001"
             });
         });
     }
+
+
+    private static Task AddColorAsync(
+        IUserCustomColorService customColorService,
+        Guid token,
+        NewCustomUserColorRequest request) =>
+        customColorService.AddCustomUserColorsAsync(token, [request]);
 
 
     private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception

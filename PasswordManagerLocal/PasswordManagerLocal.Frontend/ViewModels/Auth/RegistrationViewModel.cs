@@ -284,6 +284,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         {
             IsBusy = true;
             var token = await _endpoints.RegisterAsync(CreateRegistrationRequest(passwordHash));
+            await _endpoints.AddCustomUserColorsAsync(token, CreateDefaultCustomColorRequests());
             await _onAuthenticationSucceededAsync(token);
             Reset();
         }
@@ -350,6 +351,19 @@ public sealed class RegistrationViewModel : ViewModelBase
             Email = Email.Trim(),
             RememberMe = RememberMe
         };
+
+
+    private IReadOnlyList<NewCustomUserColorRequest> CreateDefaultCustomColorRequests() =>
+    [
+        new() { ColorName = GetTranslation("Passwords_Color_Gold"), ColorCode = "#FFFFD700" },
+        new() { ColorName = GetTranslation("Passwords_Color_Blue"), ColorCode = "#FF3B82F6" },
+        new() { ColorName = GetTranslation("Passwords_Color_Green"), ColorCode = "#FF22C55E" },
+        new() { ColorName = GetTranslation("Passwords_Color_Red"), ColorCode = "#FFEF4444" },
+        new() { ColorName = GetTranslation("Passwords_Color_Purple"), ColorCode = "#FFA855F7" },
+        new() { ColorName = GetTranslation("Passwords_Color_Orange"), ColorCode = "#FFF97316" },
+        new() { ColorName = GetTranslation("Passwords_Color_Gray"), ColorCode = "#FF94A3B8" }
+    ];
+
 
     private void TogglePasswordVisibility() => IsPasswordVisible = !IsPasswordVisible;
 

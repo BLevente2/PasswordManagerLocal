@@ -9,15 +9,21 @@ public sealed class PasswordColorOptionViewModel : ReactiveObject
     private string _hexValue;
     private IBrush _brush;
 
-    public PasswordColorOptionViewModel(string key, string displayName, string hexValue)
+    public PasswordColorOptionViewModel(string key, string displayName, string hexValue, bool isManageColorsOption = false)
     {
         Key = key;
+        IsManageColorsOption = isManageColorsOption;
+        IsRegularColorOption = !isManageColorsOption;
         _displayName = displayName;
         _hexValue = hexValue;
         _brush = ParseBrush(hexValue);
     }
 
     public string Key { get; }
+
+    public bool IsManageColorsOption { get; }
+
+    public bool IsRegularColorOption { get; }
 
     public string DisplayName
     {
