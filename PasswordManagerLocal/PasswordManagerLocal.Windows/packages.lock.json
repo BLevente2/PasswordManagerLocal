@@ -303,10 +303,22 @@
         "resolved": "6.0.1",
         "contentHash": "rHaWtKDwCi9qJ3ObKo8LHPMuuwv33YbmQi7TcUK1C264V3MFnOr5Im7QgCTdLniztP3GJyeiSg5x8NqYJFqRmg=="
       },
+      "passwordmanagerlocal.backend": {
+        "type": "Project",
+        "dependencies": {
+          "Google.Protobuf": "[3.33.4, )",
+          "Microsoft.EntityFrameworkCore.Sqlite.Core": "[10.0.2, )",
+          "Microsoft.Extensions.Caching.Memory": "[10.0.2, )",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.2, )",
+          "NSec.Cryptography": "[25.4.0, )",
+          "SQLitePCLRaw.bundle_e_sqlcipher": "[2.1.11, )"
+        }
+      },
       "passwordmanagerlocal.frontend": {
         "type": "Project",
         "dependencies": {
           "Avalonia": "[11.3.11, )",
+          "Avalonia.Controls.ColorPicker": "[11.3.11, )",
           "Avalonia.Fonts.Inter": "[11.3.11, )",
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.11, )",
@@ -317,15 +329,14 @@
           "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"
         }
       },
-      "passwordmanagerlocal.backend": {
-        "type": "Project",
+      "Avalonia.Controls.ColorPicker": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.11, )",
+        "resolved": "11.3.11",
+        "contentHash": "2i5dvZcizAtumywPRravU0/0lLsa8F+n3cTyt2ZpXAwnqnE+eeuozl9Q23YnE69BpROC5wXYrjogXhWcUPks4g==",
         "dependencies": {
-          "Google.Protobuf": "[3.33.4, )",
-          "Microsoft.EntityFrameworkCore.Sqlite.Core": "[10.0.2, )",
-          "Microsoft.Extensions.Caching.Memory": "[10.0.2, )",
-          "Microsoft.Extensions.DependencyInjection": "[10.0.2, )",
-          "NSec.Cryptography": "[25.4.0, )",
-          "SQLitePCLRaw.bundle_e_sqlcipher": "[2.1.11, )"
+          "Avalonia": "11.3.11",
+          "Avalonia.Remote.Protocol": "11.3.11"
         }
       },
       "Avalonia.ReactiveUI": {
