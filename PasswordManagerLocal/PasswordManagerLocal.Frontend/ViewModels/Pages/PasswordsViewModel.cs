@@ -3,6 +3,7 @@ using PasswordManagerLocal.Frontend.Helpers;
 using PasswordManagerLocal.Frontend.Security;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Responses;
 using ReactiveUI;
@@ -18,6 +19,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private const string ListPane = "list";
     private const string EditorPane = "editor";
     private const string DetailsPane = "details";
+    private const string CustomColorListPane = "custom-color-list";
     private const string ColorPane = "color";
     private const string CustomColorKey = "custom";
     private const string SelectedCustomColorKey = "selected-custom";
@@ -44,6 +46,10 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(CurrentColorCodeLabel),
         nameof(MoreColorsLabel),
         nameof(ColorPickerTitle),
+        nameof(ColorPickerNameLabel),
+        nameof(ColorPickerNamePlaceholder),
+        nameof(AddColorButtonLabel),
+        nameof(CustomColorSaveSuccessMessage),
         nameof(ColorPickerDescription),
         nameof(ColorPickerCodeLabel),
         nameof(ColorPickerCodePlaceholder),
@@ -76,6 +82,26 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(SearchModeNameLabel),
         nameof(SearchModeDescriptionLabel),
         nameof(SearchModeTagLabel),
+        nameof(CustomColorsTitle),
+        nameof(CustomColorsBackToEditorLabel),
+        nameof(CustomColorsEmptyTitle),
+        nameof(CustomColorsEmptyDescription),
+        nameof(CustomColorsEmptyAddLabel),
+        nameof(CustomColorsSearchEmptyTitle),
+        nameof(CustomColorsSearchEmptyDescription),
+        nameof(CustomColorsSearchPlaceholder),
+        nameof(CustomColorsSearchModeLabel),
+        nameof(CustomColorsSearchModeNameLabel),
+        nameof(CustomColorsSearchModeColorCodeLabel),
+        nameof(CustomColorsSortLabel),
+        nameof(CustomColorsSortNameAscMenuLabel),
+        nameof(CustomColorsSortNameDescMenuLabel),
+        nameof(AddCustomColorLabel),
+        nameof(CustomColorDeleteConfirmationTitle),
+        nameof(CustomColorDeleteConfirmationMessage),
+        nameof(ConfirmDeleteCustomColorLabel),
+        nameof(CustomColorDeleteSuccessMessage),
+        nameof(BackFromColorPickerLabel),
         nameof(SwitchOnLabel),
         nameof(SwitchOffLabel),
         nameof(SortLabel),
@@ -102,18 +128,24 @@ public sealed class PasswordsViewModel : ViewModelBase
     private readonly MaximumStrengthPasswordGenerator _passwordGenerator;
     private readonly List<PasswordItemViewModel> _allPasswords = [];
     private readonly List<CustomUserColorInfoResponse> _savedCustomColors = [];
+    private readonly List<CustomColorItemViewModel> _allCustomColors = [];
 
     private Guid _token;
     private PasswordItemViewModel? _selectedPassword;
     private PasswordItemViewModel? _passwordPendingDeletion;
+    private CustomColorItemViewModel? _customColorPendingDeletion;
     private string? _revealedPassword;
     private string _currentPane = ListPane;
     private PasswordPaneTransitionViewModel? _currentAnimatedPaneViewModel;
     private bool _isPaneTransitionReversed;
     private bool _isCreateMode;
     private bool _isDeleteConfirmationOpen;
+    private bool _isCustomColorDeleteConfirmationOpen;
     private bool _isSavingPassword;
     private bool _isDeletingPassword;
+    private bool _isDeletingCustomColor;
+    private bool _isSavingCustomColor;
+    private Guid? _editingCustomColorId;
     private string _editorName = string.Empty;
     private string _editorDescription = string.Empty;
     private string _editorColor = PasswordColorUtility.DefaultColor;
@@ -122,6 +154,10 @@ public sealed class PasswordsViewModel : ViewModelBase
     private bool _isEditorStoredPasswordRevealed;
     private int _editorPasswordStrength;
     private int _revealedPasswordStrength;
+    private string _customColorPickerName = string.Empty;
+    private Color _customColorPickerColor = Color.FromRgb(20, 184, 166);
+    private string _customColorPickerCode = PasswordColorUtility.DefaultColor;
+    private bool _isUpdatingCustomColorPickerFields;
     private string _customColorCode = PasswordColorUtility.DefaultColor;
     private double _customAlpha = 255;
     private double _customRed = 20;
@@ -129,9 +165,13 @@ public sealed class PasswordsViewModel : ViewModelBase
     private double _customBlue = 166;
     private bool _isUpdatingColorFields;
     private string _searchQuery = string.Empty;
+    private string _customColorSearchQuery = string.Empty;
     private bool _isPasswordSearchNameEnabled = true;
     private bool _isPasswordSearchDescriptionEnabled = true;
     private bool _isPasswordSearchTagEnabled = true;
+    private bool _isCustomColorSearchNameEnabled = true;
+    private bool _isCustomColorSearchCodeEnabled = true;
+    private string _customColorSortKey = "name-asc";
     private PasswordColorOptionViewModel? _selectedEditorColorOption;
     private PasswordSortOptionViewModel? _selectedSortOption;
 
@@ -142,6 +182,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         _passwordGenerator = new MaximumStrengthPasswordGenerator(_passwordStrengthEstimator);
 
         Passwords = new ObservableCollection<PasswordItemViewModel>();
+        CustomColors = new ObservableCollection<CustomColorItemViewModel>();
         PresetColors = new ObservableCollection<PasswordColorOptionViewModel>();
         SortOptions = new ObservableCollection<PasswordSortOptionViewModel>();
 
@@ -163,7 +204,13 @@ public sealed class PasswordsViewModel : ViewModelBase
         ToggleEditorPasswordVisibilityCommand = ReactiveCommand.Create(ToggleEditorPasswordVisibility);
         GenerateEditorPasswordCommand = ReactiveCommand.Create(GenerateEditorPassword);
         OpenCustomColorPickerCommand = ReactiveCommand.Create(OpenCustomColorPicker);
-        BackToPasswordEditorCommand = ReactiveCommand.Create(BackToPasswordEditor);
+        BackFromColorPickerCommand = ReactiveCommand.Create(BackFromColorPicker);
+        SaveCustomColorCommand = ReactiveCommand.CreateFromTask(SaveCustomColorAsync);
+        BackFromCustomColorListCommand = ReactiveCommand.Create(BackFromCustomColorList);
+        SearchCustomColorsCommand = ReactiveCommand.Create(ApplyCustomColorFiltersAndSorting);
+        SelectCustomColorSortOptionCommand = ReactiveCommand.Create<string>(SelectCustomColorSortOption);
+        ConfirmDeleteCustomColorCommand = ReactiveCommand.CreateFromTask(ConfirmDeleteCustomColorAsync);
+        CancelDeleteCustomColorCommand = ReactiveCommand.Create(CancelDeleteCustomColor);
         ApplyManualColorCodeCommand = ReactiveCommand.Create(ApplyManualColorCode);
         BackToListCommand = ReactiveCommand.Create(BackToList);
         ClearSelectionCommand = ReactiveCommand.Create(BackToList);
@@ -175,6 +222,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
     public ObservableCollection<PasswordItemViewModel> Passwords { get; }
+
+    public ObservableCollection<CustomColorItemViewModel> CustomColors { get; }
 
     public event EventHandler? ListScrollToTopRequested;
 
@@ -279,6 +328,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool IsDetailsPaneVisible => CurrentPane == DetailsPane;
 
+    public bool IsCustomColorListPaneVisible => CurrentPane == CustomColorListPane;
+
     public bool IsColorPaneVisible => CurrentPane == ColorPane;
 
     public bool IsEditorOpen => IsEditorPaneVisible;
@@ -298,6 +349,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(IsListPaneVisible));
         this.RaisePropertyChanged(nameof(IsEditorPaneVisible));
         this.RaisePropertyChanged(nameof(IsDetailsPaneVisible));
+        this.RaisePropertyChanged(nameof(IsCustomColorListPaneVisible));
         this.RaisePropertyChanged(nameof(IsColorPaneVisible));
         this.RaisePropertyChanged(nameof(IsEditorOpen));
         this.RaisePropertyChanged(nameof(IsEditorClosed));
@@ -309,6 +361,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             EditorPane => new PasswordEditorPaneTransitionViewModel(this),
             DetailsPane => new PasswordDetailsPaneTransitionViewModel(this),
+            CustomColorListPane => new PasswordCustomColorListPaneTransitionViewModel(this),
             ColorPane => new PasswordColorPaneTransitionViewModel(this),
             _ => new PasswordListPaneTransitionViewModel(this)
         };
@@ -370,10 +423,9 @@ public sealed class PasswordsViewModel : ViewModelBase
         get => _selectedEditorColorOption;
         set
         {
-            if (value?.Key == CustomColorKey)
+            if (value?.IsManageColorsOption == true)
             {
-                this.RaisePropertyChanged(nameof(SelectedEditorColorOption));
-                OpenCustomColorPicker();
+                OpenCustomColorList();
                 return;
             }
 
@@ -394,6 +446,53 @@ public sealed class PasswordsViewModel : ViewModelBase
     public IBrush EditorColorBrush => PasswordColorUtility.ParseBrush(EditorColor);
 
     public string EditorColorCode => EditorColor;
+
+    public string CustomColorPickerName
+    {
+        get => _customColorPickerName;
+        set => this.RaiseAndSetIfChanged(ref _customColorPickerName, value ?? string.Empty);
+    }
+
+    public Color CustomColorPickerColor
+    {
+        get => _customColorPickerColor;
+        set
+        {
+            if (_customColorPickerColor == value)
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _customColorPickerColor, value);
+            SyncCustomColorPickerCodeFromColor();
+        }
+    }
+
+    public string CustomColorPickerCode
+    {
+        get => _customColorPickerCode;
+        set
+        {
+            value ??= string.Empty;
+            if (_customColorPickerCode == value)
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _customColorPickerCode, value);
+
+            if (_isUpdatingCustomColorPickerFields
+                || !PasswordColorUtility.TryNormalizeHexColor(value, out var normalizedColor))
+            {
+                return;
+            }
+
+            SetCustomColorPickerColorFromNormalizedCode(normalizedColor);
+            ClearStatusMessage();
+        }
+    }
+
+    public int CustomColorNameMaxLength => DataLengthConstants.CustomUserColorNameMaxLength;
 
     public string CustomColorCode
     {
@@ -567,6 +666,62 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool CanTogglePasswordSearchTag => CanTogglePasswordSearchMode(_isPasswordSearchTagEnabled);
 
+    public string CustomColorSearchQuery
+    {
+        get => _customColorSearchQuery;
+        set
+        {
+            value ??= string.Empty;
+            if (string.Equals(_customColorSearchQuery, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _customColorSearchQuery, value);
+            ApplyCustomColorFiltersAndSorting();
+        }
+    }
+
+    public bool IsCustomColorSearchNameEnabled
+    {
+        get => _isCustomColorSearchNameEnabled;
+        set => SetCustomColorSearchMode(ref _isCustomColorSearchNameEnabled, value, nameof(IsCustomColorSearchNameEnabled));
+    }
+
+    public bool IsCustomColorSearchCodeEnabled
+    {
+        get => _isCustomColorSearchCodeEnabled;
+        set => SetCustomColorSearchMode(ref _isCustomColorSearchCodeEnabled, value, nameof(IsCustomColorSearchCodeEnabled));
+    }
+
+    public bool CanToggleCustomColorSearchName => CanToggleCustomColorSearchMode(_isCustomColorSearchNameEnabled);
+
+    public bool CanToggleCustomColorSearchCode => CanToggleCustomColorSearchMode(_isCustomColorSearchCodeEnabled);
+
+    public bool HasCustomColors => CustomColors.Count > 0;
+
+    public bool HasStoredCustomColors => _allCustomColors.Count > 0;
+
+    public bool IsCustomColorListEmpty => _allCustomColors.Count == 0;
+
+    public bool IsCustomColorSearchResultEmpty => HasStoredCustomColors && CustomColors.Count == 0;
+
+    public CustomColorItemViewModel? CustomColorPendingDeletion
+    {
+        get => _customColorPendingDeletion;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _customColorPendingDeletion, value);
+            this.RaisePropertyChanged(nameof(CustomColorDeleteConfirmationMessage));
+        }
+    }
+
+    public bool IsCustomColorDeleteConfirmationOpen
+    {
+        get => _isCustomColorDeleteConfirmationOpen;
+        private set => this.RaiseAndSetIfChanged(ref _isCustomColorDeleteConfirmationOpen, value);
+    }
+
     public PasswordSortOptionViewModel? SelectedSortOption
     {
         get => _selectedSortOption;
@@ -620,7 +775,19 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> OpenCustomColorPickerCommand { get; }
 
-    public ReactiveCommand<Unit, Unit> BackToPasswordEditorCommand { get; }
+    public ReactiveCommand<Unit, Unit> BackFromColorPickerCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SaveCustomColorCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BackFromCustomColorListCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SearchCustomColorsCommand { get; }
+
+    public ReactiveCommand<string, Unit> SelectCustomColorSortOptionCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ConfirmDeleteCustomColorCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> CancelDeleteCustomColorCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ApplyManualColorCodeCommand { get; }
 
@@ -666,7 +833,20 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string MoreColorsLabel => GetTranslation("Passwords_Color_More");
 
-    public string ColorPickerTitle => GetTranslation("Passwords_ColorPicker_Title");
+    public string ColorPickerTitle => GetTranslation(
+        IsEditingCustomColor ? "Passwords_ColorPicker_EditTitle" : "Passwords_ColorPicker_Title");
+
+    public string ColorPickerNameLabel => GetTranslation("Passwords_ColorPicker_NameLabel");
+
+    public string ColorPickerNamePlaceholder => GetTranslation("Passwords_ColorPicker_NamePlaceholder");
+
+    public string AddColorButtonLabel => GetTranslation(
+        IsEditingCustomColor ? "Passwords_ColorPicker_Save" : "Passwords_ColorPicker_Add");
+
+    public string CustomColorSaveSuccessMessage => GetTranslation(
+        IsEditingCustomColor ? "Passwords_CustomColors_Update_Success" : "Passwords_CustomColors_Add_Success");
+
+    public bool IsEditingCustomColor => _editingCustomColorId.HasValue;
 
     public string ColorPickerDescription => GetTranslation("Passwords_ColorPicker_Description");
 
@@ -742,6 +922,48 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string SearchModeTagLabel => GetTranslation("Passwords_SearchMode_Tag");
 
+    public string CustomColorsTitle => GetTranslation("Passwords_CustomColors_Title");
+
+    public string CustomColorsBackToEditorLabel => GetTranslation("Passwords_CustomColors_BackToEditor");
+
+    public string CustomColorsEmptyTitle => GetTranslation("Passwords_CustomColors_Empty_Title");
+
+    public string CustomColorsEmptyDescription => GetTranslation("Passwords_CustomColors_Empty_Description");
+
+    public string CustomColorsEmptyAddLabel => GetTranslation("Passwords_CustomColors_Empty_Add");
+
+    public string CustomColorsSearchEmptyTitle => GetTranslation("Passwords_CustomColors_SearchEmpty_Title");
+
+    public string CustomColorsSearchEmptyDescription => GetTranslation("Passwords_CustomColors_SearchEmpty_Description");
+
+    public string CustomColorsSearchPlaceholder => GetTranslation("Passwords_CustomColors_Search_Placeholder");
+
+    public string CustomColorsSearchModeLabel => GetTranslation("Passwords_CustomColors_SearchMode_Label");
+
+    public string CustomColorsSearchModeNameLabel => GetTranslation("Common_Name");
+
+    public string CustomColorsSearchModeColorCodeLabel => GetTranslation("Passwords_CustomColors_SearchMode_ColorCode");
+
+    public string CustomColorsSortLabel => GetTranslation("Passwords_CustomColors_Sort_Label");
+
+    public string CustomColorsSortNameAscMenuLabel => BuildCustomColorSortMenuLabel("name-asc", "Passwords_Sort_NameAsc");
+
+    public string CustomColorsSortNameDescMenuLabel => BuildCustomColorSortMenuLabel("name-desc", "Passwords_Sort_NameDesc");
+
+    public string AddCustomColorLabel => GetTranslation("Passwords_CustomColors_Add");
+
+    public string CustomColorDeleteConfirmationTitle => GetTranslation("Passwords_CustomColors_DeleteConfirm_Title");
+
+    public string CustomColorDeleteConfirmationMessage => string.Format(
+        GetTranslation("Passwords_CustomColors_DeleteConfirm_Message"),
+        CustomColorPendingDeletion?.DisplayName ?? string.Empty);
+
+    public string ConfirmDeleteCustomColorLabel => GetTranslation("Passwords_CustomColors_DeleteConfirm_Confirm");
+
+    public string CustomColorDeleteSuccessMessage => GetTranslation("Passwords_CustomColors_Delete_Success");
+
+    public string BackFromColorPickerLabel => GetTranslation("Passwords_CustomColors_BackFromPicker");
+
     public string SwitchOnLabel => GetTranslation("Common_On");
 
     public string SwitchOffLabel => GetTranslation("Common_Off");
@@ -785,7 +1007,20 @@ public sealed class PasswordsViewModel : ViewModelBase
         RaisePropertiesChanged(LocalizedPropertyNames);
 
         foreach (var password in _allPasswords)
+        {
             password.ApplyActionLabels(EditPasswordLabel, DeletePasswordLabel);
+
+            if (string.Equals(
+                PasswordColorUtility.NormalizeKnownColor(password.Color),
+                PasswordColorUtility.DefaultColor,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                password.ApplyColorName(GetTranslation("Passwords_Color_Teal"));
+            }
+        }
+
+        foreach (var customColor in _allCustomColors)
+            customColor.ApplyDeleteLabel(DeletePasswordLabel);
 
         var currentEditorColor = EditorColor;
         var selectedSortKey = SelectedSortOption?.Key;
@@ -796,7 +1031,9 @@ public sealed class PasswordsViewModel : ViewModelBase
             ?? SortOptions.FirstOrDefault();
         UpdateSortOptionSelectionMarks();
         RaiseSortMenuLabelProperties();
+        RaiseCustomColorSortMenuLabelProperties();
         ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
+        ApplyCustomColorFiltersAndSorting();
     }
 
     public async Task<bool> LoadAsync(Guid token)
@@ -815,11 +1052,15 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         IsDeleteConfirmationOpen = false;
         PasswordPendingDeletion = null;
+        IsCustomColorDeleteConfirmationOpen = false;
+        CustomColorPendingDeletion = null;
         SelectedPassword = null;
         RevealedPassword = null;
         ClearStatusMessage();
         SearchQuery = string.Empty;
         IsCreateMode = true;
+        SetCustomColorPickerMode(null);
+        ResetCustomColorPickerDraft();
         CurrentPane = ListPane;
         ResetEditorFields();
     }
@@ -829,17 +1070,27 @@ public sealed class PasswordsViewModel : ViewModelBase
         _token = Guid.Empty;
         _allPasswords.Clear();
         _savedCustomColors.Clear();
+        _allCustomColors.Clear();
         Passwords.Clear();
+        CustomColors.Clear();
         RebuildPresetColors();
         RaisePasswordCollectionStateChanged();
+        RaiseCustomColorCollectionStateChanged();
         SelectedPassword = null;
         PasswordPendingDeletion = null;
+        CustomColorPendingDeletion = null;
         RevealedPassword = null;
         ClearStatusMessage();
         IsCreateMode = true;
         IsDeleteConfirmationOpen = false;
+        IsCustomColorDeleteConfirmationOpen = false;
         SearchQuery = string.Empty;
+        CustomColorSearchQuery = string.Empty;
+        _customColorSortKey = "name-asc";
+        RaiseCustomColorSortMenuLabelProperties();
         SelectDefaultSortOption();
+        SetCustomColorPickerMode(null);
+        ResetCustomColorPickerDraft();
         CurrentPane = ListPane;
         ResetEditorFields();
     }
@@ -861,6 +1112,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool TryNavigateBack()
     {
+        if (IsCustomColorDeleteConfirmationOpen)
+        {
+            CancelDeleteCustomColor();
+            return true;
+        }
+
         if (IsDeleteConfirmationOpen)
         {
             CancelDeletePassword();
@@ -869,7 +1126,13 @@ public sealed class PasswordsViewModel : ViewModelBase
 
         if (IsColorPaneVisible)
         {
-            BackToPasswordEditor();
+            BackFromColorPicker();
+            return true;
+        }
+
+        if (IsCustomColorListPaneVisible)
+        {
+            BackFromCustomColorList();
             return true;
         }
 
@@ -891,6 +1154,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private async Task ExecutePrimaryActionAsync()
     {
+        if (IsCustomColorDeleteConfirmationOpen)
+        {
+            await ConfirmDeleteCustomColorAsync();
+            return;
+        }
+
         if (IsDeleteConfirmationOpen)
         {
             await ConfirmDeletePasswordAsync();
@@ -905,7 +1174,13 @@ public sealed class PasswordsViewModel : ViewModelBase
 
         if (IsColorPaneVisible)
         {
-            ApplyManualColorCode();
+            await SaveCustomColorAsync();
+            return;
+        }
+
+        if (IsCustomColorListPaneVisible)
+        {
+            ApplyCustomColorFiltersAndSorting();
             return;
         }
 
@@ -935,7 +1210,10 @@ public sealed class PasswordsViewModel : ViewModelBase
             _savedCustomColors.Clear();
             _savedCustomColors.AddRange(response.CustomColors);
             RebuildPresetColors();
+            RebuildCustomColorItems();
             ApplyEditorColor(currentEditorColor);
+
+            var colorNameByCode = BuildColorNameByCodeLookup(response.CustomColors);
 
             _allPasswords.Clear();
 
@@ -947,7 +1225,18 @@ public sealed class PasswordsViewModel : ViewModelBase
                     .Select(tagName => tagName!)
                     .ToList();
 
-                _allPasswords.Add(PasswordItemViewModel.Create(password, tagNames, EditPasswordLabel, DeletePasswordLabel, BeginViewPasswordAsync, BeginEditPasswordAsync, BeginDeletePasswordAsync));
+                var normalizedPasswordColor = PasswordColorUtility.NormalizeKnownColor(password.Color);
+                colorNameByCode.TryGetValue(normalizedPasswordColor, out var colorName);
+
+                _allPasswords.Add(PasswordItemViewModel.Create(
+                    password,
+                    tagNames,
+                    colorName,
+                    EditPasswordLabel,
+                    DeletePasswordLabel,
+                    BeginViewPasswordAsync,
+                    BeginEditPasswordAsync,
+                    BeginDeletePasswordAsync));
             }
 
             ApplyFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
@@ -961,6 +1250,27 @@ public sealed class PasswordsViewModel : ViewModelBase
             ShowErrorMessage(GetSafeErrorMessage(ex));
             return false;
         }
+    }
+
+    private Dictionary<string, string> BuildColorNameByCodeLookup(
+        IEnumerable<CustomUserColorInfoResponse> customColors)
+    {
+        var namesByCode = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var customColor in customColors)
+        {
+            if (string.IsNullOrWhiteSpace(customColor.ColorName))
+            {
+                continue;
+            }
+
+            var normalizedColorCode = PasswordColorUtility.NormalizeKnownColor(customColor.ColorCode);
+            namesByCode[normalizedColorCode] = customColor.ColorName.Trim();
+        }
+
+        namesByCode[PasswordColorUtility.DefaultColor] = GetTranslation("Passwords_Color_Teal");
+
+        return namesByCode;
     }
 
     private void ApplyCurrentSearch() => ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
@@ -1378,6 +1688,66 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(IsSearchResultEmpty));
     }
 
+    private void RebuildCustomColorItems()
+    {
+        _allCustomColors.Clear();
+
+        foreach (var customColor in _savedCustomColors)
+        {
+            var normalizedColor = PasswordColorUtility.NormalizeKnownColor(customColor.ColorCode);
+            if (string.Equals(normalizedColor, PasswordColorUtility.DefaultColor, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            _allCustomColors.Add(CustomColorItemViewModel.Create(
+                customColor,
+                DeletePasswordLabel,
+                OpenCustomColorPickerForEditing,
+                BeginDeleteCustomColorAsync));
+        }
+
+        ApplyCustomColorFiltersAndSorting();
+    }
+
+    private void ApplyCustomColorFiltersAndSorting()
+    {
+        IEnumerable<CustomColorItemViewModel> query = _allCustomColors;
+
+        if (!string.IsNullOrWhiteSpace(CustomColorSearchQuery))
+        {
+            var searchTerm = CustomColorSearchQuery.Trim();
+            query = query.Where(item =>
+                (IsCustomColorSearchNameEnabled
+                    && !string.IsNullOrWhiteSpace(item.Name)
+                    && item.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+                || (IsCustomColorSearchCodeEnabled
+                    && item.ColorCode.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        query = _customColorSortKey switch
+        {
+            "name-desc" => query.OrderByDescending(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase),
+            _ => query.OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+        };
+
+        CustomColors.Clear();
+        foreach (var customColor in query)
+        {
+            CustomColors.Add(customColor);
+        }
+
+        RaiseCustomColorCollectionStateChanged();
+    }
+
+    private void RaiseCustomColorCollectionStateChanged()
+    {
+        this.RaisePropertyChanged(nameof(HasCustomColors));
+        this.RaisePropertyChanged(nameof(HasStoredCustomColors));
+        this.RaisePropertyChanged(nameof(IsCustomColorListEmpty));
+        this.RaisePropertyChanged(nameof(IsCustomColorSearchResultEmpty));
+    }
+
     private void RebuildPresetColors()
     {
         PresetColors.Clear();
@@ -1442,6 +1812,37 @@ public sealed class PasswordsViewModel : ViewModelBase
         + (_isPasswordSearchDescriptionEnabled ? 1 : 0)
         + (_isPasswordSearchTagEnabled ? 1 : 0);
 
+    private void SetCustomColorSearchMode(ref bool field, bool value, string propertyName)
+    {
+        if (field == value)
+        {
+            return;
+        }
+
+        if (!value && EnabledCustomColorSearchModeCount <= 1)
+        {
+            this.RaisePropertyChanged(propertyName);
+            RaiseCustomColorSearchModeToggleProperties();
+            return;
+        }
+
+        this.RaiseAndSetIfChanged(ref field, value, propertyName);
+        RaiseCustomColorSearchModeToggleProperties();
+        ApplyCustomColorFiltersAndSorting();
+    }
+
+    private bool CanToggleCustomColorSearchMode(bool isEnabled) => !isEnabled || EnabledCustomColorSearchModeCount > 1;
+
+    private void RaiseCustomColorSearchModeToggleProperties()
+    {
+        this.RaisePropertyChanged(nameof(CanToggleCustomColorSearchName));
+        this.RaisePropertyChanged(nameof(CanToggleCustomColorSearchCode));
+    }
+
+    private int EnabledCustomColorSearchModeCount =>
+        (_isCustomColorSearchNameEnabled ? 1 : 0)
+        + (_isCustomColorSearchCodeEnabled ? 1 : 0);
+
     private void UpdateSortOptionSelectionMarks()
     {
         foreach (var option in SortOptions)
@@ -1469,17 +1870,269 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(SortUpdatedOldestMenuLabel));
     }
 
+    private void SelectCustomColorSortOption(string key)
+    {
+        if (key is not ("name-asc" or "name-desc")
+            || string.Equals(_customColorSortKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _customColorSortKey = key;
+        RaiseCustomColorSortMenuLabelProperties();
+        ApplyCustomColorFiltersAndSorting();
+    }
+
+    private string BuildCustomColorSortMenuLabel(string key, string translationKey) =>
+        $"{(string.Equals(_customColorSortKey, key, StringComparison.Ordinal) ? "✓ " : "   ")}{GetTranslation(translationKey)}";
+
+    private void RaiseCustomColorSortMenuLabelProperties()
+    {
+        this.RaisePropertyChanged(nameof(CustomColorsSortNameAscMenuLabel));
+        this.RaisePropertyChanged(nameof(CustomColorsSortNameDescMenuLabel));
+    }
+
+    private void OpenCustomColorList()
+    {
+        ClearStatusMessage();
+        IsCustomColorDeleteConfirmationOpen = false;
+        CustomColorPendingDeletion = null;
+        CurrentPane = CustomColorListPane;
+    }
+
+    private void BackFromCustomColorList()
+    {
+        ClearStatusMessage();
+        SetCurrentPane(EditorPane, true);
+
+        // "Manage colors" is a navigation action, not a real color option.
+        // Re-notify the binding after returning so the ComboBox restores the
+        // actual color that was selected before the user opened this page.
+        this.RaisePropertyChanged(nameof(SelectedEditorColorOption));
+    }
+
     private void OpenCustomColorPicker()
     {
-        SyncColorFieldsFromEditorColor();
+        SetCustomColorPickerMode(null);
+        ResetCustomColorPickerDraft();
         ClearStatusMessage();
         CurrentPane = ColorPane;
     }
 
-    private void BackToPasswordEditor()
+    private void OpenCustomColorPickerForEditing(CustomColorItemViewModel customColor)
+    {
+        SetCustomColorPickerMode(customColor.Id);
+        LoadCustomColorPickerDraft(customColor.Name, customColor.ColorCode);
+        ClearStatusMessage();
+        CurrentPane = ColorPane;
+    }
+
+    private void BackFromColorPicker()
     {
         ClearStatusMessage();
-        SetCurrentPane(EditorPane, true);
+        ResetCustomColorPickerDraft();
+        SetCustomColorPickerMode(null);
+        SetCurrentPane(CustomColorListPane, true);
+    }
+
+    private async Task SaveCustomColorAsync()
+    {
+        if (_isSavingCustomColor)
+        {
+            return;
+        }
+
+        ClearStatusMessage();
+
+        if (!PasswordColorUtility.TryNormalizeHexColor(CustomColorPickerCode, out var colorCode))
+        {
+            ShowErrorMessage(GetTranslation("Passwords_ColorPicker_InvalidCode"));
+            return;
+        }
+
+        if (string.Equals(colorCode, PasswordColorUtility.DefaultColor, StringComparison.OrdinalIgnoreCase))
+        {
+            ShowErrorMessage(GetTranslation("Passwords_CustomColors_Add_DefaultColor"));
+            return;
+        }
+
+        var colorName = string.IsNullOrWhiteSpace(CustomColorPickerName)
+            ? null
+            : CustomColorPickerName.Trim();
+        var editingCustomColorId = _editingCustomColorId;
+
+        try
+        {
+            _isSavingCustomColor = true;
+
+            if (editingCustomColorId.HasValue)
+            {
+                await _endpoints.UpdateCustomUserColorAsync(_token, new UpdateCustomUserColorRequest
+                {
+                    Id = editingCustomColorId.Value,
+                    ColorName = colorName,
+                    ClearColorName = colorName is null,
+                    ColorCode = colorCode
+                });
+            }
+            else
+            {
+                await _endpoints.AddCustomUserColorsAsync(_token,
+                [
+                    new NewCustomUserColorRequest
+                    {
+                        ColorName = colorName,
+                        ColorCode = colorCode
+                    }
+                ]);
+            }
+
+            if (!await RefreshAsync(false))
+            {
+                return;
+            }
+
+            var successMessage = CustomColorSaveSuccessMessage;
+            ResetCustomColorPickerDraft();
+            SetCustomColorPickerMode(null);
+            SetCurrentPane(CustomColorListPane, true);
+            ShowSuccessMessage(successMessage);
+        }
+        catch (Exception ex)
+        {
+            ShowErrorMessage(GetSafeErrorMessage(ex));
+        }
+        finally
+        {
+            _isSavingCustomColor = false;
+        }
+    }
+
+    private void SetCustomColorPickerMode(Guid? customColorId)
+    {
+        if (_editingCustomColorId == customColorId)
+        {
+            return;
+        }
+
+        _editingCustomColorId = customColorId;
+        this.RaisePropertyChanged(nameof(IsEditingCustomColor));
+        this.RaisePropertyChanged(nameof(ColorPickerTitle));
+        this.RaisePropertyChanged(nameof(AddColorButtonLabel));
+        this.RaisePropertyChanged(nameof(CustomColorSaveSuccessMessage));
+    }
+
+    private void ResetCustomColorPickerDraft() =>
+        LoadCustomColorPickerDraft(string.Empty, PasswordColorUtility.DefaultColor);
+
+    private void LoadCustomColorPickerDraft(string? name, string colorCode)
+    {
+        var normalizedColor = PasswordColorUtility.NormalizeKnownColor(colorCode);
+
+        _isUpdatingCustomColorPickerFields = true;
+        try
+        {
+            CustomColorPickerName = name ?? string.Empty;
+            _customColorPickerCode = normalizedColor;
+            this.RaisePropertyChanged(nameof(CustomColorPickerCode));
+            _customColorPickerColor = ColorFromNormalizedArgbHex(normalizedColor);
+            this.RaisePropertyChanged(nameof(CustomColorPickerColor));
+        }
+        finally
+        {
+            _isUpdatingCustomColorPickerFields = false;
+        }
+    }
+
+    private void SyncCustomColorPickerCodeFromColor()
+    {
+        if (_isUpdatingCustomColorPickerFields)
+        {
+            return;
+        }
+
+        _isUpdatingCustomColorPickerFields = true;
+        try
+        {
+            _customColorPickerCode = ToArgbHex(CustomColorPickerColor);
+            this.RaisePropertyChanged(nameof(CustomColorPickerCode));
+        }
+        finally
+        {
+            _isUpdatingCustomColorPickerFields = false;
+        }
+    }
+
+    private void SetCustomColorPickerColorFromNormalizedCode(string normalizedColor)
+    {
+        _isUpdatingCustomColorPickerFields = true;
+        try
+        {
+            _customColorPickerColor = ColorFromNormalizedArgbHex(normalizedColor);
+            this.RaisePropertyChanged(nameof(CustomColorPickerColor));
+        }
+        finally
+        {
+            _isUpdatingCustomColorPickerFields = false;
+        }
+    }
+
+    private static Color ColorFromNormalizedArgbHex(string normalizedColor) =>
+        Color.FromArgb(
+            Convert.ToByte(normalizedColor.Substring(1, 2), 16),
+            Convert.ToByte(normalizedColor.Substring(3, 2), 16),
+            Convert.ToByte(normalizedColor.Substring(5, 2), 16),
+            Convert.ToByte(normalizedColor.Substring(7, 2), 16));
+
+    private static string ToArgbHex(Color color) =>
+        $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    private Task BeginDeleteCustomColorAsync(CustomColorItemViewModel customColor)
+    {
+        ClearStatusMessage();
+        CustomColorPendingDeletion = customColor;
+        IsCustomColorDeleteConfirmationOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private void CancelDeleteCustomColor()
+    {
+        ClearStatusMessage();
+        IsCustomColorDeleteConfirmationOpen = false;
+        CustomColorPendingDeletion = null;
+    }
+
+    private async Task ConfirmDeleteCustomColorAsync()
+    {
+        if (_isDeletingCustomColor || CustomColorPendingDeletion is null)
+        {
+            return;
+        }
+
+        ClearStatusMessage();
+        var customColor = CustomColorPendingDeletion;
+
+        try
+        {
+            _isDeletingCustomColor = true;
+            await _endpoints.DeleteCustomUserColorAsync(_token, customColor.Id);
+            CancelDeleteCustomColor();
+
+            if (!await RefreshAsync(false))
+            {
+                return;
+            }
+
+            ShowSuccessMessage(CustomColorDeleteSuccessMessage);
+        }
+        catch (Exception ex)
+        {
+            ShowErrorMessage(GetSafeErrorMessage(ex));
+        }
+        finally
+        {
+            _isDeletingCustomColor = false;
+        }
     }
 
     private void ApplyManualColorCode()

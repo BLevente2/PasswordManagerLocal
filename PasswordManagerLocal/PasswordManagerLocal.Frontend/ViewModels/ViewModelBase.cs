@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocal.Frontend.Exceptions;
+using PasswordManagerLocal.Frontend.Exceptions;
 using PasswordManagerLocal.Frontend.Localization;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Backend.Exceptions;
@@ -60,6 +60,9 @@ public abstract class ViewModelBase : ReactiveObject
             InvalidInputException => GetTranslation("Error_InvalidInput"),
             PasswordNotFoundException => GetTranslation("Error_NotFound"),
             DuplicatePasswordNameException => GetTranslation("Error_DuplicatePasswordName"),
+            DuplicateCustomUserColorNameException => GetTranslation("Error_DuplicateCustomColorName"),
+            DuplicateCustomUserColorCodeException => GetTranslation("Error_DuplicateCustomColorCode"),
+            CustomUserColorNotFoundException => GetTranslation("Error_NotFound"),
             LimitReachedException => GetTranslation("Error_LimitReached"),
             InvalidDataIntegrityException => GetTranslation("Error_DataIntegrity"),
             DeviceIdentityNotInitilaizedException => GetTranslation("Error_DeviceIdentity"),

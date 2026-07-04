@@ -9,10 +9,12 @@ public sealed class PasswordItemViewModel : ReactiveObject
 {
     private string _editLabel;
     private string _deleteLabel;
+    private string _colorName;
 
     private PasswordItemViewModel(
         PasswordInfoResponse password,
         IReadOnlyList<string> tagNames,
+        string? colorName,
         string editLabel,
         string deleteLabel,
         Func<PasswordItemViewModel, Task> viewAsync,
@@ -24,6 +26,7 @@ public sealed class PasswordItemViewModel : ReactiveObject
         Description = password.Description;
         TagNames = tagNames;
         Color = password.Color;
+        _colorName = colorName?.Trim() ?? string.Empty;
         CreatedAt = password.CreatedAt;
         LastUpdatedAt = password.LastUpdatedAt;
         ColorBrush = ParseBrush(password.Color);
@@ -44,6 +47,16 @@ public sealed class PasswordItemViewModel : ReactiveObject
     public IReadOnlyList<string> TagNames { get; }
 
     public string Color { get; }
+
+    public string ColorName
+    {
+        get => _colorName;
+        private set => this.RaiseAndSetIfChanged(ref _colorName, value);
+    }
+
+    public bool HasColorName => !string.IsNullOrWhiteSpace(ColorName);
+
+    public bool HasNoColorName => !HasColorName;
 
     public DateTime CreatedAt { get; }
 
@@ -105,15 +118,29 @@ public sealed class PasswordItemViewModel : ReactiveObject
         DeleteLabel = deleteLabel;
     }
 
+    public void ApplyColorName(string? colorName)
+    {
+        var normalizedColorName = colorName?.Trim() ?? string.Empty;
+        if (string.Equals(ColorName, normalizedColorName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ColorName = normalizedColorName;
+        this.RaisePropertyChanged(nameof(HasColorName));
+        this.RaisePropertyChanged(nameof(HasNoColorName));
+    }
+
     public static PasswordItemViewModel Create(
         PasswordInfoResponse password,
         IReadOnlyList<string> tagNames,
+        string? colorName,
         string editLabel,
         string deleteLabel,
         Func<PasswordItemViewModel, Task> viewAsync,
         Func<PasswordItemViewModel, Task> editAsync,
         Func<PasswordItemViewModel, Task> deleteAsync) =>
-        new(password, tagNames, editLabel, deleteLabel, viewAsync, editAsync, deleteAsync);
+        new(password, tagNames, colorName, editLabel, deleteLabel, viewAsync, editAsync, deleteAsync);
 
     private static IBrush ParseBrush(string color) =>
         PasswordColorUtility.ParseBrush(color);
