@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Services;
+using PasswordManagerLocal.Frontend.Services;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;

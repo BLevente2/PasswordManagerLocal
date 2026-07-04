@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocalBackend.Abstractions.Security;
+﻿using PasswordManagerLocal.Backend.Abstractions.Security;
 using System;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;

@@ -1,0 +1,18 @@
+﻿using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Backend.Responses;
+
+namespace PasswordManagerLocal.Backend.Abstractions.Services;
+
+public interface IPasswordService
+{
+    IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoResponses(UserPasswordsData passwords);
+    Task AddNewPassword(NewPasswordRequest request, UserPasswordsData passwords);
+    void RemovePassword(Guid passwordId, UserPasswordsData passwords);
+    SecurePassword GetAndVerifyPasswordById(Guid passwordId, UserPasswordsData passwords);
+    Task<byte[]> GetUnsecurePasswordAsync(Guid passwordId, UserPasswordsData passwords);
+    Task UpdatePasswordAsync(UpdatePasswordRequest request, UserPasswordsData passwords);
+    Task ExportPasswordsAsync(IReadOnlyList<Guid> passwordIds, UserPasswordsData sourcePasswords, UserPasswordsData targetPasswords);
+    Task<byte[]> EncryptPasswordAsync(byte[] raw, UserPasswordsData passwords);
+    Task<byte[]> DecryptPasswordAsync(byte[] password, UserPasswordsData passwords);
+}

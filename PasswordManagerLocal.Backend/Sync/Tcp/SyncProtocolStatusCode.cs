@@ -1,0 +1,12 @@
+namespace PasswordManagerLocal.Backend.Sync.Tcp;
+
+public enum SyncProtocolStatusCode
+{
+    Unknown,
+    Unauthenticated,
+    Unavailable,
+    InvalidArgument,
+    PermissionDenied,
+    ResourceExhausted,
+    FailedPrecondition
+}

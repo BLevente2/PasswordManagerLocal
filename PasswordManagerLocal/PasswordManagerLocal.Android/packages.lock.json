@@ -675,7 +675,7 @@
           "Xamarin.Kotlin.StdLib.Jdk8": "1.9.10.2"
         }
       },
-      "passwordmanagerlocal": {
+      "passwordmanagerlocal.frontend": {
         "type": "Project",
         "dependencies": {
           "Avalonia": "[11.3.11, )",
@@ -683,13 +683,13 @@
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.11, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.2, )",
-          "PasswordManagerLocalBackend": "[1.0.0, )",
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
           "SkiaSharp": "[3.119.1, )",
           "ZXing.Net": "[0.16.11, )",
           "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"
         }
       },
-      "passwordmanagerlocalbackend": {
+      "passwordmanagerlocal.backend": {
         "type": "Project",
         "dependencies": {
           "Google.Protobuf": "[3.33.4, )",

@@ -1,7 +1,8 @@
 using Avalonia;
 using Avalonia.ReactiveUI;
-using PasswordManagerLocal.Services;
-using PasswordManagerLocalBackend;
+using PasswordManagerLocal.Frontend;
+using PasswordManagerLocal.Frontend.Services;
+using PasswordManagerLocal.Backend;
 using System;
 
 namespace PasswordManagerLocal.Windows;

@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Services;
+using PasswordManagerLocal.Frontend.Services;
 
 namespace PasswordManagerLocal.Android;
 

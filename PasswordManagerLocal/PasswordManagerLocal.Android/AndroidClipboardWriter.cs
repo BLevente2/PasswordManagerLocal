@@ -1,6 +1,6 @@
 ﻿using Android.App;
 using Android.Content;
-using PasswordManagerLocal.Services;
+using PasswordManagerLocal.Frontend.Services;
 using AndroidClipboardManager = Android.Content.ClipboardManager;
 using System;
 using System.Threading.Tasks;

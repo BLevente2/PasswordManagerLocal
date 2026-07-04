@@ -4,7 +4,7 @@ using Android.Security.Keystore;
 using Java.Security;
 using Javax.Crypto;
 using Javax.Crypto.Spec;
-using PasswordManagerLocalBackend.Abstractions.Security;
+using PasswordManagerLocal.Backend.Abstractions.Security;
 using System;
 using System.Security.Cryptography;
 
