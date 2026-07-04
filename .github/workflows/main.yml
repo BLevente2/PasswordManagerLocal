@@ -81,17 +81,17 @@ jobs:
             fi
           }
 
-          restore_one ./PasswordManagerLocalBackend/PasswordManagerLocalBackend.csproj
-          restore_one ./PasswordManagerLocal/PasswordManagerLocal/PasswordManagerLocal.csproj
-          restore_one ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj
+          restore_one ./PasswordManagerLocal.Backend/PasswordManagerLocal.Backend.csproj
+          restore_one ./PasswordManagerLocal/PasswordManagerLocal.Frontend/PasswordManagerLocal.Frontend.csproj
+          restore_one ./PasswordManagerLocal.Test/PasswordManagerLocal.Test.csproj
 
       - name: Build (only required projects)
         shell: bash
         run: |
           set -euo pipefail
-          dotnet build ./PasswordManagerLocalBackend/PasswordManagerLocalBackend.csproj -c Release --no-restore
-          dotnet build ./PasswordManagerLocal/PasswordManagerLocal/PasswordManagerLocal.csproj -c Release --no-restore
-          dotnet build ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj -c Release --no-restore
+          dotnet build ./PasswordManagerLocal.Backend/PasswordManagerLocal.Backend.csproj -c Release --no-restore
+          dotnet build ./PasswordManagerLocal/PasswordManagerLocal.Frontend/PasswordManagerLocal.Frontend.csproj -c Release --no-restore
+          dotnet build ./PasswordManagerLocal.Test/PasswordManagerLocal.Test.csproj -c Release --no-restore
 
       - name: Test (log + TRX)
         id: test
@@ -102,7 +102,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 
           $logPath = Join-Path $resultsDir "dotnet-test.log"
-          dotnet test ./PasswordManagerLocalTest/PasswordManagerLocalTest.csproj `
+          dotnet test ./PasswordManagerLocal.Test/PasswordManagerLocal.Test.csproj `
             -c Release `
             --no-build `
             --logger "trx;LogFileName=tests.trx" `

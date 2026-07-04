@@ -6,8 +6,9 @@ using Android.Views.InputMethods;
 using Avalonia;
 using Avalonia.Android;
 using Avalonia.ReactiveUI;
-using PasswordManagerLocal.Services;
-using PasswordManagerLocalBackend;
+using PasswordManagerLocal.Frontend;
+using PasswordManagerLocal.Frontend.Services;
+using PasswordManagerLocal.Backend;
 
 namespace PasswordManagerLocal.Android;
 
@@ -28,7 +29,7 @@ public class MainActivity : AvaloniaMainActivity<App>
 
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
-        global::PasswordManagerLocal.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
+        global::PasswordManagerLocal.Frontend.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
         SoftwareKeyboardService.SetPlatformHideAction(HideSoftwareKeyboard);
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(new AndroidQrCodeCameraScanner(this));
         AcquireMulticastLock();

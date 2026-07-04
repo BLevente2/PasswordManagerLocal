@@ -8,7 +8,7 @@ using Android.OS;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.Content;
-using PasswordManagerLocal.Services;
+using PasswordManagerLocal.Frontend.Services;
 using Camera = Android.Hardware.Camera;
 using Color = Android.Graphics.Color;
 using Orientation = Android.Content.Res.Orientation;

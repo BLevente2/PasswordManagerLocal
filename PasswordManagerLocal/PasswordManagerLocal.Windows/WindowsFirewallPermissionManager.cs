@@ -4,9 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using PasswordManagerLocal.Services;
-using PasswordManagerLocalBackend.Constants;
-using PasswordManagerLocalBackend.Utils;
+using PasswordManagerLocal.Frontend.Services;
+using PasswordManagerLocal.Backend.Constants;
+using PasswordManagerLocal.Backend.Utils;
 
 namespace PasswordManagerLocal.Windows;
 
