@@ -49,6 +49,7 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
+        sc.AddSingleton<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
         sc.AddSingleton<IUserService, UserService>();
         sc.AddSingleton<IUserProfileService, UserProfileService>();
         sc.AddSingleton<IRememberMeService, RememberMeService>();

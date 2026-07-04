@@ -15,6 +15,16 @@ public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepositor
     public override Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         Set.FirstOrDefaultAsync(u => u.UId == id, ct);
 
+    public async Task<IReadOnlyList<UserLoginLookupData>> ListLoginLookupDataAsync(CancellationToken ct = default) =>
+        await Set.AsNoTracking()
+            .Select(user => new UserLoginLookupData
+            {
+                UId = user.UId,
+                UsernameSalt = user.UsernameSalt,
+                UsernameHash = user.UsernameHash
+            })
+            .ToListAsync(ct);
+
     public Task<User?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
         Set.AsNoTracking().FirstOrDefaultAsync(u => u.UId == id, ct);
 

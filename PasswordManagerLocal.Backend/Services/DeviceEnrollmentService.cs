@@ -1240,7 +1240,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         deviceData.GenerateIntegrityHash();
         bundle.UserDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == deviceData.Id);
         bundle.UserDevicesData.Devices.Add(deviceData);
-        bundle.UserDevicesData.GenerateIntegrityHash();
         await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, ct);
     }
 

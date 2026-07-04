@@ -7,6 +7,11 @@ namespace PasswordManagerLocal.Test.Fakes;
 public sealed class InMemoryUserRepository : IUserRepository
 {
     private readonly ConcurrentDictionary<Guid, User> _store = new();
+    private int _listAllCallCount;
+    private int _loginLookupCallCount;
+
+    public int ListAllCallCount => Volatile.Read(ref _listAllCallCount);
+    public int LoginLookupCallCount => Volatile.Read(ref _loginLookupCallCount);
 
     public Task AddAsync(User entity, CancellationToken ct = default)
     {
@@ -21,6 +26,23 @@ public sealed class InMemoryUserRepository : IUserRepository
 
     public Task<bool> ExistsAsync(Guid id, CancellationToken ct = default)
         => Task.FromResult(_store.ContainsKey(id));
+
+    public Task<IReadOnlyList<UserLoginLookupData>> ListLoginLookupDataAsync(CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref _loginLookupCallCount);
+
+        var list = _store.Values
+            .Select(user => new UserLoginLookupData
+            {
+                UId = user.UId,
+                UsernameSalt = user.UsernameSalt.ToArray(),
+                UsernameHash = user.UsernameHash.ToArray()
+            })
+            .ToList();
+
+        return Task.FromResult((IReadOnlyList<UserLoginLookupData>)list);
+    }
+
 
     public Task<IReadOnlyList<User>> GetAllRememberMeEnabledUsersAsync(CancellationToken ct = default)
     {
@@ -57,6 +79,7 @@ public sealed class InMemoryUserRepository : IUserRepository
 
     public Task<IReadOnlyList<User>> ListAllAsync(CancellationToken ct = default)
     {
+        Interlocked.Increment(ref _listAllCallCount);
         var list = _store.Values.Select(Clone).ToList();
         return Task.FromResult((IReadOnlyList<User>)list);
     }

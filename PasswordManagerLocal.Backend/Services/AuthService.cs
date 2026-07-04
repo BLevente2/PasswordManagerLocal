@@ -24,6 +24,7 @@ public sealed class AuthService : IAuthService
     private readonly IDeviceIdentityService _identity;
     private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly ISyncRuntimeService _syncRuntime;
+    private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUnitOfWork _uow;
 
     public AuthService(
@@ -35,6 +36,7 @@ public sealed class AuthService : IAuthService
         IDeviceIdentityService identity,
         ILocalUserDeviceRepository localUserDevices,
         ISyncRuntimeService syncRuntime,
+        IUserDataBundleIntegrityService integrity,
         IUnitOfWork uow)
     {
         _userService = userService;
@@ -45,6 +47,7 @@ public sealed class AuthService : IAuthService
         _identity = identity;
         _localUserDevices = localUserDevices;
         _syncRuntime = syncRuntime;
+        _integrity = integrity;
         _uow = uow;
     }
 
@@ -94,7 +97,7 @@ public sealed class AuthService : IAuthService
             UserPasswordsData = CreateInitialUserPasswordsData(),
             UserDevicesData = CreateInitialUserDevicesData(now, linkedAt)
         };
-        GenerateAndCopyIntegrityHashes(bundle);
+        _integrity.RebuildInitialIntegrity(bundle);
         return bundle;
     }
 
@@ -147,22 +150,43 @@ public sealed class AuthService : IAuthService
         CancellationToken ct)
     {
         var usernameSalt = Hashing.GenerateSalt();
+        var usernameHash = Hashing.SHA256Hash(usernameBytes, usernameSalt);
         var userData = bundle.UserData;
-        return new User
+
+        var userDataTask = SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData, ct: ct);
+        var generalTask = EncryptGeneralUserDataAsync(bundle.GeneralUserData, userData.GeneralUserDataKey, ct);
+        var passwordsTask = EncryptUserPasswordsDataAsync(bundle.UserPasswordsData, userData.UserPasswordsDataKey, ct);
+        var devicesTask = EncryptUserDevicesDataAsync(bundle.UserDevicesData, userData.UserDevicesDataKey, ct);
+        var encryptionTasks = new[] { userDataTask, generalTask, passwordsTask, devicesTask };
+
+        try
         {
-            UId = userData.UId,
-            UsernameSalt = usernameSalt,
-            UsernameHash = Hashing.SHA256Hash(usernameBytes, usernameSalt),
-            PasswordSalt = passwordSalt,
-            EncryptedPayload = await SerializeCompressEncryptAsync(userData, key, BackendJsonSerializerContext.Default.UserData, ct: ct),
-            EncryptedGeneralUserDataPayload = await EncryptGeneralUserDataAsync(bundle.GeneralUserData, userData.GeneralUserDataKey, ct),
-            EncryptedUserPasswordsDataPayload = await EncryptUserPasswordsDataAsync(bundle.UserPasswordsData, userData.UserPasswordsDataKey, ct),
-            EncryptedUserDevicesDataPayload = await EncryptUserDevicesDataAsync(bundle.UserDevicesData, userData.UserDevicesDataKey, ct),
-            UserDataLastModifiedAt = linkedAt,
-            GeneralUserDataLastModifiedAt = linkedAt,
-            UserPasswordsDataLastModifiedAt = linkedAt,
-            UserDevicesDataLastModifiedAt = linkedAt
-        };
+            await Task.WhenAll(encryptionTasks);
+
+            return new User
+            {
+                UId = userData.UId,
+                UsernameSalt = usernameSalt,
+                UsernameHash = usernameHash,
+                PasswordSalt = passwordSalt,
+                EncryptedPayload = await userDataTask,
+                EncryptedGeneralUserDataPayload = await generalTask,
+                EncryptedUserPasswordsDataPayload = await passwordsTask,
+                EncryptedUserDevicesDataPayload = await devicesTask,
+                UserDataLastModifiedAt = linkedAt,
+                GeneralUserDataLastModifiedAt = linkedAt,
+                UserPasswordsDataLastModifiedAt = linkedAt,
+                UserDevicesDataLastModifiedAt = linkedAt
+            };
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(usernameSalt);
+            CryptographicOperations.ZeroMemory(usernameHash);
+            foreach (var task in encryptionTasks)
+                ZeroCompletedEncryptionTask(task);
+            throw;
+        }
     }
 
 
@@ -206,20 +230,16 @@ public sealed class AuthService : IAuthService
 
         var usernameBytes = Encoding.UTF8.GetBytes(request.Username);
         var user = await _userService.GetAndVerifyUserByUsernameAsync(usernameBytes, ct);
-
-        var token = _tokens.Issue(user.UId);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
-        _keys.SetUserKey(token, key);
 
-        var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, token, ct);
+        var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, key, ct);
         var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, DateTimeOffset.UtcNow);
         UpdateCurrentDeviceLastLoginDate(bundle.UserDevicesData);
         modifiedBlobs |= UserDataBlobKind.Devices;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
         await _userService.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
-        _keys.SetUserBlobKeys(token, bundle.UserData);
-        _cache.SetUserDataBundle(token, bundle);
-        return token;
+
+        return CreateAuthenticatedSession(user.UId, key, bundle);
     }
 
 
@@ -411,40 +431,6 @@ public sealed class AuthService : IAuthService
         device.LastLoginDate = DateTime.UtcNow;
         device.LastUpdatedAt = DateTimeOffset.UtcNow;
         device.GenerateIntegrityHash();
-        userDevicesData.GenerateIntegrityHash();
-    }
-
-    private void GenerateAndCopyIntegrityHashes(UserDataBundle bundle)
-    {
-        bundle.GeneralUserData.GenerateIntegrityHash();
-
-        foreach (var password in bundle.UserPasswordsData.Passwords)
-            password.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
-            deleted.GenerateIntegrityHash();
-        foreach (var color in bundle.UserPasswordsData.CustomColors)
-            color.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
-            deleted.GenerateIntegrityHash();
-        foreach (var tag in bundle.UserPasswordsData.Tags)
-            tag.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
-            deleted.GenerateIntegrityHash();
-        bundle.UserPasswordsData.GenerateIntegrityHash();
-
-        foreach (var device in bundle.UserDevicesData.Devices)
-            device.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
-            deleted.GenerateIntegrityHash();
-        bundle.UserDevicesData.GenerateIntegrityHash();
-
-        CryptographicOperations.ZeroMemory(bundle.UserData.GeneralUserDataIntegrityHash);
-        CryptographicOperations.ZeroMemory(bundle.UserData.UserPasswordsDataIntegrityHash);
-        CryptographicOperations.ZeroMemory(bundle.UserData.UserDevicesDataIntegrityHash);
-        bundle.UserData.GeneralUserDataIntegrityHash = bundle.GeneralUserData.IntegrityHash.ToArray();
-        bundle.UserData.UserPasswordsDataIntegrityHash = bundle.UserPasswordsData.IntegrityHash.ToArray();
-        bundle.UserData.UserDevicesDataIntegrityHash = bundle.UserDevicesData.IntegrityHash.ToArray();
-        bundle.UserData.GenerateIntegrityHash();
     }
 
     private async Task<byte[]> EncryptGeneralUserDataAsync(GeneralUserData data, byte[] rawKey, CancellationToken ct)
@@ -463,5 +449,12 @@ public sealed class AuthService : IAuthService
     {
         using var key = EncryptionKey.FromRaw(rawKey);
         return await SerializeCompressEncryptAsync(data, key, BackendJsonSerializerContext.Default.UserDevicesData, ct: ct);
+    }
+
+
+    private void ZeroCompletedEncryptionTask(Task<byte[]> task)
+    {
+        if (task.Status == TaskStatus.RanToCompletion)
+            CryptographicOperations.ZeroMemory(task.Result);
     }
 }

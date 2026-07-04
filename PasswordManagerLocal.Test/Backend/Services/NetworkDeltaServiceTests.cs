@@ -82,6 +82,7 @@ public sealed class NetworkDeltaServiceTests
             new FakeSyncRuntimeService(),
             new FakeAuthService(),
             new TestKeyProtector(),
+            new UserDataBundleIntegrityService(),
             new FakeUnitOfWork());
 
     private static async Task<ValidDeltaSetup> CreateValidDeltaAsync()

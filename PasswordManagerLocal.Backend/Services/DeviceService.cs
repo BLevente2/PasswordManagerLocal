@@ -268,6 +268,8 @@ public sealed class DeviceService : IDeviceService
             encryptedDevice.Name = normalizedName;
             encryptedDevice.LastUpdatedAt = DateTimeOffset.UtcNow;
         }
+
+        encryptedDevice.GenerateIntegrityHash();
         await PersistUserDeviceDataAsync(bundle, token, ct);
     }
 
@@ -324,13 +326,8 @@ public sealed class DeviceService : IDeviceService
     private bool IsEncryptedNameTaken(UserDevicesData userDevicesData, string name, Guid exceptDeviceId) =>
         userDevicesData.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
 
-    private async Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct, bool enqueueSync = true)
-    {
-        foreach (var device in bundle.UserDevicesData.Devices) device.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserDevicesData.DeletedDevices) deleted.GenerateIntegrityHash();
-        bundle.UserDevicesData.GenerateIntegrityHash();
-        await _users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
-    }
+    private Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct, bool enqueueSync = true) =>
+        _users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
 
     private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData) => new()
     {
