@@ -1,6 +1,6 @@
-using Makaretu.Dns;
 using PasswordManagerLocalBackend.Exceptions;
 using PasswordManagerLocalBackend.Responses;
+using System.Security.Cryptography;
 
 namespace PasswordManagerLocalBackend.State;
 
@@ -14,6 +14,13 @@ internal sealed class EnrollmentSession
     public string? ErrorMessage { get; set; }
     public DeviceEnrollmentErrorCode ErrorCode { get; set; } = DeviceEnrollmentErrorCode.Unknown;
     public int FailedValidationAttempts { get; set; }
-    public ServiceDiscovery? Discovery { get; set; }
-    public ServiceProfile? Profile { get; set; }
+
+    public void ClearSensitiveData()
+    {
+        if (Secret.Length > 0)
+            CryptographicOperations.ZeroMemory(Secret);
+
+        Secret = [];
+        Code = string.Empty;
+    }
 }

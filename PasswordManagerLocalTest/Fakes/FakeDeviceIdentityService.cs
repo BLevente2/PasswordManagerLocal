@@ -17,6 +17,7 @@ public sealed class FakeDeviceIdentityService : IDeviceIdentityService
     public string DeviceIdHex => LocalDeviceId.ToString("N").ToUpperInvariant();
     public X509Certificate2 Certificate => throw new NotSupportedException("The fake device identity has no certificate.");
     public string FingerprintHex { get; set; } = string.Empty;
+    public Func<byte[], byte[]>? SignHandler { get; set; }
 
     public Task InitializeAsync(CancellationToken ct = default)
     {
@@ -31,7 +32,7 @@ public sealed class FakeDeviceIdentityService : IDeviceIdentityService
         return Task.CompletedTask;
     }
 
-    public byte[] Sign(ReadOnlySpan<byte> data) => [];
+    public byte[] Sign(ReadOnlySpan<byte> data) => SignHandler?.Invoke(data.ToArray()) ?? [];
 
     public byte[] EncryptForDevice(byte[] plaintext, byte[] recipientAgreementPublicKey, byte[] associatedData, out byte[] ephemeralPublicKey, out byte[] nonce, out byte[] tag)
     {

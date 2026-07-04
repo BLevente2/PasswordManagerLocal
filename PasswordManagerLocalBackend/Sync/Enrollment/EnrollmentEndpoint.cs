@@ -2,7 +2,7 @@ using PasswordManagerLocalBackend.Models;
 
 namespace PasswordManagerLocalBackend.Sync.Enrollment;
 
-internal sealed class EnrollmentEndpoint
+public sealed class EnrollmentEndpoint
 {
     public string Host { get; set; } = string.Empty;
     public int Port { get; set; }

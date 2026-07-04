@@ -1,5 +1,4 @@
 using Google.Protobuf;
-using Makaretu.Dns;
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocalBackend.Abstractions.Persistence;
 using PasswordManagerLocalBackend.Abstractions.Repositories;
@@ -13,7 +12,6 @@ using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Sync;
 using PasswordManagerLocalBackend.Utils;
 using System.Net;
-using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -31,19 +29,28 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly ISyncTransportClientService _syncTransport;
     private readonly ISyncRuntimeService _syncRuntime;
+    private readonly ILocalDiscoveryService _localDiscovery;
+    private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
     private CancellationTokenSource? _enrollmentExpirationCancellation;
-    private CancellationTokenSource? _enrollmentNetworkRefreshCancellation;
-    private bool _enrollmentNetworkMonitoringStarted;
 
-    public DeviceEnrollmentService(IServiceScopeFactory scopeFactory, IDeviceIdentityService identity, IDiscoveredDeviceEndpointCache endpointCache, ISyncTransportClientService syncTransport, ISyncRuntimeService syncRuntime)
+    public DeviceEnrollmentService(
+        IServiceScopeFactory scopeFactory,
+        IDeviceIdentityService identity,
+        IDiscoveredDeviceEndpointCache endpointCache,
+        ISyncTransportClientService syncTransport,
+        ISyncRuntimeService syncRuntime,
+        ILocalDiscoveryService localDiscovery,
+        ILocalNetworkAddressService networkAddresses)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
         _endpointCache = endpointCache;
         _syncTransport = syncTransport;
         _syncRuntime = syncRuntime;
+        _localDiscovery = localDiscovery;
+        _networkAddresses = networkAddresses;
     }
 
 
@@ -61,8 +68,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             lock (_lock)
             {
                 CancelEnrollmentExpirationLocked();
-                StopEnrollmentNetworkMonitoringLocked();
-                StopAdvertisingLocked();
+                DeactivateEnrollmentDiscoveryLocked();
+                _currentSession?.ClearSensitiveData();
                 directEndpointInfo = BuildDirectEndpointInfo();
                 var generated = DeviceEnrollmentCode.Create(directEndpointInfo);
                 session = new EnrollmentSession
@@ -74,8 +81,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     State = DeviceEnrollmentState.Waiting
                 };
                 _currentSession = session;
-                StartEnrollmentNetworkMonitoringLocked();
-                StartAdvertisingLocked(session, directEndpointInfo.Hosts);
+                _localDiscovery.ActivateEnrollmentSession(session.SessionId, session.Secret, session.ExpiresAt);
                 StartEnrollmentExpirationCountdownLocked(session);
             }
 
@@ -89,8 +95,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 if (session is not null && ReferenceEquals(_currentSession, session))
                 {
                     CancelEnrollmentExpirationLocked();
-                    StopEnrollmentNetworkMonitoringLocked();
-                    StopAdvertisingLocked();
+                    DeactivateEnrollmentDiscoveryLocked();
+                    session.ClearSensitiveData();
                     _currentSession = null;
                 }
             }
@@ -190,8 +196,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         lock (_lock)
         {
             CancelEnrollmentExpirationLocked();
-            StopEnrollmentNetworkMonitoringLocked();
-            StopAdvertisingLocked();
+            DeactivateEnrollmentDiscoveryLocked();
+            _currentSession?.ClearSensitiveData();
             _currentSession = null;
         }
         await _syncRuntime.EndEnrollmentOnlyAsync(ct);
@@ -238,7 +244,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var hasAuthoritativeSameSubnetDirectEndpoint = directEndpointCandidates.Any(candidate => candidate.Priority >= 2000);
         var directFailures = new List<string>();
-        var mdnsFailures = new List<string>();
+        var discoveryFailures = new List<string>();
         var attemptedEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         DeviceEnrollmentTrace.Info($"AddDeviceByCode started. Session={parsed.SessionId}, directEndpointCount={directEndpoints.Count}, authoritativeDirect={hasAuthoritativeSameSubnetDirectEndpoint}, directEndpointCandidates={string.Join(", ", directEndpointCandidates.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
@@ -263,42 +269,42 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (directEndpoints.Count > 0)
         {
             var reason = hasAuthoritativeSameSubnetDirectEndpoint
-                ? "The same-subnet direct endpoint did not respond. Trying mDNS fallback because Wi-Fi/wired bridges can still expose another usable address."
-                : "The direct enrollment endpoints did not respond. Trying mDNS fallback.";
+                ? "The same-subnet direct endpoint did not respond. Trying authenticated local discovery fallback because Wi-Fi/wired bridges can still expose another usable address."
+                : "The direct enrollment endpoints did not respond. Trying authenticated local discovery fallback.";
 
             DeviceEnrollmentTrace.Info(reason);
         }
 
-        IReadOnlyList<EnrollmentEndpoint> mdnsEndpoints;
+        IReadOnlyList<EnrollmentEndpoint> discoveryEndpoints;
         try
         {
-            DeviceEnrollmentTrace.Info("Trying mDNS enrollment discovery fallback.");
-            mdnsEndpoints = await FindEnrollmentEndpointsAsync(parsed, ct);
+            DeviceEnrollmentTrace.Info("Trying authenticated local enrollment discovery fallback.");
+            discoveryEndpoints = await _localDiscovery.FindEnrollmentEndpointsAsync(parsed, ct);
         }
         catch (DeviceEnrollmentException ex) when (directFailures.Count > 0)
         {
             throw new DeviceEnrollmentException(
                 DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
                 BuildEndpointFailureMessage(
-                    BuildMdnsDiscoveryFailedMessage(hasAuthoritativeSameSubnetDirectEndpoint),
+                    BuildLocalDiscoveryFailedMessage(hasAuthoritativeSameSubnetDirectEndpoint),
                     directFailures),
                 ex);
         }
 
-        foreach (var endpoint in mdnsEndpoints)
+        foreach (var endpoint in discoveryEndpoints)
         {
             var endpointKey = $"{endpoint.Host}:{endpoint.Port}";
             var isAuthenticatedRediscoveryRetry = !attemptedEndpoints.Add(endpointKey);
 
             if (isAuthenticatedRediscoveryRetry)
             {
-                DeviceEnrollmentTrace.Info($"Retrying enrollment endpoint {endpointKey} because a fresh authenticated mDNS advertisement confirmed that the same enrollment session is still active there.");
+                DeviceEnrollmentTrace.Info($"Retrying enrollment endpoint {endpointKey} because a fresh authenticated local discovery response confirmed that the same enrollment session is still active there.");
                 await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
             }
 
             try
             {
-                var attemptKind = isAuthenticatedRediscoveryRetry ? "mDNS-confirmed retry" : "mDNS enrollment endpoint";
+                var attemptKind = isAuthenticatedRediscoveryRetry ? "authenticated-discovery-confirmed retry" : "authenticated local discovery endpoint";
                 DeviceEnrollmentTrace.Info($"Trying {attemptKind} {endpoint.Host}:{endpoint.Port}.");
                 await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
                 DeviceEnrollmentTrace.Info($"{attemptKind} {endpoint.Host}:{endpoint.Port} completed successfully.");
@@ -306,8 +312,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             }
             catch (DeviceEnrollmentException ex) when (ex.ErrorCode == DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
             {
-                var attemptKind = isAuthenticatedRediscoveryRetry ? "mDNS-confirmed retry" : "mDNS";
-                mdnsFailures.Add($"{endpoint.Host}:{endpoint.Port} ({attemptKind}) -> {ex.Message}");
+                var attemptKind = isAuthenticatedRediscoveryRetry ? "authenticated-discovery-confirmed retry" : "authenticated local discovery";
+                discoveryFailures.Add($"{endpoint.Host}:{endpoint.Port} ({attemptKind}) -> {ex.Message}");
                 DeviceEnrollmentTrace.Error($"{attemptKind} enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
             }
         }
@@ -315,8 +321,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         throw new DeviceEnrollmentException(
             DeviceEnrollmentErrorCode.NewDeviceConnectionFailed,
             BuildEndpointFailureMessage(
-                BuildNoEndpointAcceptedMessage(hasAuthoritativeSameSubnetDirectEndpoint, mdnsEndpoints.Count > 0),
-                directFailures.Concat(mdnsFailures)));
+                BuildNoEndpointAcceptedMessage(hasAuthoritativeSameSubnetDirectEndpoint, discoveryEndpoints.Count > 0),
+                directFailures.Concat(discoveryFailures)));
     }
 
 
@@ -334,30 +340,30 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint, bool authenticatedMdnsAdvertisementReceived)
+    private string BuildNoEndpointAcceptedMessage(bool hadSameSubnetDirectEndpoint, bool authenticatedDiscoveryResponseReceived)
     {
-        if (hadSameSubnetDirectEndpoint && authenticatedMdnsAdvertisementReceived)
+        if (hadSameSubnetDirectEndpoint && authenticatedDiscoveryResponseReceived)
         {
-            return "The enrollment code contained a same-subnet address and the old device received a fresh authenticated mDNS advertisement from that enrollment session, but TCP port 26688 still did not complete a connection. The app retried the mDNS-confirmed address. The failure happened before device identity verification or profile transfer, so the remaining problem is in the TCP-specific path between the two Windows devices, such as effective OS filtering, adapter routing, a transient Wi-Fi/ARP state, or a duplicate IP address.";
+            return "The enrollment code contained a same-subnet address and the old device received a fresh authenticated local discovery response from that enrollment session, but TCP port 26688 still did not complete a connection. The app retried the local discovery-confirmed address. The failure happened before device identity verification or profile transfer, so the remaining problem is in the TCP-specific path between the two Windows devices, such as effective OS filtering, adapter routing, a transient Wi-Fi/ARP state, or a duplicate IP address.";
         }
 
         if (hadSameSubnetDirectEndpoint)
         {
-            return "The enrollment code contained a same-subnet address for the new device, but no advertised address completed the authenticated TCP enrollment connection. The failure happened before device identity verification or profile transfer. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that TCP traffic reaches that process.";
+            return "The enrollment code contained a same-subnet address for the new device, but no known or authenticated-discovery address completed the authenticated TCP enrollment connection. The failure happened before device identity verification or profile transfer. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that TCP traffic reaches that process.";
         }
 
         return "The new device was discovered, but none of the reachable network addresses accepted the enrollment transfer.";
     }
 
 
-    private string BuildMdnsDiscoveryFailedMessage(bool hadSameSubnetDirectEndpoint)
+    private string BuildLocalDiscoveryFailedMessage(bool hadSameSubnetDirectEndpoint)
     {
         if (hadSameSubnetDirectEndpoint)
         {
-            return "The enrollment code contained a same-subnet address for the new device, but the authenticated TCP enrollment connection could not be completed and mDNS discovery also failed. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that inbound traffic reaches that process.";
+            return "The enrollment code contained a same-subnet address for the new device, but the authenticated TCP enrollment connection could not be completed and authenticated local discovery also failed. Keep the enrollment screen open and verify that the target app is still listening on TCP port 26688 and that inbound traffic reaches that process.";
         }
 
-        return "The new device was included in the enrollment code, but it could not be reached directly and mDNS discovery also failed.";
+        return "The new device was included in the enrollment code, but it could not be reached directly and authenticated local discovery also failed.";
     }
 
 
@@ -683,8 +689,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 _currentSession.ErrorCode = DeviceEnrollmentErrorCode.Unknown;
                 _currentSession.ErrorMessage = null;
                 CancelEnrollmentExpirationLocked();
-                StopEnrollmentNetworkMonitoringLocked();
-                StopAdvertisingLocked();
+                DeactivateEnrollmentDiscoveryLocked();
+                _currentSession.ClearSensitiveData();
             }
         }
 
@@ -713,8 +719,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             session.ErrorCode = errorCode;
             session.ErrorMessage = "Enrollment was stopped after three failed validation attempts. Generate a new enrollment code before trying again.";
             CancelEnrollmentExpirationLocked();
-            StopEnrollmentNetworkMonitoringLocked();
-            StopAdvertisingLocked();
+            DeactivateEnrollmentDiscoveryLocked();
+            session.ClearSensitiveData();
             return (true, session.ErrorMessage);
         }
 
@@ -733,385 +739,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             SignPublicKey = _identity.SignPublicKey,
             AgreementPublicKey = _identity.AgreementPublicKey,
             Port = SyncPort,
-            Hosts = GetLocalEnrollmentHosts()
+            Hosts = _networkAddresses.GetPreferredLocalHosts()
         };
 
 
-    private IReadOnlyList<string> GetLocalEnrollmentHosts()
-    {
-        var candidates = new List<LocalEnrollmentHostCandidate>();
-
-        try
-        {
-            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (!LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork(networkInterface))
-                    continue;
-
-                if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
-                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
-                    continue;
-
-                var properties = networkInterface.GetIPProperties();
-                var hasGateway = properties.GatewayAddresses.Any(gateway => IsUsableUnicastAddress(gateway.Address));
-                var isVirtualAdapter = IsVirtualOrNonLanAdapter(networkInterface);
-                var typePriority = GetNetworkInterfaceTypePriority(networkInterface.NetworkInterfaceType);
-
-                foreach (var addressInfo in properties.UnicastAddresses)
-                {
-                    var address = addressInfo.Address;
-                    if (!IsUsableUnicastAddress(address))
-                        continue;
-
-                    if (IsWindowsHostOnlyGatewayAddress(address, isVirtualAdapter))
-                        continue;
-
-                    var priority = 0;
-
-                    if (!isVirtualAdapter)
-                        priority += 10000;
-                    else
-                        priority -= 10000;
-
-                    if (hasGateway)
-                        priority += 4000;
-
-                    priority += typePriority;
-
-                    if (address.AddressFamily == AddressFamily.InterNetwork)
-                        priority += 2000;
-                    else
-                        priority -= 500;
-
-                    priority += GetPrivateAddressPriority(address);
-
-                    if (OperatingSystem.IsWindows() && (addressInfo.PrefixOrigin is PrefixOrigin.Dhcp or PrefixOrigin.Manual))
-                        priority += 250;
-
-                    candidates.Add(new LocalEnrollmentHostCandidate
-                    {
-                        Address = address,
-                        Priority = priority,
-                        InterfaceName = networkInterface.Name,
-                        InterfaceDescription = networkInterface.Description,
-                        IsVirtualAdapter = isVirtualAdapter,
-                        HasGateway = hasGateway
-                    });
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            DeviceEnrollmentTrace.Error($"Could not enumerate local enrollment network interfaces: {ex.Message}", ex);
-        }
-
-        var hasPhysicalIpv4Candidate = candidates.Any(candidate =>
-            !candidate.IsVirtualAdapter &&
-            candidate.Address.AddressFamily == AddressFamily.InterNetwork &&
-            IsPrivateIpv4(candidate.Address));
-
-        if (hasPhysicalIpv4Candidate)
-        {
-            candidates = candidates
-                .Where(candidate => !candidate.IsVirtualAdapter && candidate.Address.AddressFamily == AddressFamily.InterNetwork)
-                .ToList();
-        }
-        else if (candidates.Any(candidate => !candidate.IsVirtualAdapter))
-        {
-            candidates = candidates
-                .Where(candidate => !candidate.IsVirtualAdapter)
-                .ToList();
-        }
-        else
-        {
-            DeviceEnrollmentTrace.Info("Only virtual/VPN/non-LAN enrollment address candidates were found. Keeping them as a last-resort fallback.");
-        }
-
-        if (candidates.Count == 0)
-        {
-            try
-            {
-                foreach (var address in Dns.GetHostAddresses(Dns.GetHostName()))
-                {
-                    if (!IsUsableUnicastAddress(address) || IsWindowsHostOnlyGatewayAddress(address, true))
-                        continue;
-
-                    candidates.Add(new LocalEnrollmentHostCandidate
-                    {
-                        Address = address,
-                        Priority = address.AddressFamily == AddressFamily.InterNetwork ? 100 : 50,
-                        InterfaceName = "DNS fallback",
-                        InterfaceDescription = "DNS fallback",
-                        IsVirtualAdapter = false,
-                        HasGateway = false
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                DeviceEnrollmentTrace.Error($"Could not enumerate DNS fallback enrollment addresses: {ex.Message}", ex);
-            }
-        }
-
-        if (candidates.Count == 0)
-        {
-            foreach (var address in LocalNetworkInterfaceUtil.GetRoutedLocalAddressFallbacks())
-            {
-                if (!IsUsableUnicastAddress(address))
-                    continue;
-
-                candidates.Add(new LocalEnrollmentHostCandidate
-                {
-                    Address = address,
-                    Priority = address.AddressFamily == AddressFamily.InterNetwork ? 75 : 25,
-                    InterfaceName = "Platform route fallback",
-                    InterfaceDescription = "Platform route fallback",
-                    IsVirtualAdapter = false,
-                    HasGateway = true
-                });
-            }
-        }
-
-        var hosts = candidates
-            .GroupBy(candidate => candidate.Address.ToString(), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderByDescending(candidate => candidate.Priority).First())
-            .OrderByDescending(candidate => candidate.Priority)
-            .ThenBy(candidate => candidate.Address.ToString(), StringComparer.Ordinal)
-            .ToList();
-
-        DeviceEnrollmentTrace.Info($"Local enrollment hosts selected: {string.Join(", ", hosts.Select(candidate => $"{candidate.Address} on {candidate.InterfaceName} priority={candidate.Priority} virtual={candidate.IsVirtualAdapter} gateway={candidate.HasGateway}"))}");
-
-        return hosts
-            .Select(candidate => candidate.Address.ToString())
-            .ToList();
-    }
-
-
-    private bool IsUsableUnicastAddress(IPAddress address)
-    {
-        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.Broadcast) || address.Equals(IPAddress.IPv6Any))
-            return false;
-
-        if (address.AddressFamily == AddressFamily.InterNetwork)
-            return !IsApipaIpv4(address);
-
-        if (address.AddressFamily != AddressFamily.InterNetworkV6)
-            return false;
-
-        return !address.IsIPv6LinkLocal && !address.IsIPv6Multicast && !address.IsIPv6SiteLocal;
-    }
-
-
-    private bool IsApipaIpv4(IPAddress address)
-    {
-        if (address.AddressFamily != AddressFamily.InterNetwork)
-            return false;
-
-        var bytes = address.GetAddressBytes();
-        return bytes.Length == 4 && bytes[0] == 169 && bytes[1] == 254;
-    }
-
-
-    private int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
-        interfaceType switch
-        {
-            NetworkInterfaceType.Wireless80211 => 3000,
-            NetworkInterfaceType.Ethernet => 2500,
-            NetworkInterfaceType.GigabitEthernet => 2500,
-            NetworkInterfaceType.FastEthernetFx => 2500,
-            NetworkInterfaceType.FastEthernetT => 2500,
-            NetworkInterfaceType.Ppp => -1000,
-            _ => 0
-        };
-
-
-    private bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
-    {
-        var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
-
-        return text.Contains("virtual") ||
-               text.Contains("vethernet") ||
-               text.Contains("hyper-v") ||
-               text.Contains("default switch") ||
-               text.Contains("wsl") ||
-               text.Contains("docker") ||
-               text.Contains("vmware") ||
-               text.Contains("virtualbox") ||
-               text.Contains("vmnet") ||
-               text.Contains("host-only") ||
-               text.Contains("loopback") ||
-               text.Contains("npcap") ||
-               text.Contains("bluetooth") ||
-               text.Contains("vpn") ||
-               text.Contains("tap") ||
-               text.Contains("tun") ||
-               text.Contains("tailscale") ||
-               text.Contains("zerotier") ||
-               text.Contains("wireguard") ||
-               text.Contains("pseudo");
-    }
-
-
-    private bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
-    {
-        if (!isVirtualAdapter || address.AddressFamily != AddressFamily.InterNetwork)
-            return false;
-
-        var bytes = address.GetAddressBytes();
-        if (bytes.Length != 4)
-            return false;
-
-        if (bytes[3] != 1)
-            return false;
-
-        return true;
-    }
-
-
-    private int GetPrivateAddressPriority(IPAddress address)
-    {
-        if (address.AddressFamily == AddressFamily.InterNetwork)
-        {
-            var bytes = address.GetAddressBytes();
-            if (bytes.Length != 4)
-                return 0;
-
-            if (bytes[0] == 192 && bytes[1] == 168)
-                return 500;
-
-            if (bytes[0] == 10)
-                return 400;
-
-            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
-                return 250;
-
-            return -500;
-        }
-
-        return IsPrivateIpv6(address) ? 100 : -500;
-    }
-
-
-    private bool IsPrivateIpv4(IPAddress address)
-    {
-        if (address.AddressFamily != AddressFamily.InterNetwork)
-            return false;
-
-        var bytes = address.GetAddressBytes();
-        return bytes.Length == 4 &&
-               (bytes[0] == 10 ||
-                (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
-                (bytes[0] == 192 && bytes[1] == 168));
-    }
-
-
-    private bool IsPrivateIpv6(IPAddress address)
-    {
-        if (address.AddressFamily != AddressFamily.InterNetworkV6)
-            return false;
-
-        var bytes = address.GetAddressBytes();
-        return bytes.Length == 16 && (bytes[0] & 0xFE) == 0xFC;
-    }
-
-
-    private int GetDirectEndpointPriorityForThisDevice(EnrollmentEndpoint endpoint)
-    {
-        if (!IPAddress.TryParse(endpoint.Host, out var remoteAddress))
-            return 0;
-
-        if (!IsUsableUnicastAddress(remoteAddress))
-            return int.MinValue;
-
-        var localNetworks = GetLocalIpv4Networks();
-        if (remoteAddress.AddressFamily == AddressFamily.InterNetwork)
-        {
-            if (localNetworks.Any(network => network.Address.Equals(remoteAddress)))
-            {
-                DeviceEnrollmentTrace.Info($"Skipping direct enrollment endpoint {endpoint.Host}:{endpoint.Port} because the address belongs to this device.");
-                return int.MinValue;
-            }
-
-            var samePhysicalSubnet = localNetworks.Any(network => !network.IsVirtualAdapter && IsInSameIpv4Subnet(remoteAddress, network.Address, network.Mask));
-            if (samePhysicalSubnet)
-                return 5000 + GetPrivateAddressPriority(remoteAddress);
-
-            var sameVirtualSubnet = localNetworks.Any(network => network.IsVirtualAdapter && IsInSameIpv4Subnet(remoteAddress, network.Address, network.Mask));
-            if (sameVirtualSubnet)
-                return 2500 + GetPrivateAddressPriority(remoteAddress);
-
-            if (IsPrivateIpv4(remoteAddress))
-                return 100 + GetPrivateAddressPriority(remoteAddress);
-        }
-
-        return remoteAddress.AddressFamily == AddressFamily.InterNetwork ? 0 : -100;
-    }
-
-
-    private List<LocalIpv4Network> GetLocalIpv4Networks()
-    {
-        var networks = new List<LocalIpv4Network>();
-
-        try
-        {
-            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (!LocalNetworkInterfaceUtil.IsOperationalForLocalNetwork(networkInterface))
-                    continue;
-
-                if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
-                    networkInterface.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
-                    continue;
-
-                var isVirtualAdapter = IsVirtualOrNonLanAdapter(networkInterface);
-                foreach (var addressInfo in networkInterface.GetIPProperties().UnicastAddresses)
-                {
-                    if (addressInfo.Address.AddressFamily != AddressFamily.InterNetwork ||
-                        addressInfo.IPv4Mask is null ||
-                        !IsUsableUnicastAddress(addressInfo.Address))
-                        continue;
-
-                    networks.Add(new LocalIpv4Network
-                    {
-                        Address = addressInfo.Address,
-                        Mask = addressInfo.IPv4Mask,
-                        InterfaceName = networkInterface.Name,
-                        IsVirtualAdapter = isVirtualAdapter
-                    });
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            DeviceEnrollmentTrace.Error($"Could not enumerate local IPv4 networks: {ex.Message}", ex);
-        }
-
-        return networks;
-    }
-
-
-    private bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
-    {
-        if (remoteAddress.AddressFamily != AddressFamily.InterNetwork ||
-            localAddress.AddressFamily != AddressFamily.InterNetwork ||
-            mask.AddressFamily != AddressFamily.InterNetwork)
-            return false;
-
-        var remoteBytes = remoteAddress.GetAddressBytes();
-        var localBytes = localAddress.GetAddressBytes();
-        var maskBytes = mask.GetAddressBytes();
-
-        if (remoteBytes.Length != 4 || localBytes.Length != 4 || maskBytes.Length != 4)
-            return false;
-
-        for (var i = 0; i < 4; i++)
-        {
-            if ((remoteBytes[i] & maskBytes[i]) != (localBytes[i] & maskBytes[i]))
-                return false;
-        }
-
-        return true;
-    }
+    private int GetDirectEndpointPriorityForThisDevice(EnrollmentEndpoint endpoint) =>
+        _networkAddresses.GetRemoteEndpointPriority(endpoint.Host);
 
 
     private EnrollmentEndpoint ToEnrollmentEndpoint(DeviceEnrollmentParsedDirectEndpoint endpoint) =>
@@ -1171,40 +804,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private void StartAdvertisingLocked(EnrollmentSession session, IReadOnlyList<string> directHosts)
-    {
-        var advertiseHash = DeviceEnrollmentCode.BuildEnrollmentAdvertisementHash(
-            session.SessionId,
-            session.Secret,
-            _identity.FingerprintHex,
-            _identity.SignPublicKey);
-
-        var discovery = new ServiceDiscovery();
-        var profile = new ServiceProfile($"pml-enroll-{session.SessionId.ToLowerInvariant()}", MdnsServiceType, (ushort)SyncPort);
-        profile.AddProperty("deviceid", _identity.DeviceIdHex);
-        profile.AddProperty("deviceguid", _identity.LocalDeviceId.ToString("N"));
-        profile.AddProperty("signpub", Convert.ToHexString(_identity.SignPublicKey));
-        profile.AddProperty("agreepub", Convert.ToHexString(_identity.AgreementPublicKey));
-        profile.AddProperty("tlsfp", _identity.FingerprintHex);
-        profile.AddProperty("enrollid", session.SessionId);
-        profile.AddProperty("enrollhash", advertiseHash);
-        profile.AddProperty("hosts", string.Join(",", directHosts.Where(host => IPAddress.TryParse(host, out _)).Distinct(StringComparer.OrdinalIgnoreCase)));
-
-        try
-        {
-            discovery.Advertise(profile);
-            discovery.Announce(profile);
-            session.Discovery = discovery;
-            session.Profile = profile;
-        }
-        catch
-        {
-            discovery.Dispose();
-            throw;
-        }
-    }
-
-
     private void StartEnrollmentExpirationCountdownLocked(EnrollmentSession session)
     {
         CancelEnrollmentExpirationLocked();
@@ -1235,8 +834,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
                     _currentSession.ErrorMessage = "The enrollment code expired.";
                     _enrollmentExpirationCancellation = null;
-                    StopEnrollmentNetworkMonitoringLocked();
-                    StopAdvertisingLocked();
+                    DeactivateEnrollmentDiscoveryLocked();
+                    _currentSession.ClearSensitiveData();
                     expired = true;
                 }
             }
@@ -1275,148 +874,10 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private void StartEnrollmentNetworkMonitoringLocked()
+    private void DeactivateEnrollmentDiscoveryLocked()
     {
-        if (_enrollmentNetworkMonitoringStarted)
-            return;
-
-        NetworkChange.NetworkAddressChanged += OnEnrollmentNetworkChanged;
-        NetworkChange.NetworkAvailabilityChanged += OnEnrollmentNetworkAvailabilityChanged;
-        _enrollmentNetworkMonitoringStarted = true;
-        DeviceEnrollmentTrace.Info("Network-change monitoring started for the active enrollment session.");
-    }
-
-
-    private void StopEnrollmentNetworkMonitoringLocked()
-    {
-        if (_enrollmentNetworkMonitoringStarted)
-        {
-            NetworkChange.NetworkAddressChanged -= OnEnrollmentNetworkChanged;
-            NetworkChange.NetworkAvailabilityChanged -= OnEnrollmentNetworkAvailabilityChanged;
-            _enrollmentNetworkMonitoringStarted = false;
-            DeviceEnrollmentTrace.Info("Network-change monitoring stopped for the enrollment session.");
-        }
-
-        var cancellation = _enrollmentNetworkRefreshCancellation;
-        _enrollmentNetworkRefreshCancellation = null;
-        cancellation?.Cancel();
-    }
-
-
-    private void OnEnrollmentNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e) =>
-        ScheduleEnrollmentNetworkRefresh();
-
-
-    private void OnEnrollmentNetworkChanged(object? sender, EventArgs e) =>
-        ScheduleEnrollmentNetworkRefresh();
-
-
-    private void ScheduleEnrollmentNetworkRefresh()
-    {
-        CancellationTokenSource cancellation;
-
-        lock (_lock)
-        {
-            if (!_enrollmentNetworkMonitoringStarted ||
-                _currentSession is null ||
-                _currentSession.State != DeviceEnrollmentState.Waiting)
-                return;
-
-            _enrollmentNetworkRefreshCancellation?.Cancel();
-            cancellation = new CancellationTokenSource();
-            _enrollmentNetworkRefreshCancellation = cancellation;
-        }
-
-        _ = Task.Run(() => RefreshEnrollmentAdvertisementAfterNetworkChangeAsync(cancellation), CancellationToken.None);
-    }
-
-
-    private async Task RefreshEnrollmentAdvertisementAfterNetworkChangeAsync(CancellationTokenSource cancellation)
-    {
-        try
-        {
-            await Task.Delay(TimeSpan.FromSeconds(NetworkRefreshDebounceSeconds), cancellation.Token);
-
-            EnrollmentSession? session;
-            lock (_lock)
-            {
-                if (!ReferenceEquals(_enrollmentNetworkRefreshCancellation, cancellation))
-                    return;
-
-                _enrollmentNetworkRefreshCancellation = null;
-                session = _currentSession;
-
-                if (session is null || session.State != DeviceEnrollmentState.Waiting)
-                    return;
-            }
-
-            var hosts = GetLocalEnrollmentHosts();
-            if (hosts.Count == 0)
-            {
-                DeviceEnrollmentTrace.Info("The network changed during enrollment, but no usable local address is available yet. The enrollment advertisement will be refreshed after the next network change.");
-                return;
-            }
-
-            lock (_lock)
-            {
-                if (!ReferenceEquals(_currentSession, session) ||
-                    session.State != DeviceEnrollmentState.Waiting ||
-                    !_enrollmentNetworkMonitoringStarted)
-                    return;
-
-                StopAdvertisingLocked();
-                StartAdvertisingLocked(session, hosts);
-            }
-
-            DeviceEnrollmentTrace.Info($"Enrollment advertisement refreshed after the network change. Hosts={string.Join(", ", hosts)}.");
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        catch (Exception ex)
-        {
-            DeviceEnrollmentTrace.Error($"Could not refresh the enrollment advertisement after the network change: {ex.Message}", ex);
-        }
-        finally
-        {
-            cancellation.Dispose();
-        }
-    }
-
-
-    private void StopAdvertisingLocked()
-    {
-        var session = _currentSession;
-        var discovery = session?.Discovery;
-        var profile = session?.Profile;
-
-        if (session is null || discovery is null)
-            return;
-
-        session.Discovery = null;
-        session.Profile = null;
-
-        try
-        {
-            if (profile is not null)
-                discovery.Unadvertise(profile);
-        }
-        catch (Exception ex)
-        {
-            DeviceEnrollmentTrace.Error($"Could not unadvertise the enrollment service cleanly: {ex.Message}", ex);
-        }
-
-        try
-        {
-            discovery.Dispose();
-        }
-        catch (Exception ex)
-        {
-            DeviceEnrollmentTrace.Error($"Could not dispose the enrollment discovery service cleanly: {ex.Message}", ex);
-        }
+        if (_currentSession is not null)
+            _localDiscovery.DeactivateEnrollmentSession(_currentSession.SessionId);
     }
 
 
@@ -1432,235 +893,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         _currentSession.ErrorCode = DeviceEnrollmentErrorCode.CodeExpired;
         _currentSession.ErrorMessage = "The enrollment code expired.";
         CancelEnrollmentExpirationLocked();
-        StopEnrollmentNetworkMonitoringLocked();
-        StopAdvertisingLocked();
-    }
-
-
-    private async Task<IReadOnlyList<EnrollmentEndpoint>> FindEnrollmentEndpointsAsync(DeviceEnrollmentParsedCode parsed, CancellationToken ct)
-    {
-        var tcs = new TaskCompletionSource<IReadOnlyList<EnrollmentEndpoint>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var discovery = new ServiceDiscovery();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        using var queryLoop = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
-        timeout.CancelAfter(TimeSpan.FromSeconds(DeviceEnrollmentDiscoveryTimeoutSeconds));
-
-        discovery.ServiceInstanceDiscovered += OnDiscovered;
-        var queryTask = RepeatQueriesAsync(queryLoop.Token);
-
-        using (timeout.Token.Register(() => tcs.TrySetCanceled(timeout.Token)))
-        {
-            try
-            {
-                return await tcs.Task;
-            }
-            catch (OperationCanceledException ex)
-            {
-                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceNotFound, "The new device could not be found on the local network. Keep the code screen open on the new device and make sure both devices are on the same local network.", ex);
-            }
-            finally
-            {
-                queryLoop.Cancel();
-                discovery.ServiceInstanceDiscovered -= OnDiscovered;
-
-                try
-                {
-                    await queryTask;
-                }
-                catch
-                {
-                }
-            }
-        }
-
-        async Task RepeatQueriesAsync(CancellationToken queryCt)
-        {
-            while (!queryCt.IsCancellationRequested && !tcs.Task.IsCompleted)
-            {
-                try
-                {
-                    discovery.QueryServiceInstances(MdnsServiceType);
-                }
-                catch
-                {
-                }
-
-                await Task.Delay(TimeSpan.FromSeconds(2), queryCt);
-            }
-        }
-
-
-        async void OnDiscovered(object? sender, ServiceInstanceDiscoveryEventArgs e)
-        {
-            try
-            {
-                var mdns = discovery.Mdns;
-                var txt = await ResolveTxtAsync(mdns, e.ServiceInstanceName, timeout.Token);
-                if (txt is null)
-                    return;
-
-                if (!txt.TryGetValue("enrollid", out var enrollId) || !string.Equals(enrollId, parsed.SessionId, StringComparison.Ordinal))
-                    return;
-
-                if (!TryReadEndpointIdentity(txt, out var deviceId, out var tlsFp, out var signPub, out var agreePub))
-                    return;
-
-                if (!txt.TryGetValue("enrollhash", out var advertisedHash))
-                    return;
-
-                var expectedHash = DeviceEnrollmentCode.BuildEnrollmentAdvertisementHash(parsed.SessionId, parsed.Secret, tlsFp, signPub);
-                if (!string.Equals(expectedHash, advertisedHash, StringComparison.Ordinal))
-                    return;
-
-                if (deviceId == _identity.LocalDeviceId || _identity.SignPublicKey.SequenceEqual(signPub))
-                    return;
-
-                var srv = await ResolveSrvAsync(mdns, e.ServiceInstanceName, timeout.Token);
-                if (srv is null)
-                    return;
-
-                var hosts = new List<string>();
-                if (txt.TryGetValue("hosts", out var advertisedHosts))
-                    hosts.AddRange(ParseAdvertisedHosts(advertisedHosts));
-
-                hosts.AddRange(await ResolveHostsAsync(mdns, srv.Target, timeout.Token));
-
-                var endpoints = hosts
-                    .Where(host => !string.IsNullOrWhiteSpace(host))
-                    .Select(host => host.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Select(host => new EnrollmentEndpoint
-                    {
-                        Host = host,
-                        Port = srv.Port,
-                        DeviceId = deviceId,
-                        TlsCertFingerprint = tlsFp,
-                        SignPublicKey = signPub,
-                        AgreementPublicKey = agreePub
-                    })
-                    .Where(endpoint => !IsLocalEndpoint(endpoint))
-                    .Select(endpoint => new { Endpoint = endpoint, Priority = GetDirectEndpointPriorityForThisDevice(endpoint) })
-                    .Where(candidate => candidate.Priority > int.MinValue)
-                    .OrderByDescending(candidate => candidate.Priority)
-                    .ThenBy(candidate => candidate.Endpoint.Host, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                if (endpoints.Count == 0)
-                    return;
-
-                var bestPriority = endpoints[0].Priority;
-                if (bestPriority >= 2000)
-                    endpoints = endpoints.Where(candidate => candidate.Priority >= 2000).ToList();
-                else if (bestPriority > 0)
-                    endpoints = endpoints.Where(candidate => candidate.Priority > 0).ToList();
-
-                DeviceEnrollmentTrace.Info($"mDNS enrollment endpoints resolved: {string.Join(", ", endpoints.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
-                tcs.TrySetResult(endpoints.Select(candidate => candidate.Endpoint).ToList());
-            }
-            catch (Exception ex)
-            {
-                DeviceEnrollmentTrace.Error($"mDNS enrollment endpoint processing failed: {ex.Message}", ex);
-            }
-        }
-    }
-
-
-    private async Task<IReadOnlyDictionary<string, string>?> ResolveTxtAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
-    {
-        var query = new Message();
-        query.Questions.Add(new Question { Name = instance, Type = DnsType.TXT });
-
-        var response = await mdns.ResolveAsync(query, ct);
-        var record = response.Answers.Concat(response.AdditionalRecords).OfType<TXTRecord>().FirstOrDefault();
-        if (record is null)
-            return null;
-
-        return record.Strings
-            .Where(s => s.Contains('='))
-            .Select(s =>
-            {
-                var separatorIndex = s.IndexOf('=');
-                return new KeyValuePair<string, string>(s[..separatorIndex], s[(separatorIndex + 1)..]);
-            })
-            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(x => x.Key, x => x.First().Value, StringComparer.OrdinalIgnoreCase);
-    }
-
-
-    private async Task<SRVRecord?> ResolveSrvAsync(MulticastService mdns, DomainName instance, CancellationToken ct)
-    {
-        var query = new Message();
-        query.Questions.Add(new Question { Name = instance, Type = DnsType.SRV });
-
-        var response = await mdns.ResolveAsync(query, ct);
-        return response.Answers.Concat(response.AdditionalRecords).OfType<SRVRecord>().FirstOrDefault();
-    }
-
-
-    private IReadOnlyList<string> ParseAdvertisedHosts(string advertisedHosts) =>
-        advertisedHosts
-            .Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(host => IPAddress.TryParse(host, out _))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-
-    private async Task<IReadOnlyList<string>> ResolveHostsAsync(MulticastService mdns, DomainName target, CancellationToken ct)
-    {
-        var hosts = new List<string>();
-
-        var aQuery = new Message();
-        aQuery.Questions.Add(new Question { Name = target, Type = DnsType.A });
-
-        var aResponse = await mdns.ResolveAsync(aQuery, ct);
-        hosts.AddRange(aResponse.Answers.Concat(aResponse.AdditionalRecords).OfType<ARecord>().Select(record => record.Address.ToString()));
-
-        var aaaaQuery = new Message();
-        aaaaQuery.Questions.Add(new Question { Name = target, Type = DnsType.AAAA });
-
-        var aaaaResponse = await mdns.ResolveAsync(aaaaQuery, ct);
-        hosts.AddRange(aaaaResponse.Answers.Concat(aaaaResponse.AdditionalRecords).OfType<AAAARecord>().Select(record => record.Address.ToString()));
-
-        return hosts
-            .Where(host => IPAddress.TryParse(host, out _))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-
-    private bool TryReadEndpointIdentity(IReadOnlyDictionary<string, string> txt, out Guid deviceId, out string tlsFp, out byte[] signPub, out byte[] agreePub)
-    {
-        deviceId = Guid.Empty;
-        tlsFp = string.Empty;
-        signPub = [];
-        agreePub = [];
-
-        try
-        {
-            if (!txt.TryGetValue("deviceguid", out var deviceGuid) || !Guid.TryParseExact(deviceGuid, "N", out deviceId))
-                return false;
-
-            if (!txt.TryGetValue("tlsfp", out var tlsFingerprint) || string.IsNullOrWhiteSpace(tlsFingerprint))
-                return false;
-
-            tlsFp = tlsFingerprint;
-
-            if (!txt.TryGetValue("signpub", out var signPubHex))
-                return false;
-
-            if (!txt.TryGetValue("agreepub", out var agreePubHex))
-                return false;
-
-            signPub = Convert.FromHexString(signPubHex);
-            agreePub = Convert.FromHexString(agreePubHex);
-
-            return signPub.Length == SyncConstants.SyncDeltaEd25519PublicKeyBytes &&
-                   agreePub.Length == SyncConstants.SyncDeltaX25519PublicKeyBytes;
-        }
-        catch
-        {
-            return false;
-        }
+        DeactivateEnrollmentDiscoveryLocked();
+        _currentSession.ClearSensitiveData();
     }
 
 
@@ -1741,7 +975,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         await unitOfWork.SaveChangesAsync(ct);
     }
 
-
     private async Task<Device?> FindExistingDeviceForEndpointAsync(IDeviceRepository devices, EnrollmentEndpoint endpoint, CancellationToken ct)
     {
         var matches = new List<Device>();
@@ -1782,7 +1015,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         return device;
     }
 
-
     private async Task RejectIfPrimaryUserAlreadyLinkedToLocalDeviceAsync(IServiceProvider services, Guid userId, CancellationToken ct)
     {
         var localUserDevices = services.GetRequiredService<ILocalUserDeviceRepository>();
@@ -1794,7 +1026,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (localLink.LocalDeviceIdentityId == _identity.LocalDeviceId)
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "This profile is already linked to the local device.");
     }
-
 
     private async Task CacheIncomingEnrollmentSourceEndpointAsync(
         IServiceProvider services,
@@ -1816,11 +1047,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (string.IsNullOrWhiteSpace(sourceTlsCertFingerprint))
             return;
 
-        if (IPAddress.TryParse(sourceHost, out var sourceAddress))
-        {
-            if (!IsUsableUnicastAddress(sourceAddress))
-                return;
-        }
+        if (IPAddress.TryParse(sourceHost, out _) &&
+            _networkAddresses.GetRemoteEndpointPriority(sourceHost) == int.MinValue)
+            return;
 
         var devices = services.GetRequiredService<IDeviceRepository>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
@@ -1844,7 +1073,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         syncIdentities.TryAdd(device);
         syncTasks.TryStart(endpoint, device);
     }
-
 
     private async Task<DeviceEnrollmentSnapshot> BuildSnapshotAsync(IServiceProvider services, Guid userId, CancellationToken ct)
     {
@@ -1994,7 +1222,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         };
     }
 
-
     private async Task EnsureEncryptedDeviceDataAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct)
     {
         using var bundle = await users.GetAndVerifyUserDataBundleAsync(user, token, ct);
@@ -2016,7 +1243,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         bundle.UserDevicesData.GenerateIntegrityHash();
         await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, ct);
     }
-
 
     private string BuildUniqueEncryptedDeviceName(UserDevicesData userDevicesData, string requestedName, Guid deviceId)
     {
@@ -2041,7 +1267,6 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         throw new InvalidInputException();
     }
-
 
     private async Task<EnrollmentEndpoint> ResolveEndpointIdentityAsync(EnrollmentEndpoint endpoint, DeviceEnrollmentParsedCode parsed, CancellationToken ct)
     {
@@ -2730,8 +1955,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         lock (_lock)
         {
             CancelEnrollmentExpirationLocked();
-            StopEnrollmentNetworkMonitoringLocked();
-            StopAdvertisingLocked();
+            DeactivateEnrollmentDiscoveryLocked();
+            _currentSession?.ClearSensitiveData();
             _currentSession = null;
         }
     }
