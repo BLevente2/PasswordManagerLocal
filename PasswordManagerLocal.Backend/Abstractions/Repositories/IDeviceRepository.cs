@@ -6,10 +6,10 @@ public interface IDeviceRepository : IGenericRepository<Device>
 {
     Task<IReadOnlyList<Device>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default);
     Task<IReadOnlyList<Device>> ListDevicesNeedingSyncAsync(CancellationToken ct = default);
-    Task<Device?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default);
-    Task<Device?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default);
     Task<Device?> GetByIdWithUserDevicesAsync(Guid id, CancellationToken ct = default);
+    Task<Device?> GetByIdAsNoTrackingWithUserDevicesAsync(Guid id, CancellationToken ct = default);
+    Task<IReadOnlyList<Guid>> ListActiveUserIdsAsync(Guid deviceId, CancellationToken ct = default);
     Task<Device?> GetBySignPublicKeyAsync(byte[] signPublicKey, CancellationToken ct = default);
     Task<Device?> GetByTlsCertFingerprintAsync(string tlsCertFingerprint, CancellationToken ct = default);
     Task<Device?> GetByTlsCertFingerprintWithUserDevicesAsync(string tlsCertFingerprint, CancellationToken ct = default);

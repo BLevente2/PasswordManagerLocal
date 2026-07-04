@@ -2,6 +2,7 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Projections;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using System.Text.Json;
@@ -16,7 +17,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     private readonly IGroupRepository _groups;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
-    private readonly ILocalUserDeviceRepository _localUserDevices;
+    private readonly ISyncRouteRepository _syncRoutes;
     private readonly IDeviceIdentityService _identity;
 
     public OutgoingDeltaBuilderService(
@@ -24,14 +25,14 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
-        ILocalUserDeviceRepository localUserDevices,
+        ISyncRouteRepository syncRoutes,
         IDeviceIdentityService identity)
     {
         _users = users;
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
-        _localUserDevices = localUserDevices;
+        _syncRoutes = syncRoutes;
         _identity = identity;
     }
 
@@ -136,7 +137,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
         if (item.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdAsNoTrackingWithUsersAsync(item.ModelId, ct);
+            var group = await _groups.GetWithUserIdsAsNoTrackingAsync(item.ModelId, ct);
             if (group is null)
                 throw new InvalidOperationException("Group sync source was not found.");
 
@@ -146,7 +147,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
         if (item.ModelType == SyncModelType.Device)
         {
-            var sourceDevice = await _devices.GetByIdAsNoTrackingWithUsersAsync(item.ModelId, ct);
+            var sourceDevice = await _devices.GetByIdAsNoTrackingWithUserDevicesAsync(item.ModelId, ct);
             if (sourceDevice is null)
                 throw new InvalidOperationException("Device sync source was not found.");
 
@@ -189,13 +190,13 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private GroupSyncPayload CreateGroupPayload(Group group, long timestamp)
+    private GroupSyncPayload CreateGroupPayload(GroupWithUserIdsData group, long timestamp)
     {
         var payload = new GroupSyncPayload
         {
             Id = group.Id,
             EncryptedPayload = group.EncryptedPayload,
-            UserIds = group.Users.Select(u => u.UId).Distinct().ToList()
+            UserIds = group.UserIds
         };
 
         payload.IntegrityHash = SyncCryptoUtil.CalculateGroupHash(payload, timestamp);
@@ -208,19 +209,13 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         foreach (var link in device.UserDevices)
             link.VerifyIntegrity();
 
-        var userIds = new List<Guid>();
-        foreach (var userId in device.UserDevices
-                     .Where(ud => !ud.IsDeleted && ud.IsSyncOn)
-                     .Select(ud => ud.UserId)
-                     .Where(id => id != Guid.Empty)
-                     .Distinct())
-        {
-            if (!await _localUserDevices.IsSyncOnAsync(userId, ct))
-                continue;
-
-            if (await _userDevices.HasActiveLinkAsync(userId, targetDeviceId, ct))
-                userIds.Add(userId);
-        }
+        var candidateUserIds = device.UserDevices
+            .Where(link => !link.IsDeleted && link.IsSyncOn)
+            .Select(link => link.UserId)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        var userIds = await _syncRoutes.ListEligibleUserIdsAsync(candidateUserIds, targetDeviceId, ct);
 
         var payload = new DeviceSyncPayload
         {
@@ -238,7 +233,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             BlockedAt = UtcDateTimeUtil.ToUtc(device.BlockedAt),
             InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
             LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(device.LastInvalidSyncAttemptAt),
-            UserIds = userIds
+            UserIds = userIds.ToList()
         };
 
         payload.IntegrityHash = SyncCryptoUtil.CalculateDeviceHash(payload, timestamp);

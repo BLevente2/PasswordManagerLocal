@@ -1091,7 +1091,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var userDevices = allUserDevices.Where(ud => !ud.IsDeleted).ToList();
         var userDeviceIds = userDevices.Select(ud => ud.DeviceId).Distinct().ToList();
-        var groups = await groupsRepository.ListByUserWithUsersAsNoTrackingAsync(userId, ct);
+        var groups = await groupsRepository.ListByUserWithUserIdsAsNoTrackingAsync(userId, ct);
         var devices = await devicesRepository.ListByIdsWithUserDevicesAsNoTrackingAsync(userDeviceIds, _identity.LocalDeviceId, ct);
 
         foreach (var device in devices)
@@ -1101,7 +1101,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             device.GenerateIntegrityHash();
         }
         foreach (var group in groups)
-            group.GenerateIntegrityHash();
+        {
+            var integritySource = new Group
+            {
+                Id = group.Id,
+                EncryptedPayload = group.EncryptedPayload,
+                LastModifiedAt = group.LastModifiedAt
+            };
+            integritySource.GenerateIntegrityHash();
+            group.IntegrityHash = integritySource.IntegrityHash;
+        }
         user.GenerateIntegrityHash();
 
         var deviceSnapshots = devices.Select(d => new DeviceEnrollmentDeviceSnapshot
@@ -1197,7 +1206,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 EncryptedPayload = g.EncryptedPayload,
                 LastModifiedAt = UtcDateTimeUtil.ToUtc(g.LastModifiedAt),
                 IntegrityHash = g.IntegrityHash,
-                UserIds = g.Users.Select(u => u.UId).Distinct().ToList()
+                UserIds = g.UserIds
             }).ToList(),
             Devices = deviceSnapshots,
             UserDevices = userDevices.Select(ud => new DeviceEnrollmentUserDeviceSnapshot

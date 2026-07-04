@@ -23,6 +23,7 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
         Devices = new DeviceRepository(db);
         UserDevices = new UserDeviceRepository(db);
         LocalUserDevices = new LocalUserDeviceRepository(db);
+        SyncRoutes = new SyncRouteRepository(db);
         SyncItems = new SyncItemRepository(db);
         SyncQueue = new SyncQueueRepository(db);
         Tombstones = new SyncTombstoneRepository(db);
@@ -35,6 +36,7 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
     public DeviceRepository Devices { get; }
     public UserDeviceRepository UserDevices { get; }
     public LocalUserDeviceRepository LocalUserDevices { get; }
+    public SyncRouteRepository SyncRoutes { get; }
     public SyncItemRepository SyncItems { get; }
     public SyncQueueRepository SyncQueue { get; }
     public SyncTombstoneRepository Tombstones { get; }

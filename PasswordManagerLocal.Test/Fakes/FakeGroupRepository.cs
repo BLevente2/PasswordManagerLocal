@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Projections;
 
 namespace PasswordManagerLocal.Test.Fakes;
 
@@ -25,11 +26,21 @@ public sealed class FakeGroupRepository : IGroupRepository
     public Task<Group?> GetByIdWithUsersAsync(Guid id, CancellationToken ct = default) =>
         GetByIdAsync(id, ct);
 
-    public Task<Group?> GetByIdAsNoTrackingWithUsersAsync(Guid id, CancellationToken ct = default) =>
-        GetByIdAsync(id, ct);
+    public Task<GroupWithUserIdsData?> GetWithUserIdsAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(_items.TryGetValue(id, out var group) ? Project(group) : null);
 
-    public Task<IReadOnlyList<Group>> ListByUserWithUsersAsNoTrackingAsync(Guid userId, CancellationToken ct = default) =>
-        Task.FromResult((IReadOnlyList<Group>)_items.Values.Where(group => group.Users.Any(user => user.UId == userId)).ToList());
+    public Task<IReadOnlyList<GroupWithUserIdsData>> ListByUserWithUserIdsAsNoTrackingAsync(
+        Guid userId,
+        CancellationToken ct = default) =>
+        Task.FromResult((IReadOnlyList<GroupWithUserIdsData>)_items.Values
+            .Where(group => group.Users.Any(user => user.UId == userId))
+            .Select(Project)
+            .ToList());
+
+    public Task<IReadOnlyList<Guid>> ListUserIdsAsync(Guid groupId, CancellationToken ct = default) =>
+        Task.FromResult((IReadOnlyList<Guid>)(_items.TryGetValue(groupId, out var group)
+            ? group.Users.Select(user => user.UId).ToList()
+            : []));
 
     public Task<IReadOnlyList<Guid>> ListIdsByUserAsync(Guid userId, CancellationToken ct = default) =>
         Task.FromResult((IReadOnlyList<Guid>)_items.Values
@@ -57,4 +68,14 @@ public sealed class FakeGroupRepository : IGroupRepository
 
     public Task<bool> ExistsAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(_items.ContainsKey(id));
+
+    private static GroupWithUserIdsData Project(Group group) =>
+        new()
+        {
+            Id = group.Id,
+            EncryptedPayload = group.EncryptedPayload,
+            LastModifiedAt = group.LastModifiedAt,
+            IntegrityHash = group.IntegrityHash,
+            UserIds = group.Users.Select(user => user.UId).ToList()
+        };
 }

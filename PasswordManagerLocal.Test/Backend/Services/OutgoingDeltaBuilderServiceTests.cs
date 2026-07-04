@@ -56,12 +56,14 @@ public sealed class OutgoingDeltaBuilderServiceTests
         user.UserDevices.Add(link);
         user.GenerateIntegrityHash();
         await users.AddAsync(user);
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
         var builder = new OutgoingDeltaBuilderService(
             users,
             new FakeGroupRepository(),
             new FakeDeviceRepository(),
-            new FakeUserDeviceRepository(),
-            new FakeLocalUserDeviceRepository(),
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
             sender);
         var changedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -109,12 +111,14 @@ public sealed class OutgoingDeltaBuilderServiceTests
         await sender.SetSyncOnAsync(true);
         await recipient.InitializeAsync();
         var target = CreateTargetDevice(recipient);
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
         var builder = new OutgoingDeltaBuilderService(
             new InMemoryUserRepository(),
             new FakeGroupRepository(),
             new FakeDeviceRepository(),
-            new FakeUserDeviceRepository(),
-            new FakeLocalUserDeviceRepository(),
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
             sender);
         var deletedId = Guid.NewGuid();
 
@@ -140,6 +144,81 @@ public sealed class OutgoingDeltaBuilderServiceTests
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task BuildDeviceDelta_IncludesOnlyUsersWithEligibleTargetRoutes()
+    {
+        using var senderProvider = CreateIdentityProvider();
+        using var recipientProvider = CreateIdentityProvider();
+        var sender = CreateIdentity(senderProvider);
+        var recipient = CreateIdentity(recipientProvider);
+        await sender.InitializeAsync();
+        await sender.SetSyncOnAsync(true);
+        await recipient.InitializeAsync();
+        var target = CreateTargetDevice(recipient);
+
+        var eligibleUserId = Guid.NewGuid();
+        var localSyncOffUserId = Guid.NewGuid();
+        var targetSyncOffUserId = Guid.NewGuid();
+        var sourceSyncOffUserId = Guid.NewGuid();
+        var sourceDevice = new Device
+        {
+            Id = Guid.NewGuid(),
+            PublicKey = [1],
+            SignPublicKey = [2],
+            TlsCertFingerprint = "source-device",
+            DeviceType = DeviceType.WindowsPc,
+            IsTrusted = true
+        };
+
+        AddSourceLink(sourceDevice, eligibleUserId, isSyncOn: true);
+        AddSourceLink(sourceDevice, localSyncOffUserId, isSyncOn: true);
+        AddSourceLink(sourceDevice, targetSyncOffUserId, isSyncOn: true);
+        AddSourceLink(sourceDevice, sourceSyncOffUserId, isSyncOn: false);
+        sourceDevice.GenerateIntegrityHash();
+
+        var devices = new FakeDeviceRepository();
+        devices.Seed(sourceDevice);
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
+        await localUsers.AddAsync(new LocalUserDevice { UserId = eligibleUserId, IsSyncOn = true });
+        await localUsers.AddAsync(new LocalUserDevice { UserId = localSyncOffUserId, IsSyncOn = false });
+        await localUsers.AddAsync(new LocalUserDevice { UserId = targetSyncOffUserId, IsSyncOn = true });
+        await localUsers.AddAsync(new LocalUserDevice { UserId = sourceSyncOffUserId, IsSyncOn = true });
+        await userDevices.AddAsync(CreateTargetLink(eligibleUserId, target.Id, isSyncOn: true));
+        await userDevices.AddAsync(CreateTargetLink(localSyncOffUserId, target.Id, isSyncOn: true));
+        await userDevices.AddAsync(CreateTargetLink(targetSyncOffUserId, target.Id, isSyncOn: false));
+        await userDevices.AddAsync(CreateTargetLink(sourceSyncOffUserId, target.Id, isSyncOn: true));
+
+        var builder = new OutgoingDeltaBuilderService(
+            new InMemoryUserRepository(),
+            new FakeGroupRepository(),
+            devices,
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
+            sender);
+
+        var delta = await builder.BuildAsync(new SyncItem
+        {
+            ModelId = sourceDevice.Id,
+            ModelType = SyncModelType.Device,
+            ChangeType = SyncChangeType.Updated
+        }, target);
+
+        var plaintext = recipient.DecryptFromDevice(
+            delta.Payload,
+            delta.EphemeralPublicKey,
+            delta.Nonce,
+            delta.Tag,
+            SyncCryptoUtil.BuildAssociatedData(delta));
+        var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintext);
+
+        MSTestAssert.IsNotNull(payload?.Device);
+        CollectionAssert.AreEquivalent(new[] { eligibleUserId }, payload.Device.UserIds);
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
@@ -152,12 +231,14 @@ public sealed class OutgoingDeltaBuilderServiceTests
         await sender.InitializeAsync();
         await sender.SetSyncOnAsync(true);
         await recipient.InitializeAsync();
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
         var builder = new OutgoingDeltaBuilderService(
             new InMemoryUserRepository(),
             new FakeGroupRepository(),
             new FakeDeviceRepository(),
-            new FakeUserDeviceRepository(),
-            new FakeLocalUserDeviceRepository(),
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
             sender);
         var item = new SyncItem
         {
@@ -181,6 +262,33 @@ public sealed class OutgoingDeltaBuilderServiceTests
         await ExpectThrowsAsync<InvalidOperationException>(() => builder.BuildAsync(item, blocked));
         await ExpectThrowsAsync<InvalidOperationException>(() => builder.BuildAsync(item, untrusted));
         await ExpectThrowsAsync<InvalidOperationException>(() => builder.BuildAsync(item, local));
+    }
+
+
+    private static void AddSourceLink(Device sourceDevice, Guid userId, bool isSyncOn)
+    {
+        var link = new UserDevice
+        {
+            UserId = userId,
+            DeviceId = sourceDevice.Id,
+            IsSyncOn = isSyncOn,
+            IsDeleted = false
+        };
+        link.GenerateIntegrityHash();
+        sourceDevice.UserDevices.Add(link);
+    }
+
+    private static UserDevice CreateTargetLink(Guid userId, Guid targetDeviceId, bool isSyncOn)
+    {
+        var link = new UserDevice
+        {
+            UserId = userId,
+            DeviceId = targetDeviceId,
+            IsSyncOn = isSyncOn,
+            IsDeleted = false
+        };
+        link.GenerateIntegrityHash();
+        return link;
     }
 
     private static ServiceProvider CreateIdentityProvider()

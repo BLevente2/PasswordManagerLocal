@@ -65,14 +65,17 @@ public sealed class NetworkDeltaServiceTests
         await ExpectThrowsAsync<UnauthorizedAccessException>(() => service.ApplyAsync(setup.Delta));
     }
 
-    private static NetworkDeltaService CreateService(IDeviceIdentityService identity, FakeDeviceRepository devices) =>
-        new(
+    private static NetworkDeltaService CreateService(IDeviceIdentityService identity, FakeDeviceRepository devices)
+    {
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
+        return new NetworkDeltaService(
             new FakeOutgoingDeltaBuilderService(),
             new InMemoryUserRepository(),
             new FakeGroupRepository(),
             devices,
-            new FakeUserDeviceRepository(),
-            new FakeLocalUserDeviceRepository(),
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
             new FakeSyncTombstoneRepository(),
             new FakeSyncQueueRepository(),
             new FakeSyncQueueService(),
@@ -84,6 +87,7 @@ public sealed class NetworkDeltaServiceTests
             new TestKeyProtector(),
             new UserDataBundleIntegrityService(),
             new FakeUnitOfWork());
+    }
 
     private static async Task<ValidDeltaSetup> CreateValidDeltaAsync()
     {
@@ -105,12 +109,14 @@ public sealed class NetworkDeltaServiceTests
             DeviceType = recipient.DeviceType,
             IsTrusted = true
         };
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
         var builder = new OutgoingDeltaBuilderService(
             new InMemoryUserRepository(),
             new FakeGroupRepository(),
             new FakeDeviceRepository(),
-            new FakeUserDeviceRepository(),
-            new FakeLocalUserDeviceRepository(),
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
             sender);
         var delta = await builder.BuildAsync(new SyncItem
         {

@@ -166,10 +166,8 @@ public sealed class SyncQueueService : ISyncQueueService
 
         if (item.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
-            return group is not null &&
-                   group.Users.Any(user => user.UId == deletedUserId) &&
-                   group.Users.All(user => user.UId == deletedUserId);
+            var userIds = await _groups.ListUserIdsAsync(item.ModelId, ct);
+            return userIds.Contains(deletedUserId) && userIds.All(userId => userId == deletedUserId);
         }
 
         if (item.ModelType == SyncModelType.Device)
@@ -233,21 +231,27 @@ public sealed class SyncQueueService : ISyncQueueService
             }, targetDeviceId, ct);
         }
 
+        var sourceDeviceIds = user.UserDevices
+            .Where(link => !link.IsDeleted && link.DeviceId != targetDeviceId)
+            .Select(link => link.DeviceId)
+            .Distinct()
+            .ToArray();
+        var sourceDevices = (await _devices.ListByIdsAsync(sourceDeviceIds, ct))
+            .ToDictionary(device => device.Id);
+
         foreach (var link in user.UserDevices)
         {
-            if (!link.IsDeleted && link.DeviceId != targetDeviceId)
+            if (!link.IsDeleted &&
+                link.DeviceId != targetDeviceId &&
+                sourceDevices.TryGetValue(link.DeviceId, out var sourceDevice))
             {
-                var sourceDevice = await _devices.GetByIdAsync(link.DeviceId, ct);
-                if (sourceDevice is not null)
+                await EnqueueForDeviceAsync(new SyncItem
                 {
-                    await EnqueueForDeviceAsync(new SyncItem
-                    {
-                        ModelId = link.DeviceId,
-                        ModelType = SyncModelType.Device,
-                        ChangeType = SyncChangeType.Updated,
-                        ChangedAtTs = ToSyncTimestamp(sourceDevice.LastModifiedAt)
-                    }, targetDeviceId, ct);
-                }
+                    ModelId = link.DeviceId,
+                    ModelType = SyncModelType.Device,
+                    ChangeType = SyncChangeType.Updated,
+                    ChangedAtTs = ToSyncTimestamp(sourceDevice.LastModifiedAt)
+                }, targetDeviceId, ct);
             }
 
             await EnqueueForDeviceAsync(new SyncItem
@@ -324,7 +328,7 @@ public sealed class SyncQueueService : ISyncQueueService
 
         if (item.ModelType == SyncModelType.Group)
         {
-            var group = await _groups.GetByIdWithUsersAsync(item.ModelId, ct);
+            var group = await _groups.GetByIdAsync(item.ModelId, ct);
             if (group is null)
                 return;
 
@@ -337,7 +341,7 @@ public sealed class SyncQueueService : ISyncQueueService
 
         if (item.ModelType == SyncModelType.Device)
         {
-            var device = await _devices.GetByIdWithUsersAsync(item.ModelId, ct);
+            var device = await _devices.GetByIdWithUserDevicesAsync(item.ModelId, ct);
             if (device is null)
                 return;
 
@@ -406,27 +410,26 @@ public sealed class SyncQueueService : ISyncQueueService
         if (!await _localUserDevices.IsSyncOnAsync(userId, ct))
             return [];
 
-        var links = await _userDevices.ListByUserAsync(userId, ct);
+        var links = await _userDevices.ListByUserWithDevicesAsync(userId, ct);
         return SelectDistinctDevices(links.Where(link => !link.IsDeleted && link.IsSyncOn));
     }
 
 
     private async Task<IReadOnlyList<Device>> ListGroupTargetDevicesAsync(Guid groupId, CancellationToken ct)
     {
-        var group = await _groups.GetByIdAsNoTrackingWithUsersAsync(groupId, ct);
-        if (group is null || group.Users.Count == 0)
+        var groupUserIds = await _groups.ListUserIdsAsync(groupId, ct);
+        if (groupUserIds.Count == 0)
             return [];
 
         var locallyEnabledUserIds = (await _localUserDevices.ListSyncOnUserIdsAsync(ct)).ToHashSet();
-        var enabledGroupUserIds = group.Users
-            .Select(user => user.UId)
+        var enabledGroupUserIds = groupUserIds
             .Where(locallyEnabledUserIds.Contains)
             .Distinct()
             .ToList();
         if (enabledGroupUserIds.Count == 0)
             return [];
 
-        var links = await _userDevices.ListByUsersAsync(enabledGroupUserIds, ct);
+        var links = await _userDevices.ListByUsersWithDevicesAsync(enabledGroupUserIds, ct);
         return SelectDistinctDevices(links.Where(link => !link.IsDeleted && link.IsSyncOn));
     }
 
@@ -449,7 +452,7 @@ public sealed class SyncQueueService : ISyncQueueService
         if (enabledUserIds.Count == 0)
             return [];
 
-        var targetLinks = await _userDevices.ListByUsersAsync(enabledUserIds, ct);
+        var targetLinks = await _userDevices.ListByUsersWithDevicesAsync(enabledUserIds, ct);
         return SelectDistinctDevices(targetLinks.Where(link =>
             link.DeviceId != sourceDeviceId &&
             !link.IsDeleted &&
@@ -466,7 +469,7 @@ public sealed class SyncQueueService : ISyncQueueService
         if (!await _localUserDevices.IsSyncOnAsync(userId, ct))
             return [];
 
-        var links = await _userDevices.ListByUserAsync(userId, ct);
+        var links = await _userDevices.ListByUserWithDevicesAsync(userId, ct);
         return SelectDistinctDevices(links.Where(link =>
             link.DeviceId == changedDeviceId
                 ? includeChangedDevice

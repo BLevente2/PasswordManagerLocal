@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
@@ -75,14 +76,47 @@ public sealed class Sha256HashBuilder : IDisposable
     public void WriteString(string? value)
     {
         EnsureWritable();
-        var bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
+
+        var text = value ?? string.Empty;
+        var byteCount = Encoding.UTF8.GetByteCount(text);
+        Write(byteCount);
+        if (byteCount == 0)
+            return;
+
+        const int MaxStackUtf8Bytes = 256;
+        if (byteCount <= MaxStackUtf8Bytes)
+        {
+            Span<byte> bytes = stackalloc byte[byteCount];
+            try
+            {
+                var bytesWritten = Encoding.UTF8.GetBytes(text.AsSpan(), bytes);
+                if (bytesWritten != byteCount)
+                    throw new InvalidOperationException("UTF-8 encoding length changed unexpectedly.");
+
+                _hash.AppendData(bytes);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+            }
+
+            return;
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(byteCount);
         try
         {
-            WriteBytes(bytes);
+            var bytes = rented.AsSpan(0, byteCount);
+            var bytesWritten = Encoding.UTF8.GetBytes(text.AsSpan(), bytes);
+            if (bytesWritten != byteCount)
+                throw new InvalidOperationException("UTF-8 encoding length changed unexpectedly.");
+
+            _hash.AppendData(bytes);
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(bytes);
+            CryptographicOperations.ZeroMemory(rented.AsSpan(0, byteCount));
+            ArrayPool<byte>.Shared.Return(rented);
         }
     }
 

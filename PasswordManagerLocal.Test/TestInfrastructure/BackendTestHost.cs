@@ -39,10 +39,13 @@ public sealed class BackendTestHost : IDisposable
 
         sc.AddSingleton<IUserRepository, InMemoryUserRepository>();
         sc.AddSingleton<IGroupRepository, FakeGroupRepository>();
-        sc.AddSingleton<IUserDeviceRepository, FakeUserDeviceRepository>();
+        sc.AddSingleton<FakeUserDeviceRepository>();
+        sc.AddSingleton<IUserDeviceRepository>(sp => sp.GetRequiredService<FakeUserDeviceRepository>());
         sc.AddSingleton<IDeviceRepository, FakeDeviceRepository>();
         sc.AddSingleton<ISyncQueueRepository, FakeSyncQueueRepository>();
-        sc.AddSingleton<ILocalUserDeviceRepository, FakeLocalUserDeviceRepository>();
+        sc.AddSingleton<FakeLocalUserDeviceRepository>();
+        sc.AddSingleton<ILocalUserDeviceRepository>(sp => sp.GetRequiredService<FakeLocalUserDeviceRepository>());
+        sc.AddSingleton<ISyncRouteRepository, FakeSyncRouteRepository>();
         sc.AddSingleton<IDeviceIdentityService, FakeDeviceIdentityService>();
         sc.AddSingleton<ISyncQueueService, FakeSyncQueueService>();
         sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
