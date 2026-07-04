@@ -5,10 +5,20 @@ public static class SyncConstants
     public const string PFXPassword = "";
 
     public const int SyncPort = 26688;
-    public const string MdnsServiceType = "_pmlsync._tcp";
-    public const int MdnsThrottleSeconds = 20;
-    public const int MdnsResolveTimeoutSeconds = 2;
-    public const int MdnsRefreshIntervalSeconds = 30;
+    public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
+    public const int LocalDiscoveryPort = 26689;
+    public const int LocalDiscoveryProtocolVersion = 1;
+    public const int LocalDiscoveryPeerThrottleSeconds = 20;
+    public const int LocalDiscoveryQueryIntervalSeconds = 30;
+    public const int LocalDiscoveryEnrollmentQueryIntervalSeconds = 2;
+    public const int LocalDiscoveryMaxClockSkewSeconds = 60;
+    public const int LocalDiscoveryRequestThrottleMilliseconds = 250;
+    public const int LocalDiscoveryMaxPacketBytes = 2048;
+    public const int LocalDiscoveryReplayRetentionSeconds = LocalDiscoveryMaxClockSkewSeconds * 2 + 5;
+    public const int LocalDiscoveryNonceBytes = 16;
+    public const int LocalDiscoverySignatureBytes = 64;
+    public const int LocalDiscoveryMacBytes = 32;
+    public const int LocalDiscoveryRecentNonceCapacity = 4096;
     public const int NetworkRefreshDebounceSeconds = 3;
     public const int DeviceEnrollmentDiscoveryTimeoutSeconds = 30;
     public const int DeviceEnrollmentConnectTimeoutSeconds = 8;

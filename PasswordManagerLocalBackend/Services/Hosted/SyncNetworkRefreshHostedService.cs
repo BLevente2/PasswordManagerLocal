@@ -7,15 +7,14 @@ using PasswordManagerLocalBackend.Abstractions.State;
 
 namespace PasswordManagerLocalBackend.Services.Hosted;
 
-public sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedService, IDisposable
+internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedService, IDisposable
 {
     private readonly IDeviceIdentityService _identity;
     private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly TcpSyncServerHostedService _tcpServer;
-    private readonly MdnsPublisherHostedService _publisher;
-    private readonly MdnsBrowserHostedService _browser;
+    private readonly LocalDiscoveryHostedService _discovery;
     private readonly object _lock = new();
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private CancellationTokenSource? _debounceCancellation;
@@ -27,19 +26,17 @@ public sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedServi
         IDiscoveredDeviceEndpointCache endpointCache,
         IDeviceSyncTaskService deviceSyncTasks,
         TcpSyncServerHostedService tcpServer,
-        MdnsPublisherHostedService publisher,
-        MdnsBrowserHostedService browser)
+        LocalDiscoveryHostedService discovery)
     {
         _identity = identity;
         _enrollmentState = enrollmentState;
         _endpointCache = endpointCache;
         _deviceSyncTasks = deviceSyncTasks;
         _tcpServer = tcpServer;
-        _publisher = publisher;
-        _browser = browser;
+        _discovery = discovery;
     }
 
-    public int StartOrder => 50;
+    public int StartOrder => 40;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -166,20 +163,14 @@ public sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedServi
             await _deviceSyncTasks.StopAllAsync(ct);
             _endpointCache.Clear();
 
-            await _browser.StopAsync(ct);
-            await _publisher.StopAsync(ct);
+            await _discovery.StopAsync(ct);
             await _tcpServer.StopAsync(ct);
 
             if (!IsNetworkRuntimeActive())
                 return;
 
             await _tcpServer.StartAsync(ct);
-
-            if (_identity.IsSyncOn)
-            {
-                await _publisher.StartAsync(ct);
-                await _browser.StartAsync(ct);
-            }
+            await _discovery.StartAsync(ct);
 
             DeviceEnrollmentTrace.Info("Local synchronization/enrollment networking was refreshed after the network change.");
         }

@@ -4,13 +4,13 @@ $ErrorActionPreference = 'Stop'
 
 $tcpAppRule = 'PasswordManagerLocal Sync TCP App'
 $tcpPortRule = 'PasswordManagerLocal Sync TCP Port'
-$mdnsAppRule = 'PasswordManagerLocal mDNS UDP App'
-$mdnsPortRule = 'PasswordManagerLocal mDNS UDP Port'
+$discoveryAppRule = 'PasswordManagerLocal Discovery UDP App'
+$discoveryPortRule = 'PasswordManagerLocal Discovery UDP Port'
 $tcpOutboundAppRule = 'PasswordManagerLocal Sync TCP Outbound App'
-$mdnsOutboundAppRule = 'PasswordManagerLocal mDNS UDP Outbound App'
-$legacyRuleNames = @('PasswordManagerLocal Sync TCP', 'PasswordManagerLocal mDNS UDP')
+$discoveryOutboundAppRule = 'PasswordManagerLocal Discovery UDP Outbound App'
+$legacyRuleNames = @('PasswordManagerLocal Sync TCP', 'PasswordManagerLocal mDNS UDP', 'PasswordManagerLocal mDNS UDP App', 'PasswordManagerLocal mDNS UDP Port', 'PasswordManagerLocal mDNS UDP Outbound App')
 $syncPort = 26688
-$mdnsPort = 5353
+$discoveryPort = 26689
 
 Import-Module NetSecurity -ErrorAction Stop
 
@@ -84,10 +84,10 @@ Write-Host
 @(
     $tcpAppRule,
     $tcpPortRule,
-    $mdnsAppRule,
-    $mdnsPortRule,
+    $discoveryAppRule,
+    $discoveryPortRule,
     $tcpOutboundAppRule,
-    $mdnsOutboundAppRule
+    $discoveryOutboundAppRule
 ) + $legacyRuleNames | ForEach-Object {
     Remove-PmlFirewallRuleByDisplayName -DisplayName $_
 }
@@ -95,13 +95,13 @@ Write-Host
 Remove-PmlConflictingAppBlockRules -AppExe $AppExe
 
 New-NetFirewallRule -DisplayName $tcpPortRule -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP -LocalPort $syncPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-New-NetFirewallRule -DisplayName $mdnsPortRule -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol UDP -LocalPort $mdnsPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+New-NetFirewallRule -DisplayName $discoveryPortRule -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol UDP -LocalPort $discoveryPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 
 if (-not [string]::IsNullOrWhiteSpace($AppExe) -and (Test-Path -LiteralPath $AppExe)) {
     New-NetFirewallRule -DisplayName $tcpAppRule -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -LocalPort $syncPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-    New-NetFirewallRule -DisplayName $mdnsAppRule -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -LocalPort $mdnsPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName $discoveryAppRule -Direction Inbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -LocalPort $discoveryPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
     New-NetFirewallRule -DisplayName $tcpOutboundAppRule -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol TCP -RemotePort $syncPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
-    New-NetFirewallRule -DisplayName $mdnsOutboundAppRule -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -RemotePort $mdnsPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -DisplayName $discoveryOutboundAppRule -Direction Outbound -Action Allow -Enabled True -Profile Any -Program $AppExe -Protocol UDP -RemotePort $discoveryPort -RemoteAddress Any -InterfaceType Any -ErrorAction Stop | Out-Null
 } else {
     throw 'The executable was not found, so application-specific outbound rules could not be added.'
 }
@@ -109,4 +109,4 @@ if (-not [string]::IsNullOrWhiteSpace($AppExe) -and (Test-Path -LiteralPath $App
 Write-Host
 Write-Host 'Windows Firewall inbound and outbound rules were added successfully.'
 Write-Host "Sync TCP port: $syncPort"
-Write-Host "mDNS UDP port: $mdnsPort"
+Write-Host "Discovery UDP port: $discoveryPort"

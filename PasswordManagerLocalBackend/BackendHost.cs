@@ -13,6 +13,7 @@ using PasswordManagerLocalBackend.Repositories;
 using PasswordManagerLocalBackend.Security;
 using PasswordManagerLocalBackend.Services;
 using PasswordManagerLocalBackend.Services.Hosted;
+using PasswordManagerLocalBackend.Services.Discovery;
 using PasswordManagerLocalBackend.Utils;
 using SQLitePCL;
 using System.Text;
@@ -262,6 +263,10 @@ namespace PasswordManagerLocalBackend
             services.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
             services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
             services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
+            services.AddSingleton<ILocalNetworkAddressService, LocalNetworkAddressService>();
+            services.AddSingleton<ILocalDiscoveryTransport, UdpLocalDiscoveryTransport>();
+            services.AddSingleton<LocalDiscoveryHostedService>();
+            services.AddSingleton<ILocalDiscoveryService>(sp => sp.GetRequiredService<LocalDiscoveryHostedService>());
             services.AddSingleton<ISyncRuntimeService, SyncRuntimeService>();
             services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
             services.AddScoped<IOutgoingDeltaBuilderService, OutgoingDeltaBuilderService>();
@@ -279,14 +284,11 @@ namespace PasswordManagerLocalBackend
             services.AddSingleton<SyncPeerProtocolHandler>();
             services.AddSingleton<SyncDeviceIdentityWarmupHostedService>();
             services.AddSingleton<TcpSyncServerHostedService>();
-            services.AddSingleton<MdnsPublisherHostedService>();
-            services.AddSingleton<MdnsBrowserHostedService>();
             services.AddSingleton<SyncNetworkRefreshHostedService>();
 
             services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<SyncDeviceIdentityWarmupHostedService>());
             services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<TcpSyncServerHostedService>());
-            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<MdnsPublisherHostedService>());
-            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<MdnsBrowserHostedService>());
+            services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<LocalDiscoveryHostedService>());
             services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<SyncNetworkRefreshHostedService>());
         }
 

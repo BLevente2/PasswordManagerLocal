@@ -67,10 +67,6 @@ public static class DeviceEnrollmentCode
     }
 
 
-    public static string BuildEnrollmentAdvertisementHash(string sessionId, byte[] secret, string tlsFingerprint, byte[] signPublicKey) =>
-        Encode(Hmac(secret, $"advertise:{sessionId}:{NormalizeFingerprint(tlsFingerprint)}:{Convert.ToHexString(signPublicKey)}").Take(12).ToArray());
-
-
     public static byte[] BuildEnrollmentInfoProof(string sessionId, byte[] secret) =>
         Hmac(secret, $"info:{sessionId}");
 

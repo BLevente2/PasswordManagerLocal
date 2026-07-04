@@ -48,7 +48,9 @@ public sealed class DeviceEnrollmentServiceTests
             new FakeDeviceIdentityService(),
             new DiscoveredDeviceEndpointCache(),
             new FakeSyncTransportClientService(),
-            runtime);
+            runtime,
+            new FakeLocalDiscoveryService(),
+            new FakeLocalNetworkAddressService());
         return new EnrollmentServiceSetup(service, provider, runtime);
     }
 
