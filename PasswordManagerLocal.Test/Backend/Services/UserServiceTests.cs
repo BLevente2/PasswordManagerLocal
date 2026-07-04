@@ -1,8 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;
 using System.Text;
 
@@ -55,6 +58,27 @@ public sealed class UserServiceTests
 
         MSTestAssert.IsNotNull(user);
     }
+
+    [TestMethod]
+    public async Task GetUserByUsername_UsesLightweightLookupInsteadOfListingFullUsers()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var repository = (InMemoryUserRepository)host.Services.GetRequiredService<IUserRepository>();
+
+        await auth.RegisterAsync(host.CreateValidRegistrationRequest("lookup_user"));
+        var loginLookupCallsBefore = repository.LoginLookupCallCount;
+        var listAllCallsBefore = repository.ListAllCallCount;
+
+        var user = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("lookup_user"));
+
+        MSTestAssert.IsNotNull(user);
+        MSTestAssert.IsTrue(repository.LoginLookupCallCount > loginLookupCallsBefore);
+        MSTestAssert.AreEqual(listAllCallsBefore, repository.ListAllCallCount);
+    }
+
 
     [TestMethod]
     public async Task GetUserByUsername_NonExisting_ReturnsNull()
@@ -119,6 +143,31 @@ public sealed class UserServiceTests
 
         MSTestAssert.AreEqual("Updated", reloaded.GeneralUserData.FirstName);
     }
+
+    [TestMethod]
+    public async Task UpdateUserDataBundle_ChangedPasswordWithoutUpdatedChildHash_Throws()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var passwords = host.Services.GetRequiredService<IPasswordService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("integrity_guard"));
+        var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
+        await passwords.AddNewPassword(new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = Encoding.UTF8.GetBytes("SecretPassword123")
+        }, bundle.UserPasswordsData);
+        await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords);
+
+        bundle.UserPasswordsData.Passwords[0].Name = "Changed without regenerating integrity";
+
+        await ExpectThrowsAsync<InvalidDataIntegrityException>(() =>
+            users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords));
+    }
+
 
     [TestMethod]
     public async Task DeleteUserByToken_RemovesUser()

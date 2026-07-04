@@ -32,6 +32,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IAuthService _auth;
     private readonly IKeyProtector _keyProtector;
+    private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUnitOfWork _uow;
 
     public NetworkDeltaService(
@@ -50,6 +51,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         ISyncRuntimeService syncRuntime,
         IAuthService auth,
         IKeyProtector keyProtector,
+        IUserDataBundleIntegrityService integrity,
         IUnitOfWork uow)
     {
         _outgoingDeltaBuilder = outgoingDeltaBuilder;
@@ -67,6 +69,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _syncRuntime = syncRuntime;
         _auth = auth;
         _keyProtector = keyProtector;
+        _integrity = integrity;
         _uow = uow;
     }
 
@@ -343,7 +346,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
             if (changedBlobs != UserDataBlobKind.None)
             {
-                await PersistMergedUserBundleAsync(existing, existingBundle, userKey, ct);
+                await PersistMergedUserBundleAsync(existing, existingBundle, userKey, changedBlobs, ct);
 
                 existing.UserDataLastModifiedAt = MaxDateTimeOffset(existing.UserDataLastModifiedAt, incoming.UserDataLastModifiedAt, incomingTs);
                 if (changedBlobs.HasFlag(UserDataBlobKind.General))
@@ -1087,22 +1090,58 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         if (userData is null)
             throw new UnauthorizedAccessException();
 
-        userData.VerifyIntegrity();
-
-        var general = await DecryptEncryptedUserBlobAsync(user.EncryptedGeneralUserDataPayload, userData.GeneralUserDataKey, BackendJsonSerializerContext.Default.GeneralUserData, ct);
-        var passwords = await DecryptEncryptedUserBlobAsync(user.EncryptedUserPasswordsDataPayload, userData.UserPasswordsDataKey, BackendJsonSerializerContext.Default.UserPasswordsData, ct);
-        var devices = await DecryptEncryptedUserBlobAsync(user.EncryptedUserDevicesDataPayload, userData.UserDevicesDataKey, BackendJsonSerializerContext.Default.UserDevicesData, ct);
-
-        var bundle = new UserDataBundle
+        try
         {
-            UserData = userData,
-            GeneralUserData = general,
-            UserPasswordsData = passwords,
-            UserDevicesData = devices
-        };
+            _integrity.VerifyUserData(userData);
+        }
+        catch
+        {
+            userData.Dispose();
+            throw;
+        }
 
-        VerifyUserDataBundleForSync(bundle);
-        return bundle;
+        var generalTask = DecryptAndVerifyEncryptedUserBlobAsync(
+            user.EncryptedGeneralUserDataPayload,
+            userData.GeneralUserDataKey,
+            BackendJsonSerializerContext.Default.GeneralUserData,
+            _integrity.VerifyGeneralUserData,
+            ct);
+        var passwordsTask = DecryptAndVerifyEncryptedUserBlobAsync(
+            user.EncryptedUserPasswordsDataPayload,
+            userData.UserPasswordsDataKey,
+            BackendJsonSerializerContext.Default.UserPasswordsData,
+            _integrity.VerifyUserPasswordsData,
+            ct);
+        var devicesTask = DecryptAndVerifyEncryptedUserBlobAsync(
+            user.EncryptedUserDevicesDataPayload,
+            userData.UserDevicesDataKey,
+            BackendJsonSerializerContext.Default.UserDevicesData,
+            _integrity.VerifyUserDevicesData,
+            ct);
+
+        try
+        {
+            await Task.WhenAll(generalTask, passwordsTask, devicesTask);
+
+            var bundle = new UserDataBundle
+            {
+                UserData = userData,
+                GeneralUserData = await generalTask,
+                UserPasswordsData = await passwordsTask,
+                UserDevicesData = await devicesTask
+            };
+
+            _integrity.VerifyBundleLinks(bundle);
+            return bundle;
+        }
+        catch
+        {
+            DisposeCompletedTaskResult(generalTask);
+            DisposeCompletedTaskResult(passwordsTask);
+            DisposeCompletedTaskResult(devicesTask);
+            userData.Dispose();
+            throw;
+        }
     }
 
 
@@ -1120,108 +1159,106 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     }
 
 
-    private async Task PersistMergedUserBundleAsync(User user, UserDataBundle bundle, EncryptionKey userKey, CancellationToken ct)
+    private async Task<T> DecryptAndVerifyEncryptedUserBlobAsync<T>(
+        byte[] encryptedBlob,
+        byte[] rawKey,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo,
+        Action<T> verifyIntegrity,
+        CancellationToken ct) where T : class, IDisposable
     {
-        GenerateAndCopyUserBundleHashesForSync(bundle);
-        VerifyUserDataBundleForSync(bundle);
-
-        using (var generalKey = EncryptionKey.FromRaw(bundle.UserData.GeneralUserDataKey))
+        var data = await DecryptEncryptedUserBlobAsync(encryptedBlob, rawKey, typeInfo, ct);
+        try
         {
-            var encrypted = await SerializeCompressEncryptAsync(bundle.GeneralUserData, generalKey, BackendJsonSerializerContext.Default.GeneralUserData, ct: ct);
-            CryptographicOperations.ZeroMemory(user.EncryptedGeneralUserDataPayload);
-            user.EncryptedGeneralUserDataPayload = encrypted;
+            verifyIntegrity(data);
+            return data;
         }
-
-        using (var passwordsKey = EncryptionKey.FromRaw(bundle.UserData.UserPasswordsDataKey))
+        catch
         {
-            var encrypted = await SerializeCompressEncryptAsync(bundle.UserPasswordsData, passwordsKey, BackendJsonSerializerContext.Default.UserPasswordsData, ct: ct);
-            CryptographicOperations.ZeroMemory(user.EncryptedUserPasswordsDataPayload);
-            user.EncryptedUserPasswordsDataPayload = encrypted;
+            data.Dispose();
+            throw;
         }
-
-        using (var devicesKey = EncryptionKey.FromRaw(bundle.UserData.UserDevicesDataKey))
-        {
-            var encrypted = await SerializeCompressEncryptAsync(bundle.UserDevicesData, devicesKey, BackendJsonSerializerContext.Default.UserDevicesData, ct: ct);
-            CryptographicOperations.ZeroMemory(user.EncryptedUserDevicesDataPayload);
-            user.EncryptedUserDevicesDataPayload = encrypted;
-        }
-
-        var encryptedUserData = await SerializeCompressEncryptAsync(bundle.UserData, userKey, BackendJsonSerializerContext.Default.UserData, ct: ct);
-        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
-        user.EncryptedPayload = encryptedUserData;
     }
 
 
-    private void GenerateAndCopyUserBundleHashesForSync(UserDataBundle bundle)
+    private async Task PersistMergedUserBundleAsync(
+        User user,
+        UserDataBundle bundle,
+        EncryptionKey userKey,
+        UserDataBlobKind changedBlobs,
+        CancellationToken ct)
     {
-        bundle.GeneralUserData.GenerateIntegrityHash();
+        _integrity.RebuildModifiedBlobIntegrity(bundle, changedBlobs);
 
-        foreach (var password in bundle.UserPasswordsData.Passwords)
-            password.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
-            deleted.GenerateIntegrityHash();
-        foreach (var color in bundle.UserPasswordsData.CustomColors)
-            color.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
-            deleted.GenerateIntegrityHash();
-        foreach (var tag in bundle.UserPasswordsData.Tags)
-            tag.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
-            deleted.GenerateIntegrityHash();
-        bundle.UserPasswordsData.GenerateIntegrityHash();
+        Task<byte[]>? generalTask = changedBlobs.HasFlag(UserDataBlobKind.General)
+            ? EncryptUserBlobAsync(bundle.GeneralUserData, bundle.UserData.GeneralUserDataKey, BackendJsonSerializerContext.Default.GeneralUserData, ct)
+            : null;
+        Task<byte[]>? passwordsTask = changedBlobs.HasFlag(UserDataBlobKind.Passwords)
+            ? EncryptUserBlobAsync(bundle.UserPasswordsData, bundle.UserData.UserPasswordsDataKey, BackendJsonSerializerContext.Default.UserPasswordsData, ct)
+            : null;
+        Task<byte[]>? devicesTask = changedBlobs.HasFlag(UserDataBlobKind.Devices)
+            ? EncryptUserBlobAsync(bundle.UserDevicesData, bundle.UserData.UserDevicesDataKey, BackendJsonSerializerContext.Default.UserDevicesData, ct)
+            : null;
+        var userDataTask = SerializeCompressEncryptAsync(bundle.UserData, userKey, BackendJsonSerializerContext.Default.UserData, ct: ct);
 
-        foreach (var device in bundle.UserDevicesData.Devices)
-            device.GenerateIntegrityHash();
-        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
-            deleted.GenerateIntegrityHash();
-        bundle.UserDevicesData.GenerateIntegrityHash();
+        var encryptionTasks = new List<Task<byte[]>> { userDataTask };
+        if (generalTask is not null)
+            encryptionTasks.Add(generalTask);
+        if (passwordsTask is not null)
+            encryptionTasks.Add(passwordsTask);
+        if (devicesTask is not null)
+            encryptionTasks.Add(devicesTask);
 
-        CryptographicOperations.ZeroMemory(bundle.UserData.GeneralUserDataIntegrityHash);
-        CryptographicOperations.ZeroMemory(bundle.UserData.UserPasswordsDataIntegrityHash);
-        CryptographicOperations.ZeroMemory(bundle.UserData.UserDevicesDataIntegrityHash);
-        bundle.UserData.GeneralUserDataIntegrityHash = bundle.GeneralUserData.IntegrityHash.ToArray();
-        bundle.UserData.UserPasswordsDataIntegrityHash = bundle.UserPasswordsData.IntegrityHash.ToArray();
-        bundle.UserData.UserDevicesDataIntegrityHash = bundle.UserDevicesData.IntegrityHash.ToArray();
-        bundle.UserData.GenerateIntegrityHash();
+        try
+        {
+            await Task.WhenAll(encryptionTasks);
+        }
+        catch
+        {
+            foreach (var task in encryptionTasks)
+                ZeroCompletedEncryptionTask(task);
+            throw;
+        }
+
+        if (generalTask is not null)
+            ReplaceEncryptedPayload(user.EncryptedGeneralUserDataPayload, await generalTask, value => user.EncryptedGeneralUserDataPayload = value);
+        if (passwordsTask is not null)
+            ReplaceEncryptedPayload(user.EncryptedUserPasswordsDataPayload, await passwordsTask, value => user.EncryptedUserPasswordsDataPayload = value);
+        if (devicesTask is not null)
+            ReplaceEncryptedPayload(user.EncryptedUserDevicesDataPayload, await devicesTask, value => user.EncryptedUserDevicesDataPayload = value);
+
+        ReplaceEncryptedPayload(user.EncryptedPayload, await userDataTask, value => user.EncryptedPayload = value);
     }
 
 
-    private void VerifyUserDataBundleForSync(UserDataBundle bundle)
+    private async Task<byte[]> EncryptUserBlobAsync<T>(
+        T data,
+        byte[] rawKey,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo,
+        CancellationToken ct) where T : class
     {
-        bundle.UserData.VerifyIntegrity();
-        bundle.GeneralUserData.VerifyIntegrity();
-        VerifyStoredUserBlobHashForSync(bundle.UserData.GeneralUserDataIntegrityHash, bundle.GeneralUserData.IntegrityHash, typeof(GeneralUserData));
-
-        foreach (var password in bundle.UserPasswordsData.Passwords)
-            password.VerifyIntegrity();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedPasswords)
-            deleted.VerifyIntegrity();
-        foreach (var color in bundle.UserPasswordsData.CustomColors)
-            color.VerifyIntegrity();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedCustomColors)
-            deleted.VerifyIntegrity();
-        foreach (var tag in bundle.UserPasswordsData.Tags)
-            tag.VerifyIntegrity();
-        foreach (var deleted in bundle.UserPasswordsData.DeletedTags)
-            deleted.VerifyIntegrity();
-        bundle.UserPasswordsData.VerifyIntegrity();
-        VerifyStoredUserBlobHashForSync(bundle.UserData.UserPasswordsDataIntegrityHash, bundle.UserPasswordsData.IntegrityHash, typeof(UserPasswordsData));
-
-        foreach (var device in bundle.UserDevicesData.Devices)
-            device.VerifyIntegrity();
-        foreach (var deleted in bundle.UserDevicesData.DeletedDevices)
-            deleted.VerifyIntegrity();
-        bundle.UserDevicesData.VerifyIntegrity();
-        VerifyStoredUserBlobHashForSync(bundle.UserData.UserDevicesDataIntegrityHash, bundle.UserDevicesData.IntegrityHash, typeof(UserDevicesData));
+        using var key = EncryptionKey.FromRaw(rawKey);
+        return await SerializeCompressEncryptAsync(data, key, typeInfo, ct: ct);
     }
 
 
-    private void VerifyStoredUserBlobHashForSync(byte[] expected, byte[] actual, Type type)
+    private void DisposeCompletedTaskResult<T>(Task<T> task) where T : IDisposable
     {
-        if (expected.Length != Hashing.SHA256HashSizeInBytes ||
-            actual.Length != Hashing.SHA256HashSizeInBytes ||
-            !Hashing.Verify(expected, actual))
-            throw new InvalidDataIntegrityException(type);
+        if (task.Status == TaskStatus.RanToCompletion)
+            task.Result.Dispose();
+    }
+
+
+    private void ZeroCompletedEncryptionTask(Task<byte[]> task)
+    {
+        if (task.Status == TaskStatus.RanToCompletion)
+            CryptographicOperations.ZeroMemory(task.Result);
+    }
+
+
+    private void ReplaceEncryptedPayload(byte[] currentPayload, byte[] replacementPayload, Action<byte[]> assignReplacement)
+    {
+        CryptographicOperations.ZeroMemory(currentPayload);
+        assignReplacement(replacementPayload);
     }
 
 

@@ -12,6 +12,8 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class PasswordService : IPasswordService
 {
+    private const int MaxConcurrentPasswordExports = 4;
+
     public IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoResponses(UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
@@ -209,19 +211,50 @@ public sealed class PasswordService : IPasswordService
         UserPasswordsData targetPasswords)
     {
         var now = DateTime.UtcNow;
-        var copiedPasswords = new List<SecurePassword>(selectedPasswords.Count);
+        var maxConcurrency = Math.Min(MaxConcurrentPasswordExports, Math.Max(1, Environment.ProcessorCount));
+        using var limiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        var copyTasks = selectedPasswords
+            .Select(sourcePassword => CopyPasswordForExportWithLimitAsync(
+                sourcePassword,
+                sourcePasswords,
+                targetPasswords,
+                now,
+                limiter))
+            .ToArray();
 
         try
         {
-            foreach (var sourcePassword in selectedPasswords)
-                copiedPasswords.Add(await CopyPasswordForExportAsync(sourcePassword, sourcePasswords, targetPasswords, now));
-
-            return copiedPasswords;
+            var copiedPasswords = await Task.WhenAll(copyTasks);
+            return copiedPasswords.ToList();
         }
         catch
         {
-            DisposeCopiedPasswords(copiedPasswords);
+            foreach (var task in copyTasks)
+            {
+                if (task.Status == TaskStatus.RanToCompletion)
+                    task.Result.Dispose();
+            }
+
             throw;
+        }
+    }
+
+
+    private async Task<SecurePassword> CopyPasswordForExportWithLimitAsync(
+        SecurePassword sourcePassword,
+        UserPasswordsData sourcePasswords,
+        UserPasswordsData targetPasswords,
+        DateTime now,
+        SemaphoreSlim limiter)
+    {
+        await limiter.WaitAsync();
+        try
+        {
+            return await CopyPasswordForExportAsync(sourcePassword, sourcePasswords, targetPasswords, now);
+        }
+        finally
+        {
+            limiter.Release();
         }
     }
 

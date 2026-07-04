@@ -243,6 +243,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IPasswordTagService, PasswordTagService>();
             services.AddScoped<IGroupService, GroupService>();
             services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
+            services.AddScoped<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IRememberMeService, RememberMeService>();

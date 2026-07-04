@@ -52,6 +52,31 @@ public sealed class AuthServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
+    public async Task Login_WrongPassword_DoesNotCreateSessionState()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+
+        var registrationToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("failed_login"));
+        var uid = users.GetUidFromToken(registrationToken);
+        var tokensBefore = tokens.ListTokensByUid(uid).OrderBy(token => token).ToArray();
+
+        var request = host.CreateValidLoginRequest("failed_login");
+        request.Password = Encoding.UTF8.GetBytes("WrongPassword12345678");
+
+        await ExpectThrowsAsync<UnauthorizedAccessException>(() => auth.LoginAsync(request));
+
+        var tokensAfter = tokens.ListTokensByUid(uid).OrderBy(token => token).ToArray();
+        CollectionAssert.AreEqual(tokensBefore, tokensAfter);
+    }
+
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
     public async Task Register_DuplicateUsername_Throws()
     {
         using var host = new BackendTestHost();
