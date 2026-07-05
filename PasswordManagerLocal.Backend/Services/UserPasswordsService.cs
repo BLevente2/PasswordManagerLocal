@@ -47,10 +47,19 @@ public sealed class UserPasswordsService : IUserPasswordsService
     }
 
 
-    public async Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
+    public async Task RemovePasswordsAsync(
+        Guid token,
+        IReadOnlyList<Guid> passwordIds,
+        CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(passwordIds);
+
         var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
-        _passwordService.RemovePassword(passwordId, bundle.UserPasswordsData);
+
+        if (passwordIds.Count == 0)
+            return;
+
+        _passwordService.RemovePasswords(passwordIds, bundle.UserPasswordsData);
         await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 

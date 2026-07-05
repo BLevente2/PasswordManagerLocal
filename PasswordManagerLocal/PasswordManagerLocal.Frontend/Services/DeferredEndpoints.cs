@@ -204,10 +204,13 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default)
+    public async Task RemovePasswordsAsync(
+        Guid token,
+        IReadOnlyList<Guid> passwordIds,
+        CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.RemovePasswordAsync(token, passwordId, ct);
+        await endpoints.RemovePasswordsAsync(token, passwordIds, ct);
     }
 
 
@@ -241,10 +244,13 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task DeleteCustomUserColorAsync(Guid token, Guid customUserColorId, CancellationToken ct = default)
+    public async Task DeleteCustomUserColorsAsync(
+        Guid token,
+        IReadOnlyList<Guid> customUserColorIds,
+        CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.DeleteCustomUserColorAsync(token, customUserColorId, ct);
+        await endpoints.DeleteCustomUserColorsAsync(token, customUserColorIds, ct);
     }
 
 

@@ -61,11 +61,35 @@ public sealed class PasswordService : IPasswordService
     }
 
 
-    public void RemovePassword(Guid passwordId, UserPasswordsData passwords)
+    public void RemovePasswords(IReadOnlyList<Guid> passwordIds, UserPasswordsData passwords)
     {
-        using var password = GetAndVerifyPasswordById(passwordId, passwords);
-        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, password.Id, DateTime.UtcNow);
-        passwords.Passwords.Remove(password);
+        ArgumentNullException.ThrowIfNull(passwordIds);
+        passwords.VerifyIntegrity();
+
+        if (passwordIds.Count == 0)
+            return;
+
+        var uniquePasswordIds = passwordIds.Distinct().ToList();
+        var passwordsToRemove = new List<SecurePassword>(uniquePasswordIds.Count);
+
+        foreach (var passwordId in uniquePasswordIds)
+        {
+            var password = passwords.Passwords.FirstOrDefault(password => password.Id == passwordId);
+            if (password is null)
+                throw new PasswordNotFoundException(passwordId);
+
+            password.VerifyIntegrity();
+            passwordsToRemove.Add(password);
+        }
+
+        var deletedAt = DateTime.UtcNow;
+        foreach (var password in passwordsToRemove)
+        {
+            TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, password.Id, deletedAt);
+            passwords.Passwords.Remove(password);
+            password.Dispose();
+        }
+
         passwords.GeneratePasswordsIntegrityHash();
     }
 

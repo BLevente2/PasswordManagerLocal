@@ -1,5 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -252,7 +254,40 @@ public static class FirewallPermissionStartupPrompt
             Margin = new Thickness(24),
             Children = { title, message, buttons }
         };
+
+        AddDialogKeyboardShortcuts(dialog, secondaryButtonKey is not null, setResult);
         return dialog;
+    }
+
+    private static void AddDialogKeyboardShortcuts(
+        Window dialog,
+        bool hasSecondaryButton,
+        Action<bool> setResult)
+    {
+        dialog.AddHandler(
+            InputElement.KeyDownEvent,
+            (_, e) =>
+            {
+                if (e.KeyModifiers != KeyModifiers.None)
+                    return;
+
+                if (e.Key == Key.Enter)
+                {
+                    e.Handled = true;
+                    setResult(true);
+                    dialog.Close();
+                    return;
+                }
+
+                if (e.Key == Key.Escape && hasSecondaryButton)
+                {
+                    e.Handled = true;
+                    setResult(false);
+                    dialog.Close();
+                }
+            },
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
     }
 
     private static Window CreateDialogWindow(AppLanguage language, string titleKey) =>

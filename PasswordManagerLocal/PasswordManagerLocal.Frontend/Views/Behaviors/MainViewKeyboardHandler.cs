@@ -20,6 +20,9 @@ internal sealed class MainViewKeyboardHandler
         if (await TryHandleRefreshShortcutAsync(e))
             return;
 
+        if (await TryHandleConfirmationShortcutAsync(e))
+            return;
+
         if (e.Handled
             || OperatingSystem.IsAndroid()
             || e.Key != Key.Escape
@@ -87,6 +90,25 @@ internal sealed class MainViewKeyboardHandler
 
         e.Handled = true;
         await viewModel.RequestRefreshVisiblePageAsync();
+        return true;
+    }
+
+    private async Task<bool> TryHandleConfirmationShortcutAsync(KeyEventArgs e)
+    {
+        if (!OperatingSystem.IsWindows()
+            || e.Handled
+            || e.Key != Key.Enter
+            || e.KeyModifiers != KeyModifiers.None
+            || _view.DataContext is not MainViewModel viewModel
+            || !viewModel.HasConfirmableDialogOpen)
+        {
+            return false;
+        }
+
+        // Mark the routed event handled before awaiting so the focused control cannot
+        // also process Enter while the confirmation operation is running.
+        e.Handled = true;
+        await viewModel.ConfirmOpenDialogAsync();
         return true;
     }
 

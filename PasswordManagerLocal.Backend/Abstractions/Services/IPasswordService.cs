@@ -8,7 +8,7 @@ public interface IPasswordService
 {
     IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoResponses(UserPasswordsData passwords);
     Task AddNewPassword(NewPasswordRequest request, UserPasswordsData passwords);
-    void RemovePassword(Guid passwordId, UserPasswordsData passwords);
+    void RemovePasswords(IReadOnlyList<Guid> passwordIds, UserPasswordsData passwords);
     SecurePassword GetAndVerifyPasswordById(Guid passwordId, UserPasswordsData passwords);
     Task<byte[]> GetUnsecurePasswordAsync(Guid passwordId, UserPasswordsData passwords);
     Task UpdatePasswordAsync(UpdatePasswordRequest request, UserPasswordsData passwords);
