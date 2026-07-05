@@ -157,6 +157,30 @@ public partial class MainView : UserControl
         _longPressToolTipHandler.Reset();
     }
 
+    public async Task<bool> HandleBackRequestAsync()
+    {
+        _longPressToolTipHandler.DismissOpenToolTip();
+
+        if (TryDismissOpenFlyout())
+            return true;
+
+        return await _keyboardHandler.HandleBackRequestCoreAsync();
+    }
+
+    private bool TryDismissOpenFlyout()
+    {
+        foreach (var descendant in this.GetVisualDescendants())
+        {
+            if (descendant is not Button button || button.Flyout?.IsOpen != true)
+                continue;
+
+            button.Flyout.Hide();
+            return true;
+        }
+
+        return false;
+    }
+
     private async void HandleTopLevelKeyDown(object? sender, KeyEventArgs e)
     {
         _longPressToolTipHandler.DismissOpenToolTip();

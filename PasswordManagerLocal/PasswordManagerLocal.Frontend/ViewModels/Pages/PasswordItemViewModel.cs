@@ -5,7 +5,7 @@ using System.Reactive;
 
 namespace PasswordManagerLocal.Frontend.ViewModels.Pages;
 
-public sealed class PasswordItemViewModel : ReactiveObject
+public sealed class PasswordItemViewModel : MultiSelectableListItemViewModel
 {
     private string _editLabel;
     private string _deleteLabel;

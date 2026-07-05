@@ -174,6 +174,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     private string _customColorSortKey = "name-asc";
     private PasswordColorOptionViewModel? _selectedEditorColorOption;
     private PasswordSortOptionViewModel? _selectedSortOption;
+    private bool _isPasswordMultiSelectionActive;
+    private bool _isCustomColorMultiSelectionActive;
 
     public PasswordsViewModel(UiPreferencesService uiPreferences, IEndpoints endpoints)
         : base(uiPreferences)
@@ -224,6 +226,18 @@ public sealed class PasswordsViewModel : ViewModelBase
     public ObservableCollection<PasswordItemViewModel> Passwords { get; }
 
     public ObservableCollection<CustomColorItemViewModel> CustomColors { get; }
+
+    public bool IsPasswordMultiSelectionActive
+    {
+        get => _isPasswordMultiSelectionActive;
+        private set => this.RaiseAndSetIfChanged(ref _isPasswordMultiSelectionActive, value);
+    }
+
+    public bool IsCustomColorMultiSelectionActive
+    {
+        get => _isCustomColorMultiSelectionActive;
+        private set => this.RaiseAndSetIfChanged(ref _isCustomColorMultiSelectionActive, value);
+    }
 
     public event EventHandler? ListScrollToTopRequested;
 
@@ -341,6 +355,18 @@ public sealed class PasswordsViewModel : ViewModelBase
         if (string.Equals(_currentPane, value, StringComparison.Ordinal))
         {
             return;
+        }
+
+        if (string.Equals(_currentPane, ListPane, StringComparison.Ordinal)
+            && !string.Equals(value, ListPane, StringComparison.Ordinal))
+        {
+            ExitPasswordMultiSelection();
+        }
+
+        if (string.Equals(_currentPane, CustomColorListPane, StringComparison.Ordinal)
+            && !string.Equals(value, CustomColorListPane, StringComparison.Ordinal))
+        {
+            ExitCustomColorMultiSelection();
         }
 
         IsPaneTransitionReversed = isBackNavigation;
@@ -1068,6 +1094,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     public void Reset()
     {
         _token = Guid.Empty;
+        ExitPasswordMultiSelection();
+        ExitCustomColorMultiSelection();
         _allPasswords.Clear();
         _savedCustomColors.Clear();
         _allCustomColors.Clear();
@@ -1110,6 +1138,77 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
 
+    public void BeginPasswordMultiSelection(PasswordItemViewModel password)
+    {
+        if (!IsListPaneVisible || !_allPasswords.Contains(password))
+        {
+            return;
+        }
+
+        if (!IsPasswordMultiSelectionActive)
+        {
+            IsPasswordMultiSelectionActive = true;
+            SetSelectionMode(_allPasswords, true);
+        }
+
+        password.IsSelected = true;
+    }
+
+    public void BeginCustomColorMultiSelection(CustomColorItemViewModel customColor)
+    {
+        if (!IsCustomColorListPaneVisible || !_allCustomColors.Contains(customColor))
+        {
+            return;
+        }
+
+        if (!IsCustomColorMultiSelectionActive)
+        {
+            IsCustomColorMultiSelectionActive = true;
+            SetSelectionMode(_allCustomColors, true);
+        }
+
+        customColor.IsSelected = true;
+    }
+
+    private void ExitPasswordMultiSelection()
+    {
+        IsPasswordMultiSelectionActive = false;
+        SetSelectionMode(_allPasswords, false);
+    }
+
+    private void ExitCustomColorMultiSelection()
+    {
+        IsCustomColorMultiSelectionActive = false;
+        SetSelectionMode(_allCustomColors, false);
+    }
+
+    private static void SetSelectionMode<TItem>(IEnumerable<TItem> items, bool isActive)
+        where TItem : MultiSelectableListItemViewModel
+    {
+        foreach (var item in items)
+        {
+            item.SetSelectionModeActive(isActive);
+        }
+    }
+
+    public bool TryExitMultiSelection()
+    {
+        if (IsCustomColorMultiSelectionActive)
+        {
+            ExitCustomColorMultiSelection();
+            return true;
+        }
+
+        if (IsPasswordMultiSelectionActive)
+        {
+            ExitPasswordMultiSelection();
+            return true;
+        }
+
+        return false;
+    }
+
+
     public bool TryNavigateBack()
     {
         if (IsCustomColorDeleteConfirmationOpen)
@@ -1123,6 +1222,9 @@ public sealed class PasswordsViewModel : ViewModelBase
             CancelDeletePassword();
             return true;
         }
+
+        if (TryExitMultiSelection())
+            return true;
 
         if (IsColorPaneVisible)
         {
@@ -1199,6 +1301,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
 
         ClearStatusMessage();
+        ExitPasswordMultiSelection();
+        ExitCustomColorMultiSelection();
         var selectedId = SelectedPassword?.Id;
 
         try
@@ -1902,6 +2006,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private void BackFromCustomColorList()
     {
+        if (IsCustomColorMultiSelectionActive)
+        {
+            ExitCustomColorMultiSelection();
+            return;
+        }
+
         ClearStatusMessage();
         SetCurrentPane(EditorPane, true);
 

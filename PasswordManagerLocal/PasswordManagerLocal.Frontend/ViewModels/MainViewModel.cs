@@ -532,6 +532,12 @@ public sealed class MainViewModel : ViewModelBase
 
     public async Task<bool> TryNavigateBackAsync()
     {
+        if (IsSessionRenewalDialogOpen)
+        {
+            DeclineSessionRenewal();
+            return true;
+        }
+
         if (IsDatabaseRecoveryDialogOpen)
         {
             if (!_isResettingDatabase)
