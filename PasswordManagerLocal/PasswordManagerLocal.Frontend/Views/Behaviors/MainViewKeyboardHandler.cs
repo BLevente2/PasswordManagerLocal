@@ -20,11 +20,16 @@ internal sealed class MainViewKeyboardHandler
         if (await TryHandleRefreshShortcutAsync(e))
             return;
 
-        if (e.Handled || e.Key != Key.Escape || e.KeyModifiers != KeyModifiers.None)
+        if (e.Handled
+            || OperatingSystem.IsAndroid()
+            || e.Key != Key.Escape
+            || e.KeyModifiers != KeyModifiers.None)
+        {
             return;
+        }
 
         e.Handled = true;
-        await HandleEscapeAsync();
+        await _view.HandleBackRequestAsync();
     }
 
     public async Task HandleKeyDownAsync(KeyEventArgs e)
@@ -35,10 +40,12 @@ internal sealed class MainViewKeyboardHandler
         if (await TryHandleRefreshShortcutAsync(e))
             return;
 
-        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None)
+        if (!OperatingSystem.IsAndroid()
+            && e.Key == Key.Escape
+            && e.KeyModifiers == KeyModifiers.None)
         {
             e.Handled = true;
-            await HandleEscapeAsync();
+            await _view.HandleBackRequestAsync();
             return;
         }
 
@@ -83,13 +90,16 @@ internal sealed class MainViewKeyboardHandler
         return true;
     }
 
-    private async Task HandleEscapeAsync()
+    internal async Task<bool> HandleBackRequestCoreAsync()
     {
-        if (_view.DataContext is not MainViewModel viewModel || await viewModel.TryNavigateBackAsync())
-            return;
+        if (_view.DataContext is not MainViewModel viewModel)
+            return true;
+
+        if (await viewModel.TryNavigateBackAsync())
+            return true;
 
         if (!OperatingSystem.IsWindows())
-            return;
+            return false;
 
         if (viewModel.IsAuthenticated)
         {
@@ -102,7 +112,7 @@ internal sealed class MainViewKeyboardHandler
                 await viewModel.RequestLogoutAsync();
             }
 
-            return;
+            return true;
         }
 
         if (await ShowConfirmationDialogAsync(
@@ -113,6 +123,8 @@ internal sealed class MainViewKeyboardHandler
         {
             (TopLevel.GetTopLevel(_view) as Window)?.Close();
         }
+
+        return true;
     }
 
     private async Task<bool> ShowConfirmationDialogAsync(string title, string message, string yesLabel, string noLabel)

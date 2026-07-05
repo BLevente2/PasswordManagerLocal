@@ -5,7 +5,7 @@ using System.Reactive;
 
 namespace PasswordManagerLocal.Frontend.ViewModels.Pages;
 
-public sealed class CustomColorItemViewModel : ReactiveObject
+public sealed class CustomColorItemViewModel : MultiSelectableListItemViewModel
 {
     private string _deleteLabel;
 

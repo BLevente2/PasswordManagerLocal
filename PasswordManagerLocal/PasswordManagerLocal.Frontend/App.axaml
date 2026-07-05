@@ -314,6 +314,16 @@
       <Setter Property="BorderBrush" Value="#DD2D6AE3" />
     </Style>
 
+    <Style Selector="Border.interactiveListItem.multiSelected">
+      <Setter Property="Background" Value="#182D6AE3" />
+      <Setter Property="BorderBrush" Value="#FF2D6AE3" />
+    </Style>
+
+    <Style Selector="Border.interactiveListItem.multiSelected:pointerover">
+      <Setter Property="Background" Value="#302D6AE3" />
+      <Setter Property="BorderBrush" Value="#FF68A9FF" />
+    </Style>
+
     <Style Selector="TextBlock.pageTitle">
       <Setter Property="FontSize" Value="28" />
       <Setter Property="FontWeight" Value="Bold" />

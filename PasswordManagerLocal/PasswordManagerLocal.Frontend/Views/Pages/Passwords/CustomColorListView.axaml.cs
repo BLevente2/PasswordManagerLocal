@@ -1,14 +1,12 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Input;
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
-using Avalonia.Media;
 using Avalonia.VisualTree;
 using PasswordManagerLocal.Frontend.ViewModels.Pages;
+using PasswordManagerLocal.Frontend.Views.Behaviors;
 
 namespace PasswordManagerLocal.Frontend.Views.Pages.Passwords;
 
@@ -16,86 +14,70 @@ public partial class CustomColorListView : UserControl
 {
     private const string HoveredClass = "hovered";
     private const string InteractiveListItemClass = "interactiveListItem";
-    private const double MaximumTapMovement = 10;
 
-    private static readonly IBrush NormalBackground = new SolidColorBrush(Color.FromArgb(0x08, 0x80, 0x80, 0x80));
-    private static readonly IBrush NormalBorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0x80, 0x80, 0x80));
-    private static readonly IBrush HoverBackground = new SolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
-    private static readonly IBrush HoverBorderBrush = new SolidColorBrush(Color.FromArgb(0xDD, 0x2D, 0x6A, 0xE3));
-
-    private Border? _pressedItem;
-    private IPointer? _pressedPointer;
-    private Point _pressedPoint;
+    private readonly MultiSelectionListItemPointerHandler<CustomColorItemViewModel> _multiSelectionPointerHandler;
 
     public CustomColorListView()
     {
         InitializeComponent();
+        _multiSelectionPointerHandler = new MultiSelectionListItemPointerHandler<CustomColorItemViewModel>(
+            this,
+            BeginMultiSelection);
     }
 
-    private void InteractiveListItem_PointerEntered(object? sender, PointerEventArgs e)
-    {
+    private void InteractiveListItem_PointerEntered(object? sender, PointerEventArgs e) =>
         SetHoverVisuals(sender, isHovered: true);
-    }
 
     private void InteractiveListItem_PointerExited(object? sender, PointerEventArgs e)
     {
         SetHoverVisuals(sender, isHovered: false);
-        ResetPressedItem();
+        _multiSelectionPointerHandler.CancelPointerTracking();
     }
 
     private void InteractiveListItem_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        ResetPressedItem();
-
         if (IsNestedActionSource(e.Source))
         {
             return;
         }
 
-        Border? item = FindInteractiveListItem(sender) ?? FindInteractiveListItem(e.Source);
-        if (item is null)
+        var item = FindInteractiveListItem(sender) ?? FindInteractiveListItem(e.Source);
+        if (item is not null)
         {
-            return;
+            _multiSelectionPointerHandler.HandlePointerPressed(item, e);
         }
-
-        _pressedItem = item;
-        _pressedPointer = e.Pointer;
-        _pressedPoint = e.GetPosition(item);
     }
+
+    private void InteractiveListItem_PointerMoved(object? sender, PointerEventArgs e) =>
+        _multiSelectionPointerHandler.HandlePointerMoved(e);
+
+    private void InteractiveListItem_PointerCaptureLost(object? sender, PointerCaptureLostEventArgs e) =>
+        _multiSelectionPointerHandler.HandlePointerCaptureLost(e);
 
     private void InteractiveListItem_PointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        Border? pressedItem = _pressedItem;
-        IPointer? pressedPointer = _pressedPointer;
-        Point pressedPoint = _pressedPoint;
-        ResetPressedItem();
+        if (IsNestedActionSource(e.Source))
+        {
+            _multiSelectionPointerHandler.CancelPointerTracking();
+            return;
+        }
 
-        if (pressedItem is null || !Equals(pressedPointer, e.Pointer) || IsNestedActionSource(e.Source))
+        var item = FindInteractiveListItem(sender) ?? FindInteractiveListItem(e.Source);
+        if (item is null || _multiSelectionPointerHandler.HandlePointerReleased(item, e))
         {
             return;
         }
 
-        Border? releasedItem = FindInteractiveListItem(sender) ?? FindInteractiveListItem(e.Source);
-        if (!ReferenceEquals(pressedItem, releasedItem))
-        {
-            return;
-        }
-
-        Vector movement = e.GetPosition(pressedItem) - pressedPoint;
-        if (Math.Abs(movement.X) > MaximumTapMovement || Math.Abs(movement.Y) > MaximumTapMovement)
-        {
-            return;
-        }
-
-        ExecuteEditCommand(pressedItem);
+        ExecuteEditCommand(item);
         e.Handled = true;
     }
 
-    private void ResetPressedItem()
+    private void BeginMultiSelection(CustomColorItemViewModel customColor)
     {
-        _pressedItem = null;
-        _pressedPointer = null;
-        _pressedPoint = default;
+        if (DataContext is PasswordsViewModel viewModel)
+        {
+            viewModel.BeginCustomColorMultiSelection(customColor);
+        }
     }
 
     private static void ExecuteEditCommand(Border item)
@@ -123,13 +105,13 @@ public partial class CustomColorListView : UserControl
     }
 
     private static bool IsNestedActionControl(Control control) =>
-        control is Button or ToggleSwitch;
+        control is Button or ToggleSwitch or CheckBox;
 
     private static IEnumerable<Control> EnumerateSelfAndAncestors(Control control)
     {
         yield return control;
 
-        foreach (Control ancestor in control.GetVisualAncestors().OfType<Control>())
+        foreach (var ancestor in control.GetVisualAncestors().OfType<Control>())
         {
             if (ancestor is Border border && border.Classes.Contains(InteractiveListItemClass))
             {
@@ -142,7 +124,7 @@ public partial class CustomColorListView : UserControl
 
     private static void SetHoverVisuals(object? sender, bool isHovered)
     {
-        Border? item = FindInteractiveListItem(sender);
+        var item = FindInteractiveListItem(sender);
         if (item is null)
         {
             return;
@@ -155,14 +137,10 @@ public partial class CustomColorListView : UserControl
                 item.Classes.Add(HoveredClass);
             }
 
-            item.Background = HoverBackground;
-            item.BorderBrush = HoverBorderBrush;
             return;
         }
 
         item.Classes.Remove(HoveredClass);
-        item.Background = NormalBackground;
-        item.BorderBrush = NormalBorderBrush;
     }
 
     private static Border? FindInteractiveListItem(object? sender)
