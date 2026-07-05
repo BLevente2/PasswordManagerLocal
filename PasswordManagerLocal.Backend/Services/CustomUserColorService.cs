@@ -57,11 +57,35 @@ public sealed class CustomUserColorService : ICustomUserColorService
     }
 
 
-    public void DeleteCustomUserColor(Guid customUserColorId, UserPasswordsData passwords)
+    public void DeleteCustomUserColors(IReadOnlyList<Guid> customUserColorIds, UserPasswordsData passwords)
     {
-        using var color = GetAndVerifyCustomUserColorById(customUserColorId, passwords);
-        TombstoneCleanupUtil.AddOrUpdateDeletedCustomUserColor(passwords, color.Id, DateTime.UtcNow);
-        passwords.CustomColors.Remove(color);
+        ArgumentNullException.ThrowIfNull(customUserColorIds);
+        passwords.VerifyIntegrity();
+
+        if (customUserColorIds.Count == 0)
+            return;
+
+        var uniqueCustomUserColorIds = customUserColorIds.Distinct().ToList();
+        var colorsToDelete = new List<CustomUserColor>(uniqueCustomUserColorIds.Count);
+
+        foreach (var customUserColorId in uniqueCustomUserColorIds)
+        {
+            var color = passwords.CustomColors.FirstOrDefault(color => color.Id == customUserColorId);
+            if (color is null)
+                throw new CustomUserColorNotFoundException(customUserColorId);
+
+            color.VerifyIntegrity();
+            colorsToDelete.Add(color);
+        }
+
+        var deletedAt = DateTime.UtcNow;
+        foreach (var color in colorsToDelete)
+        {
+            TombstoneCleanupUtil.AddOrUpdateDeletedCustomUserColor(passwords, color.Id, deletedAt);
+            passwords.CustomColors.Remove(color);
+            color.Dispose();
+        }
+
         passwords.GenerateCustomColorsIntegrityHash();
     }
 

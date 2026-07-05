@@ -947,6 +947,22 @@ public sealed class ProfileViewModel : ViewModelBase
         CurrentDevicePane = DeviceListPane;
     }
 
+    internal bool HasConfirmableDialogOpen =>
+        IsLocalSyncDialogOpen || IsDeviceDisconnectDialogOpen;
+
+    internal async Task ConfirmOpenDialogAsync()
+    {
+        if (IsLocalSyncDialogOpen)
+        {
+            await ConfirmLocalSyncToggleAsync();
+            return;
+        }
+
+        if (IsDeviceDisconnectDialogOpen)
+            await ConfirmDisconnectDeviceAsync();
+    }
+
+
     public bool TryNavigateBack()
     {
         if (IsLocalSyncDialogOpen)

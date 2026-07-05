@@ -235,7 +235,7 @@ public sealed class PasswordServiceTests
     }
 
     [TestMethod]
-    public void RemovePassword_Existing_Works()
+    public void RemovePasswords_SingleItemList_Works()
     {
         var service = new PasswordService();
         var passwords = CreateEmptyPasswords();
@@ -252,7 +252,7 @@ public sealed class PasswordServiceTests
         passwords.GenerateIntegrityHash();
         var passwordId = pw.Id;
 
-        service.RemovePassword(passwordId, passwords);
+        service.RemovePasswords([passwordId], passwords);
 
         MSTestAssert.IsEmpty(passwords.Passwords);
         MSTestAssert.HasCount(1, passwords.DeletedPasswords);
@@ -261,15 +261,76 @@ public sealed class PasswordServiceTests
     }
 
     [TestMethod]
-    public void RemovePassword_NonExisting_Throws()
+    public void RemovePasswords_MultipleItems_RemovesAllAndCreatesTombstones()
     {
         var service = new PasswordService();
         var passwords = CreateEmptyPasswords();
 
+        var first = new SecurePassword
+        {
+            Id = Guid.NewGuid(),
+            Name = "First",
+            Password = Encoding.UTF8.GetBytes("one")
+        };
+        var second = new SecurePassword
+        {
+            Id = Guid.NewGuid(),
+            Name = "Second",
+            Password = Encoding.UTF8.GetBytes("two")
+        };
+        var kept = new SecurePassword
+        {
+            Id = Guid.NewGuid(),
+            Name = "Kept",
+            Password = Encoding.UTF8.GetBytes("three")
+        };
+        first.GenerateIntegrityHash();
+        second.GenerateIntegrityHash();
+        kept.GenerateIntegrityHash();
+        passwords.Passwords.AddRange([first, second, kept]);
+        passwords.GenerateIntegrityHash();
+
+        var firstId = first.Id;
+        var secondId = second.Id;
+        var keptId = kept.Id;
+
+        service.RemovePasswords([firstId, secondId], passwords);
+
+        MSTestAssert.HasCount(1, passwords.Passwords);
+        MSTestAssert.AreEqual(keptId, passwords.Passwords[0].Id);
+        CollectionAssert.AreEquivalent(
+            new[] { firstId, secondId },
+            passwords.DeletedPasswords.Select(deleted => deleted.Id).ToArray());
+        passwords.VerifyIntegrity();
+    }
+
+    [TestMethod]
+    public void RemovePasswords_NonExisting_ThrowsWithoutRemovingExistingPasswords()
+    {
+        var service = new PasswordService();
+        var passwords = CreateEmptyPasswords();
+
+        var existing = new SecurePassword
+        {
+            Id = Guid.NewGuid(),
+            Name = "Existing",
+            Password = Encoding.UTF8.GetBytes("secret")
+        };
+        existing.GenerateIntegrityHash();
+        passwords.Passwords.Add(existing);
+        passwords.GenerateIntegrityHash();
+        var originalHash = passwords.IntegrityHash.ToArray();
+
         ExpectThrows<PasswordNotFoundException>(() =>
         {
-            service.RemovePassword(Guid.NewGuid(), passwords);
+            service.RemovePasswords([existing.Id, Guid.NewGuid()], passwords);
         });
+
+        MSTestAssert.HasCount(1, passwords.Passwords);
+        MSTestAssert.AreEqual(existing.Id, passwords.Passwords[0].Id);
+        MSTestAssert.IsEmpty(passwords.DeletedPasswords);
+        CollectionAssert.AreEqual(originalHash, passwords.IntegrityHash);
+        passwords.VerifyIntegrity();
     }
 
     [TestMethod]

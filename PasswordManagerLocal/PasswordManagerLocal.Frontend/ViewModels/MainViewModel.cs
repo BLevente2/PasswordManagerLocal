@@ -530,6 +530,60 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
+    internal bool HasConfirmableDialogOpen
+    {
+        get
+        {
+            if (IsSessionRenewalDialogOpen
+                || (IsDatabaseRecoveryDialogOpen && IsDatabaseRecoveryPrimaryButtonVisible))
+            {
+                return true;
+            }
+
+            if (_passwordsViewModel is not null
+                && ReferenceEquals(CurrentPageViewModel, _passwordsViewModel)
+                && _passwordsViewModel.HasConfirmableDialogOpen)
+            {
+                return true;
+            }
+
+            return _profileViewModel is not null
+                && ReferenceEquals(CurrentPageViewModel, _profileViewModel)
+                && _profileViewModel.HasConfirmableDialogOpen;
+        }
+    }
+
+    internal async Task ConfirmOpenDialogAsync()
+    {
+        if (IsSessionRenewalDialogOpen)
+        {
+            await ConfirmSessionRenewalAsync();
+            return;
+        }
+
+        if (IsDatabaseRecoveryDialogOpen && IsDatabaseRecoveryPrimaryButtonVisible)
+        {
+            await HandleDatabaseRecoveryPrimaryActionAsync();
+            return;
+        }
+
+        if (_passwordsViewModel is not null
+            && ReferenceEquals(CurrentPageViewModel, _passwordsViewModel)
+            && _passwordsViewModel.HasConfirmableDialogOpen)
+        {
+            await _passwordsViewModel.ConfirmOpenDialogAsync();
+            return;
+        }
+
+        if (_profileViewModel is not null
+            && ReferenceEquals(CurrentPageViewModel, _profileViewModel)
+            && _profileViewModel.HasConfirmableDialogOpen)
+        {
+            await _profileViewModel.ConfirmOpenDialogAsync();
+        }
+    }
+
+
     public async Task<bool> TryNavigateBackAsync()
     {
         if (IsSessionRenewalDialogOpen)

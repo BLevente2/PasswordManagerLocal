@@ -69,7 +69,7 @@ public sealed class UserPasswordsServiceTests
     }
 
     [TestMethod]
-    public async Task RemovePassword_RemovesPersistently()
+    public async Task RemovePasswords_SingleItemList_RemovesPersistently()
     {
         using var host = new BackendTestHost();
 
@@ -88,11 +88,47 @@ public sealed class UserPasswordsServiceTests
         var response = await svc.GetSavedPasswordsAsync(token);
         var id = response.Passwords[0].Id;
 
-        await svc.RemovePasswordAsync(token, id);
+        await svc.RemovePasswordsAsync(token, [id]);
 
         cache.InvalidateToken(token);
         var after = await svc.GetSavedPasswordsAsync(token);
         MSTestAssert.IsEmpty(after.Passwords);
+    }
+
+
+    [TestMethod]
+    public async Task RemovePasswords_MultipleItems_RemovesAllRequestedPersistently()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var svc = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("batch-delete-passwords"));
+
+        foreach (var name in new[] { "Email", "Bank", "Forum" })
+        {
+            await svc.AddNewPasswordAsync(token, new NewPasswordRequest
+            {
+                Name = name,
+                Password = Encoding.UTF8.GetBytes($"{name}-secret")
+            });
+        }
+
+        var before = await svc.GetSavedPasswordsAsync(token);
+        var idsToRemove = before.Passwords
+            .Where(password => password.Name is "Email" or "Forum")
+            .Select(password => password.Id)
+            .ToList();
+
+        await svc.RemovePasswordsAsync(token, idsToRemove);
+
+        cache.InvalidateToken(token);
+        var after = await svc.GetSavedPasswordsAsync(token);
+
+        MSTestAssert.HasCount(1, after.Passwords);
+        MSTestAssert.AreEqual("Bank", after.Passwords[0].Name);
     }
 
     [TestMethod]

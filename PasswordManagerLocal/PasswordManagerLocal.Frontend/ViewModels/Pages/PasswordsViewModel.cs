@@ -1209,6 +1209,22 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
 
+    internal bool HasConfirmableDialogOpen =>
+        IsCustomColorDeleteConfirmationOpen || IsDeleteConfirmationOpen;
+
+    internal async Task ConfirmOpenDialogAsync()
+    {
+        if (IsCustomColorDeleteConfirmationOpen)
+        {
+            await ConfirmDeleteCustomColorAsync();
+            return;
+        }
+
+        if (IsDeleteConfirmationOpen)
+            await ConfirmDeletePasswordAsync();
+    }
+
+
     public bool TryNavigateBack()
     {
         if (IsCustomColorDeleteConfirmationOpen)
@@ -1466,7 +1482,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         try
         {
             _isDeletingPassword = true;
-            await _endpoints.RemovePasswordAsync(_token, password.Id);
+            await _endpoints.RemovePasswordsAsync(_token, [password.Id]);
             CancelDeletePassword();
 
             if (SelectedPassword?.Id == password.Id)
@@ -2225,7 +2241,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         try
         {
             _isDeletingCustomColor = true;
-            await _endpoints.DeleteCustomUserColorAsync(_token, customColor.Id);
+            await _endpoints.DeleteCustomUserColorsAsync(_token, [customColor.Id]);
             CancelDeleteCustomColor();
 
             if (!await RefreshAsync(false))

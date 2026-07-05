@@ -302,7 +302,7 @@ public sealed class CustomUserColorServiceTests
 
 
     [TestMethod]
-    public void DeleteCustomUserColor_ExistingColor_RemovesAndCreatesTombstone()
+    public void DeleteCustomUserColors_SingleItemList_RemovesAndCreatesTombstone()
     {
         var service = new CustomUserColorService();
         var passwords = CreateEmptyPasswords();
@@ -314,7 +314,7 @@ public sealed class CustomUserColorServiceTests
         }, passwords);
 
         var colorId = passwords.CustomColors[0].Id;
-        service.DeleteCustomUserColor(colorId, passwords);
+        service.DeleteCustomUserColors([colorId], passwords);
 
         MSTestAssert.IsEmpty(passwords.CustomColors);
         MSTestAssert.HasCount(1, passwords.DeletedCustomColors);
@@ -325,18 +325,57 @@ public sealed class CustomUserColorServiceTests
 
 
     [TestMethod]
-    public void DeleteCustomUserColor_NonExistingColor_Throws()
+    public void DeleteCustomUserColors_MultipleItems_RemovesAllAndCreatesTombstones()
     {
         var service = new CustomUserColorService();
         var passwords = CreateEmptyPasswords();
 
+        service.AddCustomUserColors(
+        [
+            new NewCustomUserColorRequest { ColorName = "Blue", ColorCode = "#FF010203" },
+            new NewCustomUserColorRequest { ColorName = "Green", ColorCode = "#FF040506" },
+            new NewCustomUserColorRequest { ColorName = "Red", ColorCode = "#FF070809" }
+        ], passwords);
+
+        var blueId = passwords.CustomColors.Single(color => color.ColorName == "Blue").Id;
+        var greenId = passwords.CustomColors.Single(color => color.ColorName == "Green").Id;
+        var redId = passwords.CustomColors.Single(color => color.ColorName == "Red").Id;
+
+        service.DeleteCustomUserColors([blueId, redId], passwords);
+
+        MSTestAssert.HasCount(1, passwords.CustomColors);
+        MSTestAssert.AreEqual(greenId, passwords.CustomColors[0].Id);
+        CollectionAssert.AreEquivalent(
+            new[] { blueId, redId },
+            passwords.DeletedCustomColors.Select(deleted => deleted.Id).ToArray());
+        passwords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public void DeleteCustomUserColors_NonExistingColor_ThrowsWithoutDeletingExistingColors()
+    {
+        var service = new CustomUserColorService();
+        var passwords = CreateEmptyPasswords();
+
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "Existing",
+            ColorCode = "#FF123456"
+        }, passwords);
+
+        var existingColorId = passwords.CustomColors[0].Id;
+        var originalHash = passwords.IntegrityHash.ToArray();
+
         ExpectThrows<CustomUserColorNotFoundException>(() =>
         {
-            service.DeleteCustomUserColor(Guid.NewGuid(), passwords);
+            service.DeleteCustomUserColors([existingColorId, Guid.NewGuid()], passwords);
         });
 
-        MSTestAssert.IsEmpty(passwords.CustomColors);
+        MSTestAssert.HasCount(1, passwords.CustomColors);
+        MSTestAssert.AreEqual(existingColorId, passwords.CustomColors[0].Id);
         MSTestAssert.IsEmpty(passwords.DeletedCustomColors);
+        CollectionAssert.AreEqual(originalHash, passwords.IntegrityHash);
         passwords.VerifyIntegrity();
     }
 

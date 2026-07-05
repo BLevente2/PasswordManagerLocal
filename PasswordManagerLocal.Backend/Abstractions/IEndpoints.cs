@@ -41,12 +41,12 @@ public interface IEndpoints
 
     Task<SavedPasswordsResponse> GetSavedPasswordsAsync(Guid token, CancellationToken ct = default);
     Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default);
-    Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default);
+    Task RemovePasswordsAsync(Guid token, IReadOnlyList<Guid> passwordIds, CancellationToken ct = default);
     Task<byte[]> GetUnsecurePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default);
     Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default);
     Task ExportPasswordsToUserAsync(Guid sourceToken, ExportPasswordsToUserRequest request, CancellationToken ct = default);
     Task AddCustomUserColorsAsync(Guid token, IReadOnlyList<NewCustomUserColorRequest> requests, CancellationToken ct = default);
-    Task DeleteCustomUserColorAsync(Guid token, Guid customUserColorId, CancellationToken ct = default);
+    Task DeleteCustomUserColorsAsync(Guid token, IReadOnlyList<Guid> customUserColorIds, CancellationToken ct = default);
     Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default);
     Task AddPasswordTagAsync(Guid token, NewPasswordTagRequest request, CancellationToken ct = default);
     Task DeletePasswordTagAsync(Guid token, Guid passwordTagId, CancellationToken ct = default);

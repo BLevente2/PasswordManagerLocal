@@ -27,10 +27,19 @@ public sealed class UserCustomColorService : IUserCustomColorService
     }
 
 
-    public async Task DeleteCustomUserColorAsync(Guid token, Guid customUserColorId, CancellationToken ct = default)
+    public async Task DeleteCustomUserColorsAsync(
+        Guid token,
+        IReadOnlyList<Guid> customUserColorIds,
+        CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(customUserColorIds);
+
         var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
-        _customUserColorService.DeleteCustomUserColor(customUserColorId, bundle.UserPasswordsData);
+
+        if (customUserColorIds.Count == 0)
+            return;
+
+        _customUserColorService.DeleteCustomUserColors(customUserColorIds, bundle.UserPasswordsData);
         await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 

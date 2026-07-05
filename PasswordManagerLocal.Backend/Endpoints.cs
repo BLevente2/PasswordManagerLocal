@@ -127,8 +127,11 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserPasswordsService>(service => service.AddNewPasswordAsync(token, request, ct));
 
-    public Task RemovePasswordAsync(Guid token, Guid passwordId, CancellationToken ct = default) =>
-        RunAsync<IUserPasswordsService>(service => service.RemovePasswordAsync(token, passwordId, ct));
+    public Task RemovePasswordsAsync(
+        Guid token,
+        IReadOnlyList<Guid> passwordIds,
+        CancellationToken ct = default) =>
+        RunAsync<IUserPasswordsService>(service => service.RemovePasswordsAsync(token, passwordIds, ct));
 
     public Task<byte[]> GetUnsecurePasswordAsync(
         Guid token,
@@ -155,11 +158,11 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserCustomColorService>(service => service.AddCustomUserColorsAsync(token, requests, ct));
 
-    public Task DeleteCustomUserColorAsync(
+    public Task DeleteCustomUserColorsAsync(
         Guid token,
-        Guid customUserColorId,
+        IReadOnlyList<Guid> customUserColorIds,
         CancellationToken ct = default) =>
-        RunAsync<IUserCustomColorService>(service => service.DeleteCustomUserColorAsync(token, customUserColorId, ct));
+        RunAsync<IUserCustomColorService>(service => service.DeleteCustomUserColorsAsync(token, customUserColorIds, ct));
 
     public Task UpdateCustomUserColorAsync(
         Guid token,

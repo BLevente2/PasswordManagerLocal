@@ -102,11 +102,46 @@ public sealed class UserCustomColorServiceTests
         MSTestAssert.IsNull(updated.CustomColors[0].ColorName);
         MSTestAssert.AreEqual("#FF654321", updated.CustomColors[0].ColorCode);
 
-        await customColorService.DeleteCustomUserColorAsync(token, colorId);
+        await customColorService.DeleteCustomUserColorsAsync(token, [colorId]);
 
         cache.InvalidateToken(token);
         var deleted = await passwordService.GetSavedPasswordsAsync(token);
         MSTestAssert.IsEmpty(deleted.CustomColors);
+    }
+
+
+    [TestMethod]
+    public async Task DeleteCustomUserColors_MultipleItems_RemovesAllRequestedPersistently()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("colors-batch-delete"));
+
+        await customColorService.AddCustomUserColorsAsync(token,
+        [
+            new NewCustomUserColorRequest { ColorName = "Blue", ColorCode = "#FF010203" },
+            new NewCustomUserColorRequest { ColorName = "Green", ColorCode = "#FF040506" },
+            new NewCustomUserColorRequest { ColorName = "Red", ColorCode = "#FF070809" }
+        ]);
+
+        var before = await passwordService.GetSavedPasswordsAsync(token);
+        var idsToDelete = before.CustomColors
+            .Where(color => color.ColorName is "Blue" or "Red")
+            .Select(color => color.Id)
+            .ToList();
+
+        await customColorService.DeleteCustomUserColorsAsync(token, idsToDelete);
+
+        cache.InvalidateToken(token);
+        var after = await passwordService.GetSavedPasswordsAsync(token);
+
+        MSTestAssert.HasCount(1, after.CustomColors);
+        MSTestAssert.AreEqual("Green", after.CustomColors[0].ColorName);
     }
 
 
@@ -195,7 +230,7 @@ public sealed class UserCustomColorServiceTests
 
 
     [TestMethod]
-    public async Task DeleteCustomUserColor_NonExistingColor_Throws()
+    public async Task DeleteCustomUserColors_NonExistingColor_Throws()
     {
         using var host = new BackendTestHost();
 
@@ -206,7 +241,7 @@ public sealed class UserCustomColorServiceTests
 
         await ExpectThrowsAsync<CustomUserColorNotFoundException>(async () =>
         {
-            await customColorService.DeleteCustomUserColorAsync(token, Guid.NewGuid());
+            await customColorService.DeleteCustomUserColorsAsync(token, [Guid.NewGuid()]);
         });
     }
 
