@@ -262,7 +262,8 @@ public sealed class UserPasswordsServiceTests
         await svc.ExportPasswordsToUserAsync(sourceToken, new ExportPasswordsToUserRequest
         {
             TargetToken = targetToken,
-            PasswordIds = exportedIds
+            PasswordIds = exportedIds,
+            DeleteOriginal = false
         });
 
         cache.InvalidateToken(sourceToken);
@@ -288,7 +289,57 @@ public sealed class UserPasswordsServiceTests
 
 
     [TestMethod]
-    public async Task ExportPasswordsToUser_DuplicateTargetName_ThrowsAndDoesNotModifyTarget()
+    public async Task ExportPasswordsToUser_DeleteOriginalTrue_MovesSelectedPasswords()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var svc = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var sourceToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("export-move-source"));
+        var targetToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("export-move-target"));
+
+        var emailPassword = Encoding.UTF8.GetBytes("email-secret");
+        await svc.AddNewPasswordAsync(sourceToken, new NewPasswordRequest
+        {
+            Name = "Email",
+            Password = emailPassword
+        });
+        await svc.AddNewPasswordAsync(sourceToken, new NewPasswordRequest
+        {
+            Name = "Bank",
+            Password = Encoding.UTF8.GetBytes("bank-secret")
+        });
+
+        var sourceBefore = await svc.GetSavedPasswordsAsync(sourceToken);
+        var emailId = sourceBefore.Passwords.Single(password => password.Name == "Email").Id;
+
+        await svc.ExportPasswordsToUserAsync(sourceToken, new ExportPasswordsToUserRequest
+        {
+            TargetToken = targetToken,
+            PasswordIds = [emailId],
+            DeleteOriginal = true
+        });
+
+        cache.InvalidateToken(sourceToken);
+        cache.InvalidateToken(targetToken);
+
+        var sourceAfter = await svc.GetSavedPasswordsAsync(sourceToken);
+        var targetAfter = await svc.GetSavedPasswordsAsync(targetToken);
+
+        MSTestAssert.HasCount(1, sourceAfter.Passwords);
+        MSTestAssert.AreEqual("Bank", sourceAfter.Passwords[0].Name);
+        MSTestAssert.HasCount(1, targetAfter.Passwords);
+        MSTestAssert.AreEqual("Email", targetAfter.Passwords[0].Name);
+        CollectionAssert.AreEqual(
+            emailPassword,
+            await svc.GetUnsecurePasswordAsync(targetToken, targetAfter.Passwords[0].Id));
+    }
+
+
+    [TestMethod]
+    public async Task ExportPasswordsToUser_DuplicateTargetName_WithDeleteOriginalTrue_DoesNotModifyEitherUser()
     {
         using var host = new BackendTestHost();
 
@@ -317,11 +368,15 @@ public sealed class UserPasswordsServiceTests
             await svc.ExportPasswordsToUserAsync(sourceToken, new ExportPasswordsToUserRequest
             {
                 TargetToken = targetToken,
-                PasswordIds = [sourcePasswords.Passwords[0].Id]
+                PasswordIds = [sourcePasswords.Passwords[0].Id],
+                DeleteOriginal = true
             });
         });
 
+        var sourceAfter = await svc.GetSavedPasswordsAsync(sourceToken);
         var targetPasswords = await svc.GetSavedPasswordsAsync(targetToken);
+        MSTestAssert.HasCount(1, sourceAfter.Passwords);
+        MSTestAssert.AreEqual("Email", sourceAfter.Passwords[0].Name);
         MSTestAssert.HasCount(1, targetPasswords.Passwords);
         MSTestAssert.AreEqual("email", targetPasswords.Passwords[0].Name);
         CollectionAssert.AreEqual(

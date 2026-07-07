@@ -146,6 +146,93 @@ public sealed class UserCustomColorServiceTests
 
 
     [TestMethod]
+    public async Task ExportCustomUserColorsToUser_DeleteOriginalFalse_CopiesAndKeepsSourceColors()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var sourceToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("color-export-copy-source"));
+        var targetToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("color-export-copy-target"));
+
+        await customColorService.AddCustomUserColorsAsync(sourceToken,
+        [
+            new NewCustomUserColorRequest { ColorName = "Work", ColorCode = "#FF123456" },
+            new NewCustomUserColorRequest { ColorName = "Personal", ColorCode = "#FF654321" }
+        ]);
+
+        var sourceBefore = await passwordService.GetSavedPasswordsAsync(sourceToken);
+        var sourceColorIds = sourceBefore.CustomColors.Select(color => color.Id).ToList();
+
+        await customColorService.ExportCustomUserColorsToUserAsync(sourceToken, new ExportCustomUserColorsToUserRequest
+        {
+            TargetToken = targetToken,
+            CustomUserColorIds = sourceColorIds,
+            DeleteOriginal = false
+        });
+
+        cache.InvalidateToken(sourceToken);
+        cache.InvalidateToken(targetToken);
+
+        var sourceAfter = await passwordService.GetSavedPasswordsAsync(sourceToken);
+        var targetAfter = await passwordService.GetSavedPasswordsAsync(targetToken);
+
+        MSTestAssert.HasCount(2, sourceAfter.CustomColors);
+        MSTestAssert.HasCount(2, targetAfter.CustomColors);
+        CollectionAssert.AreEquivalent(
+            new[] { "Personal", "Work" },
+            targetAfter.CustomColors.Select(color => color.ColorName).ToArray());
+        MSTestAssert.IsFalse(targetAfter.CustomColors.Any(color => sourceColorIds.Contains(color.Id)));
+    }
+
+
+    [TestMethod]
+    public async Task ExportCustomUserColorsToUser_DeleteOriginalTrue_MovesSelectedColors()
+    {
+        using var host = new BackendTestHost();
+
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var customColorService = host.Services.GetRequiredService<IUserCustomColorService>();
+        var passwordService = host.Services.GetRequiredService<IUserPasswordsService>();
+        var cache = host.Services.GetRequiredService<IDataCachingService>();
+
+        var sourceToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("color-export-move-source"));
+        var targetToken = await auth.RegisterAsync(host.CreateValidRegistrationRequest("color-export-move-target"));
+
+        await customColorService.AddCustomUserColorsAsync(sourceToken,
+        [
+            new NewCustomUserColorRequest { ColorName = "Work", ColorCode = "#FF123456" },
+            new NewCustomUserColorRequest { ColorName = "Personal", ColorCode = "#FF654321" }
+        ]);
+
+        var sourceBefore = await passwordService.GetSavedPasswordsAsync(sourceToken);
+        var workColorId = sourceBefore.CustomColors.Single(color => color.ColorName == "Work").Id;
+
+        await customColorService.ExportCustomUserColorsToUserAsync(sourceToken, new ExportCustomUserColorsToUserRequest
+        {
+            TargetToken = targetToken,
+            CustomUserColorIds = [workColorId],
+            DeleteOriginal = true
+        });
+
+        cache.InvalidateToken(sourceToken);
+        cache.InvalidateToken(targetToken);
+
+        var sourceAfter = await passwordService.GetSavedPasswordsAsync(sourceToken);
+        var targetAfter = await passwordService.GetSavedPasswordsAsync(targetToken);
+
+        MSTestAssert.HasCount(1, sourceAfter.CustomColors);
+        MSTestAssert.AreEqual("Personal", sourceAfter.CustomColors[0].ColorName);
+        MSTestAssert.HasCount(1, targetAfter.CustomColors);
+        MSTestAssert.AreEqual("Work", targetAfter.CustomColors[0].ColorName);
+        MSTestAssert.AreNotEqual(workColorId, targetAfter.CustomColors[0].Id);
+    }
+
+
+    [TestMethod]
     public async Task AddCustomUserColor_DuplicateCode_ThrowsAndKeepsExistingColor()
     {
         using var host = new BackendTestHost();

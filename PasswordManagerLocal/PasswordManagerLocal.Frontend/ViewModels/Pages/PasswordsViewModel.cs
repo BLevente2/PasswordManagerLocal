@@ -1076,6 +1076,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public void ShowMainPage()
     {
+        ExitPasswordMultiSelection();
+        ExitCustomColorMultiSelection();
         IsDeleteConfirmationOpen = false;
         PasswordPendingDeletion = null;
         IsCustomColorDeleteConfirmationOpen = false;

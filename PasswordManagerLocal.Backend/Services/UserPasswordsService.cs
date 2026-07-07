@@ -105,6 +105,17 @@ public sealed class UserPasswordsService : IUserPasswordsService
             UserDataBlobKind.Passwords,
             true,
             ct);
+
+        if (!request.DeleteOriginal)
+            return;
+
+        _passwordService.RemovePasswords(request.PasswordIds!, sourceBundle.UserPasswordsData);
+        await _userService.UpdateUserDataBundleAsync(
+            sourceBundle,
+            sourceToken,
+            UserDataBlobKind.Passwords,
+            true,
+            ct);
     }
 
 }

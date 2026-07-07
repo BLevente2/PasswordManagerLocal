@@ -164,6 +164,13 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserCustomColorService>(service => service.DeleteCustomUserColorsAsync(token, customUserColorIds, ct));
 
+    public Task ExportCustomUserColorsToUserAsync(
+        Guid sourceToken,
+        ExportCustomUserColorsToUserRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserCustomColorService>(service =>
+            service.ExportCustomUserColorsToUserAsync(sourceToken, request, ct));
+
     public Task UpdateCustomUserColorAsync(
         Guid token,
         UpdateCustomUserColorRequest request,
@@ -182,6 +189,13 @@ public sealed class Endpoints : IEndpoints
         Guid passwordTagId,
         CancellationToken ct = default) =>
         RunAsync<IUserPasswordTagService>(service => service.DeletePasswordTagAsync(token, passwordTagId, ct));
+
+    public Task ExportPasswordTagsToUserAsync(
+        Guid sourceToken,
+        ExportPasswordTagsToUserRequest request,
+        CancellationToken ct = default) =>
+        RunAsync<IUserPasswordTagService>(service =>
+            service.ExportPasswordTagsToUserAsync(sourceToken, request, ct));
 
     public Task UpdatePasswordTagAsync(
         Guid token,

@@ -229,6 +229,67 @@ public sealed class PasswordTagServiceTests
 
 
     [TestMethod]
+    public void ExportPasswordTags_CopiesSelectedTagsWithNewIds()
+    {
+        var service = new PasswordTagService();
+        var sourcePasswords = CreateEmptyPasswords();
+        var targetPasswords = CreateEmptyPasswords();
+
+        service.AddPasswordTag(new NewPasswordTagRequest
+        {
+            Name = "Work",
+            Color = "#ff123456"
+        }, sourcePasswords);
+
+        var sourceTag = sourcePasswords.Tags[0];
+        service.ExportPasswordTags([sourceTag.Id], sourcePasswords, targetPasswords);
+
+        MSTestAssert.HasCount(1, sourcePasswords.Tags);
+        MSTestAssert.HasCount(1, targetPasswords.Tags);
+        MSTestAssert.AreNotEqual(sourceTag.Id, targetPasswords.Tags[0].Id);
+        MSTestAssert.AreEqual("Work", targetPasswords.Tags[0].Name);
+        MSTestAssert.AreEqual("#FF123456", targetPasswords.Tags[0].Color);
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public void ExportPasswordTags_DuplicateTargetName_ThrowsWithoutModifyingTarget()
+    {
+        var service = new PasswordTagService();
+        var sourcePasswords = CreateEmptyPasswords();
+        var targetPasswords = CreateEmptyPasswords();
+
+        service.AddPasswordTag(new NewPasswordTagRequest
+        {
+            Name = "Work",
+            Color = "#FF123456"
+        }, sourcePasswords);
+        service.AddPasswordTag(new NewPasswordTagRequest
+        {
+            Name = "work",
+            Color = "#FF654321"
+        }, targetPasswords);
+
+        var targetHash = targetPasswords.IntegrityHash.ToArray();
+        ExpectThrows<DuplicatePasswordTagNameException>(() =>
+        {
+            service.ExportPasswordTags(
+                [sourcePasswords.Tags[0].Id],
+                sourcePasswords,
+                targetPasswords);
+        });
+
+        MSTestAssert.HasCount(1, targetPasswords.Tags);
+        MSTestAssert.AreEqual("work", targetPasswords.Tags[0].Name);
+        CollectionAssert.AreEqual(targetHash, targetPasswords.IntegrityHash);
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
     public void ConvertToPasswordTagInfoResponses_ReturnsStableSortedResponses()
     {
         var service = new PasswordTagService();

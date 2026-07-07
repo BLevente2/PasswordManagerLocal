@@ -6,6 +6,7 @@ public sealed class ExportPasswordsToUserRequest
 {
     public Guid TargetToken { get; set; }
     public IReadOnlyList<Guid>? PasswordIds { get; set; } = [];
+    public bool DeleteOriginal { get; set; }
 
     public bool Validate(out List<string> errors)
     {

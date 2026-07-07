@@ -254,6 +254,16 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
+    public async Task ExportCustomUserColorsToUserAsync(
+        Guid sourceToken,
+        ExportCustomUserColorsToUserRequest request,
+        CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.ExportCustomUserColorsToUserAsync(sourceToken, request, ct);
+    }
+
+
     public async Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
@@ -272,6 +282,16 @@ public sealed class DeferredEndpoints : IEndpoints
     {
         var endpoints = await GetEndpointsAsync(ct);
         await endpoints.DeletePasswordTagAsync(token, passwordTagId, ct);
+    }
+
+
+    public async Task ExportPasswordTagsToUserAsync(
+        Guid sourceToken,
+        ExportPasswordTagsToUserRequest request,
+        CancellationToken ct = default)
+    {
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.ExportPasswordTagsToUserAsync(sourceToken, request, ct);
     }
 
 

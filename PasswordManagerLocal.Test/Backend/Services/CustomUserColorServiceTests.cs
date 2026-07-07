@@ -381,6 +381,67 @@ public sealed class CustomUserColorServiceTests
 
 
     [TestMethod]
+    public void ExportCustomUserColors_CopiesSelectedColorsWithNewIds()
+    {
+        var service = new CustomUserColorService();
+        var sourcePasswords = CreateEmptyPasswords();
+        var targetPasswords = CreateEmptyPasswords();
+
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "Work",
+            ColorCode = "#ff123456"
+        }, sourcePasswords);
+
+        var sourceColor = sourcePasswords.CustomColors[0];
+        service.ExportCustomUserColors([sourceColor.Id], sourcePasswords, targetPasswords);
+
+        MSTestAssert.HasCount(1, sourcePasswords.CustomColors);
+        MSTestAssert.HasCount(1, targetPasswords.CustomColors);
+        MSTestAssert.AreNotEqual(sourceColor.Id, targetPasswords.CustomColors[0].Id);
+        MSTestAssert.AreEqual("Work", targetPasswords.CustomColors[0].ColorName);
+        MSTestAssert.AreEqual("#FF123456", targetPasswords.CustomColors[0].ColorCode);
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
+    public void ExportCustomUserColors_DuplicateTargetName_ThrowsWithoutModifyingTarget()
+    {
+        var service = new CustomUserColorService();
+        var sourcePasswords = CreateEmptyPasswords();
+        var targetPasswords = CreateEmptyPasswords();
+
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "Work",
+            ColorCode = "#FF123456"
+        }, sourcePasswords);
+        service.AddCustomUserColor(new NewCustomUserColorRequest
+        {
+            ColorName = "work",
+            ColorCode = "#FF654321"
+        }, targetPasswords);
+
+        var targetHash = targetPasswords.IntegrityHash.ToArray();
+        ExpectThrows<DuplicateCustomUserColorNameException>(() =>
+        {
+            service.ExportCustomUserColors(
+                [sourcePasswords.CustomColors[0].Id],
+                sourcePasswords,
+                targetPasswords);
+        });
+
+        MSTestAssert.HasCount(1, targetPasswords.CustomColors);
+        MSTestAssert.AreEqual("work", targetPasswords.CustomColors[0].ColorName);
+        CollectionAssert.AreEqual(targetHash, targetPasswords.IntegrityHash);
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+    }
+
+
+    [TestMethod]
     public void ConvertToCustomUserColorInfoResponses_ReturnsStableSortedResponses()
     {
         var service = new CustomUserColorService();

@@ -75,6 +75,56 @@ public sealed class PasswordTagService : IPasswordTagService
     }
 
 
+    public void ExportPasswordTags(
+        IReadOnlyList<Guid> passwordTagIds,
+        UserPasswordsData sourcePasswords,
+        UserPasswordsData targetPasswords)
+    {
+        ArgumentNullException.ThrowIfNull(passwordTagIds);
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+
+        ValidatePasswordTagExportRequest(passwordTagIds, targetPasswords);
+
+        var selectedTags = GetPasswordTagsToExport(passwordTagIds, sourcePasswords);
+        EnsureTargetPasswordTagNamesAreAvailable(selectedTags, targetPasswords);
+
+        var now = DateTime.UtcNow;
+        var copiedTags = selectedTags
+            .Select(tag =>
+            {
+                var copiedTag = new PasswordTag
+                {
+                    Id = Guid.NewGuid(),
+                    Name = NormalizeTagName(tag.Name),
+                    Color = NormalizeColorCode(tag.Color),
+                    LastUpdatedAt = now
+                };
+                copiedTag.GenerateIntegrityHash();
+                return copiedTag;
+            })
+            .ToList();
+
+        try
+        {
+            foreach (var copiedTag in copiedTags)
+            {
+                targetPasswords.DeletedTags.RemoveAll(deleted => deleted.Id == copiedTag.Id);
+                targetPasswords.Tags.Add(copiedTag);
+            }
+
+            targetPasswords.GeneratePasswordTagsIntegrityHash();
+        }
+        catch
+        {
+            var copiedIds = copiedTags.Select(tag => tag.Id).ToHashSet();
+            targetPasswords.Tags.RemoveAll(tag => copiedIds.Contains(tag.Id));
+            copiedTags.ForEach(tag => tag.Dispose());
+            throw;
+        }
+    }
+
+
     public void UpdatePasswordTag(UpdatePasswordTagRequest request, UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
@@ -111,6 +161,59 @@ public sealed class PasswordTagService : IPasswordTagService
 
         tag.VerifyIntegrity();
         return tag;
+    }
+
+
+    private void ValidatePasswordTagExportRequest(
+        IReadOnlyList<Guid> passwordTagIds,
+        UserPasswordsData targetPasswords)
+    {
+        var hasInvalidInput = passwordTagIds.Count == 0
+            || passwordTagIds.Count > MaxNumberOfPasswordTags
+            || passwordTagIds.Any(id => id == Guid.Empty)
+            || passwordTagIds.Distinct().Count() != passwordTagIds.Count;
+
+        if (hasInvalidInput)
+            throw new InvalidInputException(["PasswordTagIds"]);
+
+        if (targetPasswords.Tags.Count + passwordTagIds.Count > MaxNumberOfPasswordTags)
+            throw new LimitReachedException(MaxNumberOfPasswordTags, "passwordTag");
+    }
+
+
+    private List<PasswordTag> GetPasswordTagsToExport(
+        IReadOnlyList<Guid> passwordTagIds,
+        UserPasswordsData sourcePasswords)
+    {
+        var selectedTags = new List<PasswordTag>(passwordTagIds.Count);
+        foreach (var passwordTagId in passwordTagIds)
+        {
+            var tag = sourcePasswords.Tags.FirstOrDefault(tag => tag.Id == passwordTagId);
+            if (tag is null)
+                throw new PasswordTagNotFoundException(passwordTagId);
+
+            tag.VerifyIntegrity();
+            selectedTags.Add(tag);
+        }
+
+        return selectedTags;
+    }
+
+
+    private void EnsureTargetPasswordTagNamesAreAvailable(
+        IReadOnlyList<PasswordTag> selectedTags,
+        UserPasswordsData targetPasswords)
+    {
+        var usedNames = targetPasswords.Tags
+            .Select(tag => NormalizeTagName(tag.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tag in selectedTags)
+        {
+            var tagName = NormalizeTagName(tag.Name);
+            if (!usedNames.Add(tagName))
+                throw new DuplicatePasswordTagNameException(tagName);
+        }
     }
 
 

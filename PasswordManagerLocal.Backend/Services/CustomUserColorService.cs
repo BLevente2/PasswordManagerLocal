@@ -90,6 +90,56 @@ public sealed class CustomUserColorService : ICustomUserColorService
     }
 
 
+    public void ExportCustomUserColors(
+        IReadOnlyList<Guid> customUserColorIds,
+        UserPasswordsData sourcePasswords,
+        UserPasswordsData targetPasswords)
+    {
+        ArgumentNullException.ThrowIfNull(customUserColorIds);
+        sourcePasswords.VerifyIntegrity();
+        targetPasswords.VerifyIntegrity();
+
+        ValidateCustomUserColorExportRequest(customUserColorIds, targetPasswords);
+
+        var selectedColors = GetCustomUserColorsToExport(customUserColorIds, sourcePasswords);
+        EnsureTargetCustomUserColorsAreAvailable(selectedColors, targetPasswords);
+
+        var now = DateTime.UtcNow;
+        var copiedColors = selectedColors
+            .Select(color =>
+            {
+                var copiedColor = new CustomUserColor
+                {
+                    Id = Guid.NewGuid(),
+                    ColorName = NormalizeOptionalColorName(color.ColorName),
+                    ColorCode = NormalizeColorCode(color.ColorCode),
+                    LastUpdatedAt = now
+                };
+                copiedColor.GenerateIntegrityHash();
+                return copiedColor;
+            })
+            .ToList();
+
+        try
+        {
+            foreach (var copiedColor in copiedColors)
+            {
+                targetPasswords.DeletedCustomColors.RemoveAll(deleted => deleted.Id == copiedColor.Id);
+                targetPasswords.CustomColors.Add(copiedColor);
+            }
+
+            targetPasswords.GenerateCustomColorsIntegrityHash();
+        }
+        catch
+        {
+            var copiedIds = copiedColors.Select(color => color.Id).ToHashSet();
+            targetPasswords.CustomColors.RemoveAll(color => copiedIds.Contains(color.Id));
+            copiedColors.ForEach(color => color.Dispose());
+            throw;
+        }
+    }
+
+
     public void UpdateCustomUserColor(UpdateCustomUserColorRequest request, UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
@@ -131,6 +181,68 @@ public sealed class CustomUserColorService : ICustomUserColorService
 
         color.VerifyIntegrity();
         return color;
+    }
+
+
+    private void ValidateCustomUserColorExportRequest(
+        IReadOnlyList<Guid> customUserColorIds,
+        UserPasswordsData targetPasswords)
+    {
+        var hasInvalidInput = customUserColorIds.Count == 0
+            || customUserColorIds.Count > MaxNumberOfCustomUserColors
+            || customUserColorIds.Any(id => id == Guid.Empty)
+            || customUserColorIds.Distinct().Count() != customUserColorIds.Count;
+
+        if (hasInvalidInput)
+            throw new InvalidInputException(["CustomUserColorIds"]);
+
+        if (targetPasswords.CustomColors.Count + customUserColorIds.Count > MaxNumberOfCustomUserColors)
+            throw new LimitReachedException(MaxNumberOfCustomUserColors, "customUserColor");
+    }
+
+
+    private List<CustomUserColor> GetCustomUserColorsToExport(
+        IReadOnlyList<Guid> customUserColorIds,
+        UserPasswordsData sourcePasswords)
+    {
+        var selectedColors = new List<CustomUserColor>(customUserColorIds.Count);
+        foreach (var customUserColorId in customUserColorIds)
+        {
+            var color = sourcePasswords.CustomColors.FirstOrDefault(color => color.Id == customUserColorId);
+            if (color is null)
+                throw new CustomUserColorNotFoundException(customUserColorId);
+
+            color.VerifyIntegrity();
+            selectedColors.Add(color);
+        }
+
+        return selectedColors;
+    }
+
+
+    private void EnsureTargetCustomUserColorsAreAvailable(
+        IReadOnlyList<CustomUserColor> selectedColors,
+        UserPasswordsData targetPasswords)
+    {
+        var usedNames = targetPasswords.CustomColors
+            .Where(color => color.ColorName is not null)
+            .Select(color => color.ColorName!.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var usedCodes = targetPasswords.CustomColors
+            .Select(color => NormalizeColorCode(color.ColorCode))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var color in selectedColors)
+        {
+            var colorName = NormalizeOptionalColorName(color.ColorName);
+            var colorCode = NormalizeColorCode(color.ColorCode);
+
+            if (colorName is not null && !usedNames.Add(colorName))
+                throw new DuplicateCustomUserColorNameException(colorName);
+
+            if (!usedCodes.Add(colorCode))
+                throw new DuplicateCustomUserColorCodeException(colorCode);
+        }
     }
 
 
