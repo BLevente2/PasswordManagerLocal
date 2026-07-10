@@ -614,7 +614,7 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string LocalSyncDeviceName => PendingLocalSyncDevice?.Name ?? string.Empty;
 
-    public string RegistrationDateText => RegistrationDate.ToLocalTime().ToString("f");
+    public string RegistrationDateText => FrontendDateTimeUtil.ToLocalFromBackendUtc(RegistrationDate).ToString("f");
 
     public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }
 

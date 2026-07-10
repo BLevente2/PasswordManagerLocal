@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Frontend.Services;
 using ReactiveUI;
 using System.Reactive;
 
@@ -175,15 +176,15 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string SyncStateText => IsSyncOn ? SyncEnabledLabel : SyncDisabledLabel;
 
-    public string LastSyncText => LastSync.ToLocalTime().ToString("g");
+    public string LastSyncText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastSync).ToString("g");
 
-    public string LastSeenText => LastSeen.ToLocalTime().ToString("g");
+    public string LastSeenText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastSeen).ToString("g");
 
-    public string LastLoginDateText => LastLoginDate.ToLocalTime().ToString("g");
+    public string LastLoginDateText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastLoginDate).ToString("g");
 
-    public string LinkedAtText => LinkedAt.ToLocalTime().ToString("g");
+    public string LinkedAtText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LinkedAt).ToString("g");
 
-    public string BlockedAtText => BlockedAt?.ToLocalTime().ToString("g") ?? string.Empty;
+    public string BlockedAtText => FrontendDateTimeUtil.ToLocalFromBackendUtc(BlockedAt)?.ToString("g") ?? string.Empty;
 
     public ReactiveCommand<Unit, Unit> ViewCommand { get; }
 

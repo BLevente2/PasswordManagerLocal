@@ -111,7 +111,7 @@ public sealed class MainViewModel : ViewModelBase
             OnAuthenticationSucceededAsync);
 
     public PasswordsViewModel PasswordsViewModel =>
-        _passwordsViewModel ??= new PasswordsViewModel(UiPreferences, _endpoints);
+        _passwordsViewModel ??= new PasswordsViewModel(UiPreferences, _endpoints, _authSessionRegistry);
 
     public ProfileViewModel ProfileViewModel =>
         _profileViewModel ??= new ProfileViewModel(

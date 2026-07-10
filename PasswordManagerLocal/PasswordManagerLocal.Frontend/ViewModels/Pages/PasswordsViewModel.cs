@@ -1,4 +1,5 @@
 using Avalonia.Media;
+using PasswordManagerLocal.Frontend.Abstractions.Services;
 using PasswordManagerLocal.Frontend.Helpers;
 using PasswordManagerLocal.Frontend.Security;
 using PasswordManagerLocal.Frontend.Services;
@@ -8,6 +9,7 @@ using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Responses;
 using ReactiveUI;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Reactive;
 using System.Security.Cryptography;
 using System.Text;
@@ -21,6 +23,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private const string DetailsPane = "details";
     private const string CustomColorListPane = "custom-color-list";
     private const string ColorPane = "color";
+    private const string ExportTargetPane = "export-target";
     private const string CustomColorKey = "custom";
     private const string SelectedCustomColorKey = "selected-custom";
 
@@ -106,6 +109,21 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(SwitchOffLabel),
         nameof(SortLabel),
         nameof(ClearSelectionLabel),
+        nameof(MultiSelectionCancelLabel),
+        nameof(MultiSelectionSelectAllLabel),
+        nameof(MultiSelectionExportLabel),
+        nameof(MultiSelectionDeleteLabel),
+        nameof(ExportTargetTitle),
+        nameof(ExportTargetSubtitle),
+        nameof(ExportTargetAccountsLabel),
+        nameof(ExportTargetBackLabel),
+        nameof(ExportTargetEmptyTitle),
+        nameof(ExportTargetEmptyDescription),
+        nameof(ExportConfirmationTitle),
+        nameof(ExportConfirmationMessage),
+        nameof(ExportDeleteOriginalLabel),
+        nameof(ExportDeleteOriginalDescription),
+        nameof(ConfirmExportLabel),
         nameof(PasswordRevealHint),
         nameof(DeleteConfirmationTitle),
         nameof(DeleteConfirmationMessage),
@@ -124,6 +142,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     ];
 
     private readonly IEndpoints _endpoints;
+    private readonly IAuthSessionRegistry _authSessionRegistry;
     private readonly PasswordStrengthEstimator _passwordStrengthEstimator = new();
     private readonly MaximumStrengthPasswordGenerator _passwordGenerator;
     private readonly List<PasswordItemViewModel> _allPasswords = [];
@@ -134,6 +153,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     private PasswordItemViewModel? _selectedPassword;
     private PasswordItemViewModel? _passwordPendingDeletion;
     private CustomColorItemViewModel? _customColorPendingDeletion;
+    private IReadOnlyList<PasswordItemViewModel> _passwordsPendingDeletion = [];
+    private IReadOnlyList<CustomColorItemViewModel> _customColorsPendingDeletion = [];
     private string? _revealedPassword;
     private string _currentPane = ListPane;
     private PasswordPaneTransitionViewModel? _currentAnimatedPaneViewModel;
@@ -176,15 +197,27 @@ public sealed class PasswordsViewModel : ViewModelBase
     private PasswordSortOptionViewModel? _selectedSortOption;
     private bool _isPasswordMultiSelectionActive;
     private bool _isCustomColorMultiSelectionActive;
+    private MultiSelectionExportKind _pendingExportKind;
+    private IReadOnlyList<Guid> _pendingExportItemIds = [];
+    private Guid _selectedExportTargetToken;
+    private string _selectedExportTargetDisplayName = string.Empty;
+    private bool _isExportConfirmationOpen;
+    private bool _deleteOriginalOnExport;
+    private bool _isExporting;
 
-    public PasswordsViewModel(UiPreferencesService uiPreferences, IEndpoints endpoints)
+    public PasswordsViewModel(
+        UiPreferencesService uiPreferences,
+        IEndpoints endpoints,
+        IAuthSessionRegistry authSessionRegistry)
         : base(uiPreferences)
     {
         _endpoints = endpoints;
+        _authSessionRegistry = authSessionRegistry;
         _passwordGenerator = new MaximumStrengthPasswordGenerator(_passwordStrengthEstimator);
 
         Passwords = new ObservableCollection<PasswordItemViewModel>();
         CustomColors = new ObservableCollection<CustomColorItemViewModel>();
+        ExportTargetProfiles = new ObservableCollection<ExportTargetProfileItemViewModel>();
         PresetColors = new ObservableCollection<PasswordColorOptionViewModel>();
         SortOptions = new ObservableCollection<PasswordSortOptionViewModel>();
 
@@ -216,6 +249,13 @@ public sealed class PasswordsViewModel : ViewModelBase
         ApplyManualColorCodeCommand = ReactiveCommand.Create(ApplyManualColorCode);
         BackToListCommand = ReactiveCommand.Create(BackToList);
         ClearSelectionCommand = ReactiveCommand.Create(BackToList);
+        CancelMultiSelectionCommand = ReactiveCommand.Create(CancelMultiSelection);
+        SelectAllMultiSelectionCommand = ReactiveCommand.Create(SelectAllMultiSelection);
+        ExportMultiSelectionCommand = ReactiveCommand.Create(BeginExportMultiSelection);
+        BeginDeleteMultiSelectionCommand = ReactiveCommand.Create(BeginDeleteMultiSelection);
+        BackFromExportTargetCommand = ReactiveCommand.Create(BackFromExportTarget);
+        ConfirmExportCommand = ReactiveCommand.CreateFromTask(ConfirmExportAsync);
+        CancelExportConfirmationCommand = ReactiveCommand.Create(CancelExportConfirmation);
 
         RebuildPresetColors();
         RebuildSortOptions();
@@ -227,16 +267,71 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public ObservableCollection<CustomColorItemViewModel> CustomColors { get; }
 
+    public ObservableCollection<ExportTargetProfileItemViewModel> ExportTargetProfiles { get; }
+
+    public bool HasExportTargetProfiles => ExportTargetProfiles.Count > 0;
+
+    public bool IsExportTargetProfilesEmpty => ExportTargetProfiles.Count == 0;
+
     public bool IsPasswordMultiSelectionActive
     {
         get => _isPasswordMultiSelectionActive;
-        private set => this.RaiseAndSetIfChanged(ref _isPasswordMultiSelectionActive, value);
+        private set
+        {
+            if (_isPasswordMultiSelectionActive == value)
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _isPasswordMultiSelectionActive, value);
+            RaiseMultiSelectionStateChanged();
+        }
     }
 
     public bool IsCustomColorMultiSelectionActive
     {
         get => _isCustomColorMultiSelectionActive;
-        private set => this.RaiseAndSetIfChanged(ref _isCustomColorMultiSelectionActive, value);
+        private set
+        {
+            if (_isCustomColorMultiSelectionActive == value)
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _isCustomColorMultiSelectionActive, value);
+            RaiseMultiSelectionStateChanged();
+        }
+    }
+
+    public bool IsMultiSelectionToolbarVisible =>
+        IsPasswordMultiSelectionActive || IsCustomColorMultiSelectionActive;
+
+    public bool HasSelectedMultiSelectionItems => IsPasswordMultiSelectionActive
+        ? _allPasswords.Any(item => item.IsSelected)
+        : IsCustomColorMultiSelectionActive && _allCustomColors.Any(item => item.IsSelected);
+
+    public bool CanExportMultiSelectionItems =>
+        HasSelectedMultiSelectionItems && HasOtherActiveExportTargetAccount();
+
+    public bool IsExportConfirmationOpen
+    {
+        get => _isExportConfirmationOpen;
+        private set => this.RaiseAndSetIfChanged(ref _isExportConfirmationOpen, value);
+    }
+
+    public bool DeleteOriginalOnExport
+    {
+        get => _deleteOriginalOnExport;
+        set
+        {
+            if (_deleteOriginalOnExport == value)
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _deleteOriginalOnExport, value);
+            this.RaisePropertyChanged(nameof(ConfirmExportLabel));
+        }
     }
 
     public event EventHandler? ListScrollToTopRequested;
@@ -279,6 +374,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         private set
         {
             this.RaiseAndSetIfChanged(ref _passwordPendingDeletion, value);
+            this.RaisePropertyChanged(nameof(DeleteConfirmationTitle));
             this.RaisePropertyChanged(nameof(DeleteConfirmationMessage));
             this.RaisePropertyChanged(nameof(PasswordPendingDeletionName));
         }
@@ -346,6 +442,8 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool IsColorPaneVisible => CurrentPane == ColorPane;
 
+    public bool IsExportTargetPaneVisible => CurrentPane == ExportTargetPane;
+
     public bool IsEditorOpen => IsEditorPaneVisible;
 
     public bool IsEditorClosed => !IsEditorPaneVisible;
@@ -377,6 +475,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(IsDetailsPaneVisible));
         this.RaisePropertyChanged(nameof(IsCustomColorListPaneVisible));
         this.RaisePropertyChanged(nameof(IsColorPaneVisible));
+        this.RaisePropertyChanged(nameof(IsExportTargetPaneVisible));
         this.RaisePropertyChanged(nameof(IsEditorOpen));
         this.RaisePropertyChanged(nameof(IsEditorClosed));
         CurrentAnimatedPaneViewModel = CreatePaneTransitionViewModel(value);
@@ -389,6 +488,7 @@ public sealed class PasswordsViewModel : ViewModelBase
             DetailsPane => new PasswordDetailsPaneTransitionViewModel(this),
             CustomColorListPane => new PasswordCustomColorListPaneTransitionViewModel(this),
             ColorPane => new PasswordColorPaneTransitionViewModel(this),
+            ExportTargetPane => new PasswordExportTargetPaneTransitionViewModel(this),
             _ => new PasswordListPaneTransitionViewModel(this)
         };
 
@@ -738,6 +838,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         private set
         {
             this.RaiseAndSetIfChanged(ref _customColorPendingDeletion, value);
+            this.RaisePropertyChanged(nameof(CustomColorDeleteConfirmationTitle));
             this.RaisePropertyChanged(nameof(CustomColorDeleteConfirmationMessage));
         }
     }
@@ -820,6 +921,20 @@ public sealed class PasswordsViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> BackToListCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ClearSelectionCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> CancelMultiSelectionCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> SelectAllMultiSelectionCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ExportMultiSelectionCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BeginDeleteMultiSelectionCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> BackFromExportTargetCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> ConfirmExportCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> CancelExportConfirmationCommand { get; }
 
     public string Title => GetTranslation("Passwords_Title");
 
@@ -978,11 +1093,18 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string AddCustomColorLabel => GetTranslation("Passwords_CustomColors_Add");
 
-    public string CustomColorDeleteConfirmationTitle => GetTranslation("Passwords_CustomColors_DeleteConfirm_Title");
+    public string CustomColorDeleteConfirmationTitle => GetTranslation(
+        _customColorsPendingDeletion.Count > 1
+            ? "Passwords_CustomColors_DeleteConfirm_MultipleTitle"
+            : "Passwords_CustomColors_DeleteConfirm_Title");
 
-    public string CustomColorDeleteConfirmationMessage => string.Format(
-        GetTranslation("Passwords_CustomColors_DeleteConfirm_Message"),
-        CustomColorPendingDeletion?.DisplayName ?? string.Empty);
+    public string CustomColorDeleteConfirmationMessage => _customColorsPendingDeletion.Count > 1
+        ? string.Format(
+            GetTranslation("Passwords_CustomColors_DeleteConfirm_MultipleMessage"),
+            _customColorsPendingDeletion.Count)
+        : string.Format(
+            GetTranslation("Passwords_CustomColors_DeleteConfirm_Message"),
+            CustomColorPendingDeletion?.DisplayName ?? string.Empty);
 
     public string ConfirmDeleteCustomColorLabel => GetTranslation("Passwords_CustomColors_DeleteConfirm_Confirm");
 
@@ -1010,11 +1132,60 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string ClearSelectionLabel => GetTranslation("Common_ClearSelection");
 
+    public string MultiSelectionCancelLabel => GetTranslation("Common_Cancel");
+
+    public string MultiSelectionSelectAllLabel => GetTranslation("Common_SelectAll");
+
+    public string MultiSelectionExportLabel => GetTranslation("Common_Export");
+
+    public string MultiSelectionDeleteLabel => GetTranslation("Common_Delete");
+
+    public string ExportTargetTitle => GetTranslation("Passwords_Export_Target_Title");
+
+    public string ExportTargetSubtitle => GetTranslation(_pendingExportKind switch
+    {
+        MultiSelectionExportKind.Passwords when _pendingExportItemIds.Count == 1 => "Passwords_Export_Target_Subtitle_Password",
+        MultiSelectionExportKind.Passwords => "Passwords_Export_Target_Subtitle_Passwords",
+        MultiSelectionExportKind.CustomColors when _pendingExportItemIds.Count == 1 => "Passwords_Export_Target_Subtitle_CustomColor",
+        _ => "Passwords_Export_Target_Subtitle_CustomColors"
+    });
+
+    public string ExportTargetAccountsLabel => GetTranslation("Passwords_Export_Target_Accounts");
+
+    public string ExportTargetBackLabel => GetTranslation("Common_Back");
+
+    public string ExportTargetEmptyTitle => GetTranslation("Passwords_Export_Target_Empty_Title");
+
+    public string ExportTargetEmptyDescription => GetTranslation("Passwords_Export_Target_Empty_Description");
+
+    public string ExportConfirmationTitle => GetTranslation("Passwords_Export_Confirm_Title");
+
+    public string ExportConfirmationMessage => string.Format(
+        GetTranslation(_pendingExportKind switch
+        {
+            MultiSelectionExportKind.Passwords when _pendingExportItemIds.Count == 1 => "Passwords_Export_Confirm_Message_Password",
+            MultiSelectionExportKind.Passwords => "Passwords_Export_Confirm_Message_Passwords",
+            MultiSelectionExportKind.CustomColors when _pendingExportItemIds.Count == 1 => "Passwords_Export_Confirm_Message_CustomColor",
+            _ => "Passwords_Export_Confirm_Message_CustomColors"
+        }),
+        _selectedExportTargetDisplayName);
+
+    public string ExportDeleteOriginalLabel => GetTranslation("Passwords_Export_DeleteOriginal_Label");
+
+    public string ExportDeleteOriginalDescription => GetTranslation("Passwords_Export_DeleteOriginal_Description");
+
+    public string ConfirmExportLabel => GetTranslation(DeleteOriginalOnExport ? "Common_Move" : "Common_Copy");
+
     public string PasswordRevealHint => GetTranslation("Passwords_Reveal_Hint");
 
-    public string DeleteConfirmationTitle => GetTranslation("Passwords_DeleteConfirm_Title");
+    public string DeleteConfirmationTitle => GetTranslation(
+        _passwordsPendingDeletion.Count > 1
+            ? "Passwords_DeleteConfirm_MultipleTitle"
+            : "Passwords_DeleteConfirm_Title");
 
-    public string DeleteConfirmationMessage => string.Format(GetTranslation("Passwords_DeleteConfirm_Message"), PasswordPendingDeletionName);
+    public string DeleteConfirmationMessage => _passwordsPendingDeletion.Count > 1
+        ? string.Format(GetTranslation("Passwords_DeleteConfirm_MultipleMessage"), _passwordsPendingDeletion.Count)
+        : string.Format(GetTranslation("Passwords_DeleteConfirm_Message"), PasswordPendingDeletionName);
 
     public string ConfirmDeletePasswordLabel => GetTranslation("Passwords_DeleteConfirm_Confirm");
 
@@ -1065,10 +1236,15 @@ public sealed class PasswordsViewModel : ViewModelBase
     public async Task<bool> LoadAsync(Guid token)
     {
         _token = token;
+        RaiseMultiSelectionStateChanged();
         return await RefreshAsync(false);
     }
 
-    public void SetSessionToken(Guid token) => _token = token;
+    public void SetSessionToken(Guid token)
+    {
+        _token = token;
+        RaiseMultiSelectionStateChanged();
+    }
 
     public async Task<bool> RefreshCurrentDataAsync(bool showSuccessMessage = true) => await RefreshAsync(showSuccessMessage);
 
@@ -1079,9 +1255,12 @@ public sealed class PasswordsViewModel : ViewModelBase
         ExitPasswordMultiSelection();
         ExitCustomColorMultiSelection();
         IsDeleteConfirmationOpen = false;
+        _passwordsPendingDeletion = [];
         PasswordPendingDeletion = null;
         IsCustomColorDeleteConfirmationOpen = false;
+        _customColorsPendingDeletion = [];
         CustomColorPendingDeletion = null;
+        ClearExportFlowState();
         SelectedPassword = null;
         RevealedPassword = null;
         ClearStatusMessage();
@@ -1098,17 +1277,20 @@ public sealed class PasswordsViewModel : ViewModelBase
         _token = Guid.Empty;
         ExitPasswordMultiSelection();
         ExitCustomColorMultiSelection();
-        _allPasswords.Clear();
+        ClearPasswordItems();
         _savedCustomColors.Clear();
-        _allCustomColors.Clear();
+        ClearCustomColorItems();
         Passwords.Clear();
         CustomColors.Clear();
         RebuildPresetColors();
         RaisePasswordCollectionStateChanged();
         RaiseCustomColorCollectionStateChanged();
         SelectedPassword = null;
+        _passwordsPendingDeletion = [];
         PasswordPendingDeletion = null;
+        _customColorsPendingDeletion = [];
         CustomColorPendingDeletion = null;
+        ClearExportFlowState();
         RevealedPassword = null;
         ClearStatusMessage();
         IsCreateMode = true;
@@ -1172,6 +1354,344 @@ public sealed class PasswordsViewModel : ViewModelBase
         customColor.IsSelected = true;
     }
 
+    private void CancelMultiSelection() => TryExitMultiSelection();
+
+    private void SelectAllMultiSelection()
+    {
+        if (IsPasswordMultiSelectionActive)
+        {
+            foreach (var password in Passwords)
+            {
+                password.IsSelected = true;
+            }
+
+            return;
+        }
+
+        if (!IsCustomColorMultiSelectionActive)
+        {
+            return;
+        }
+
+        foreach (var customColor in CustomColors)
+        {
+            customColor.IsSelected = true;
+        }
+    }
+
+    private void BeginExportMultiSelection()
+    {
+        if (!CanExportMultiSelectionItems)
+        {
+            return;
+        }
+
+        IReadOnlyList<Guid> selectedIds;
+        if (IsPasswordMultiSelectionActive)
+        {
+            selectedIds = _allPasswords.Where(item => item.IsSelected).Select(item => item.Id).ToArray();
+            _pendingExportKind = MultiSelectionExportKind.Passwords;
+        }
+        else if (IsCustomColorMultiSelectionActive)
+        {
+            selectedIds = _allCustomColors.Where(item => item.IsSelected).Select(item => item.Id).ToArray();
+            _pendingExportKind = MultiSelectionExportKind.CustomColors;
+        }
+        else
+        {
+            return;
+        }
+
+        if (selectedIds.Count == 0)
+        {
+            return;
+        }
+
+        _pendingExportItemIds = selectedIds;
+        BuildExportTargetProfiles();
+        if (ExportTargetProfiles.Count == 0)
+        {
+            ClearExportFlowState();
+            RaiseMultiSelectionStateChanged();
+            return;
+        }
+
+        this.RaisePropertyChanged(nameof(ExportTargetSubtitle));
+        CurrentPane = ExportTargetPane;
+    }
+
+    private void BuildExportTargetProfiles()
+    {
+        ExportTargetProfiles.Clear();
+
+        foreach (var session in GetOtherActiveExportTargetSessions()
+                     .OrderBy(session => session.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                     .ThenBy(session => session.Subtitle, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var displayName = BuildExportTargetDisplayName(session);
+            var subtitle = BuildExportTargetSubtitle(session, displayName);
+            ExportTargetProfiles.Add(new ExportTargetProfileItemViewModel(
+                session.Token,
+                displayName,
+                subtitle,
+                SelectExportTarget));
+        }
+
+        this.RaisePropertyChanged(nameof(HasExportTargetProfiles));
+        this.RaisePropertyChanged(nameof(IsExportTargetProfilesEmpty));
+    }
+
+    private IEnumerable<AuthSessionProfile> GetOtherActiveExportTargetSessions()
+    {
+        var sourceSession = _authSessionRegistry.GetSession(_token);
+        var seenUserIds = new HashSet<Guid>();
+
+        foreach (var session in _authSessionRegistry.ListSessions())
+        {
+            if (session.Token == Guid.Empty || session.Token == _token)
+            {
+                continue;
+            }
+
+            if (sourceSession is not null
+                && sourceSession.UserId != Guid.Empty
+                && session.UserId != Guid.Empty
+                && session.UserId == sourceSession.UserId)
+            {
+                continue;
+            }
+
+            if (session.UserId != Guid.Empty && !seenUserIds.Add(session.UserId))
+            {
+                continue;
+            }
+
+            yield return session;
+        }
+    }
+
+    private bool HasOtherActiveExportTargetAccount() => GetOtherActiveExportTargetSessions().Any();
+
+    private static string BuildExportTargetDisplayName(AuthSessionProfile session)
+    {
+        if (!string.IsNullOrWhiteSpace(session.DisplayName))
+        {
+            return session.DisplayName.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.Username))
+        {
+            return session.Username.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.Email))
+        {
+            return session.Email.Trim();
+        }
+
+        return session.UserId == Guid.Empty ? "—" : session.UserId.ToString();
+    }
+
+    private static string BuildExportTargetSubtitle(AuthSessionProfile session, string displayName)
+    {
+        if (!string.IsNullOrWhiteSpace(session.Subtitle)
+            && !string.Equals(session.Subtitle.Trim(), displayName, StringComparison.OrdinalIgnoreCase))
+        {
+            return session.Subtitle.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.Email)
+            && !string.Equals(session.Email.Trim(), displayName, StringComparison.OrdinalIgnoreCase))
+        {
+            return session.Email.Trim();
+        }
+
+        return string.Empty;
+    }
+
+    private void SelectExportTarget(Guid targetToken)
+    {
+        if (targetToken == Guid.Empty || targetToken == _token || _pendingExportItemIds.Count == 0)
+        {
+            return;
+        }
+
+        var target = ExportTargetProfiles.FirstOrDefault(profile => profile.Token == targetToken);
+        if (target is null)
+        {
+            return;
+        }
+
+        _selectedExportTargetToken = targetToken;
+        _selectedExportTargetDisplayName = target.DisplayName;
+        DeleteOriginalOnExport = false;
+        this.RaisePropertyChanged(nameof(ExportConfirmationMessage));
+        IsExportConfirmationOpen = true;
+    }
+
+    private void CancelExportConfirmation()
+    {
+        IsExportConfirmationOpen = false;
+        DeleteOriginalOnExport = false;
+        _selectedExportTargetToken = Guid.Empty;
+        _selectedExportTargetDisplayName = string.Empty;
+        this.RaisePropertyChanged(nameof(ExportConfirmationMessage));
+    }
+
+    private async Task ConfirmExportAsync()
+    {
+        if (_isExporting
+            || !IsExportConfirmationOpen
+            || _selectedExportTargetToken == Guid.Empty
+            || _pendingExportItemIds.Count == 0)
+        {
+            return;
+        }
+
+        var exportKind = _pendingExportKind;
+        var sourcePane = exportKind == MultiSelectionExportKind.CustomColors ? CustomColorListPane : ListPane;
+        var deleteOriginal = DeleteOriginalOnExport;
+
+        try
+        {
+            _isExporting = true;
+            ClearStatusMessage();
+
+            if (exportKind == MultiSelectionExportKind.Passwords)
+            {
+                await _endpoints.ExportPasswordsToUserAsync(
+                    _token,
+                    new ExportPasswordsToUserRequest
+                    {
+                        TargetToken = _selectedExportTargetToken,
+                        PasswordIds = _pendingExportItemIds.ToArray(),
+                        DeleteOriginal = deleteOriginal
+                    });
+            }
+            else if (exportKind == MultiSelectionExportKind.CustomColors)
+            {
+                await _endpoints.ExportCustomUserColorsToUserAsync(
+                    _token,
+                    new ExportCustomUserColorsToUserRequest
+                    {
+                        TargetToken = _selectedExportTargetToken,
+                        CustomUserColorIds = _pendingExportItemIds.ToArray(),
+                        DeleteOriginal = deleteOriginal
+                    });
+            }
+            else
+            {
+                return;
+            }
+
+            IsExportConfirmationOpen = false;
+            ClearExportFlowState();
+            SetCurrentPane(sourcePane, true);
+
+            if (deleteOriginal && !await RefreshAsync(false))
+            {
+                return;
+            }
+
+            ShowSuccessMessage(GetTranslation((exportKind, deleteOriginal) switch
+            {
+                (MultiSelectionExportKind.Passwords, false) => "Passwords_Export_Copy_Passwords_Success",
+                (MultiSelectionExportKind.Passwords, true) => "Passwords_Export_Move_Passwords_Success",
+                (MultiSelectionExportKind.CustomColors, false) => "Passwords_Export_Copy_CustomColors_Success",
+                _ => "Passwords_Export_Move_CustomColors_Success"
+            }));
+        }
+        catch (Exception ex)
+        {
+            CancelExportConfirmation();
+            ShowErrorMessage(GetSafeErrorMessage(ex));
+        }
+        finally
+        {
+            _isExporting = false;
+        }
+    }
+
+    private void BackFromExportTarget()
+    {
+        if (_pendingExportKind == MultiSelectionExportKind.None)
+        {
+            SetCurrentPane(ListPane, true);
+            return;
+        }
+
+        CancelExportConfirmation();
+        var exportKind = _pendingExportKind;
+        var selectedIds = _pendingExportItemIds.ToHashSet();
+        var sourcePane = exportKind == MultiSelectionExportKind.CustomColors ? CustomColorListPane : ListPane;
+        ClearExportFlowState();
+        SetCurrentPane(sourcePane, true);
+
+        if (exportKind == MultiSelectionExportKind.Passwords)
+        {
+            IsPasswordMultiSelectionActive = true;
+            SetSelectionMode(_allPasswords, true);
+            foreach (var item in _allPasswords)
+            {
+                item.IsSelected = selectedIds.Contains(item.Id);
+            }
+        }
+        else
+        {
+            IsCustomColorMultiSelectionActive = true;
+            SetSelectionMode(_allCustomColors, true);
+            foreach (var item in _allCustomColors)
+            {
+                item.IsSelected = selectedIds.Contains(item.Id);
+            }
+        }
+
+        RaiseMultiSelectionStateChanged();
+    }
+
+    private void ClearExportFlowState()
+    {
+        IsExportConfirmationOpen = false;
+        DeleteOriginalOnExport = false;
+        _pendingExportKind = MultiSelectionExportKind.None;
+        _pendingExportItemIds = [];
+        _selectedExportTargetToken = Guid.Empty;
+        _selectedExportTargetDisplayName = string.Empty;
+        ExportTargetProfiles.Clear();
+        this.RaisePropertyChanged(nameof(HasExportTargetProfiles));
+        this.RaisePropertyChanged(nameof(IsExportTargetProfilesEmpty));
+        this.RaisePropertyChanged(nameof(ExportTargetSubtitle));
+        this.RaisePropertyChanged(nameof(ExportConfirmationMessage));
+    }
+
+    private void BeginDeleteMultiSelection()
+    {
+        if (IsPasswordMultiSelectionActive)
+        {
+            var selectedPasswords = _allPasswords.Where(item => item.IsSelected).ToList();
+            if (selectedPasswords.Count == 0)
+            {
+                return;
+            }
+
+            BeginDeletePasswords(selectedPasswords);
+            return;
+        }
+
+        if (!IsCustomColorMultiSelectionActive)
+        {
+            return;
+        }
+
+        var selectedCustomColors = _allCustomColors.Where(item => item.IsSelected).ToList();
+        if (selectedCustomColors.Count == 0)
+        {
+            return;
+        }
+
+        BeginDeleteCustomColors(selectedCustomColors);
+    }
+
     private void ExitPasswordMultiSelection()
     {
         IsPasswordMultiSelectionActive = false;
@@ -1193,6 +1713,29 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
     }
 
+    private void HandlePasswordItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MultiSelectableListItemViewModel.IsSelected))
+        {
+            RaiseMultiSelectionStateChanged();
+        }
+    }
+
+    private void HandleCustomColorItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MultiSelectableListItemViewModel.IsSelected))
+        {
+            RaiseMultiSelectionStateChanged();
+        }
+    }
+
+    private void RaiseMultiSelectionStateChanged()
+    {
+        this.RaisePropertyChanged(nameof(IsMultiSelectionToolbarVisible));
+        this.RaisePropertyChanged(nameof(HasSelectedMultiSelectionItems));
+        this.RaisePropertyChanged(nameof(CanExportMultiSelectionItems));
+    }
+
     public bool TryExitMultiSelection()
     {
         if (IsCustomColorMultiSelectionActive)
@@ -1212,10 +1755,16 @@ public sealed class PasswordsViewModel : ViewModelBase
 
 
     internal bool HasConfirmableDialogOpen =>
-        IsCustomColorDeleteConfirmationOpen || IsDeleteConfirmationOpen;
+        IsCustomColorDeleteConfirmationOpen || IsDeleteConfirmationOpen || IsExportConfirmationOpen;
 
     internal async Task ConfirmOpenDialogAsync()
     {
+        if (IsExportConfirmationOpen)
+        {
+            await ConfirmExportAsync();
+            return;
+        }
+
         if (IsCustomColorDeleteConfirmationOpen)
         {
             await ConfirmDeleteCustomColorAsync();
@@ -1229,6 +1778,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool TryNavigateBack()
     {
+        if (IsExportConfirmationOpen)
+        {
+            CancelExportConfirmation();
+            return true;
+        }
+
         if (IsCustomColorDeleteConfirmationOpen)
         {
             CancelDeleteCustomColor();
@@ -1243,6 +1798,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
         if (TryExitMultiSelection())
             return true;
+
+        if (IsExportTargetPaneVisible)
+        {
+            BackFromExportTarget();
+            return true;
+        }
 
         if (IsColorPaneVisible)
         {
@@ -1274,6 +1835,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private async Task ExecutePrimaryActionAsync()
     {
+        if (IsExportConfirmationOpen)
+        {
+            await ConfirmExportAsync();
+            return;
+        }
+
         if (IsCustomColorDeleteConfirmationOpen)
         {
             await ConfirmDeleteCustomColorAsync();
@@ -1337,7 +1904,7 @@ public sealed class PasswordsViewModel : ViewModelBase
 
             var colorNameByCode = BuildColorNameByCodeLookup(response.CustomColors);
 
-            _allPasswords.Clear();
+            ClearPasswordItems();
 
             foreach (var password in response.Passwords)
             {
@@ -1350,7 +1917,7 @@ public sealed class PasswordsViewModel : ViewModelBase
                 var normalizedPasswordColor = PasswordColorUtility.NormalizeKnownColor(password.Color);
                 colorNameByCode.TryGetValue(normalizedPasswordColor, out var colorName);
 
-                _allPasswords.Add(PasswordItemViewModel.Create(
+                var passwordItem = PasswordItemViewModel.Create(
                     password,
                     tagNames,
                     colorName,
@@ -1358,7 +1925,10 @@ public sealed class PasswordsViewModel : ViewModelBase
                     DeletePasswordLabel,
                     BeginViewPasswordAsync,
                     BeginEditPasswordAsync,
-                    BeginDeletePasswordAsync));
+                    BeginDeletePasswordAsync);
+
+                passwordItem.PropertyChanged += HandlePasswordItemPropertyChanged;
+                _allPasswords.Add(passwordItem);
             }
 
             ApplyFiltersAndSorting(selectedId, preserveSelection: selectedId.HasValue);
@@ -1453,14 +2023,25 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private Task BeginDeletePasswordAsync(PasswordItemViewModel password)
     {
-        BeginDeletePassword(password);
+        BeginDeletePasswords([password]);
         return Task.CompletedTask;
     }
 
     private void BeginDeletePassword(PasswordItemViewModel password)
     {
+        BeginDeletePasswords([password]);
+    }
+
+    private void BeginDeletePasswords(IReadOnlyList<PasswordItemViewModel> passwords)
+    {
+        if (passwords.Count == 0)
+        {
+            return;
+        }
+
         ClearStatusMessage();
-        PasswordPendingDeletion = password;
+        _passwordsPendingDeletion = passwords.ToArray();
+        PasswordPendingDeletion = _passwordsPendingDeletion[0];
         IsDeleteConfirmationOpen = true;
     }
 
@@ -1468,26 +2049,28 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         ClearStatusMessage();
         IsDeleteConfirmationOpen = false;
+        _passwordsPendingDeletion = [];
         PasswordPendingDeletion = null;
     }
 
     private async Task ConfirmDeletePasswordAsync()
     {
-        if (_isDeletingPassword || PasswordPendingDeletion is null)
+        if (_isDeletingPassword || _passwordsPendingDeletion.Count == 0)
         {
             return;
         }
 
         ClearStatusMessage();
-        var password = PasswordPendingDeletion;
+        var passwords = _passwordsPendingDeletion.ToArray();
+        var passwordIds = passwords.Select(item => item.Id).ToArray();
 
         try
         {
             _isDeletingPassword = true;
-            await _endpoints.RemovePasswordsAsync(_token, [password.Id]);
+            await _endpoints.RemovePasswordsAsync(_token, passwordIds);
             CancelDeletePassword();
 
-            if (SelectedPassword?.Id == password.Id)
+            if (SelectedPassword is not null && passwordIds.Contains(SelectedPassword.Id))
             {
                 SelectedPassword = null;
                 HidePassword();
@@ -1497,7 +2080,10 @@ public sealed class PasswordsViewModel : ViewModelBase
             if (!await RefreshAsync(false))
                 return;
 
-            ShowSuccessMessage(GetTranslation("Passwords_Delete_Success"));
+            ShowSuccessMessage(GetTranslation(
+                passwords.Length > 1
+                    ? "Passwords_Delete_MultipleSuccess"
+                    : "Passwords_Delete_Success"));
         }
         catch (Exception ex)
         {
@@ -1810,9 +2396,20 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(IsSearchResultEmpty));
     }
 
+    private void ClearPasswordItems()
+    {
+        foreach (var password in _allPasswords)
+        {
+            password.PropertyChanged -= HandlePasswordItemPropertyChanged;
+        }
+
+        _allPasswords.Clear();
+        RaiseMultiSelectionStateChanged();
+    }
+
     private void RebuildCustomColorItems()
     {
-        _allCustomColors.Clear();
+        ClearCustomColorItems();
 
         foreach (var customColor in _savedCustomColors)
         {
@@ -1822,11 +2419,14 @@ public sealed class PasswordsViewModel : ViewModelBase
                 continue;
             }
 
-            _allCustomColors.Add(CustomColorItemViewModel.Create(
+            var customColorItem = CustomColorItemViewModel.Create(
                 customColor,
                 DeletePasswordLabel,
                 OpenCustomColorPickerForEditing,
-                BeginDeleteCustomColorAsync));
+                BeginDeleteCustomColorAsync);
+
+            customColorItem.PropertyChanged += HandleCustomColorItemPropertyChanged;
+            _allCustomColors.Add(customColorItem);
         }
 
         ApplyCustomColorFiltersAndSorting();
@@ -1868,6 +2468,17 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(HasStoredCustomColors));
         this.RaisePropertyChanged(nameof(IsCustomColorListEmpty));
         this.RaisePropertyChanged(nameof(IsCustomColorSearchResultEmpty));
+    }
+
+    private void ClearCustomColorItems()
+    {
+        foreach (var customColor in _allCustomColors)
+        {
+            customColor.PropertyChanged -= HandleCustomColorItemPropertyChanged;
+        }
+
+        _allCustomColors.Clear();
+        RaiseMultiSelectionStateChanged();
     }
 
     private void RebuildPresetColors()
@@ -2018,6 +2629,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         ClearStatusMessage();
         IsCustomColorDeleteConfirmationOpen = false;
+        _customColorsPendingDeletion = [];
         CustomColorPendingDeletion = null;
         CurrentPane = CustomColorListPane;
     }
@@ -2217,33 +2829,46 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     private Task BeginDeleteCustomColorAsync(CustomColorItemViewModel customColor)
     {
-        ClearStatusMessage();
-        CustomColorPendingDeletion = customColor;
-        IsCustomColorDeleteConfirmationOpen = true;
+        BeginDeleteCustomColors([customColor]);
         return Task.CompletedTask;
+    }
+
+    private void BeginDeleteCustomColors(IReadOnlyList<CustomColorItemViewModel> customColors)
+    {
+        if (customColors.Count == 0)
+        {
+            return;
+        }
+
+        ClearStatusMessage();
+        _customColorsPendingDeletion = customColors.ToArray();
+        CustomColorPendingDeletion = _customColorsPendingDeletion[0];
+        IsCustomColorDeleteConfirmationOpen = true;
     }
 
     private void CancelDeleteCustomColor()
     {
         ClearStatusMessage();
         IsCustomColorDeleteConfirmationOpen = false;
+        _customColorsPendingDeletion = [];
         CustomColorPendingDeletion = null;
     }
 
     private async Task ConfirmDeleteCustomColorAsync()
     {
-        if (_isDeletingCustomColor || CustomColorPendingDeletion is null)
+        if (_isDeletingCustomColor || _customColorsPendingDeletion.Count == 0)
         {
             return;
         }
 
         ClearStatusMessage();
-        var customColor = CustomColorPendingDeletion;
+        var customColors = _customColorsPendingDeletion.ToArray();
+        var customColorIds = customColors.Select(item => item.Id).ToArray();
 
         try
         {
             _isDeletingCustomColor = true;
-            await _endpoints.DeleteCustomUserColorsAsync(_token, [customColor.Id]);
+            await _endpoints.DeleteCustomUserColorsAsync(_token, customColorIds);
             CancelDeleteCustomColor();
 
             if (!await RefreshAsync(false))
@@ -2251,7 +2876,10 @@ public sealed class PasswordsViewModel : ViewModelBase
                 return;
             }
 
-            ShowSuccessMessage(CustomColorDeleteSuccessMessage);
+            ShowSuccessMessage(GetTranslation(
+                customColors.Length > 1
+                    ? "Passwords_CustomColors_Delete_MultipleSuccess"
+                    : "Passwords_CustomColors_Delete_Success"));
         }
         catch (Exception ex)
         {
@@ -2403,5 +3031,13 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(textPropertyName);
     }
 
+
+
+    private enum MultiSelectionExportKind
+    {
+        None,
+        Passwords,
+        CustomColors
+    }
 
 }

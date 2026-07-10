@@ -11,14 +11,14 @@ public sealed class DeferredEndpoints : IEndpoints
     public async Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        return await endpoints.RegisterAsync(request, ct);
+        return await endpoints.RegisterAsync(FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
     public async Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        return await endpoints.LoginAsync(request, ct);
+        return await endpoints.LoginAsync(FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
@@ -46,7 +46,7 @@ public sealed class DeferredEndpoints : IEndpoints
     public async Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.ChangeMasterPasswordAsync(request, ct);
+        await endpoints.ChangeMasterPasswordAsync(FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
@@ -74,7 +74,7 @@ public sealed class DeferredEndpoints : IEndpoints
     public async Task UpdateUserProfileInfoAsync(UpdateUserProfileRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.UpdateUserProfileInfoAsync(request, ct);
+        await endpoints.UpdateUserProfileInfoAsync(FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
@@ -200,7 +200,7 @@ public sealed class DeferredEndpoints : IEndpoints
     public async Task AddNewPasswordAsync(Guid token, NewPasswordRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.AddNewPasswordAsync(token, request, ct);
+        await endpoints.AddNewPasswordAsync(token, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
@@ -224,13 +224,13 @@ public sealed class DeferredEndpoints : IEndpoints
     public async Task UpdatePasswordAsync(Guid token, UpdatePasswordRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.UpdatePasswordAsync(token, request, ct);
+        await endpoints.UpdatePasswordAsync(token, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
     public async Task ExportPasswordsToUserAsync(Guid sourceToken, ExportPasswordsToUserRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.ExportPasswordsToUserAsync(sourceToken, request, ct);
+        await endpoints.ExportPasswordsToUserAsync(sourceToken, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
@@ -240,7 +240,7 @@ public sealed class DeferredEndpoints : IEndpoints
         CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.AddCustomUserColorsAsync(token, requests, ct);
+        await endpoints.AddCustomUserColorsAsync(token, FrontendDateTimeUtil.NormalizeRequestToUtc(requests), ct);
     }
 
 
@@ -260,21 +260,21 @@ public sealed class DeferredEndpoints : IEndpoints
         CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.ExportCustomUserColorsToUserAsync(sourceToken, request, ct);
+        await endpoints.ExportCustomUserColorsToUserAsync(sourceToken, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
     public async Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.UpdateCustomUserColorAsync(token, request, ct);
+        await endpoints.UpdateCustomUserColorAsync(token, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
     public async Task AddPasswordTagAsync(Guid token, NewPasswordTagRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.AddPasswordTagAsync(token, request, ct);
+        await endpoints.AddPasswordTagAsync(token, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
@@ -291,14 +291,14 @@ public sealed class DeferredEndpoints : IEndpoints
         CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.ExportPasswordTagsToUserAsync(sourceToken, request, ct);
+        await endpoints.ExportPasswordTagsToUserAsync(sourceToken, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 
     public async Task UpdatePasswordTagAsync(Guid token, UpdatePasswordTagRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.UpdatePasswordTagAsync(token, request, ct);
+        await endpoints.UpdatePasswordTagAsync(token, FrontendDateTimeUtil.NormalizeRequestToUtc(request), ct);
     }
 
 

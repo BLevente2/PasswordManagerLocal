@@ -1,5 +1,6 @@
 using Avalonia.Media;
 using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Frontend.Services;
 using ReactiveUI;
 using System.Reactive;
 
@@ -105,9 +106,9 @@ public sealed class PasswordItemViewModel : MultiSelectableListItemViewModel
         }
     }
 
-    public string CreatedAtText => CreatedAt.ToLocalTime().ToString("g");
+    public string CreatedAtText => FrontendDateTimeUtil.ToLocalFromBackendUtc(CreatedAt).ToString("g");
 
-    public string LastUpdatedAtText => LastUpdatedAt.ToLocalTime().ToString("g");
+    public string LastUpdatedAtText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastUpdatedAt).ToString("g");
 
     public bool HasTagMatching(string searchTerm) =>
         TagNames.Any(tagName => tagName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
