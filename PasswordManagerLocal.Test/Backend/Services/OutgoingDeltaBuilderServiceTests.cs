@@ -144,6 +144,69 @@ public sealed class OutgoingDeltaBuilderServiceTests
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);
     }
 
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task BuildDeletedUserDeviceDelta_ProducesPayloadThatRecipientCanValidate()
+    {
+        using var senderProvider = CreateIdentityProvider();
+        using var recipientProvider = CreateIdentityProvider();
+        var sender = CreateIdentity(senderProvider);
+        var recipient = CreateIdentity(recipientProvider);
+        await sender.InitializeAsync();
+        await sender.SetSyncOnAsync(true);
+        await recipient.InitializeAsync();
+        var target = CreateTargetDevice(recipient);
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
+        var changedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var userDevice = new UserDevice
+        {
+            UserId = Guid.NewGuid(),
+            DeviceId = target.Id,
+            Device = target,
+            IsSyncOn = false,
+            IsDeleted = true,
+            DeletedAt = DateTimeOffset.FromUnixTimeMilliseconds(changedAt),
+            LastModifiedAt = DateTimeOffset.FromUnixTimeMilliseconds(changedAt)
+        };
+        userDevice.GenerateIntegrityHash();
+        await userDevices.AddAsync(userDevice);
+        var builder = new OutgoingDeltaBuilderService(
+            new InMemoryUserRepository(),
+            new FakeGroupRepository(),
+            new FakeDeviceRepository(),
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
+            sender);
+
+        var delta = await builder.BuildAsync(new SyncItem
+        {
+            ModelId = userDevice.ModelId,
+            ModelType = SyncModelType.UserDevice,
+            ChangeType = SyncChangeType.Deleted,
+            ChangedAtTs = changedAt
+        }, target);
+
+        var plaintext = recipient.DecryptFromDevice(
+            delta.Payload,
+            delta.EphemeralPublicKey,
+            delta.Nonce,
+            delta.Tag,
+            SyncCryptoUtil.BuildAssociatedData(delta));
+        var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintext);
+
+        MSTestAssert.IsNotNull(payload?.UserDevice);
+        MSTestAssert.AreEqual(userDevice.ModelId, payload.ModelId);
+        MSTestAssert.AreEqual(SyncModelType.UserDevice, payload.ModelType);
+        MSTestAssert.AreEqual(SyncChangeType.Deleted, payload.ChangeType);
+        MSTestAssert.AreEqual(userDevice.UserId, payload.UserDevice.UserId);
+        MSTestAssert.AreEqual(target.Id, payload.UserDevice.DeviceId);
+        MSTestAssert.IsTrue(payload.UserDevice.IsDeleted);
+        MSTestAssert.IsFalse(payload.UserDevice.IsSyncOn);
+        SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);
+    }
+
 
     [TestMethod]
     [TestCategory("Backend")]

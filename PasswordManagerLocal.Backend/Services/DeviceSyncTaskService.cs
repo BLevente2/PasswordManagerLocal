@@ -21,6 +21,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     private readonly IDeviceIdentityService _identity;
     private readonly ConcurrentDictionary<Guid, byte> _runningDeviceIds = new();
     private readonly ConcurrentDictionary<Guid, Task> _runningTasks = new();
+    private readonly Dictionary<Guid, PendingDeviceSyncStart> _pendingStarts = new();
     private readonly object _runtimeLock = new();
     private CancellationTokenSource _runtimeCancellation = new();
 
@@ -64,24 +65,25 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (string.IsNullOrWhiteSpace(endpoint.TlsCertFingerprint))
             return false;
 
-        if (!_runningDeviceIds.TryAdd(device.Id, 0))
-            return false;
-
+        Device targetDevice;
         CancellationToken token;
         lock (_runtimeLock)
         {
             if (!_identity.IsSyncOn || _runtimeCancellation.IsCancellationRequested)
+                return false;
+
+            if (_runningDeviceIds.ContainsKey(device.Id))
             {
-                _runningDeviceIds.TryRemove(device.Id, out _);
+                _pendingStarts[device.Id] = new PendingDeviceSyncStart(CloneEndpoint(endpoint), CloneDevice(device));
                 return false;
             }
 
+            _runningDeviceIds[device.Id] = 0;
             token = _runtimeCancellation.Token;
+            targetDevice = CloneDevice(device);
+            var task = Task.Run(() => RunAsync(CloneEndpoint(endpoint), targetDevice, token), CancellationToken.None);
+            _runningTasks[device.Id] = task;
         }
-
-        var targetDevice = CloneDevice(device);
-        var task = Task.Run(() => RunAsync(endpoint, targetDevice, token), CancellationToken.None);
-        _runningTasks[device.Id] = task;
 
         return true;
     }
@@ -108,11 +110,11 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             }
         }
 
-        _runningDeviceIds.Clear();
-        _runningTasks.Clear();
-
         lock (_runtimeLock)
         {
+            _runningDeviceIds.Clear();
+            _runningTasks.Clear();
+            _pendingStarts.Clear();
             _runtimeCancellation.Dispose();
             _runtimeCancellation = new CancellationTokenSource();
         }
@@ -121,8 +123,12 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
     public void Dispose()
     {
-        _runtimeCancellation.Cancel();
-        _runtimeCancellation.Dispose();
+        lock (_runtimeLock)
+        {
+            _runtimeCancellation.Cancel();
+            _pendingStarts.Clear();
+            _runtimeCancellation.Dispose();
+        }
     }
 
 
@@ -137,21 +143,34 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
                     break;
             }
         }
-        catch
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+        }
+        catch (Exception ex)
+        {
+            DeviceEnrollmentTrace.Error($"Outgoing synchronization worker for device {targetDevice.Id:N} failed: {ex.Message}", ex);
         }
         finally
         {
-            _runningDeviceIds.TryRemove(targetDevice.Id, out _);
-            _runningTasks.TryRemove(targetDevice.Id, out _);
+            PendingDeviceSyncStart? pendingStart;
+            lock (_runtimeLock)
+            {
+                _runningDeviceIds.TryRemove(targetDevice.Id, out _);
+                _runningTasks.TryRemove(targetDevice.Id, out _);
+                _pendingStarts.Remove(targetDevice.Id, out pendingStart);
+            }
 
             try
             {
-                if (!await HasPendingAsync(targetDevice.Id, CancellationToken.None))
+                var hasPending = await HasPendingAsync(targetDevice.Id, CancellationToken.None);
+                if (hasPending && pendingStart is not null && _identity.IsSyncOn)
+                    TryStart(pendingStart.Endpoint, pendingStart.Device);
+                else if (!hasPending)
                     _syncDeviceIdentities.TryRemove(targetDevice);
             }
-            catch
+            catch (Exception ex)
             {
+                DeviceEnrollmentTrace.Error($"Outgoing synchronization worker cleanup for device {targetDevice.Id:N} failed: {ex.Message}", ex);
             }
         }
     }
@@ -208,12 +227,18 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
                 totalPayloadBytes += delta.Payload.Length;
                 sendItems.Add((item.QueueItem, item.SyncItem, delta));
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
+                DeviceEnrollmentTrace.Error(
+                    $"Discarding invalid outgoing sync item {item.SyncItem.Id:N} ({item.SyncItem.ModelType}/{item.SyncItem.ChangeType}) for device {targetDevice.Id:N}: {ex.Message}",
+                    ex);
                 queue.Delete(item.QueueItem);
             }
-            catch (InvalidDataException)
+            catch (InvalidDataException ex)
             {
+                DeviceEnrollmentTrace.Error(
+                    $"Discarding malformed outgoing sync item {item.SyncItem.Id:N} ({item.SyncItem.ModelType}/{item.SyncItem.ChangeType}) for device {targetDevice.Id:N}: {ex.Message}",
+                    ex);
                 queue.Delete(item.QueueItem);
             }
         }
@@ -419,4 +444,16 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             IntegrityHash = source.IntegrityHash.ToArray(),
             LastModifiedAt = UtcDateTimeUtil.ToUtc(source.LastModifiedAt)
         };
+
+
+    private static DiscoveredDeviceEndpoint CloneEndpoint(DiscoveredDeviceEndpoint source) =>
+        new()
+        {
+            Host = source.Host,
+            Port = source.Port,
+            TlsCertFingerprint = source.TlsCertFingerprint
+        };
+
+
+    private sealed record PendingDeviceSyncStart(DiscoveredDeviceEndpoint Endpoint, Device Device);
 }

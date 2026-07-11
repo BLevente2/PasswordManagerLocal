@@ -11,6 +11,7 @@ public static class SyncHashUtil
     public static byte[] CalculateUserDeviceHash(UserDeviceSyncPayload payload, long timestamp) =>
         Hashing.SHA256Hash(hash =>
         {
+            hash.Write(SyncIdentityUtil.BuildUserDeviceModelId(payload.UserId, payload.DeviceId));
             hash.Write(payload.UserId);
             hash.Write(payload.DeviceId);
             hash.Write(payload.IsSyncOn);

@@ -99,6 +99,26 @@ public sealed class DeviceSyncTaskServiceTests
         await WaitUntilAsync(() => setup.Queue.Items.Count == 0);
     }
 
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task TryStart_WhileRunning_RemembersPendingKickAndRestartsAfterFirstAttemptStops()
+    {
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var setup = CreateSetup(sendResult: true, sendGate: gate);
+        setup.Transport.SendResults.Enqueue(false);
+        setup.Transport.SendResults.Enqueue(true);
+        setup.Queue.Seed(CreateQueueItem(setup.Device.Id));
+
+        MSTestAssert.IsTrue(setup.Service.TryStart(setup.Endpoint, setup.Device));
+        await WaitUntilAsync(() => setup.Transport.SendCalls == 1);
+        MSTestAssert.IsFalse(setup.Service.TryStart(setup.Endpoint, setup.Device));
+
+        gate.SetResult(true);
+
+        await WaitUntilAsync(() => setup.Transport.SendCalls == 2 && setup.Queue.Items.Count == 0);
+    }
+
     private static DeviceSyncTaskSetup CreateSetup(bool sendResult = true, TaskCompletionSource<bool>? sendGate = null)
     {
         var device = new Device

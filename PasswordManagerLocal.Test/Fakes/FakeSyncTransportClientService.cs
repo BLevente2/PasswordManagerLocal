@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Sync;
+using System.Collections.Concurrent;
 
 namespace PasswordManagerLocal.Test.Fakes;
 
@@ -12,6 +13,7 @@ public sealed class FakeSyncTransportClientService : ISyncTransportClientService
     public string? LastFingerprint { get; private set; }
     public IReadOnlyList<NetworkDelta> LastDeltas { get; private set; } = [];
     public TaskCompletionSource<bool>? SendGate { get; set; }
+    public ConcurrentQueue<bool> SendResults { get; } = new();
 
     public async Task<bool> SendDeltasAsync(string host, int port, string serverFingerprintHex, IEnumerable<NetworkDelta> deltas, CancellationToken ct = default)
     {
@@ -24,7 +26,7 @@ public sealed class FakeSyncTransportClientService : ISyncTransportClientService
         if (SendGate is not null)
             await SendGate.Task.WaitAsync(ct);
 
-        return SendResult;
+        return SendResults.TryDequeue(out var queuedResult) ? queuedResult : SendResult;
     }
 
     public Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(string host, int port, string serverFingerprintHex, GetDeviceEnrollmentInfoRequest request, CancellationToken ct = default) =>
