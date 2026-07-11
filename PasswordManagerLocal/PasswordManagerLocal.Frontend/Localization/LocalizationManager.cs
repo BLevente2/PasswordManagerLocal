@@ -67,7 +67,9 @@ public static class LocalizationManager
                 detectEncodingFromByteOrderMarks: true,
                 leaveOpen: false);
 
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(reader.ReadToEnd());
+            return JsonSerializer.Deserialize(
+                reader.ReadToEnd(),
+                LocalizationJsonContext.Default.TranslationDictionary);
         }
         catch
         {

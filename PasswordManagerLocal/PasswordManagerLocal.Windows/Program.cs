@@ -23,7 +23,8 @@ internal sealed class Program
     public static AppBuilder BuildAvaloniaApp()
     {
         var builder = AppBuilder.Configure<App>()
-            .UsePlatformDetect()
+            .UseWin32()
+            .UseSkia()
             .WithInterFont()
             .UseReactiveUI();
 

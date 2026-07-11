@@ -64,7 +64,9 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, ts);
 
         UtcDateTimeUtil.NormalizeObjectGraph(payload);
-        var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(payload, DataCodec.JsonOpts);
+        var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(
+            payload,
+            BackendJsonSerializerContext.Default.SyncDeltaPayload);
         try
         {
             if (plaintextPayload.Length == 0 || plaintextPayload.Length > SyncConstants.MaxIncomingDeltaPayloadBytes)

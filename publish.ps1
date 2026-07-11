@@ -29,7 +29,7 @@ $script:AndroidApiLevels = @{
 
 function Write-Usage {
     Write-Host 'Usage:'
-    Write-Host '  .\publish.ps1 -W           Publish Windows x64'
+    Write-Host '  .\publish.ps1 -W           Publish trimmed, self-contained Windows x64'
     Write-Host '  .\publish.ps1 -A           Publish Android APKs supporting Android 10 and later'
     Write-Host '  .\publish.ps1 -A 16        Publish an ARM64 APK requiring Android 16 or later'
     Write-Host '  .\publish.ps1 -F [10-16]   Publish Windows x64 and Android'
@@ -234,13 +234,119 @@ function Test-AndroidPackage {
     }
 }
 
+function Test-WindowsPublish {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath
+    )
+
+    $requiredFiles = @(
+        'PasswordManagerLocal.Windows.exe',
+        'PasswordManagerLocal.Windows.dll',
+        'PasswordManagerLocal.Windows.deps.json',
+        'PasswordManagerLocal.Windows.runtimeconfig.json',
+        'coreclr.dll',
+        'hostfxr.dll',
+        'hostpolicy.dll',
+        'Avalonia.Win32.dll',
+        'Avalonia.Skia.dll',
+        'libSkiaSharp.dll'
+    )
+
+    foreach ($requiredFile in $requiredFiles) {
+        if (-not (Test-Path (Join-Path $OutputPath $requiredFile))) {
+            throw "Windows publish validation failed. Required file is missing: $requiredFile"
+        }
+    }
+
+    $unexpectedFiles = @(
+        'Avalonia.Desktop.dll',
+        'Avalonia.X11.dll',
+        'Avalonia.FreeDesktop.dll',
+        'Avalonia.Native.dll',
+        'Tmds.DBus.Protocol.dll',
+        'Avalonia.DesignerSupport.dll',
+        'Avalonia.Remote.Protocol.dll',
+        'createdump.exe',
+        'mscordaccore.dll',
+        'mscordbi.dll',
+        'Microsoft.DiaSymReader.Native.amd64.dll'
+    )
+
+    foreach ($unexpectedFile in $unexpectedFiles) {
+        if (Test-Path (Join-Path $OutputPath $unexpectedFile)) {
+            throw "Windows publish validation failed. Excluded release-only asset was published: $unexpectedFile"
+        }
+    }
+
+    $versionedDacFiles = Get-ChildItem -Path $OutputPath -File -Filter 'mscordaccore_*.dll'
+    if ($versionedDacFiles) {
+        $dacNames = ($versionedDacFiles.Name | Sort-Object -Unique) -join ', '
+        throw "Windows publish validation failed. Crash-dump DAC assets were published: $dacNames"
+    }
+
+    $depsPath = Join-Path $OutputPath 'PasswordManagerLocal.Windows.deps.json'
+    $depsText = Get-Content -LiteralPath $depsPath -Raw
+    foreach ($excludedManifestEntry in @(
+        'Avalonia.DesignerSupport.dll',
+        'Avalonia.Remote.Protocol',
+        'createdump.exe',
+        'mscordaccore.dll',
+        'mscordbi.dll',
+        'Microsoft.DiaSymReader.Native.amd64.dll'
+    )) {
+        if ($depsText.Contains($excludedManifestEntry)) {
+            throw "Windows publish validation failed. The dependency manifest still contains excluded asset: $excludedManifestEntry"
+        }
+    }
+
+    if ($depsText -match 'mscordaccore_[^"\/]+\.dll') {
+        throw 'Windows publish validation failed. The dependency manifest still contains a version-qualified crash-dump DAC asset.'
+    }
+
+    $publishedSymbols = Get-ChildItem -Path $OutputPath -Recurse -File -Filter '*.pdb'
+    if ($publishedSymbols) {
+        $symbolNames = ($publishedSymbols.Name | Sort-Object -Unique) -join ', '
+        throw "Windows publish validation failed. Release symbols were published: $symbolNames"
+    }
+
+    $files = Get-ChildItem -Path $OutputPath -Recurse -File
+    $totalBytes = ($files | Measure-Object -Property Length -Sum).Sum
+    $totalMiB = [math]::Round($totalBytes / 1MB, 2)
+
+    Write-Host "Verified self-contained runtime: coreclr.dll is present"
+    Write-Host "Verified Avalonia.Desktop/X11/FreeDesktop/Native and D-Bus are absent"
+    Write-Host "Verified Avalonia designer and remote-protocol runtime assets are absent"
+    Write-Host "Verified crash-dump and managed-debugger payloads are absent"
+    Write-Host "Verified the dependency manifest contains none of the excluded assets"
+    if (Test-Path (Join-Path $OutputPath 'Avalonia.Metal.dll')) {
+        Write-Host "Avalonia.Metal.dll is present as Avalonia's shared rendering abstraction (allowed)"
+    }
+    Write-Host "Verified release output contains no PDB files"
+    Write-Host "Published files: $($files.Count), total size: $totalMiB MiB"
+}
+
 function Publish-WindowsApp {
     $project = Join-Path $script:Root 'PasswordManagerLocal\PasswordManagerLocal.Windows\PasswordManagerLocal.Windows.csproj'
     $output = Join-Path $script:Root 'artifacts\publish\PasswordManagerLocal.Windows\win-x64'
 
-    Invoke-CommandChecked 'Publishing Windows x64 app' {
-        dotnet publish $project -c Release -f net10.0-windows -r win-x64 -p:PublishProfile=FolderProfile
+    if (Test-Path $output) {
+        Remove-Item -Path $output -Recurse -Force
     }
+
+    Invoke-CommandChecked 'Publishing trimmed self-contained Windows x64 app' {
+        dotnet publish $project `
+            -c Release `
+            -f net10.0-windows `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishProfile=FolderProfile
+    }
+
+    Write-Host ''
+    Write-Host 'Validating Windows publish'
+    Write-Host '--------------------------'
+    Test-WindowsPublish -OutputPath $output
 
     Write-Host ''
     Write-Host "Windows publish output: $output"

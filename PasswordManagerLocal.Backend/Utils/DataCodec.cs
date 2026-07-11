@@ -7,24 +7,6 @@ namespace PasswordManagerLocal.Backend.Utils;
 
 internal static class DataCodec
 {
-    internal static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = false };
-
-    internal static Task<byte[]> SerializeCompressEncryptAsync<T>(
-        T value,
-        EncryptionKey key,
-        int level = 11,
-        byte[]? associatedData = null,
-        int aesFrameSize = AES256.DefaultFrameSize,
-        CancellationToken ct = default) where T : class =>
-        SerializeCompressEncryptCoreAsync(
-            value,
-            key,
-            (stream, token) => JsonSerializer.SerializeAsync(stream, value, JsonOpts, token),
-            level,
-            associatedData,
-            aesFrameSize,
-            ct);
-
     internal static Task<byte[]> SerializeCompressEncryptAsync<T>(
         T value,
         EncryptionKey key,
@@ -40,18 +22,6 @@ internal static class DataCodec
             level,
             associatedData,
             aesFrameSize,
-            ct);
-
-    internal static Task<T?> DecryptDecompressDeserializeAsync<T>(
-        byte[] blob,
-        EncryptionKey key,
-        byte[]? associatedData = null,
-        CancellationToken ct = default) where T : class =>
-        DecryptDecompressDeserializeCoreAsync(
-            blob,
-            key,
-            (stream, token) => JsonSerializer.DeserializeAsync<T>(stream, JsonOpts, token),
-            associatedData,
             ct);
 
     internal static Task<T?> DecryptDecompressDeserializeAsync<T>(

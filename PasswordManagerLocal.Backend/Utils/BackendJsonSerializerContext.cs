@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Sync;
 using System.Text.Json.Serialization;
 
 namespace PasswordManagerLocal.Backend.Utils;
@@ -14,4 +15,6 @@ namespace PasswordManagerLocal.Backend.Utils;
 [JsonSerializable(typeof(PasswordTag))]
 [JsonSerializable(typeof(DeletedPasswordTagData))]
 [JsonSerializable(typeof(DeletedUserDeviceData))]
+[JsonSerializable(typeof(DeviceEnrollmentSnapshot), TypeInfoPropertyName = "DeviceEnrollmentSnapshot")]
+[JsonSerializable(typeof(SyncDeltaPayload), TypeInfoPropertyName = "SyncDeltaPayload")]
 internal partial class BackendJsonSerializerContext : JsonSerializerContext;

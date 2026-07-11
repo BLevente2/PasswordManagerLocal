@@ -1,9 +1,10 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
+using System.Diagnostics.CodeAnalysis;
 
 namespace PasswordManagerLocal.Backend.Repositories;
 
-public abstract class GenericRepositoryBase<T> : IGenericRepository<T> where T : class
+public abstract class GenericRepositoryBase<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T> : IGenericRepository<T> where T : class
 {
     protected readonly DbSet<T> Set;
 

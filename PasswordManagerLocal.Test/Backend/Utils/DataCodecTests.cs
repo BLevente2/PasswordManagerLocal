@@ -28,11 +28,13 @@ public sealed class DataCodecTests
         var encrypted = await DataCodec.SerializeCompressEncryptAsync(
             payload,
             key,
+            DataCodecTestJsonContext.Default.CodecPayload,
             associatedData: associatedData,
             aesFrameSize: 4096);
         var decoded = await DataCodec.DecryptDecompressDeserializeAsync<CodecPayload>(
             encrypted,
             key,
+            DataCodecTestJsonContext.Default.CodecPayload,
             associatedData);
 
         MSTestAssert.IsNotNull(decoded);
@@ -56,12 +58,14 @@ public sealed class DataCodecTests
         var encrypted = await DataCodec.SerializeCompressEncryptAsync(
             payload,
             key,
+            DataCodecTestJsonContext.Default.CodecPayload,
             associatedData: Encoding.UTF8.GetBytes("correct"),
             aesFrameSize: 1024);
 
         var decoded = await DataCodec.DecryptDecompressDeserializeAsync<CodecPayload>(
             encrypted,
             key,
+            DataCodecTestJsonContext.Default.CodecPayload,
             Encoding.UTF8.GetBytes("wrong"));
 
         MSTestAssert.IsNull(decoded);
@@ -91,6 +95,7 @@ public sealed class DataCodecTests
         var decodeTask = DataCodec.DecryptDecompressDeserializeAsync<CodecPayload>(
             encrypted,
             key,
+            DataCodecTestJsonContext.Default.CodecPayload,
             associatedData);
 
         var decoded = await decodeTask.WaitAsync(TimeSpan.FromSeconds(10));

@@ -242,7 +242,9 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
 
         RejectSensitiveLocalOnlyPayload(plaintextPayload);
 
-        var payload = JsonSerializer.Deserialize<SyncDeltaPayload>(plaintextPayload, DataCodec.JsonOpts);
+        var payload = JsonSerializer.Deserialize(
+            plaintextPayload,
+            BackendJsonSerializerContext.Default.SyncDeltaPayload);
         if (payload is null)
             throw new InvalidDataException("Network delta payload is invalid.");
 

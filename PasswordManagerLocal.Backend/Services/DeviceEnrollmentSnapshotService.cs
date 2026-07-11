@@ -70,7 +70,9 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         try
         {
             RejectSensitiveLocalOnlySnapshotPayload(plaintextSnapshotBytes);
-            var snapshot = JsonSerializer.Deserialize<DeviceEnrollmentSnapshot>(plaintextSnapshotBytes, DataCodec.JsonOpts);
+            var snapshot = JsonSerializer.Deserialize(
+                plaintextSnapshotBytes,
+                BackendJsonSerializerContext.Default.DeviceEnrollmentSnapshot);
             if (snapshot is null || snapshot.PrimaryUserId == Guid.Empty)
                 throw new InvalidDataException("The received profile data is empty.");
 
