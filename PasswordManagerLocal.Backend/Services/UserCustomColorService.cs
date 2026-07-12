@@ -7,12 +7,20 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserCustomColorService : IUserCustomColorService
 {
-    private readonly IUserService _userService;
+    private readonly IUserSessionService _sessions;
+    private readonly IUserDataReaderService _reader;
+    private readonly IUserDataWriterService _writer;
     private readonly ICustomUserColorService _customUserColorService;
 
-    public UserCustomColorService(IUserService userService, ICustomUserColorService customUserColorService)
+    public UserCustomColorService(
+        IUserSessionService sessions,
+        IUserDataReaderService reader,
+        IUserDataWriterService writer,
+        ICustomUserColorService customUserColorService)
     {
-        _userService = userService;
+        _sessions = sessions;
+        _reader = reader;
+        _writer = writer;
         _customUserColorService = customUserColorService;
     }
 
@@ -22,9 +30,9 @@ public sealed class UserCustomColorService : IUserCustomColorService
         IReadOnlyList<NewCustomUserColorRequest> requests,
         CancellationToken ct = default)
     {
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct);
         _customUserColorService.AddCustomUserColors(requests, bundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 
 
@@ -35,13 +43,13 @@ public sealed class UserCustomColorService : IUserCustomColorService
     {
         ArgumentNullException.ThrowIfNull(customUserColorIds);
 
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct);
 
         if (customUserColorIds.Count == 0)
             return;
 
         _customUserColorService.DeleteCustomUserColors(customUserColorIds, bundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 
 
@@ -53,20 +61,20 @@ public sealed class UserCustomColorService : IUserCustomColorService
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var sourceUid = _userService.GetUidFromToken(sourceToken);
-        var targetUid = _userService.GetUidFromToken(request.TargetToken);
+        var sourceUid = _sessions.GetUidFromToken(sourceToken);
+        var targetUid = _sessions.GetUidFromToken(request.TargetToken);
         if (sourceUid == targetUid)
             throw new InvalidInputException(["TargetToken"]);
 
-        var sourceBundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(sourceToken, ct);
-        var targetBundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.TargetToken, ct);
+        var sourceBundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(sourceToken, ct);
+        var targetBundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(request.TargetToken, ct);
 
         _customUserColorService.ExportCustomUserColors(
             request.CustomUserColorIds!,
             sourceBundle.UserPasswordsData,
             targetBundle.UserPasswordsData);
 
-        await _userService.UpdateUserDataBundleAsync(
+        await _writer.UpdateUserDataBundleAsync(
             targetBundle,
             request.TargetToken,
             UserDataBlobKind.Passwords,
@@ -79,7 +87,7 @@ public sealed class UserCustomColorService : IUserCustomColorService
         _customUserColorService.DeleteCustomUserColors(
             request.CustomUserColorIds!,
             sourceBundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(
+        await _writer.UpdateUserDataBundleAsync(
             sourceBundle,
             sourceToken,
             UserDataBlobKind.Passwords,
@@ -90,8 +98,8 @@ public sealed class UserCustomColorService : IUserCustomColorService
 
     public async Task UpdateCustomUserColorAsync(Guid token, UpdateCustomUserColorRequest request, CancellationToken ct = default)
     {
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct);
         _customUserColorService.UpdateCustomUserColor(request, bundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 }

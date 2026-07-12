@@ -13,7 +13,9 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceService : IDeviceService
 {
-    private readonly IUserService _users;
+    private readonly IUserLookupService _userLookup;
+    private readonly IUserDataReaderService _userDataReader;
+    private readonly IUserDataWriterService _userDataWriter;
     private readonly IAuthService _auth;
     private readonly IDeviceIdentityService _identity;
     private readonly IDeviceRepository _devices;
@@ -21,14 +23,17 @@ public sealed class DeviceService : IDeviceService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ILocalUserDeviceRepository _localUserDevices;
     private readonly ISyncRouteRepository _syncRoutes;
-    private readonly ISyncQueueService _syncQueue;
+    private readonly ISyncChangeQueueService _syncChanges;
+    private readonly IUserSyncCatchUpService _userSyncCatchUp;
     private readonly ISyncQueueRepository _syncQueueItems;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IUnitOfWork _uow;
 
     public DeviceService(
-        IUserService users,
+        IUserLookupService userLookup,
+        IUserDataReaderService userDataReader,
+        IUserDataWriterService userDataWriter,
         IAuthService auth,
         IDeviceIdentityService identity,
         IDeviceRepository devices,
@@ -36,13 +41,16 @@ public sealed class DeviceService : IDeviceService
         IUserDeviceRepository userDevices,
         ILocalUserDeviceRepository localUserDevices,
         ISyncRouteRepository syncRoutes,
-        ISyncQueueService syncQueue,
+        ISyncChangeQueueService syncChanges,
+        IUserSyncCatchUpService userSyncCatchUp,
         ISyncQueueRepository syncQueueItems,
         ISyncDeviceIdentityService syncDeviceIdentities,
         ISyncRuntimeService syncRuntime,
         IUnitOfWork uow)
     {
-        _users = users;
+        _userLookup = userLookup;
+        _userDataReader = userDataReader;
+        _userDataWriter = userDataWriter;
         _auth = auth;
         _identity = identity;
         _devices = devices;
@@ -50,7 +58,8 @@ public sealed class DeviceService : IDeviceService
         _userDevices = userDevices;
         _localUserDevices = localUserDevices;
         _syncRoutes = syncRoutes;
-        _syncQueue = syncQueue;
+        _syncChanges = syncChanges;
+        _userSyncCatchUp = userSyncCatchUp;
         _syncQueueItems = syncQueueItems;
         _syncDeviceIdentities = syncDeviceIdentities;
         _syncRuntime = syncRuntime;
@@ -69,14 +78,14 @@ public sealed class DeviceService : IDeviceService
 
     public async Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default)
     {
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
         var link = await EnsureLocalUserDeviceAsync(user.UId, ct);
         return link.IsSyncOn;
     }
 
     public async Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default)
     {
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
         var link = await EnsureLocalUserDeviceAsync(user.UId, ct);
         if (link.IsSyncOn == isSyncOn)
             return;
@@ -92,7 +101,7 @@ public sealed class DeviceService : IDeviceService
             var remotes = await _userDevices.ListByUserAsync(user.UId, ct);
             foreach (var deleted in remotes.Where(x => x.IsDeleted))
             {
-                await _syncQueue.EnqueueForDeviceAsync(new SyncItem
+                await _syncChanges.EnqueueForDeviceAsync(new SyncItem
                 {
                     ModelId = SyncIdentityUtil.BuildUserDeviceModelId(deleted.UserId, deleted.DeviceId),
                     ModelType = SyncModelType.UserDevice,
@@ -102,7 +111,7 @@ public sealed class DeviceService : IDeviceService
             }
 
             foreach (var remote in remotes.Where(x => !x.IsDeleted && x.IsSyncOn))
-                await _syncQueue.EnqueueUserCatchUpAsync(user.UId, remote.DeviceId, ct);
+                await _userSyncCatchUp.EnqueueAsync(user.UId, remote.DeviceId, ct);
         }
     }
 
@@ -111,8 +120,8 @@ public sealed class DeviceService : IDeviceService
 
     public async Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(Guid token, CancellationToken ct = default)
     {
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
+        var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var userDevicesData = bundle.UserDevicesData;
         var localLink = await EnsureLocalUserDeviceAsync(user.UId, ct);
         var links = await _userDevices.ListByUserWithDevicesAsync(user.UId, ct);
@@ -148,7 +157,7 @@ public sealed class DeviceService : IDeviceService
             return;
         }
 
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
         var userDevice = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
         if (userDevice.IsSyncOn == isSyncOn)
         {
@@ -164,14 +173,14 @@ public sealed class DeviceService : IDeviceService
         await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Updated, ct);
 
         if (isSyncOn)
-            await _syncQueue.EnqueueUserCatchUpAsync(user.UId, deviceId, ct);
+            await _userSyncCatchUp.EnqueueAsync(user.UId, deviceId, ct);
         else
             await RemoveCachedDeviceIfNoPendingAsync(userDevice, ct);
     }
 
     public async Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default)
     {
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
         await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
         var device = await _devices.GetByIdWithUserDevicesAsync(deviceId, ct) ?? throw new InvalidInputException();
         if (!device.IsBlocked && device.InvalidSyncAttemptCount == 0 && device.BlockedReason is null)
@@ -185,19 +194,19 @@ public sealed class DeviceService : IDeviceService
         device.LastModifiedAt = DateTimeOffset.UtcNow;
         device.GenerateIntegrityHash();
         _devices.Update(device);
-        await _syncQueue.EnqueueAsync(new SyncItem { ModelId = device.Id, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Updated }, ct);
+        await _syncChanges.EnqueueAsync(new SyncItem { ModelId = device.Id, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Updated }, ct);
     }
 
     public async Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default)
     {
         if (!IsValidPassword(masterPassword) || deviceId == _identity.LocalDeviceId)
             throw new InvalidInputException();
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
         if (!_auth.IsPasswordValid(token, masterPassword, user.PasswordSalt))
             throw new InvalidInputException();
 
         var userDevice = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
-        var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var userDevicesData = bundle.UserDevicesData;
         var now = DateTimeOffset.UtcNow;
         userDevice.IsDeleted = true;
@@ -226,7 +235,7 @@ public sealed class DeviceService : IDeviceService
 
         if (userDeviceDataChanged)
         {
-            await _syncQueue.EnqueueAsync(new SyncItem
+            await _syncChanges.EnqueueAsync(new SyncItem
             {
                 ModelId = user.UId,
                 ModelType = SyncModelType.User,
@@ -240,8 +249,8 @@ public sealed class DeviceService : IDeviceService
     private async Task SetEncryptedDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct)
     {
         var normalizedName = NormalizeUserDeviceName(name);
-        var user = await _users.GetAndVerifyUserAsync(token, ct);
-        var bundle = await _users.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
+        var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var userDevicesData = bundle.UserDevicesData;
         await EnsureLocalUserDeviceAsync(user.UId, ct);
         UserDevice? remoteLink = null;
@@ -330,7 +339,7 @@ public sealed class DeviceService : IDeviceService
         userDevicesData.Devices.Any(d => d.Id != exceptDeviceId && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
 
     private Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct, bool enqueueSync = true) =>
-        _users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
+        _userDataWriter.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
 
     private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData) => new()
     {
@@ -373,7 +382,7 @@ public sealed class DeviceService : IDeviceService
     };
 
     private Task EnqueueUserDeviceChangeAsync(UserDevice userDevice, SyncChangeType changeType, CancellationToken ct) =>
-        _syncQueue.EnqueueAsync(new SyncItem
+        _syncChanges.EnqueueAsync(new SyncItem
         {
             ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userDevice.UserId, userDevice.DeviceId),
             ModelType = SyncModelType.UserDevice,

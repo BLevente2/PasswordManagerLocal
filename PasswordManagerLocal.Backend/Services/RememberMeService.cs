@@ -12,18 +12,24 @@ public class RememberMeService : IRememberMeService
     private readonly ITokenService _tokens;
     private readonly IKeyVaultService _keys;
     private readonly IKeyProtector _protector;
-    private readonly IUserService _userService;
+    private readonly IUserLookupService _lookup;
+    private readonly IUserSessionService _sessions;
+    private readonly IUserDataWriterService _writer;
 
     public RememberMeService(
         ITokenService tokens,
         IKeyVaultService keys,
         IKeyProtector protector,
-        IUserService userService)
+        IUserLookupService lookup,
+        IUserSessionService sessions,
+        IUserDataWriterService writer)
     {
         _tokens = tokens;
         _keys = keys;
         _protector = protector;
-        _userService = userService;
+        _lookup = lookup;
+        _sessions = sessions;
+        _writer = writer;
     }
 
 
@@ -32,7 +38,7 @@ public class RememberMeService : IRememberMeService
     {
         var initializedTokens = new List<Guid>();
 
-        var usersEnabledRM = await _userService.GetAndVerifyRememberMeEnabledUsersAsync(ct);
+        var usersEnabledRM = await _lookup.GetAndVerifyRememberMeEnabledUsersAsync(ct);
         if (usersEnabledRM.Count == 0)
             return initializedTokens;
 
@@ -49,7 +55,7 @@ public class RememberMeService : IRememberMeService
 
     public async Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default)
     {
-        var user = await _userService.GetAndVerifyUserByUidAsync(userId, ct);
+        var user = await _lookup.GetAndVerifyUserByUidAsync(userId, ct);
         var token = await TryInitializeRememberedUserAsync(user, ct);
 
         if (token is null)
@@ -61,11 +67,11 @@ public class RememberMeService : IRememberMeService
 
     public async Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default)
     {
-        var user = await _userService.GetAndVerifyUserAsync(token, ct);
-        using var key = _userService.GetEncryptionKeyFromToken(token);
+        var user = await _lookup.GetAndVerifyUserAsync(token, ct);
+        using var key = _sessions.GetEncryptionKeyFromToken(token);
 
         SetRememberMe(user, rememberMe, key);
-        await _userService.UpdateUserAsync(user, ct);
+        await _writer.UpdateUserAsync(user, ct);
     }
 
 
@@ -131,7 +137,7 @@ public class RememberMeService : IRememberMeService
                 CryptographicOperations.ZeroMemory(user.SavedKey);
 
             user.SavedKey = null;
-            await _userService.UpdateUserAsync(user, ct);
+            await _writer.UpdateUserAsync(user, ct);
         }
         catch
         {

@@ -116,6 +116,7 @@ public sealed class NetworkDeltaServiceTests
             tombstones,
             syncQueue,
             syncQueueService,
+            syncQueueService,
             syncDeviceIdentities,
             identity,
             authorization,

@@ -224,15 +224,17 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
     public async Task QueueInitialSyncAsync(IServiceProvider services, Guid userId, Guid newDeviceId, CancellationToken ct)
     {
         var groups = services.GetRequiredService<IGroupRepository>();
-        var syncQueue = services.GetRequiredService<ISyncQueueService>();
+        var syncQueue = services.GetRequiredService<ISyncChangeQueueService>();
         var groupIds = await groups.ListIdsByUserAsync(userId, ct);
 
-        await syncQueue.EnqueueAsync(new SyncItem { ModelId = userId, ModelType = SyncModelType.User, ChangeType = SyncChangeType.Updated }, ct);
+        // These rows are written inside the enrollment transaction. Starting workers here would let
+        // their separate DbContexts run before commit and incorrectly observe an empty queue.
+        await syncQueue.EnqueueDeferredAsync(new SyncItem { ModelId = userId, ModelType = SyncModelType.User, ChangeType = SyncChangeType.Updated }, ct);
 
         foreach (var groupId in groupIds)
-            await syncQueue.EnqueueAsync(new SyncItem { ModelId = groupId, ModelType = SyncModelType.Group, ChangeType = SyncChangeType.Updated }, ct);
+            await syncQueue.EnqueueDeferredAsync(new SyncItem { ModelId = groupId, ModelType = SyncModelType.Group, ChangeType = SyncChangeType.Updated }, ct);
 
-        await syncQueue.EnqueueAsync(new SyncItem { ModelId = newDeviceId, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Created }, ct);
-        await syncQueue.EnqueueAsync(new SyncItem { ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userId, newDeviceId), ModelType = SyncModelType.UserDevice, ChangeType = SyncChangeType.Created }, ct);
+        await syncQueue.EnqueueDeferredAsync(new SyncItem { ModelId = newDeviceId, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Created }, ct);
+        await syncQueue.EnqueueDeferredAsync(new SyncItem { ModelId = SyncIdentityUtil.BuildUserDeviceModelId(userId, newDeviceId), ModelType = SyncModelType.UserDevice, ChangeType = SyncChangeType.Created }, ct);
     }
 }

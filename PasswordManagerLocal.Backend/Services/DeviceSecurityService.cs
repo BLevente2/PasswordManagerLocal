@@ -9,13 +9,13 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class DeviceSecurityService : IDeviceSecurityService
 {
     private readonly IDeviceRepository _devices;
-    private readonly ISyncQueueService _syncQueue;
+    private readonly ISyncChangeQueueService _syncQueue;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IUnitOfWork _uow;
 
     public DeviceSecurityService(
         IDeviceRepository devices,
-        ISyncQueueService syncQueue,
+        ISyncChangeQueueService syncQueue,
         ISyncDeviceIdentityService syncDeviceIdentities,
         IUnitOfWork uow)
     {

@@ -1,0 +1,331 @@
+using PasswordManagerLocal.Backend.Abstractions.Persistence;
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
+using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Utils;
+using System.Security.Cryptography;
+using static PasswordManagerLocal.Backend.Utils.DataCodec;
+
+namespace PasswordManagerLocal.Backend.Services;
+
+/// <summary>
+/// Encrypts and persists user-data changes and optionally records them in the synchronization queue.
+/// </summary>
+public sealed class UserDataWriterService : IUserDataWriterService
+{
+    private readonly IUserRepository _users;
+    private readonly IDataCachingService _cache;
+    private readonly IKeyVaultService _keys;
+    private readonly IUserSessionService _sessions;
+    private readonly IUserLookupService _lookup;
+    private readonly ISyncChangeQueueService _syncQueue;
+    private readonly IUserDataBundleIntegrityService _integrity;
+    private readonly IUserDataPersistenceValidator _validator;
+    private readonly IUnitOfWork _uow;
+
+    public UserDataWriterService(
+        IUserRepository users,
+        IDataCachingService cache,
+        IKeyVaultService keys,
+        IUserSessionService sessions,
+        IUserLookupService lookup,
+        ISyncChangeQueueService syncQueue,
+        IUserDataBundleIntegrityService integrity,
+        IUserDataPersistenceValidator validator,
+        IUnitOfWork uow)
+    {
+        _users = users;
+        _cache = cache;
+        _keys = keys;
+        _sessions = sessions;
+        _lookup = lookup;
+        _syncQueue = syncQueue;
+        _integrity = integrity;
+        _validator = validator;
+        _uow = uow;
+    }
+
+    public async Task AddNewUserAsync(User user, CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        user.LastModifiedAt = now;
+        EnsureBlobTimestamps(user, now);
+        user.GenerateIntegrityHash();
+        await _users.AddAsync(user, ct);
+        await _uow.SaveChangesAsync(ct);
+    }
+
+    public Task UpdateUserAsync(User user, CancellationToken ct = default) =>
+        UpdateUserAsync(user, false, ct);
+
+    public async Task UpdateUserAsync(User user, bool enqueueSync, CancellationToken ct = default)
+    {
+        user.LastModifiedAt = DateTimeOffset.UtcNow;
+        user.GenerateIntegrityHash();
+        _users.Update(user);
+
+        if (enqueueSync)
+        {
+            await _syncQueue.EnqueueAsync(new SyncItem
+            {
+                ModelId = user.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Updated
+            }, ct);
+            return;
+        }
+
+        await _uow.SaveChangesAsync(ct);
+    }
+
+    public Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, CancellationToken ct = default) =>
+        UpdateUserDataAsync(userData, user, key, false, ct);
+
+    public async Task UpdateUserDataAsync(
+        UserData userData,
+        User user,
+        EncryptionKey key,
+        bool enqueueSync,
+        CancellationToken ct = default)
+    {
+        _validator.EnsureUserDataCanBePersisted(userData, user);
+        userData.GenerateIntegrityHash();
+        var newEncryptedPayload = await SerializeCompressEncryptAsync(
+            userData,
+            key,
+            BackendJsonSerializerContext.Default.UserData,
+            ct: ct);
+        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
+        user.EncryptedPayload = newEncryptedPayload;
+        user.UserDataLastModifiedAt = DateTimeOffset.UtcNow;
+        await UpdateUserAsync(user, enqueueSync, ct);
+    }
+
+    public Task UpdateUserDataAsync(UserData userData, Guid token, EncryptionKey key, CancellationToken ct = default) =>
+        UpdateUserDataAsync(userData, token, key, false, ct);
+
+    public async Task UpdateUserDataAsync(
+        UserData userData,
+        Guid token,
+        EncryptionKey key,
+        bool enqueueSync,
+        CancellationToken ct = default)
+    {
+        var user = await _lookup.GetAndVerifyUserAsync(token, ct);
+        await UpdateUserDataAsync(userData, user, key, enqueueSync, ct);
+    }
+
+    public Task UpdateUserDataAsync(UserData userData, Guid token, CancellationToken ct = default) =>
+        UpdateUserDataAsync(userData, token, false, ct);
+
+    public async Task UpdateUserDataAsync(
+        UserData userData,
+        Guid token,
+        bool enqueueSync,
+        CancellationToken ct = default)
+    {
+        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        await UpdateUserDataAsync(userData, token, key, enqueueSync, ct);
+    }
+
+    public Task UpdateUserDataBundleAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey key,
+        UserDataBlobKind modifiedBlobs,
+        CancellationToken ct = default) =>
+        UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, false, ct);
+
+    public async Task UpdateUserDataBundleAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey key,
+        UserDataBlobKind modifiedBlobs,
+        bool enqueueSync,
+        CancellationToken ct = default)
+    {
+        _validator.EnsureUserDataBundleCanBePersisted(bundle, user);
+        await PersistUserDataBundleAsync(bundle, user, key, modifiedBlobs, false, enqueueSync, ct);
+    }
+
+    public Task UpdateUserDataBundleAsync(
+        UserDataBundle bundle,
+        Guid token,
+        UserDataBlobKind modifiedBlobs,
+        CancellationToken ct = default) =>
+        UpdateUserDataBundleAsync(bundle, token, modifiedBlobs, false, ct);
+
+    public async Task UpdateUserDataBundleAsync(
+        UserDataBundle bundle,
+        Guid token,
+        UserDataBlobKind modifiedBlobs,
+        bool enqueueSync,
+        CancellationToken ct = default)
+    {
+        var user = await _lookup.GetAndVerifyUserAsync(token, ct);
+        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        await UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, enqueueSync, ct);
+        _keys.SetUserBlobKeys(token, bundle.UserData);
+        _cache.SetUserDataBundle(token, bundle);
+    }
+
+    public async Task ReencryptUserDataBundleWithNewKeysAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey newUserKey,
+        bool enqueueSync,
+        CancellationToken ct = default)
+    {
+        _validator.EnsureUserDataBundleCanBePersisted(bundle, user);
+        _integrity.VerifyUntrustedBundle(bundle);
+        UserDataKeyUtil.ReplaceUserBlobKeys(bundle.UserData);
+        await PersistUserDataBundleAsync(
+            bundle,
+            user,
+            newUserKey,
+            UserDataBlobKind.None,
+            true,
+            enqueueSync,
+            ct);
+    }
+
+    private async Task PersistUserDataBundleAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey userKey,
+        UserDataBlobKind modifiedBlobs,
+        bool forceRewriteAllBlobs,
+        bool enqueueSync,
+        CancellationToken ct)
+    {
+        _integrity.UpdateModifiedBlobIntegrity(bundle, modifiedBlobs);
+        _validator.EnsureUserDataBundleCanBePersisted(bundle, user);
+
+        var rewriteGeneral = forceRewriteAllBlobs || modifiedBlobs.HasFlag(UserDataBlobKind.General);
+        var rewritePasswords = forceRewriteAllBlobs || modifiedBlobs.HasFlag(UserDataBlobKind.Passwords);
+        var rewriteDevices = forceRewriteAllBlobs || modifiedBlobs.HasFlag(UserDataBlobKind.Devices);
+
+        Task<byte[]>? generalTask = rewriteGeneral
+            ? EncryptBlobAsync(
+                bundle.GeneralUserData,
+                bundle.UserData.GeneralUserDataKey,
+                BackendJsonSerializerContext.Default.GeneralUserData,
+                ct)
+            : null;
+        Task<byte[]>? passwordsTask = rewritePasswords
+            ? EncryptBlobAsync(
+                bundle.UserPasswordsData,
+                bundle.UserData.UserPasswordsDataKey,
+                BackendJsonSerializerContext.Default.UserPasswordsData,
+                ct)
+            : null;
+        Task<byte[]>? devicesTask = rewriteDevices
+            ? EncryptBlobAsync(
+                bundle.UserDevicesData,
+                bundle.UserData.UserDevicesDataKey,
+                BackendJsonSerializerContext.Default.UserDevicesData,
+                ct)
+            : null;
+        var userDataTask = SerializeCompressEncryptAsync(
+            bundle.UserData,
+            userKey,
+            BackendJsonSerializerContext.Default.UserData,
+            ct: ct);
+
+        var encryptionTasks = new List<Task<byte[]>> { userDataTask };
+        if (generalTask is not null)
+            encryptionTasks.Add(generalTask);
+        if (passwordsTask is not null)
+            encryptionTasks.Add(passwordsTask);
+        if (devicesTask is not null)
+            encryptionTasks.Add(devicesTask);
+
+        try
+        {
+            await Task.WhenAll(encryptionTasks);
+        }
+        catch
+        {
+            foreach (var task in encryptionTasks)
+                ZeroCompletedEncryptionTask(task);
+            throw;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (modifiedBlobs != UserDataBlobKind.None || forceRewriteAllBlobs)
+            user.UserDataLastModifiedAt = now;
+
+        if (generalTask is not null)
+        {
+            user.GeneralUserDataLastModifiedAt = now;
+            ReplaceEncryptedPayload(
+                user.EncryptedGeneralUserDataPayload,
+                await generalTask,
+                value => user.EncryptedGeneralUserDataPayload = value);
+        }
+
+        if (passwordsTask is not null)
+        {
+            user.UserPasswordsDataLastModifiedAt = now;
+            ReplaceEncryptedPayload(
+                user.EncryptedUserPasswordsDataPayload,
+                await passwordsTask,
+                value => user.EncryptedUserPasswordsDataPayload = value);
+        }
+
+        if (devicesTask is not null)
+        {
+            user.UserDevicesDataLastModifiedAt = now;
+            ReplaceEncryptedPayload(
+                user.EncryptedUserDevicesDataPayload,
+                await devicesTask,
+                value => user.EncryptedUserDevicesDataPayload = value);
+        }
+
+        ReplaceEncryptedPayload(
+            user.EncryptedPayload,
+            await userDataTask,
+            value => user.EncryptedPayload = value);
+        await UpdateUserAsync(user, enqueueSync, ct);
+    }
+
+    private static async Task<byte[]> EncryptBlobAsync<T>(
+        T data,
+        byte[] rawKey,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo,
+        CancellationToken ct) where T : class
+    {
+        using var key = EncryptionKey.FromRaw(rawKey);
+        return await SerializeCompressEncryptAsync(data, key, typeInfo, ct: ct);
+    }
+
+    private static void ZeroCompletedEncryptionTask(Task<byte[]> task)
+    {
+        if (task.Status == TaskStatus.RanToCompletion)
+            CryptographicOperations.ZeroMemory(task.Result);
+    }
+
+    private static void ReplaceEncryptedPayload(
+        byte[] currentPayload,
+        byte[] replacementPayload,
+        Action<byte[]> assignReplacement)
+    {
+        CryptographicOperations.ZeroMemory(currentPayload);
+        assignReplacement(replacementPayload);
+    }
+
+    private static void EnsureBlobTimestamps(User user, DateTimeOffset value)
+    {
+        if (user.UserDataLastModifiedAt == default)
+            user.UserDataLastModifiedAt = value;
+        if (user.GeneralUserDataLastModifiedAt == default)
+            user.GeneralUserDataLastModifiedAt = value;
+        if (user.UserPasswordsDataLastModifiedAt == default)
+            user.UserPasswordsDataLastModifiedAt = value;
+        if (user.UserDevicesDataLastModifiedAt == default)
+            user.UserDevicesDataLastModifiedAt = value;
+    }
+}

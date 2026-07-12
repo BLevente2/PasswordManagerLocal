@@ -1,13 +1,13 @@
-﻿using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class SyncService : ISyncService
 {
-    private readonly ISyncQueueService _queue;
+    private readonly ISyncChangeQueueService _queue;
 
-    public SyncService(ISyncQueueService queue)
+    public SyncService(ISyncChangeQueueService queue)
     {
         _queue = queue;
     }

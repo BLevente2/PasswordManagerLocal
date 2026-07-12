@@ -13,12 +13,26 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public class UserProfileService : IUserProfileService
 {
-    private readonly IUserService _userService;
+    private readonly IUserLookupService _lookup;
+    private readonly IUserDataReaderService _reader;
+    private readonly IUserDataWriterService _writer;
+    private readonly IUserSessionService _sessions;
+    private readonly IUserDeletionService _deletion;
     private readonly IAuthService _authService;
 
-    public UserProfileService(IUserService userService, IAuthService authService)
+    public UserProfileService(
+        IUserLookupService lookup,
+        IUserDataReaderService reader,
+        IUserDataWriterService writer,
+        IUserSessionService sessions,
+        IUserDeletionService deletion,
+        IAuthService authService)
     {
-        _userService = userService;
+        _lookup = lookup;
+        _reader = reader;
+        _writer = writer;
+        _sessions = sessions;
+        _deletion = deletion;
         _authService = authService;
     }
 
@@ -26,8 +40,8 @@ public class UserProfileService : IUserProfileService
 
     public async Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default)
     {
-        var user = await _userService.GetAndVerifyUserAsync(token, ct);
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var user = await _lookup.GetAndVerifyUserAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(
             bundle.UserData,
             bundle.GeneralUserData,
@@ -40,14 +54,14 @@ public class UserProfileService : IUserProfileService
         if (!IsValidPassword(password))
             throw new InvalidInputException();
 
-        var user = await _userService.GetAndVerifyUserAsync(token, ct);
+        var user = await _lookup.GetAndVerifyUserAsync(token, ct);
 
         if (!_authService.IsPasswordValid(token, password, user.PasswordSalt))
             throw new InvalidInputException();
 
         _authService.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
 
-        await _userService.DeleteUserAsync(user, true, ct);
+        await _deletion.DeleteUserAsync(user, true, ct);
     }
 
 
@@ -56,13 +70,13 @@ public class UserProfileService : IUserProfileService
         if (!IsValidUsername(newUsername))
             throw new InvalidInputException();
 
-        var user = await _userService.GetAndVerifyUserAsync(token, ct);
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var user = await _lookup.GetAndVerifyUserAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var usernameBytes = Encoding.UTF8.GetBytes(newUsername);
 
         try
         {
-            var existingUser = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
+            var existingUser = await _lookup.GetUserByUsernameAsync(usernameBytes, ct);
             if (existingUser is not null && existingUser.UId != user.UId)
                 throw new InvalidInputException();
 
@@ -79,8 +93,8 @@ public class UserProfileService : IUserProfileService
             CryptographicOperations.ZeroMemory(usernameBytes);
         }
 
-        using var key = _userService.GetEncryptionKeyFromToken(token);
-        await _userService.UpdateUserDataBundleAsync(bundle, user, key, UserDataBlobKind.General, true, ct);
+        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        await _writer.UpdateUserDataBundleAsync(bundle, user, key, UserDataBlobKind.General, true, ct);
     }
 
 
@@ -89,7 +103,7 @@ public class UserProfileService : IUserProfileService
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct);
 
         if (request.NewEamil is not null)
             bundle.GeneralUserData.Email = request.NewEamil;
@@ -102,6 +116,6 @@ public class UserProfileService : IUserProfileService
 
         bundle.GeneralUserData.LastUpdatedAt = DateTime.UtcNow;
 
-        await _userService.UpdateUserDataBundleAsync(bundle, request.Token, UserDataBlobKind.General, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, request.Token, UserDataBlobKind.General, true, ct);
     }
 }

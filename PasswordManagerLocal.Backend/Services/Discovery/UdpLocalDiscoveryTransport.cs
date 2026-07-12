@@ -159,10 +159,21 @@ internal sealed class UdpLocalDiscoveryTransport : ILocalDiscoveryTransport, IDi
 
         if (!joinedMulticastGroup)
         {
-            socket.SetSocketOption(
-                SocketOptionLevel.IP,
-                SocketOptionName.AddMembership,
-                new MulticastOption(multicastAddress));
+            // Starting synchronization while the device is completely offline must not
+            // prevent the application from starting. There may be no default multicast
+            // interface yet, particularly on Android or during a Windows adapter change.
+            // The network refresh service will recreate this socket and join the correct
+            // interfaces once an address becomes available.
+            try
+            {
+                socket.SetSocketOption(
+                    SocketOptionLevel.IP,
+                    SocketOptionName.AddMembership,
+                    new MulticastOption(multicastAddress));
+            }
+            catch
+            {
+            }
         }
 
         return socket;

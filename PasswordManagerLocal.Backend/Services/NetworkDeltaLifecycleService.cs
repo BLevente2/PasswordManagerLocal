@@ -23,7 +23,8 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncTombstoneRepository _tombstones;
     private readonly ISyncQueueRepository _syncQueue;
-    private readonly ISyncQueueService _syncQueueService;
+    private readonly ISyncChangeQueueService _syncChanges;
+    private readonly IUserSyncCatchUpService _userSyncCatchUp;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncAuthorizationService _authorization;
@@ -37,7 +38,8 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         IUserDeviceRepository userDevices,
         ISyncTombstoneRepository tombstones,
         ISyncQueueRepository syncQueue,
-        ISyncQueueService syncQueueService,
+        ISyncChangeQueueService syncChanges,
+        IUserSyncCatchUpService userSyncCatchUp,
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDeviceIdentityService identity,
         ISyncAuthorizationService authorization,
@@ -50,7 +52,8 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         _userDevices = userDevices;
         _tombstones = tombstones;
         _syncQueue = syncQueue;
-        _syncQueueService = syncQueueService;
+        _syncChanges = syncChanges;
+        _userSyncCatchUp = userSyncCatchUp;
         _syncDeviceIdentities = syncDeviceIdentities;
         _identity = identity;
         _authorization = authorization;
@@ -107,7 +110,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
             payload.UserDevice is { IsSyncOn: true, IsDeleted: false } enabledLink &&
             enabledLink.DeviceId != _identity.LocalDeviceId)
         {
-            await _syncQueueService.EnqueueUserCatchUpAsync(enabledLink.UserId, enabledLink.DeviceId, ct);
+            await _userSyncCatchUp.EnqueueAsync(enabledLink.UserId, enabledLink.DeviceId, ct);
         }
     }
 
@@ -224,7 +227,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
 
 
     private Task PropagateIncomingDeltaAsync(SyncDeltaPayload payload, Guid sourceDeviceId, long changedAtTs, CancellationToken ct) =>
-        _syncQueueService.EnqueuePropagationAsync(new SyncItem
+        _syncChanges.EnqueuePropagationAsync(new SyncItem
         {
             ModelId = payload.ModelId,
             ModelType = payload.ModelType,

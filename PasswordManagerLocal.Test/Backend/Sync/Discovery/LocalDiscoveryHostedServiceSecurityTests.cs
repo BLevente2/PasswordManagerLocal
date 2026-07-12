@@ -57,6 +57,54 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
+    public async Task SyncQuery_FromTrustedPendingDevice_StartsDeliveryToObservedSource()
+    {
+        using var localKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var remoteKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var localIdentity = CreateIdentity(localKey, isSyncOn: true);
+        var remoteDevice = CreateTrustedDevice(remoteKey);
+        var syncIdentities = new FakeSyncDeviceIdentityService();
+        syncIdentities.TryAdd(remoteDevice);
+        var transport = new FakeLocalDiscoveryTransport();
+        var syncTasks = new FakeDeviceSyncTaskService();
+        var networkAddresses = new FakeLocalNetworkAddressService
+        {
+            RemoteEndpointPriorityHandler = host => host == "192.168.1.77" ? 5000 : int.MinValue
+        };
+        using var service = CreateService(
+            localIdentity,
+            syncIdentities,
+            transport,
+            new EnrollmentRuntimeState(),
+            syncTasks,
+            networkAddresses);
+
+        await service.StartAsync();
+
+        var nonce = Enumerable.Repeat((byte)0x12, SyncConstants.LocalDiscoveryNonceBytes).ToArray();
+        var authenticatedBytes = LocalDiscoveryPacketCodec.BuildSyncQueryAuthenticatedBytes(
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            nonce,
+            remoteDevice.Id);
+        var signature = SignatureAlgorithm.Ed25519.Sign(remoteKey, authenticatedBytes);
+        var payload = LocalDiscoveryPacketCodec.AppendAuthenticator(
+            authenticatedBytes,
+            signature,
+            SyncConstants.LocalDiscoverySignatureBytes);
+
+        await transport.InjectAsync(payload, "192.168.1.77");
+
+        MSTestAssert.AreEqual(1, syncTasks.Starts.Count);
+        MSTestAssert.AreEqual(remoteDevice.Id, syncTasks.Starts[0].Device.Id);
+        MSTestAssert.AreEqual("192.168.1.77", syncTasks.Starts[0].Endpoint.Host);
+        MSTestAssert.AreEqual(SyncConstants.SyncPort, syncTasks.Starts[0].Endpoint.Port);
+        MSTestAssert.AreEqual(remoteDevice.TlsCertFingerprint, syncTasks.Starts[0].Endpoint.TlsCertFingerprint);
+    }
+
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
     public async Task SyncQuery_WithInvalidSignature_IsSilentlyIgnored()
     {
         using var localKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());

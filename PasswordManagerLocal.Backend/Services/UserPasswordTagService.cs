@@ -7,29 +7,37 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserPasswordTagService : IUserPasswordTagService
 {
-    private readonly IUserService _userService;
+    private readonly IUserSessionService _sessions;
+    private readonly IUserDataReaderService _reader;
+    private readonly IUserDataWriterService _writer;
     private readonly IPasswordTagService _passwordTagService;
 
-    public UserPasswordTagService(IUserService userService, IPasswordTagService passwordTagService)
+    public UserPasswordTagService(
+        IUserSessionService sessions,
+        IUserDataReaderService reader,
+        IUserDataWriterService writer,
+        IPasswordTagService passwordTagService)
     {
-        _userService = userService;
+        _sessions = sessions;
+        _reader = reader;
+        _writer = writer;
         _passwordTagService = passwordTagService;
     }
 
 
     public async Task AddPasswordTagAsync(Guid token, NewPasswordTagRequest request, CancellationToken ct = default)
     {
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct);
         _passwordTagService.AddPasswordTag(request, bundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 
 
     public async Task DeletePasswordTagAsync(Guid token, Guid passwordTagId, CancellationToken ct = default)
     {
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct);
         _passwordTagService.DeletePasswordTag(passwordTagId, bundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 
 
@@ -41,20 +49,20 @@ public sealed class UserPasswordTagService : IUserPasswordTagService
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var sourceUid = _userService.GetUidFromToken(sourceToken);
-        var targetUid = _userService.GetUidFromToken(request.TargetToken);
+        var sourceUid = _sessions.GetUidFromToken(sourceToken);
+        var targetUid = _sessions.GetUidFromToken(request.TargetToken);
         if (sourceUid == targetUid)
             throw new InvalidInputException(["TargetToken"]);
 
-        var sourceBundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(sourceToken, ct);
-        var targetBundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.TargetToken, ct);
+        var sourceBundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(sourceToken, ct);
+        var targetBundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(request.TargetToken, ct);
 
         _passwordTagService.ExportPasswordTags(
             request.PasswordTagIds!,
             sourceBundle.UserPasswordsData,
             targetBundle.UserPasswordsData);
 
-        await _userService.UpdateUserDataBundleAsync(
+        await _writer.UpdateUserDataBundleAsync(
             targetBundle,
             request.TargetToken,
             UserDataBlobKind.Passwords,
@@ -67,7 +75,7 @@ public sealed class UserPasswordTagService : IUserPasswordTagService
         foreach (var passwordTagId in request.PasswordTagIds!)
             _passwordTagService.DeletePasswordTag(passwordTagId, sourceBundle.UserPasswordsData);
 
-        await _userService.UpdateUserDataBundleAsync(
+        await _writer.UpdateUserDataBundleAsync(
             sourceBundle,
             sourceToken,
             UserDataBlobKind.Passwords,
@@ -78,8 +86,8 @@ public sealed class UserPasswordTagService : IUserPasswordTagService
 
     public async Task UpdatePasswordTagAsync(Guid token, UpdatePasswordTagRequest request, CancellationToken ct = default)
     {
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(token, ct);
+        var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct);
         _passwordTagService.UpdatePasswordTag(request, bundle.UserPasswordsData);
-        await _userService.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
+        await _writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Passwords, true, ct);
     }
 }

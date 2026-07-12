@@ -152,7 +152,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         using (var authorizationScope = _scopeFactory.CreateScope())
         {
-            var users = authorizationScope.ServiceProvider.GetRequiredService<IUserService>();
+            var users = authorizationScope.ServiceProvider.GetRequiredService<IUserLookupService>();
             var localUsers = authorizationScope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
             var user = await users.GetAndVerifyUserAsync(token, ct);
             if (!await localUsers.IsSyncOnAsync(user.UId, ct))
@@ -336,10 +336,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         using var scope = _scopeFactory.CreateScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var devices = scope.ServiceProvider.GetRequiredService<IDeviceRepository>();
-        var users = scope.ServiceProvider.GetRequiredService<IUserService>();
+        var users = scope.ServiceProvider.GetRequiredService<IUserLookupService>();
+        var userDataReader = scope.ServiceProvider.GetRequiredService<IUserDataReaderService>();
+        var userDataWriter = scope.ServiceProvider.GetRequiredService<IUserDataWriterService>();
         var cache = scope.ServiceProvider.GetRequiredService<IDataCachingService>();
         var syncIdentities = scope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
-        var syncTasks = scope.ServiceProvider.GetRequiredService<IDeviceSyncTaskService>();
+        var pendingSyncActivation = scope.ServiceProvider.GetRequiredService<IPendingSyncActivationService>();
         var user = await users.GetAndVerifyUserAsync(token, ct);
 
         await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
@@ -347,7 +349,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         try
         {
             await _registrationService.RegisterRemoteDeviceAsync(scope.ServiceProvider, user.UId, endpoint, ct);
-            await _snapshotService.EnsureEncryptedDeviceDataAsync(users, user, token, endpoint.DeviceId, ct);
+            await _snapshotService.EnsureEncryptedDeviceDataAsync(userDataReader, userDataWriter, user, token, endpoint.DeviceId, ct);
             var snapshot = await _snapshotService.BuildAsync(scope.ServiceProvider, user.UId, ct);
 
             var proof = DeviceEnrollmentCode.BuildCompletionProof(
@@ -376,8 +378,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     TlsCertFingerprint = endpoint.TlsCertFingerprint
                 };
                 _endpointCache.AddOrUpdate(discoveredEndpoint);
-                syncTasks.TryStart(discoveredEndpoint, remoteDevice);
             }
+
+            await pendingSyncActivation.ActivatePendingAsync(ct);
         }
         catch (DeviceEnrollmentException)
         {

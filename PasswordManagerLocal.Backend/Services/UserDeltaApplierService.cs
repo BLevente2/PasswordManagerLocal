@@ -20,14 +20,14 @@ public sealed class UserDeltaApplierService : IUserDeltaApplierService
 {
     private readonly IUserRepository _users;
     private readonly ISyncTombstoneRepository _tombstones;
-    private readonly ISyncQueueService _syncQueueService;
+    private readonly ISyncChangeQueueService _syncQueueService;
     private readonly IUserDataBundleSyncService _bundleSync;
     private readonly ISyncRelationshipReconciliationService _relationships;
 
     public UserDeltaApplierService(
         IUserRepository users,
         ISyncTombstoneRepository tombstones,
-        ISyncQueueService syncQueueService,
+        ISyncChangeQueueService syncQueueService,
         IUserDataBundleSyncService bundleSync,
         ISyncRelationshipReconciliationService relationships)
     {

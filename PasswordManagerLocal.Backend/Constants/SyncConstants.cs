@@ -20,6 +20,7 @@ public static class SyncConstants
     public const int LocalDiscoveryMacBytes = 32;
     public const int LocalDiscoveryRecentNonceCapacity = 4096;
     public const int NetworkRefreshDebounceSeconds = 3;
+    public const int NetworkConfigurationPollSeconds = 15;
     public const int DeviceEnrollmentDiscoveryTimeoutSeconds = 30;
     public const int DeviceEnrollmentConnectTimeoutSeconds = 8;
     public const int DeviceEnrollmentTransferTimeoutSeconds = 120;

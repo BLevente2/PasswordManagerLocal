@@ -246,9 +246,9 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
     }
 
 
-    public async Task EnsureEncryptedDeviceDataAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct = default)
+    public async Task EnsureEncryptedDeviceDataAsync(IUserDataReaderService reader, IUserDataWriterService writer, User user, Guid token, Guid deviceId, CancellationToken ct = default)
     {
-        using var bundle = await users.GetAndVerifyUserDataBundleAsync(user, token, ct);
+        using var bundle = await reader.GetAndVerifyUserDataBundleAsync(user, token, ct);
         if (bundle.UserDevicesData.Devices.Any(device => device.Id == deviceId))
             return;
 
@@ -264,7 +264,7 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         deviceData.GenerateIntegrityHash();
         bundle.UserDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == deviceData.Id);
         bundle.UserDevicesData.Devices.Add(deviceData);
-        await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, ct);
+        await writer.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, ct);
     }
 
 

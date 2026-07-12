@@ -46,6 +46,83 @@ public sealed class SyncQueueServiceIntegrationTests
         seeded.User.VerifyIntegrity();
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task EnqueueDeferred_EnrollmentIntroducesNewDeviceToExistingDeviceOnlyAfterCommit()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var seeded = await SeedUserRoutesAsync(database, enabledRemoteCount: 1, disabledRemoteCount: 0);
+        var existingDevice = seeded.EnabledRemotes.Single();
+        var newDevice = CreateRemoteDevice("CC00");
+        var syncIdentities = new FakeSyncDeviceIdentityService();
+        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var syncTasks = new FakeDeviceSyncTaskService();
+        var service = CreateService(
+            database,
+            seeded.Identity,
+            new FakeSyncAuthorizationService(),
+            syncIdentities,
+            endpointCache,
+            syncTasks);
+
+        endpointCache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        {
+            Host = "127.0.0.1",
+            Port = 26688,
+            TlsCertFingerprint = existingDevice.TlsCertFingerprint
+        });
+
+        await using (var transaction = await database.UnitOfWork.BeginTransactionAsync())
+        {
+            database.Db.Devices.Add(newDevice);
+            database.Db.UserDevices.Add(new UserDevice
+            {
+                UserId = seeded.User.UId,
+                DeviceId = newDevice.Id,
+                IsSyncOn = true,
+                IsDeleted = false
+            });
+            await database.Db.SaveChangesAsync();
+
+            await service.EnqueueDeferredAsync(new SyncItem
+            {
+                ModelId = seeded.User.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Updated
+            });
+            await service.EnqueueDeferredAsync(new SyncItem
+            {
+                ModelId = newDevice.Id,
+                ModelType = SyncModelType.Device,
+                ChangeType = SyncChangeType.Created
+            });
+            await service.EnqueueDeferredAsync(new SyncItem
+            {
+                ModelId = SyncIdentityUtil.BuildUserDeviceModelId(seeded.User.UId, newDevice.Id),
+                ModelType = SyncModelType.UserDevice,
+                ChangeType = SyncChangeType.Created
+            });
+
+            var queuedBeforeCommit = await database.Db.SyncQueueItems.ToListAsync();
+            MSTestAssert.HasCount(4, queuedBeforeCommit);
+            MSTestAssert.AreEqual(3, queuedBeforeCommit.Count(item => item.DeviceId == existingDevice.Id));
+            MSTestAssert.AreEqual(1, queuedBeforeCommit.Count(item => item.DeviceId == newDevice.Id));
+            MSTestAssert.AreEqual(0, syncIdentities.AddCalls);
+            MSTestAssert.IsEmpty(syncTasks.Starts);
+
+            await transaction.CommitAsync();
+        }
+
+        await service.ActivatePendingSyncsAsync();
+
+        MSTestAssert.IsTrue(syncIdentities.ContainsId(existingDevice.Id));
+        MSTestAssert.IsTrue(syncIdentities.ContainsId(newDevice.Id));
+        MSTestAssert.HasCount(1, syncTasks.Starts);
+        MSTestAssert.AreEqual(existingDevice.Id, syncTasks.Starts[0].Device.Id);
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
@@ -260,22 +337,51 @@ public sealed class SyncQueueServiceIntegrationTests
     private static SyncQueueService CreateService(
         SqliteIntegrationTestDatabase database,
         FakeDeviceIdentityService identity,
-        FakeSyncAuthorizationService authorization) =>
-        new(
-            database.SyncQueue,
+        FakeSyncAuthorizationService authorization,
+        FakeSyncDeviceIdentityService? syncIdentities = null,
+        DiscoveredDeviceEndpointCache? endpointCache = null,
+        FakeDeviceSyncTaskService? syncTasks = null)
+    {
+        syncIdentities ??= new FakeSyncDeviceIdentityService();
+        endpointCache ??= new DiscoveredDeviceEndpointCache();
+        syncTasks ??= new FakeDeviceSyncTaskService();
+
+        var localDevices = new LocalDeviceMatcherService(identity);
+        var lifecycle = new SyncItemLifecycleService(
             database.SyncItems,
+            database.SyncQueue,
             database.Users,
             database.Groups,
             database.Devices,
             database.UserDevices,
-            database.LocalUserDevices,
             database.Tombstones,
-            new FakeSyncDeviceIdentityService(),
-            new DiscoveredDeviceEndpointCache(),
-            new FakeDeviceSyncTaskService(),
+            localDevices);
+        var targets = new SyncTargetResolverService(
+            database.Groups,
+            database.Devices,
+            database.UserDevices,
+            database.LocalUserDevices,
+            localDevices);
+        var activation = new PendingSyncActivationService(
+            database.Devices,
+            syncIdentities,
+            endpointCache,
+            syncTasks,
+            identity,
+            localDevices);
+        var writer = new SyncQueueWriterService(
+            database.SyncQueue,
+            lifecycle,
+            targets,
+            activation,
+            database.Devices,
             identity,
             authorization,
             database.UnitOfWork);
+        var changes = new SyncChangeQueueService(writer);
+        var catchUp = new UserSyncCatchUpService(database.Users, database.Devices, writer);
+        return new SyncQueueService(changes, catchUp, activation);
+    }
 
     private static async Task<SeededUserRoutes> SeedUserRoutesAsync(
         SqliteIntegrationTestDatabase database,

@@ -47,12 +47,22 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<ILocalUserDeviceRepository>(sp => sp.GetRequiredService<FakeLocalUserDeviceRepository>());
         sc.AddSingleton<ISyncRouteRepository, FakeSyncRouteRepository>();
         sc.AddSingleton<IDeviceIdentityService, FakeDeviceIdentityService>();
-        sc.AddSingleton<ISyncQueueService, FakeSyncQueueService>();
+        sc.AddSingleton<FakeSyncQueueService>();
+        sc.AddSingleton<ISyncQueueService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
+        sc.AddSingleton<ISyncChangeQueueService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
+        sc.AddSingleton<IUserSyncCatchUpService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
+        sc.AddSingleton<IPendingSyncActivationService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
         sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
         sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
         sc.AddSingleton<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
+        sc.AddSingleton<IUserSessionService, UserSessionService>();
+        sc.AddSingleton<IUserLookupService, UserLookupService>();
+        sc.AddSingleton<IUserDataReaderService, UserDataReaderService>();
+        sc.AddSingleton<IUserDataPersistenceValidator, UserDataPersistenceValidator>();
+        sc.AddSingleton<IUserDataWriterService, UserDataWriterService>();
+        sc.AddSingleton<IUserDeletionService, UserDeletionService>();
         sc.AddSingleton<IUserService, UserService>();
         sc.AddSingleton<IUserProfileService, UserProfileService>();
         sc.AddSingleton<IRememberMeService, RememberMeService>();

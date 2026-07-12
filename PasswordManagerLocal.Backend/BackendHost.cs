@@ -246,6 +246,12 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
             services.AddScoped<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
             services.AddScoped<IAuthService, AuthService>();
+            services.AddScoped<IUserSessionService, UserSessionService>();
+            services.AddScoped<IUserLookupService, UserLookupService>();
+            services.AddScoped<IUserDataReaderService, UserDataReaderService>();
+            services.AddScoped<IUserDataPersistenceValidator, UserDataPersistenceValidator>();
+            services.AddScoped<IUserDataWriterService, UserDataWriterService>();
+            services.AddScoped<IUserDeletionService, UserDeletionService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IRememberMeService, RememberMeService>();
             services.AddScoped<IUserProfileService, UserProfileService>();
@@ -291,6 +297,13 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
             services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
             services.AddScoped<ISyncAuthorizationService, SyncAuthorizationService>();
+            services.AddScoped<ILocalDeviceMatcherService, LocalDeviceMatcherService>();
+            services.AddScoped<ISyncItemLifecycleService, SyncItemLifecycleService>();
+            services.AddScoped<ISyncTargetResolverService, SyncTargetResolverService>();
+            services.AddScoped<IPendingSyncActivationService, PendingSyncActivationService>();
+            services.AddScoped<ISyncQueueWriterService, SyncQueueWriterService>();
+            services.AddScoped<ISyncChangeQueueService, SyncChangeQueueService>();
+            services.AddScoped<IUserSyncCatchUpService, UserSyncCatchUpService>();
             services.AddScoped<ISyncQueueService, SyncQueueService>();
             services.AddScoped<ISyncService, SyncService>();
 

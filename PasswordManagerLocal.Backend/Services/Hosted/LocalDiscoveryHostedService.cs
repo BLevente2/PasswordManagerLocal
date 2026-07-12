@@ -393,6 +393,20 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         if (IsAuthenticatedRequestThrottled($"sync:{query.RequesterDeviceId:N}"))
             return;
 
+        // A discovery query is also an authenticated observation of the requester's
+        // current address. Use it immediately for local pending work instead of waiting
+        // for the requester to understand and accept our response. This is essential for
+        // one-way pending synchronization: the requester may have nothing queued for us
+        // and therefore may not currently keep our identity in its pending-peer cache.
+        var requesterEndpoint = BuildObservedSyncEndpoint(
+            datagram.RemoteEndpoint.Address,
+            requester.TlsCertFingerprint);
+        if (requesterEndpoint is not null)
+        {
+            _endpointCache.AddOrUpdate(requesterEndpoint);
+            _deviceSyncTasks.TryStart(requesterEndpoint, requester);
+        }
+
         var fingerprint = FingerprintHexToBytes(_identity.FingerprintHex);
         var responderAddress = _networkAddresses.GetRoutedLocalAddress(datagram.RemoteEndpoint.Address);
         if (fingerprint is null || responderAddress is null)

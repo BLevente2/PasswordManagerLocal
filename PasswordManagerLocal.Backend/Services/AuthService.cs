@@ -16,7 +16,10 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class AuthService : IAuthService
 {
-    private readonly IUserService _userService;
+    private readonly IUserLookupService _userLookup;
+    private readonly IUserDataReaderService _userDataReader;
+    private readonly IUserDataWriterService _userDataWriter;
+    private readonly IUserSessionService _userSessions;
     private readonly ITokenService _tokens;
     private readonly IDataCachingService _cache;
     private readonly IKeyVaultService _keys;
@@ -28,7 +31,10 @@ public sealed class AuthService : IAuthService
     private readonly IUnitOfWork _uow;
 
     public AuthService(
-        IUserService userService,
+        IUserLookupService userLookup,
+        IUserDataReaderService userDataReader,
+        IUserDataWriterService userDataWriter,
+        IUserSessionService userSessions,
         ITokenService tokens,
         IRememberMeService rememberMe,
         IDataCachingService cache,
@@ -39,7 +45,10 @@ public sealed class AuthService : IAuthService
         IUserDataBundleIntegrityService integrity,
         IUnitOfWork uow)
     {
-        _userService = userService;
+        _userLookup = userLookup;
+        _userDataReader = userDataReader;
+        _userDataWriter = userDataWriter;
+        _userSessions = userSessions;
         _tokens = tokens;
         _rememberMe = rememberMe;
         _cache = cache;
@@ -76,7 +85,7 @@ public sealed class AuthService : IAuthService
 
     private async Task ThrowIfUsernameExistsAsync(byte[] usernameBytes, CancellationToken ct)
     {
-        var foundUser = await _userService.GetUserByUsernameAsync(usernameBytes, ct);
+        var foundUser = await _userLookup.GetUserByUsernameAsync(usernameBytes, ct);
         if (foundUser is not null)
             throw new InvalidInputException();
     }
@@ -197,7 +206,7 @@ public sealed class AuthService : IAuthService
         CancellationToken ct)
     {
         _rememberMe.SetRememberMe(user, rememberMe, key);
-        await _userService.AddNewUserAsync(user, ct);
+        await _userDataWriter.AddNewUserAsync(user, ct);
         await AddLocalUserDeviceLinkAsync(user.UId, ct);
         await _uow.SaveChangesAsync(ct);
         await _syncRuntime.RefreshSyncEnabledAsync(ct);
@@ -229,15 +238,15 @@ public sealed class AuthService : IAuthService
             throw new InvalidInputException();
 
         var usernameBytes = Encoding.UTF8.GetBytes(request.Username);
-        var user = await _userService.GetAndVerifyUserByUsernameAsync(usernameBytes, ct);
+        var user = await _userLookup.GetAndVerifyUserByUsernameAsync(usernameBytes, ct);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
 
-        var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, key, ct);
+        var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
         var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, DateTimeOffset.UtcNow);
         UpdateCurrentDeviceLastLoginDate(bundle.UserDevicesData);
         modifiedBlobs |= UserDataBlobKind.Devices;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        await _userService.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
+        await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
 
         return CreateAuthenticatedSession(user.UId, key, bundle);
     }
@@ -331,7 +340,7 @@ public sealed class AuthService : IAuthService
 
             try
             {
-                var bundle = await _userService.GetAndVerifyUserDataBundleAsync(user, key, ct);
+                var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
                 _keys.SetUserBlobKeys(token, bundle.UserData);
                 _cache.SetUserDataBundle(token, bundle);
             }
@@ -364,12 +373,12 @@ public sealed class AuthService : IAuthService
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var user = await _userService.GetAndVerifyUserAsync(request.Token, ct);
+        var user = await _userLookup.GetAndVerifyUserAsync(request.Token, ct);
 
         if (!IsPasswordValid(request.Token, request.Password, user.PasswordSalt))
             throw new InvalidInputException();
 
-        var bundle = await _userService.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct, user);
+        var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct, user);
 
         CryptographicOperations.ZeroMemory(user.PasswordSalt);
         user.PasswordSalt = Hashing.GenerateSalt();
@@ -379,7 +388,7 @@ public sealed class AuthService : IAuthService
         if (user.SavedKey is not null)
             _rememberMe.SetRememberMe(user, true, newKey);
 
-        await _userService.ReencryptUserDataBundleWithNewKeysAsync(bundle, user, newKey, true, ct);
+        await _userDataWriter.ReencryptUserDataBundleWithNewKeysAsync(bundle, user, newKey, true, ct);
         _keys.SetUserBlobKeys(request.Token, bundle.UserData);
         _cache.SetUserDataBundle(request.Token, bundle);
 
@@ -393,7 +402,7 @@ public sealed class AuthService : IAuthService
 
     public bool IsPasswordValid(Guid token, byte[] password, byte[] salt)
     {
-        using var currentKey = _userService.GetEncryptionKeyFromToken(token);
+        using var currentKey = _userSessions.GetEncryptionKeyFromToken(token);
         using var confirmationKey = EncryptionKey.FromPassword(password, salt);
         return currentKey == confirmationKey;
     }

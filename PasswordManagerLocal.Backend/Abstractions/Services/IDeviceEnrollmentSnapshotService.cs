@@ -6,7 +6,7 @@ namespace PasswordManagerLocal.Backend.Abstractions.Services;
 public interface IDeviceEnrollmentSnapshotService
 {
     Task<DeviceEnrollmentSnapshot> BuildAsync(IServiceProvider services, Guid userId, CancellationToken ct = default);
-    Task EnsureEncryptedDeviceDataAsync(IUserService users, User user, Guid token, Guid deviceId, CancellationToken ct = default);
+    Task EnsureEncryptedDeviceDataAsync(IUserDataReaderService reader, IUserDataWriterService writer, User user, Guid token, Guid deviceId, CancellationToken ct = default);
     (byte[] Ciphertext, byte[] Nonce, byte[] Tag) Encrypt(
         string sessionId,
         byte[] secret,
