@@ -232,8 +232,16 @@ internal sealed class MainViewSwipeNavigationHandler
             return false;
 
         return TextBoxClipboardHandler.FindSourceTextBox(sourceControl) is not null
-            || sourceControl is Slider or ScrollBar
-            || sourceControl.FindAncestorOfType<Slider>() is not null
-            || sourceControl.FindAncestorOfType<ScrollBar>() is not null;
+            || IsWithin<Button>(sourceControl)
+            || IsWithin<ToggleButton>(sourceControl)
+            || IsWithin<ComboBox>(sourceControl)
+            || IsWithin<Slider>(sourceControl)
+            || IsWithin<ScrollBar>(sourceControl)
+            || IsWithin<TabItem>(sourceControl)
+            || IsWithin<MenuItem>(sourceControl);
     }
+
+    private static bool IsWithin<TControl>(Control sourceControl)
+        where TControl : Control =>
+        sourceControl is TControl || sourceControl.FindAncestorOfType<TControl>() is not null;
 }

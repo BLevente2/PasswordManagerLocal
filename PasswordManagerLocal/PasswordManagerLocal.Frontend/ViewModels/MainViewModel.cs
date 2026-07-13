@@ -36,6 +36,7 @@ public sealed class MainViewModel : ViewModelBase
     private MainPageContentViewModel _currentAnimatedPageViewModel;
     private bool _isPageTransitionReversed;
     private bool _isAuthenticated;
+    private bool _isBackendInitialized;
     private string _currentUserDisplayName = string.Empty;
     private string _currentUserSubtitle = string.Empty;
     private DispatcherTimer? _sessionMonitorTimer;
@@ -103,12 +104,23 @@ public sealed class MainViewModel : ViewModelBase
 
     public LoginViewModel LoginViewModel { get; }
 
-    public RegistrationViewModel RegistrationViewModel =>
-        _registrationViewModel ??= new RegistrationViewModel(
-            UiPreferences,
-            _endpoints,
-            NavigateToLogin,
-            OnAuthenticationSucceededAsync);
+    public RegistrationViewModel RegistrationViewModel
+    {
+        get
+        {
+            if (_registrationViewModel is null)
+            {
+                _registrationViewModel = new RegistrationViewModel(
+                    UiPreferences,
+                    _endpoints,
+                    NavigateToLogin,
+                    OnAuthenticationSucceededAsync);
+                _registrationViewModel.SetBackendInitialized(_isBackendInitialized);
+            }
+
+            return _registrationViewModel;
+        }
+    }
 
     public PasswordsViewModel PasswordsViewModel =>
         _passwordsViewModel ??= new PasswordsViewModel(UiPreferences, _endpoints, _authSessionRegistry);
@@ -494,6 +506,7 @@ public sealed class MainViewModel : ViewModelBase
         try
         {
             var rememberedTokens = await _endpoints.InicializeAllRememberMeAsync();
+            SetBackendInitialized(true);
             var loadedRememberedTokens = new List<Guid>();
 
             foreach (var token in rememberedTokens)
@@ -914,6 +927,16 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
+    private void SetBackendInitialized(bool isInitialized)
+    {
+        if (_isBackendInitialized == isInitialized)
+            return;
+
+        _isBackendInitialized = isInitialized;
+        LoginViewModel.SetBackendInitialized(isInitialized);
+        _registrationViewModel?.SetBackendInitialized(isInitialized);
+    }
+
     private void NavigateToLogin()
     {
         ConfigureAuthBackNavigation();
@@ -982,7 +1005,7 @@ public sealed class MainViewModel : ViewModelBase
     {
         var isVisible = _isAddingProfile;
         LoginViewModel.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
-        _registrationViewModel?.SetBackNavigation(isVisible, isVisible ? NavigateBackFromAddProfileAsync : null);
+        _registrationViewModel?.SetBackNavigation(isVisible ? NavigateBackFromAddProfileAsync : null);
     }
 
     private async Task NavigateBackFromAddProfileAsync()

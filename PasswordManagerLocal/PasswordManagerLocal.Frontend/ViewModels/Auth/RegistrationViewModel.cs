@@ -26,7 +26,7 @@ public sealed class RegistrationViewModel : ViewModelBase
     private bool _isPasswordVisible;
     private bool _isConfirmPasswordVisible;
     private bool _isBusy;
-    private bool _isBackButtonVisible;
+    private bool _isBackendInitialized;
     private int _passwordStrength;
 
     public RegistrationViewModel(
@@ -54,6 +54,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _username, value);
             RefreshPasswordStrength();
+            this.RaisePropertyChanged(nameof(CanRegister));
         }
     }
 
@@ -64,6 +65,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _firstName, value);
             RefreshPasswordStrength();
+            this.RaisePropertyChanged(nameof(CanRegister));
         }
     }
 
@@ -74,6 +76,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _lastName, value);
             RefreshPasswordStrength();
+            this.RaisePropertyChanged(nameof(CanRegister));
         }
     }
 
@@ -84,6 +87,7 @@ public sealed class RegistrationViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _email, value);
             RefreshPasswordStrength();
+            this.RaisePropertyChanged(nameof(CanRegister));
         }
     }
 
@@ -94,13 +98,18 @@ public sealed class RegistrationViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _password, value);
             RefreshPasswordStrength();
+            this.RaisePropertyChanged(nameof(CanRegister));
         }
     }
 
     public string ConfirmPassword
     {
         get => _confirmPassword;
-        set => this.RaiseAndSetIfChanged(ref _confirmPassword, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _confirmPassword, value);
+            this.RaisePropertyChanged(nameof(CanRegister));
+        }
     }
 
     public bool RememberMe
@@ -134,20 +143,40 @@ public sealed class RegistrationViewModel : ViewModelBase
     public bool IsBusy
     {
         get => _isBusy;
-        private set => this.RaiseAndSetIfChanged(ref _isBusy, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isBusy, value);
+            this.RaisePropertyChanged(nameof(CanRegister));
+        }
     }
 
-    public bool IsBackButtonVisible
+    public bool IsBackendInitialized
     {
-        get => _isBackButtonVisible;
-        private set => this.RaiseAndSetIfChanged(ref _isBackButtonVisible, value);
+        get => _isBackendInitialized;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isBackendInitialized, value);
+            this.RaisePropertyChanged(nameof(CanRegister));
+        }
     }
+
+    public bool IsBackButtonVisible => true;
 
     public char PasswordMaskCharacter => IsPasswordVisible ? '\0' : '●';
 
     public char ConfirmPasswordMaskCharacter => IsConfirmPasswordVisible ? '\0' : '●';
 
     public int PasswordStrength => _passwordStrength;
+
+    public bool CanRegister =>
+        IsBackendInitialized &&
+        !IsBusy &&
+        !string.IsNullOrWhiteSpace(Username) &&
+        !string.IsNullOrWhiteSpace(FirstName) &&
+        !string.IsNullOrWhiteSpace(LastName) &&
+        !string.IsNullOrWhiteSpace(Email) &&
+        !string.IsNullOrWhiteSpace(Password) &&
+        !string.IsNullOrWhiteSpace(ConfirmPassword);
 
     public ReactiveCommand<Unit, Unit> RegisterCommand { get; }
 
@@ -178,6 +207,10 @@ public sealed class RegistrationViewModel : ViewModelBase
     public string ConfirmPasswordLabel => GetTranslation("Register_ConfirmPassword_Label");
 
     public string RememberMeLabel => GetTranslation("Register_RememberMe_Label");
+
+    public string RememberMeOnLabel => GetTranslation("Common_On");
+
+    public string RememberMeOffLabel => GetTranslation("Common_Off");
 
     public string RegisterButtonLabel => GetTranslation("Register_Button");
 
@@ -223,6 +256,8 @@ public sealed class RegistrationViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(PasswordLabel));
         this.RaisePropertyChanged(nameof(ConfirmPasswordLabel));
         this.RaisePropertyChanged(nameof(RememberMeLabel));
+        this.RaisePropertyChanged(nameof(RememberMeOnLabel));
+        this.RaisePropertyChanged(nameof(RememberMeOffLabel));
         this.RaisePropertyChanged(nameof(RegisterButtonLabel));
         this.RaisePropertyChanged(nameof(AlreadyHaveAccountText));
         this.RaisePropertyChanged(nameof(NavigateToLoginLabel));
@@ -256,24 +291,30 @@ public sealed class RegistrationViewModel : ViewModelBase
     }
 
 
-    public void SetBackNavigation(bool isVisible, Func<Task>? navigateBackAsync)
-    {
-        IsBackButtonVisible = isVisible;
+    internal void SetBackendInitialized(bool isInitialized) =>
+        IsBackendInitialized = isInitialized;
+
+    public void SetBackNavigation(Func<Task>? navigateBackAsync) =>
         _navigateBackAsync = navigateBackAsync;
-    }
 
 
     private async Task NavigateBackAsync()
     {
-        if (IsBusy || _navigateBackAsync is null)
+        if (IsBusy)
             return;
 
-        await _navigateBackAsync();
+        if (_navigateBackAsync is not null)
+        {
+            await _navigateBackAsync();
+            return;
+        }
+
+        _navigateToLogin();
     }
 
     private async Task RegisterAsync()
     {
-        if (IsBusy || !ValidateRegistrationInput())
+        if (!CanRegister || !ValidateRegistrationInput())
             return;
 
         var passwordHash = SecretTransform.HashPassword(Password);

@@ -120,26 +120,68 @@
             </Grid>
           </StackPanel>
 
-          <CheckBox IsChecked="{Binding RememberMe}" Content="{Binding RememberMeLabel}" />
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+            <TextBlock
+                Text="{Binding RememberMeLabel}"
+                VerticalAlignment="Center"
+                TextWrapping="Wrap" />
+            <ToggleSwitch
+                Grid.Column="1"
+                IsChecked="{Binding RememberMe, Mode=TwoWay}"
+                MinWidth="0"
+                OnContent="{Binding RememberMeOnLabel}"
+                OffContent="{Binding RememberMeOffLabel}"
+                AutomationProperties.Name="{Binding RememberMeLabel}"
+                VerticalAlignment="Center" />
+          </Grid>
 
           <TextBlock Text="{Binding StatusMessage}" Classes="errorText" IsVisible="{Binding HasStatusMessage}" TextWrapping="Wrap" />
 
           <Button Classes="primary"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  IsEnabled="{Binding CanRegister}"
                   Command="{Binding RegisterCommand}"
                   Content="{Binding RegisterButtonLabel}" >
               <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
             </Button>
 
-          <Border Classes="divider" />
-
-          <StackPanel Spacing="8">
-            <TextBlock Text="{Binding AlreadyHaveAccountText}" Classes="subtleText" TextWrapping="Wrap" />
-            <Button Classes="ghost"
-                    Command="{Binding NavigateToLoginCommand}"
-                    Content="{Binding NavigateToLoginLabel}" >
-              <PathIcon Classes="smallUiIcon" Data="{StaticResource BackIconGeometry}" />
+          <Border Classes="toolbarGroup" Padding="14">
+            <Button
+                Classes="ghost"
+                Command="{Binding NavigateToLoginCommand}"
+                Padding="0"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Stretch"
+                Background="Transparent"
+                BorderThickness="0"
+                ToolTip.Tip="{Binding NavigateToLoginLabel}">
+              <Grid
+                  ColumnDefinitions="*,Auto"
+                  ColumnSpacing="12"
+                  HorizontalAlignment="Stretch"
+                  IsHitTestVisible="False">
+                <StackPanel Spacing="4" HorizontalAlignment="Stretch">
+                  <TextBlock
+                      Text="{Binding NavigateToLoginLabel}"
+                      FontWeight="SemiBold"
+                      FontSize="16"
+                      TextWrapping="Wrap" />
+                  <TextBlock
+                      Text="{Binding AlreadyHaveAccountText}"
+                      Classes="subtleText"
+                      TextWrapping="Wrap" />
+                </StackPanel>
+                <PathIcon
+                    Grid.Column="1"
+                    Classes="mediumUiIcon"
+                    Data="{StaticResource ChevronRightIconGeometry}"
+                    Width="44"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center" />
+              </Grid>
             </Button>
-          </StackPanel>
+          </Border>
         </StackPanel>
       </Border>
     </Grid>

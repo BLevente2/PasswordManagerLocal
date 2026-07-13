@@ -113,6 +113,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(MultiSelectionSelectAllLabel),
         nameof(MultiSelectionExportLabel),
         nameof(MultiSelectionDeleteLabel),
+        nameof(MultiSelectionExportToolTip),
+        nameof(MultiSelectionDeleteToolTip),
         nameof(ExportTargetTitle),
         nameof(ExportTargetSubtitle),
         nameof(ExportTargetAccountsLabel),
@@ -309,6 +311,16 @@ public sealed class PasswordsViewModel : ViewModelBase
     public bool HasSelectedMultiSelectionItems => IsPasswordMultiSelectionActive
         ? _allPasswords.Any(item => item.IsSelected)
         : IsCustomColorMultiSelectionActive && _allCustomColors.Any(item => item.IsSelected);
+
+    public bool AreAllVisibleMultiSelectionItemsSelected => IsPasswordMultiSelectionActive
+        ? Passwords.Count > 0 && Passwords.All(item => item.IsSelected)
+        : IsCustomColorMultiSelectionActive
+          && CustomColors.Count > 0
+          && CustomColors.All(item => item.IsSelected);
+
+    public bool IsSelectAllMultiSelectionAction => !AreAllVisibleMultiSelectionItemsSelected;
+
+    public bool IsDeselectAllMultiSelectionAction => AreAllVisibleMultiSelectionItemsSelected;
 
     public bool CanExportMultiSelectionItems =>
         HasSelectedMultiSelectionItems && HasOtherActiveExportTargetAccount();
@@ -1134,11 +1146,22 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string MultiSelectionCancelLabel => GetTranslation("Common_Cancel");
 
-    public string MultiSelectionSelectAllLabel => GetTranslation("Common_SelectAll");
+    public string MultiSelectionSelectAllLabel => GetTranslation(
+        IsDeselectAllMultiSelectionAction ? "Common_DeselectAll" : "Common_SelectAll");
 
     public string MultiSelectionExportLabel => GetTranslation("Common_Export");
 
     public string MultiSelectionDeleteLabel => GetTranslation("Common_Delete");
+
+    public string MultiSelectionExportToolTip => !HasSelectedMultiSelectionItems
+        ? GetTranslation("Passwords_MultiSelection_Disabled_NoSelection")
+        : !HasOtherActiveExportTargetAccount()
+            ? GetTranslation("Passwords_MultiSelection_Export_Disabled_NoOtherAccount")
+            : MultiSelectionExportLabel;
+
+    public string MultiSelectionDeleteToolTip => HasSelectedMultiSelectionItems
+        ? MultiSelectionDeleteLabel
+        : GetTranslation("Passwords_MultiSelection_Disabled_NoSelection");
 
     public string ExportTargetTitle => GetTranslation("Passwords_Export_Target_Title");
 
@@ -1360,9 +1383,12 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         if (IsPasswordMultiSelectionActive)
         {
-            foreach (var password in Passwords)
+            var deselectAll = IsDeselectAllMultiSelectionAction;
+            IEnumerable<PasswordItemViewModel> affectedPasswords = deselectAll ? _allPasswords : Passwords;
+
+            foreach (var password in affectedPasswords)
             {
-                password.IsSelected = true;
+                password.IsSelected = !deselectAll;
             }
 
             return;
@@ -1373,9 +1399,13 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
-        foreach (var customColor in CustomColors)
+        var deselectAllCustomColors = IsDeselectAllMultiSelectionAction;
+        IEnumerable<CustomColorItemViewModel> affectedCustomColors =
+            deselectAllCustomColors ? _allCustomColors : CustomColors;
+
+        foreach (var customColor in affectedCustomColors)
         {
-            customColor.IsSelected = true;
+            customColor.IsSelected = !deselectAllCustomColors;
         }
     }
 
@@ -1733,7 +1763,13 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         this.RaisePropertyChanged(nameof(IsMultiSelectionToolbarVisible));
         this.RaisePropertyChanged(nameof(HasSelectedMultiSelectionItems));
+        this.RaisePropertyChanged(nameof(AreAllVisibleMultiSelectionItemsSelected));
+        this.RaisePropertyChanged(nameof(IsSelectAllMultiSelectionAction));
+        this.RaisePropertyChanged(nameof(IsDeselectAllMultiSelectionAction));
+        this.RaisePropertyChanged(nameof(MultiSelectionSelectAllLabel));
         this.RaisePropertyChanged(nameof(CanExportMultiSelectionItems));
+        this.RaisePropertyChanged(nameof(MultiSelectionExportToolTip));
+        this.RaisePropertyChanged(nameof(MultiSelectionDeleteToolTip));
     }
 
     public bool TryExitMultiSelection()
@@ -2394,6 +2430,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(HasStoredPasswords));
         this.RaisePropertyChanged(nameof(IsVaultEmpty));
         this.RaisePropertyChanged(nameof(IsSearchResultEmpty));
+        RaiseMultiSelectionStateChanged();
     }
 
     private void ClearPasswordItems()
@@ -2468,6 +2505,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(HasStoredCustomColors));
         this.RaisePropertyChanged(nameof(IsCustomColorListEmpty));
         this.RaisePropertyChanged(nameof(IsCustomColorSearchResultEmpty));
+        RaiseMultiSelectionStateChanged();
     }
 
     private void ClearCustomColorItems()

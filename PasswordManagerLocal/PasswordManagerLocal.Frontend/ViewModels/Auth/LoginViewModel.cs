@@ -22,6 +22,7 @@ public sealed class LoginViewModel : ViewModelBase
     private bool _rememberMe;
     private bool _isPasswordVisible;
     private bool _isBusy;
+    private bool _isBackendInitialized;
     private bool _isBackButtonVisible;
     private bool _isDeviceTransferIntroVisible;
     private bool _isDeviceTransferCodeVisible;
@@ -29,7 +30,9 @@ public sealed class LoginViewModel : ViewModelBase
     private bool _isDeviceTransferSuccess;
     private string _deviceTransferCode = string.Empty;
     private Bitmap? _deviceTransferQrCode;
+    private bool _isDeviceTransferCodeCopied;
     private CancellationTokenSource? _deviceTransferPolling;
+    private IDisposable? _deviceTransferCopyFeedbackTimer;
 
     public LoginViewModel(
         UiPreferencesService uiPreferences,
@@ -50,7 +53,6 @@ public sealed class LoginViewModel : ViewModelBase
         ShowDeviceTransferIntroCommand = ReactiveCommand.Create(ShowDeviceTransferIntro);
         StartDeviceTransferCommand = ReactiveCommand.CreateFromTask(StartDeviceTransferAsync);
         CancelDeviceTransferCommand = ReactiveCommand.CreateFromTask(CancelDeviceTransferAsync);
-        CheckDeviceTransferStatusCommand = ReactiveCommand.CreateFromTask(CheckDeviceTransferStatusAsync);
         FinishDeviceTransferCommand = ReactiveCommand.Create(FinishDeviceTransfer);
         CopyDeviceTransferCodeCommand = ReactiveCommand.CreateFromTask(CopyDeviceTransferCodeAsync);
     }
@@ -58,13 +60,21 @@ public sealed class LoginViewModel : ViewModelBase
     public string Username
     {
         get => _username;
-        set => this.RaiseAndSetIfChanged(ref _username, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _username, value);
+            this.RaisePropertyChanged(nameof(CanLogin));
+        }
     }
 
     public string Password
     {
         get => _password;
-        set => this.RaiseAndSetIfChanged(ref _password, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _password, value);
+            this.RaisePropertyChanged(nameof(CanLogin));
+        }
     }
 
     public bool RememberMe
@@ -87,16 +97,45 @@ public sealed class LoginViewModel : ViewModelBase
     public bool IsBusy
     {
         get => _isBusy;
-        private set => this.RaiseAndSetIfChanged(ref _isBusy, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isBusy, value);
+            this.RaisePropertyChanged(nameof(CanLogin));
+            this.RaisePropertyChanged(nameof(CanStartDeviceTransfer));
+        }
+    }
+
+    public bool IsBackendInitialized
+    {
+        get => _isBackendInitialized;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isBackendInitialized, value);
+            this.RaisePropertyChanged(nameof(CanLogin));
+            this.RaisePropertyChanged(nameof(CanStartDeviceTransfer));
+        }
     }
 
     public bool IsBackButtonVisible
     {
         get => _isBackButtonVisible;
-        private set => this.RaiseAndSetIfChanged(ref _isBackButtonVisible, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isBackButtonVisible, value);
+            this.RaisePropertyChanged(nameof(IsHeaderBackButtonVisible));
+        }
     }
 
     public bool IsLoginFormVisible => !IsDeviceTransferIntroVisible && !IsDeviceTransferCodeVisible && !IsDeviceTransferFinished;
+
+    public bool IsDeviceTransferFlowVisible =>
+        IsDeviceTransferIntroVisible || IsDeviceTransferCodeVisible || IsDeviceTransferFinished;
+
+    public bool IsDeviceTransferBackButtonVisible =>
+        IsDeviceTransferIntroVisible || IsDeviceTransferCodeVisible;
+
+    public bool IsHeaderBackButtonVisible =>
+        IsBackButtonVisible || IsDeviceTransferBackButtonVisible;
 
     public bool IsDeviceTransferIntroVisible
     {
@@ -104,7 +143,8 @@ public sealed class LoginViewModel : ViewModelBase
         private set
         {
             this.RaiseAndSetIfChanged(ref _isDeviceTransferIntroVisible, value);
-            this.RaisePropertyChanged(nameof(IsLoginFormVisible));
+            this.RaisePropertyChanged(nameof(CanStartDeviceTransfer));
+            RaiseDeviceTransferViewStateChanged();
         }
     }
 
@@ -114,7 +154,7 @@ public sealed class LoginViewModel : ViewModelBase
         private set
         {
             this.RaiseAndSetIfChanged(ref _isDeviceTransferCodeVisible, value);
-            this.RaisePropertyChanged(nameof(IsLoginFormVisible));
+            RaiseDeviceTransferViewStateChanged();
         }
     }
 
@@ -124,7 +164,7 @@ public sealed class LoginViewModel : ViewModelBase
         private set
         {
             this.RaiseAndSetIfChanged(ref _isDeviceTransferFinished, value);
-            this.RaisePropertyChanged(nameof(IsLoginFormVisible));
+            RaiseDeviceTransferViewStateChanged();
         }
     }
 
@@ -159,6 +199,34 @@ public sealed class LoginViewModel : ViewModelBase
 
     public bool HasDeviceTransferQrCode => DeviceTransferQrCode is not null;
 
+    public bool IsDeviceTransferCodeCopied
+    {
+        get => _isDeviceTransferCodeCopied;
+        private set
+        {
+            if (_isDeviceTransferCodeCopied == value)
+                return;
+
+            this.RaiseAndSetIfChanged(ref _isDeviceTransferCodeCopied, value);
+            this.RaisePropertyChanged(nameof(IsDeviceTransferCodeNotCopied));
+            this.RaisePropertyChanged(nameof(DeviceTransferCopyCodeLabel));
+        }
+    }
+
+    public bool IsDeviceTransferCodeNotCopied => !IsDeviceTransferCodeCopied;
+
+    public bool CanLogin =>
+        IsBackendInitialized &&
+        !IsBusy &&
+        IsLoginFormVisible &&
+        !string.IsNullOrWhiteSpace(Username) &&
+        !string.IsNullOrWhiteSpace(Password);
+
+    public bool CanStartDeviceTransfer =>
+        IsBackendInitialized &&
+        !IsBusy &&
+        IsDeviceTransferIntroVisible;
+
     public OperationMessageState DeviceTransferStatus { get; } = new();
 
     public char PasswordMaskCharacter => IsPasswordVisible ? '\0' : '●';
@@ -179,23 +247,29 @@ public sealed class LoginViewModel : ViewModelBase
 
     public ReactiveCommand<Unit, Unit> CancelDeviceTransferCommand { get; }
 
-    public ReactiveCommand<Unit, Unit> CheckDeviceTransferStatusCommand { get; }
-
     public ReactiveCommand<Unit, Unit> FinishDeviceTransferCommand { get; }
 
     public ReactiveCommand<Unit, Unit> CopyDeviceTransferCodeCommand { get; }
 
-    public string Title => GetTranslation("Login_Title");
+    public string Title => IsDeviceTransferFlowVisible
+        ? GetTranslation("Login_DeviceTransfer_Title")
+        : GetTranslation("Login_Title");
 
     public string BackLabel => GetTranslation("Common_Back");
 
-    public string Subtitle => GetTranslation("Login_Subtitle");
+    public string Subtitle => IsDeviceTransferFlowVisible
+        ? GetTranslation("Login_DeviceTransfer_Subtitle")
+        : GetTranslation("Login_Subtitle");
 
     public string UsernameLabel => GetTranslation("Login_Username_Label");
 
     public string PasswordLabel => GetTranslation("Login_Password_Label");
 
     public string RememberMeLabel => GetTranslation("Login_RememberMe_Label");
+
+    public string RememberMeOnLabel => GetTranslation("Common_On");
+
+    public string RememberMeOffLabel => GetTranslation("Common_Off");
 
     public string LoginButtonLabel => GetTranslation("Login_Button");
 
@@ -211,25 +285,21 @@ public sealed class LoginViewModel : ViewModelBase
 
     public string DeviceTransferButtonLabel => GetTranslation("Login_DeviceTransfer_Button");
 
+    public string DeviceTransferButtonDescription => GetTranslation("Login_DeviceTransfer_Subtitle");
+
     public string DeviceTransferTitle => GetTranslation("Login_DeviceTransfer_Title");
 
     public string DeviceTransferDescription => GetTranslation("Login_DeviceTransfer_Description");
 
     public string DeviceTransferStartLabel => GetTranslation("Login_DeviceTransfer_Start");
 
-    public string DeviceTransferCodeTitle => GetTranslation("Login_DeviceTransfer_CodeTitle");
-
     public string DeviceTransferCodeDescription => GetTranslation("Login_DeviceTransfer_CodeDescription");
 
     public string DeviceTransferCodeReadabilityHint => GetTranslation("Login_DeviceTransfer_CodeReadabilityHint");
 
-    public string DeviceTransferQrCodeLabel => GetTranslation("Login_DeviceTransfer_QrCodeLabel");
-
-    public string DeviceTransferWaitingText => GetTranslation("Login_DeviceTransfer_Waiting");
-
-    public string DeviceTransferCheckStatusLabel => GetTranslation("Login_DeviceTransfer_CheckStatus");
-
-    public string DeviceTransferCopyCodeLabel => GetTranslation("Common_Copy");
+    public string DeviceTransferCopyCodeLabel => GetTranslation(IsDeviceTransferCodeCopied
+        ? "Login_DeviceTransfer_CopyCode_Copied"
+        : "Login_DeviceTransfer_CopyCode");
 
     public string DeviceTransferFinishTitle => IsDeviceTransferSuccess
         ? GetTranslation("Login_DeviceTransfer_SuccessTitle")
@@ -249,6 +319,8 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(UsernameLabel));
         this.RaisePropertyChanged(nameof(PasswordLabel));
         this.RaisePropertyChanged(nameof(RememberMeLabel));
+        this.RaisePropertyChanged(nameof(RememberMeOnLabel));
+        this.RaisePropertyChanged(nameof(RememberMeOffLabel));
         this.RaisePropertyChanged(nameof(LoginButtonLabel));
         this.RaisePropertyChanged(nameof(NavigateToRegisterLabel));
         this.RaisePropertyChanged(nameof(NoAccountText));
@@ -256,15 +328,12 @@ public sealed class LoginViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(PasswordPlaceholder));
         this.RaisePropertyChanged(nameof(PasswordVisibilityToggleText));
         this.RaisePropertyChanged(nameof(DeviceTransferButtonLabel));
+        this.RaisePropertyChanged(nameof(DeviceTransferButtonDescription));
         this.RaisePropertyChanged(nameof(DeviceTransferTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferDescription));
         this.RaisePropertyChanged(nameof(DeviceTransferStartLabel));
-        this.RaisePropertyChanged(nameof(DeviceTransferCodeTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeDescription));
         this.RaisePropertyChanged(nameof(DeviceTransferCodeReadabilityHint));
-        this.RaisePropertyChanged(nameof(DeviceTransferQrCodeLabel));
-        this.RaisePropertyChanged(nameof(DeviceTransferWaitingText));
-        this.RaisePropertyChanged(nameof(DeviceTransferCheckStatusLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferCopyCodeLabel));
         this.RaisePropertyChanged(nameof(DeviceTransferFinishTitle));
         this.RaisePropertyChanged(nameof(DeviceTransferFinishLabel));
@@ -313,6 +382,9 @@ public sealed class LoginViewModel : ViewModelBase
 
 
 
+    internal void SetBackendInitialized(bool isInitialized) =>
+        IsBackendInitialized = isInitialized;
+
     public void SetBackNavigation(bool isVisible, Func<Task>? navigateBackAsync)
     {
         IsBackButtonVisible = isVisible;
@@ -339,21 +411,22 @@ public sealed class LoginViewModel : ViewModelBase
 
         if (IsLoginFormVisible)
         {
-            await LoginAsync();
+            if (CanLogin)
+                await LoginAsync();
+
             return;
         }
 
         if (IsDeviceTransferIntroVisible)
         {
-            await StartDeviceTransferAsync();
+            if (CanStartDeviceTransfer)
+                await StartDeviceTransferAsync();
+
             return;
         }
 
         if (IsDeviceTransferCodeVisible)
-        {
-            await CheckDeviceTransferStatusAsync();
             return;
-        }
 
         if (IsDeviceTransferFinished)
         {
@@ -364,7 +437,7 @@ public sealed class LoginViewModel : ViewModelBase
 
     private async Task LoginAsync()
     {
-        if (IsBusy || !IsLoginFormVisible)
+        if (!CanLogin)
             return;
 
         ClearStatusMessage();
@@ -419,6 +492,9 @@ public sealed class LoginViewModel : ViewModelBase
 
     private async Task StartDeviceTransferAsync()
     {
+        if (!CanStartDeviceTransfer)
+            return;
+
         DeviceTransferStatus.Clear();
 
         try
@@ -432,7 +508,6 @@ public sealed class LoginViewModel : ViewModelBase
 
             var response = await _endpoints.StartDeviceEnrollmentAsync();
             DeviceTransferCode = response.Code;
-            DeviceTransferStatus.ShowInformation(GetTranslation("Login_DeviceTransfer_CodeReady"), autoDismiss: true);
             IsDeviceTransferIntroVisible = false;
             IsDeviceTransferCodeVisible = true;
             IsDeviceTransferFinished = false;
@@ -464,16 +539,36 @@ public sealed class LoginViewModel : ViewModelBase
         {
             if (await TryCopyTextToClipboardAsync(DeviceTransferCode))
             {
-                if (!DeviceTransferStatus.IsError)
-                    DeviceTransferStatus.ShowSuccess(GetTranslation("Common_Copied"));
+                ShowDeviceTransferCodeCopiedFeedback();
+                return;
             }
-            else
-                DeviceTransferStatus.ShowError(GetTranslation("Error_ClipboardUnavailable"));
+
+            ResetDeviceTransferCodeCopiedFeedback();
+            DeviceTransferStatus.ShowError(GetTranslation("Error_ClipboardUnavailable"));
         }
         catch
         {
+            ResetDeviceTransferCodeCopiedFeedback();
             DeviceTransferStatus.ShowError(GetTranslation("Error_ClipboardUnavailable"));
         }
+    }
+
+    private void ShowDeviceTransferCodeCopiedFeedback()
+    {
+        _deviceTransferCopyFeedbackTimer?.Dispose();
+        IsDeviceTransferCodeCopied = true;
+        _deviceTransferCopyFeedbackTimer = DispatcherTimer.RunOnce(() =>
+        {
+            _deviceTransferCopyFeedbackTimer = null;
+            IsDeviceTransferCodeCopied = false;
+        }, TimeSpan.FromSeconds(5));
+    }
+
+    private void ResetDeviceTransferCodeCopiedFeedback()
+    {
+        _deviceTransferCopyFeedbackTimer?.Dispose();
+        _deviceTransferCopyFeedbackTimer = null;
+        IsDeviceTransferCodeCopied = false;
     }
 
     private async Task CancelDeviceTransferAsync()
@@ -490,21 +585,6 @@ public sealed class LoginViewModel : ViewModelBase
         }
 
         ResetDeviceTransferState(true);
-    }
-
-    private async Task CheckDeviceTransferStatusAsync()
-    {
-        DeviceTransferStatus.Clear();
-
-        try
-        {
-            var status = await _endpoints.GetDeviceEnrollmentStatusAsync();
-            ApplyDeviceTransferStatus(status);
-        }
-        catch (Exception ex)
-        {
-            DeviceTransferStatus.ShowError(GetSafeErrorMessage(ex));
-        }
     }
 
     private void FinishDeviceTransfer() =>
@@ -546,12 +626,7 @@ public sealed class LoginViewModel : ViewModelBase
     private void ApplyDeviceTransferStatus(DeviceEnrollmentStatusResponse status)
     {
         if (status.State == DeviceEnrollmentState.Waiting)
-        {
-            if (DeviceTransferStatus.Kind is not OperationMessageKind.Error and not OperationMessageKind.Success)
-                DeviceTransferStatus.ShowInformation(GetTranslation("Login_DeviceTransfer_Waiting"));
-
             return;
-        }
 
         if (status.State == DeviceEnrollmentState.Completed)
         {
@@ -579,6 +654,7 @@ public sealed class LoginViewModel : ViewModelBase
 
     private void ResetDeviceTransferState(bool clearCode)
     {
+        ResetDeviceTransferCodeCopiedFeedback();
         _deviceTransferPolling?.Cancel();
         _deviceTransferPolling = null;
         IsDeviceTransferIntroVisible = false;
@@ -589,6 +665,17 @@ public sealed class LoginViewModel : ViewModelBase
 
         if (clearCode)
             DeviceTransferCode = string.Empty;
+    }
+
+    private void RaiseDeviceTransferViewStateChanged()
+    {
+        this.RaisePropertyChanged(nameof(IsLoginFormVisible));
+        this.RaisePropertyChanged(nameof(IsDeviceTransferFlowVisible));
+        this.RaisePropertyChanged(nameof(IsDeviceTransferBackButtonVisible));
+        this.RaisePropertyChanged(nameof(IsHeaderBackButtonVisible));
+        this.RaisePropertyChanged(nameof(Title));
+        this.RaisePropertyChanged(nameof(Subtitle));
+        this.RaisePropertyChanged(nameof(CanLogin));
     }
 
     private static string BuildReadableCode(string code) =>

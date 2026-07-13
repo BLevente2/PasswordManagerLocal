@@ -35,8 +35,11 @@ internal sealed class MainViewLongPressToolTipHandler
             return;
 
         var button = FindButtonWithToolTip(e.Source);
-        if (button is null || !button.IsEnabled)
+        if (button is null
+            || (!button.IsEffectivelyEnabled && !ToolTip.GetShowOnDisabled(button)))
+        {
             return;
+        }
 
         _pressedButton = button;
         _trackedPointer = e.Pointer;
