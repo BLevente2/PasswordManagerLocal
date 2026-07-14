@@ -1,4 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
 using PasswordManagerLocal.Backend.Exceptions;
@@ -24,6 +26,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly ILocalDiscoveryTransport _transport;
+    private readonly IServiceScopeFactory? _scopeFactory;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly object _enrollmentLock = new();
     private readonly RecentLocalDiscoveryNonceCache _receivedNonces = new();
@@ -31,6 +34,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastSyncResponseByDevice = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastAuthenticatedRequest = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, PendingEnrollmentDiscovery> _pendingEnrollmentDiscoveries = new(StringComparer.Ordinal);
+    private IReadOnlyDictionary<Guid, Device> _eligibleDiscoveryDevices = new Dictionary<Guid, Device>();
     private ActiveEnrollmentDiscoverySession? _activeEnrollmentSession;
     private CancellationTokenSource? _syncQueryLoopCancellation;
     private Task? _syncQueryLoopTask;
@@ -43,7 +47,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         IDeviceSyncTaskService deviceSyncTasks,
         IEnrollmentRuntimeState enrollmentState,
         ILocalNetworkAddressService networkAddresses,
-        ILocalDiscoveryTransport transport)
+        ILocalDiscoveryTransport transport,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _identity = identity;
         _syncDeviceIdentities = syncDeviceIdentities;
@@ -52,6 +57,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         _enrollmentState = enrollmentState;
         _networkAddresses = networkAddresses;
         _transport = transport;
+        _scopeFactory = scopeFactory;
     }
 
 
@@ -65,6 +71,11 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         {
             if (!_identity.IsSyncOn && !_enrollmentState.IsActive)
                 return;
+
+            if (_identity.IsSyncOn)
+                await RefreshEligibleDiscoveryDevicesAsync(ct);
+            else
+                Volatile.Write(ref _eligibleDiscoveryDevices, new Dictionary<Guid, Device>());
 
             if (!_started)
             {
@@ -100,6 +111,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             _lastSyncResponseByDevice.Clear();
             _lastAuthenticatedRequest.Clear();
             _receivedNonces.Clear();
+            Volatile.Write(ref _eligibleDiscoveryDevices, new Dictionary<Guid, Device>());
         }
         finally
         {
@@ -275,7 +287,10 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             try
             {
                 if (_identity.IsSyncOn)
+                {
+                    await RefreshEligibleDiscoveryDevicesAsync(ct);
                     await SendSyncQueryAsync(ct);
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -378,10 +393,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             query.RequesterDeviceId == _identity.LocalDeviceId)
             return;
 
-        if (!_syncDeviceIdentities.TryGetById(query.RequesterDeviceId, out var requester) ||
-            requester is null ||
-            !requester.IsTrusted ||
-            requester.IsBlocked)
+        var requester = ResolveEligibleSyncDevice(query.RequesterDeviceId);
+        if (requester is null)
             return;
 
         if (!LocalDiscoveryAuthenticator.VerifySignature(requester.SignPublicKey, query.AuthenticatedBytes, query.Signature))
@@ -404,7 +417,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         if (requesterEndpoint is not null)
         {
             _endpointCache.AddOrUpdate(requesterEndpoint);
-            _deviceSyncTasks.TryStart(requesterEndpoint, requester);
+            if (_syncDeviceIdentities.ContainsId(requester.Id))
+                _deviceSyncTasks.TryStart(requesterEndpoint, requester);
         }
 
         var fingerprint = FingerprintHexToBytes(_identity.FingerprintHex);
@@ -438,10 +452,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             !IsPendingSyncQueryNonce(response.QueryNonce, DateTimeOffset.UtcNow))
             return;
 
-        if (!_syncDeviceIdentities.TryGetById(response.ResponderDeviceId, out var device) ||
-            device is null ||
-            !device.IsTrusted ||
-            device.IsBlocked)
+        var device = ResolveEligibleSyncDevice(response.ResponderDeviceId);
+        if (device is null)
             return;
 
         var expectedFingerprint = FingerprintHexToBytes(device.TlsCertFingerprint);
@@ -463,8 +475,85 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         if (IsSyncResponseThrottled(response.ResponderDeviceId, DateTimeOffset.UtcNow))
             return;
 
-        _deviceSyncTasks.TryStart(endpoint, device);
+        if (_syncDeviceIdentities.ContainsId(device.Id))
+            _deviceSyncTasks.TryStart(endpoint, device);
     }
+
+
+    private Device? ResolveEligibleSyncDevice(Guid deviceId)
+    {
+        if (_syncDeviceIdentities.TryGetById(deviceId, out var cachedDevice) && cachedDevice is not null)
+            return cachedDevice;
+
+        var eligibleDevices = Volatile.Read(ref _eligibleDiscoveryDevices);
+        return eligibleDevices.TryGetValue(deviceId, out var eligibleDevice)
+            ? eligibleDevice
+            : null;
+    }
+
+
+    private async Task RefreshEligibleDiscoveryDevicesAsync(CancellationToken ct)
+    {
+        if (_scopeFactory is null)
+            return;
+
+        using var scope = _scopeFactory.CreateScope();
+        var localUsers = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
+        var enabledUserIds = await localUsers.ListSyncOnUserIdsAsync(ct);
+        if (enabledUserIds.Count == 0)
+        {
+            Volatile.Write(ref _eligibleDiscoveryDevices, new Dictionary<Guid, Device>());
+            return;
+        }
+
+        var userDevices = scope.ServiceProvider.GetRequiredService<IUserDeviceRepository>();
+        var links = await userDevices.ListByUsersWithDevicesAsync(enabledUserIds, ct);
+        var refreshed = new Dictionary<Guid, Device>();
+
+        foreach (var link in links)
+        {
+            if (link.IsDeleted || !link.IsSyncOn || !CanUseForAuthenticatedDiscovery(link.Device))
+                continue;
+
+            try
+            {
+                link.VerifyIntegrity();
+                link.Device!.VerifyIntegrity();
+            }
+            catch
+            {
+                continue;
+            }
+
+            refreshed[link.DeviceId] = CloneDiscoveryDevice(link.Device!);
+        }
+
+        Volatile.Write(ref _eligibleDiscoveryDevices, refreshed);
+    }
+
+
+    private static bool CanUseForAuthenticatedDiscovery(Device? device) =>
+        device is not null &&
+        device.Id != Guid.Empty &&
+        device.IsTrusted &&
+        !device.IsBlocked &&
+        device.PublicKey.Length != 0 &&
+        device.SignPublicKey.Length != 0 &&
+        !string.IsNullOrWhiteSpace(device.TlsCertFingerprint);
+
+
+    private static Device CloneDiscoveryDevice(Device device) =>
+        new()
+        {
+            Id = device.Id,
+            PublicKey = device.PublicKey.ToArray(),
+            SignPublicKey = device.SignPublicKey.ToArray(),
+            SignPublicKeyHash = device.SignPublicKeyHash.ToArray(),
+            TlsCertFingerprint = device.TlsCertFingerprint,
+            IsTrusted = device.IsTrusted,
+            IsBlocked = device.IsBlocked,
+            IntegrityHash = device.IntegrityHash.ToArray()
+        };
 
 
     private async Task HandleEnrollmentQueryAsync(LocalDiscoveryDatagram datagram, CancellationToken ct)

@@ -2,7 +2,9 @@ using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Utils;
 using System.Security.Cryptography;
 
 namespace PasswordManagerLocal.Backend.Services;
@@ -15,6 +17,8 @@ public class RememberMeService : IRememberMeService
     private readonly IUserLookupService _lookup;
     private readonly IUserSessionService _sessions;
     private readonly IUserDataWriterService _writer;
+    private readonly IUserDataReaderService _reader;
+    private readonly IDeviceIdentityService _identity;
 
     public RememberMeService(
         ITokenService tokens,
@@ -22,7 +26,9 @@ public class RememberMeService : IRememberMeService
         IKeyProtector protector,
         IUserLookupService lookup,
         IUserSessionService sessions,
-        IUserDataWriterService writer)
+        IUserDataWriterService writer,
+        IUserDataReaderService reader,
+        IDeviceIdentityService identity)
     {
         _tokens = tokens;
         _keys = keys;
@@ -30,6 +36,8 @@ public class RememberMeService : IRememberMeService
         _lookup = lookup;
         _sessions = sessions;
         _writer = writer;
+        _reader = reader;
+        _identity = identity;
     }
 
 
@@ -112,8 +120,22 @@ public class RememberMeService : IRememberMeService
         {
             rawKey = _protector.Unprotect(user.SavedKey);
             using var key = EncryptionKey.FromRaw(rawKey);
+            var bundle = await _reader.GetAndVerifyUserDataBundleAsync(user, key, ct);
+            UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
+                bundle.UserDevicesData,
+                _identity.LocalDeviceId,
+                DateTimeOffset.UtcNow);
+            await _writer.UpdateUserDataBundleAsync(
+                bundle,
+                user,
+                key,
+                UserDataBlobKind.Devices,
+                true,
+                ct);
+
             var token = _tokens.Issue(user.UId);
             _keys.SetUserKey(token, key);
+            _keys.SetUserBlobKeys(token, bundle.UserData);
             return token;
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)

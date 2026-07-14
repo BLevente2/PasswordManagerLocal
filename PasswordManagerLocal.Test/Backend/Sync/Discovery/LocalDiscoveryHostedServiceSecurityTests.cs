@@ -1,5 +1,7 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Caching;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
@@ -99,6 +101,81 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
         MSTestAssert.AreEqual("192.168.1.77", syncTasks.Starts[0].Endpoint.Host);
         MSTestAssert.AreEqual(SyncConstants.SyncPort, syncTasks.Starts[0].Endpoint.Port);
         MSTestAssert.AreEqual(remoteDevice.TlsCertFingerprint, syncTasks.Starts[0].Endpoint.TlsCertFingerprint);
+    }
+
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task SyncQuery_FromEligibleDeviceWithoutPendingWork_IsObservedWithoutStartingDelivery()
+    {
+        using var localKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var remoteKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var localIdentity = CreateIdentity(localKey, isSyncOn: true);
+        var remoteDevice = CreateTrustedDevice(remoteKey);
+        remoteDevice.GenerateIntegrityHash();
+
+        var userId = Guid.NewGuid();
+        var localUsers = new FakeLocalUserDeviceRepository();
+        var userDevices = new FakeUserDeviceRepository();
+        var localLink = new LocalUserDevice
+        {
+            UserId = userId,
+            LocalDeviceIdentityId = localIdentity.LocalDeviceId,
+            IsSyncOn = true
+        };
+        localLink.GenerateIntegrityHash();
+        await localUsers.AddAsync(localLink);
+
+        var remoteLink = new UserDevice
+        {
+            UserId = userId,
+            DeviceId = remoteDevice.Id,
+            Device = remoteDevice,
+            IsSyncOn = true,
+            IsDeleted = false
+        };
+        remoteLink.GenerateIntegrityHash();
+        await userDevices.AddAsync(remoteLink);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<ILocalUserDeviceRepository>(localUsers);
+        services.AddSingleton<IUserDeviceRepository>(userDevices);
+        using var provider = services.BuildServiceProvider();
+
+        var syncIdentities = new FakeSyncDeviceIdentityService();
+        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var syncTasks = new FakeDeviceSyncTaskService();
+        var transport = new FakeLocalDiscoveryTransport();
+        using var service = CreateService(
+            localIdentity,
+            syncIdentities,
+            transport,
+            new EnrollmentRuntimeState(),
+            syncTasks,
+            endpointCache: endpointCache,
+            scopeFactory: provider.GetRequiredService<IServiceScopeFactory>());
+
+        await service.StartAsync();
+
+        var nonce = Enumerable.Repeat((byte)0x13, SyncConstants.LocalDiscoveryNonceBytes).ToArray();
+        var authenticatedBytes = LocalDiscoveryPacketCodec.BuildSyncQueryAuthenticatedBytes(
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            nonce,
+            remoteDevice.Id);
+        var signature = SignatureAlgorithm.Ed25519.Sign(remoteKey, authenticatedBytes);
+        var payload = LocalDiscoveryPacketCodec.AppendAuthenticator(
+            authenticatedBytes,
+            signature,
+            SyncConstants.LocalDiscoverySignatureBytes);
+
+        await transport.InjectAsync(payload, "192.168.1.77");
+
+        MSTestAssert.AreEqual(1, transport.UnicastPayloads.Count);
+        MSTestAssert.AreEqual(0, syncTasks.Starts.Count);
+        MSTestAssert.IsTrue(endpointCache.IsRecentlyDiscovered(
+            remoteDevice.TlsCertFingerprint,
+            TimeSpan.FromSeconds(SyncConstants.LocalDiscoveryOnlineTimeoutSeconds)));
     }
 
 
@@ -378,15 +455,18 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
         FakeLocalDiscoveryTransport transport,
         EnrollmentRuntimeState enrollmentState,
         FakeDeviceSyncTaskService? syncTasks = null,
-        FakeLocalNetworkAddressService? networkAddresses = null) =>
+        FakeLocalNetworkAddressService? networkAddresses = null,
+        DiscoveredDeviceEndpointCache? endpointCache = null,
+        IServiceScopeFactory? scopeFactory = null) =>
         new(
             identity,
             syncIdentities,
-            new DiscoveredDeviceEndpointCache(),
+            endpointCache ?? new DiscoveredDeviceEndpointCache(),
             syncTasks ?? new FakeDeviceSyncTaskService(),
             enrollmentState,
             networkAddresses ?? new FakeLocalNetworkAddressService(),
-            transport);
+            transport,
+            scopeFactory);
 
 
     private static async Task WaitForAsync(Func<bool> condition)

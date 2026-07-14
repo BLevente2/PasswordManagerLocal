@@ -243,7 +243,10 @@ public sealed class AuthService : IAuthService
 
         var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
         var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, DateTimeOffset.UtcNow);
-        UpdateCurrentDeviceLastLoginDate(bundle.UserDevicesData);
+        UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
+            bundle.UserDevicesData,
+            _identity.LocalDeviceId,
+            DateTimeOffset.UtcNow);
         modifiedBlobs |= UserDataBlobKind.Devices;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
         await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
@@ -418,28 +421,6 @@ public sealed class AuthService : IAuthService
 
         key = null;
         return false;
-    }
-
-    private void UpdateCurrentDeviceLastLoginDate(UserDevicesData userDevicesData)
-    {
-        var device = userDevicesData.Devices.FirstOrDefault(device => device.Id == _identity.LocalDeviceId);
-        if (device is null)
-        {
-            device = new UserDeviceData
-            {
-                Id = _identity.LocalDeviceId,
-                Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
-                LinkedAt = DateTimeOffset.UtcNow,
-                LastUpdatedAt = DateTimeOffset.UtcNow
-            };
-            userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == device.Id);
-            userDevicesData.Devices.Add(device);
-        }
-
-        userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == device.Id);
-        device.LastLoginDate = DateTime.UtcNow;
-        device.LastUpdatedAt = DateTimeOffset.UtcNow;
-        device.GenerateIntegrityHash();
     }
 
     private async Task<byte[]> EncryptGeneralUserDataAsync(GeneralUserData data, byte[] rawKey, CancellationToken ct)

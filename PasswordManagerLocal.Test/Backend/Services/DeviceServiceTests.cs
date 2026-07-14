@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Abstractions.Caching;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
@@ -81,12 +82,58 @@ public sealed class DeviceServiceTests
         var remoteResponse = result.Single(item => item.DeviceId == remote.Id);
         MSTestAssert.IsFalse(remoteResponse.IsCurrentDevice);
         MSTestAssert.IsTrue(remoteResponse.IsSyncOn);
+        MSTestAssert.IsFalse(remoteResponse.IsOnline);
         MSTestAssert.AreEqual(remote.TlsCertFingerprint, remoteResponse.TlsCertFingerprint);
         MSTestAssert.IsFalse(string.IsNullOrWhiteSpace(remoteResponse.Name));
-        MSTestAssert.IsTrue(result.Single(item => item.IsCurrentDevice).LastLoginDate > DateTime.MinValue);
+        MSTestAssert.IsNotNull(remoteResponse.LastSync);
+        MSTestAssert.IsNotNull(remoteResponse.LastSeen);
+        MSTestAssert.IsNull(remoteResponse.LastLoginDate);
+
+        var localResponse = result.Single(item => item.IsCurrentDevice);
+        MSTestAssert.IsNull(localResponse.LastSync);
+        MSTestAssert.IsNull(localResponse.LastSeen);
+        MSTestAssert.IsNotNull(localResponse.LastLoginDate);
+        MSTestAssert.IsTrue(localResponse.IsOnline);
 
         var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
         MSTestAssert.IsTrue(bundle.UserDevicesData.Devices.Any(device => device.Id == remote.Id));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task GetUserDevices_ReportsRemoteOnlineOnlyWhenRecentlyDiscoveredAndSyncEligible()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var service = host.Services.GetRequiredService<IDeviceService>();
+        var userDevices = (FakeUserDeviceRepository)host.Services.GetRequiredService<IUserDeviceRepository>();
+        var devices = (FakeDeviceRepository)host.Services.GetRequiredService<IDeviceRepository>();
+        var endpoints = host.Services.GetRequiredService<IDiscoveredDeviceEndpointCache>();
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("device_online_status"));
+        var userId = users.GetUidFromToken(token);
+        var remote = CreateRemoteDevice();
+        devices.Seed(remote);
+        await userDevices.AddAsync(CreateLink(userId, remote, true, false));
+
+        var beforeDiscovery = await service.GetUserDevicesAsync(token);
+        MSTestAssert.IsFalse(beforeDiscovery.Single(item => item.DeviceId == remote.Id).IsOnline);
+
+        endpoints.AddOrUpdate(new DiscoveredDeviceEndpoint
+        {
+            Host = "192.168.1.25",
+            Port = 26688,
+            TlsCertFingerprint = remote.TlsCertFingerprint
+        });
+
+        var discovered = await service.GetUserDevicesAsync(token);
+        MSTestAssert.IsTrue(discovered.Single(item => item.DeviceId == remote.Id).IsOnline);
+
+        await service.SetUserDeviceSyncOnAsync(token, remote.Id, false);
+
+        var syncDisabled = await service.GetUserDevicesAsync(token);
+        MSTestAssert.IsFalse(syncDisabled.Single(item => item.DeviceId == remote.Id).IsOnline);
     }
 
     [TestMethod]

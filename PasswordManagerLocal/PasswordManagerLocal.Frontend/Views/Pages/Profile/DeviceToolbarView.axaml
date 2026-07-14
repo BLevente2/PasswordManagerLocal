@@ -87,6 +87,32 @@
                 Header="{Binding DeviceSortNameDescMenuLabel}"
                 Command="{Binding SelectDeviceSortOptionCommand}"
                 CommandParameter="name-desc" />
+            <Separator />
+            <MenuItem
+                Header="{Binding DeviceSortStatusOnlineFirstMenuLabel}"
+                Command="{Binding SelectDeviceSortOptionCommand}"
+                CommandParameter="status-online-first" />
+            <MenuItem
+                Header="{Binding DeviceSortStatusIssuesFirstMenuLabel}"
+                Command="{Binding SelectDeviceSortOptionCommand}"
+                CommandParameter="status-issues-first" />
+            <Separator />
+            <MenuItem
+                Header="{Binding DeviceSortLinkedNewestMenuLabel}"
+                Command="{Binding SelectDeviceSortOptionCommand}"
+                CommandParameter="linked-desc" />
+            <MenuItem
+                Header="{Binding DeviceSortLinkedOldestMenuLabel}"
+                Command="{Binding SelectDeviceSortOptionCommand}"
+                CommandParameter="linked-asc" />
+            <MenuItem
+                Header="{Binding DeviceSortLastSyncNewestMenuLabel}"
+                Command="{Binding SelectDeviceSortOptionCommand}"
+                CommandParameter="last-sync-desc" />
+            <MenuItem
+                Header="{Binding DeviceSortLastSyncOldestMenuLabel}"
+                Command="{Binding SelectDeviceSortOptionCommand}"
+                CommandParameter="last-sync-asc" />
           </MenuFlyout>
         </Button.Flyout>
       </Button>

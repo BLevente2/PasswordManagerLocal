@@ -106,4 +106,26 @@ public sealed class DiscoveredDeviceEndpointCacheTests
         cache.Clear();
         MSTestAssert.IsFalse(cache.TryGetByFingerprint("BB", out _));
     }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public void IsRecentlyDiscovered_UsesObservationTimeAndMaximumAge()
+    {
+        var now = new DateTimeOffset(2026, 7, 13, 18, 0, 0, TimeSpan.Zero);
+        var cache = new DiscoveredDeviceEndpointCache(() => now);
+        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        {
+            Host = "192.168.1.25",
+            Port = 26688,
+            TlsCertFingerprint = "AABB"
+        });
+
+        MSTestAssert.IsTrue(cache.IsRecentlyDiscovered("aa:bb", TimeSpan.FromSeconds(75)));
+
+        now = now.AddSeconds(76);
+
+        MSTestAssert.IsFalse(cache.IsRecentlyDiscovered("AABB", TimeSpan.FromSeconds(75)));
+        MSTestAssert.IsTrue(cache.TryGetByFingerprint("AABB", out _));
+    }
 }

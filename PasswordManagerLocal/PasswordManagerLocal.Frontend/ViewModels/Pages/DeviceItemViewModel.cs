@@ -1,3 +1,4 @@
+using Avalonia.Media;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Frontend.Services;
@@ -8,6 +9,10 @@ namespace PasswordManagerLocal.Frontend.ViewModels.Pages;
 
 public sealed class DeviceItemViewModel : ReactiveObject
 {
+    private static readonly IBrush OnlineStatusBrush = new SolidColorBrush(Color.Parse("#FF2E7D32"));
+    private static readonly IBrush BlockedStatusBrush = new SolidColorBrush(Color.Parse("#FFD13438"));
+    private static readonly IBrush OfflineStatusBrush = new SolidColorBrush(Color.Parse("#FFF59E0B"));
+
     private readonly Func<DeviceItemViewModel, Task> _viewAsync;
     private readonly Func<DeviceItemViewModel, Task> _saveNameAsync;
     private readonly Func<DeviceItemViewModel, Task> _toggleSyncAsync;
@@ -21,6 +26,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
     private string _notTrustedLabel = string.Empty;
     private string _syncEnabledLabel = string.Empty;
     private string _syncDisabledLabel = string.Empty;
+    private string _onlineLabel = string.Empty;
+    private string _offlineLabel = string.Empty;
     private string _syncToggleOnLabel = string.Empty;
     private string _syncToggleOffLabel = string.Empty;
     private string _windowsPcLabel = string.Empty;
@@ -30,7 +37,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
     private string _unblockLabel = string.Empty;
     private string _disconnectLabel = string.Empty;
     private string _deviceNameLabel = string.Empty;
-    private string _deviceLastSeenLabel = string.Empty;
     private string _deviceLastLoginDateLabel = string.Empty;
     private string _deviceLastSyncLabel = string.Empty;
     private string _deviceLinkedAtLabel = string.Empty;
@@ -52,7 +58,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
         Name = device.Name;
         EditableName = device.Name;
         LastSync = device.LastSync;
-        LastSeen = device.LastSeen;
         LastLoginDate = device.LastLoginDate;
         IsTrusted = device.IsTrusted;
         IsBlocked = device.IsBlocked;
@@ -60,6 +65,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         BlockedAt = device.BlockedAt;
         InvalidSyncAttemptCount = device.InvalidSyncAttemptCount;
         IsSyncOn = device.IsSyncOn;
+        IsOnline = device.IsOnline;
         LinkedAt = device.LinkedAt;
         IsCurrentDevice = device.IsCurrentDevice;
         AssignLocalization(localization);
@@ -87,11 +93,9 @@ public sealed class DeviceItemViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _editableName, value);
     }
 
-    public DateTime LastSync { get; }
+    public DateTime? LastSync { get; }
 
-    public DateTime LastSeen { get; }
-
-    public DateTime LastLoginDate { get; }
+    public DateTime? LastLoginDate { get; }
 
     public bool IsTrusted { get; }
 
@@ -113,19 +117,43 @@ public sealed class DeviceItemViewModel : ReactiveObject
         }
     }
 
+    public bool IsOnline { get; }
+
+    public bool IsOffline => !IsOnline;
+
     public DateTimeOffset LinkedAt { get; }
 
     public bool IsCurrentDevice { get; }
 
-    public bool CanDisconnect => !IsCurrentDevice;
+    public bool IsRemoteDevice => !IsCurrentDevice;
 
-    public bool CanUnblock => IsBlocked && !IsCurrentDevice;
+    public bool ShowNotTrustedStatus => IsRemoteDevice && !IsTrusted;
+
+    public bool CanDisconnect => IsRemoteDevice;
+
+    public bool CanUnblock => IsBlocked && IsRemoteDevice;
 
     public bool HasBlockedReason => !string.IsNullOrWhiteSpace(BlockedReason);
 
     public bool HasBlockedAt => BlockedAt is not null;
 
-    public bool HasInvalidSyncAttempts => InvalidSyncAttemptCount > 0;
+    public bool HasInvalidSyncAttempts => IsRemoteDevice && InvalidSyncAttemptCount > 0;
+
+    public bool HasLinkedAt => LinkedAt != default;
+
+    public bool ShowLastLoginDate => LastLoginDate is not null;
+
+    public bool ShowRemoteLastSync => IsRemoteDevice && LastSync is not null;
+
+    public bool ShowOnlineStatus => !IsBlocked && IsOnline;
+
+    public bool ShowOfflineStatus => !IsBlocked && IsOffline;
+
+    public IBrush StatusIndicatorBrush => IsBlocked
+        ? BlockedStatusBrush
+        : IsOnline
+            ? OnlineStatusBrush
+            : OfflineStatusBrush;
 
     public string CurrentDeviceLabel => _currentDeviceLabel;
 
@@ -138,6 +166,10 @@ public sealed class DeviceItemViewModel : ReactiveObject
     public string SyncEnabledLabel => _syncEnabledLabel;
 
     public string SyncDisabledLabel => _syncDisabledLabel;
+
+    public string OnlineLabel => _onlineLabel;
+
+    public string OfflineLabel => _offlineLabel;
 
     public string SyncToggleOnLabel => _syncToggleOnLabel;
 
@@ -158,8 +190,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string DeviceNameLabel => _deviceNameLabel;
 
-    public string DeviceLastSeenLabel => _deviceLastSeenLabel;
-
     public string DeviceLastLoginDateLabel => _deviceLastLoginDateLabel;
 
     public string DeviceLastSyncLabel => _deviceLastSyncLabel;
@@ -176,11 +206,15 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string SyncStateText => IsSyncOn ? SyncEnabledLabel : SyncDisabledLabel;
 
-    public string LastSyncText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastSync).ToString("g");
+    public string OnlineStateText => IsOnline ? OnlineLabel : OfflineLabel;
 
-    public string LastSeenText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastSeen).ToString("g");
+    public string LastSyncText => LastSync is { } lastSync
+        ? FrontendDateTimeUtil.ToLocalFromBackendUtc(lastSync).ToString("g")
+        : string.Empty;
 
-    public string LastLoginDateText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LastLoginDate).ToString("g");
+    public string LastLoginDateText => LastLoginDate is { } lastLoginDate
+        ? FrontendDateTimeUtil.ToLocalFromBackendUtc(lastLoginDate).ToString("g")
+        : string.Empty;
 
     public string LinkedAtText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LinkedAt).ToString("g");
 
@@ -220,6 +254,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
         _notTrustedLabel = localization.NotTrustedLabel;
         _syncEnabledLabel = localization.SyncEnabledLabel;
         _syncDisabledLabel = localization.SyncDisabledLabel;
+        _onlineLabel = localization.OnlineLabel;
+        _offlineLabel = localization.OfflineLabel;
         _syncToggleOnLabel = localization.SyncToggleOnLabel;
         _syncToggleOffLabel = localization.SyncToggleOffLabel;
         _windowsPcLabel = localization.WindowsPcLabel;
@@ -229,10 +265,11 @@ public sealed class DeviceItemViewModel : ReactiveObject
         _unblockLabel = localization.UnblockLabel;
         _disconnectLabel = localization.DisconnectLabel;
         _deviceNameLabel = localization.DeviceNameLabel;
-        _deviceLastSeenLabel = localization.DeviceLastSeenLabel;
         _deviceLastLoginDateLabel = localization.DeviceLastLoginDateLabel;
         _deviceLastSyncLabel = localization.DeviceLastSyncLabel;
-        _deviceLinkedAtLabel = localization.DeviceLinkedAtLabel;
+        _deviceLinkedAtLabel = IsCurrentDevice
+            ? localization.CurrentDeviceLinkedAtLabel
+            : localization.RemoteDeviceLinkedAtLabel;
         _deviceBlockedReasonLabel = localization.DeviceBlockedReasonLabel;
         _deviceBlockedAtLabel = localization.DeviceBlockedAtLabel;
         _deviceInvalidAttemptsLabel = localization.DeviceInvalidAttemptsLabel;
@@ -246,6 +283,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(NotTrustedLabel));
         this.RaisePropertyChanged(nameof(SyncEnabledLabel));
         this.RaisePropertyChanged(nameof(SyncDisabledLabel));
+        this.RaisePropertyChanged(nameof(OnlineLabel));
+        this.RaisePropertyChanged(nameof(OfflineLabel));
         this.RaisePropertyChanged(nameof(SyncToggleOnLabel));
         this.RaisePropertyChanged(nameof(SyncToggleOffLabel));
         this.RaisePropertyChanged(nameof(DeviceTypeText));
@@ -253,7 +292,6 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(UnblockLabel));
         this.RaisePropertyChanged(nameof(DisconnectLabel));
         this.RaisePropertyChanged(nameof(DeviceNameLabel));
-        this.RaisePropertyChanged(nameof(DeviceLastSeenLabel));
         this.RaisePropertyChanged(nameof(DeviceLastLoginDateLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
         this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
@@ -262,6 +300,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(DeviceInvalidAttemptsLabel));
         this.RaisePropertyChanged(nameof(TrustStateText));
         this.RaisePropertyChanged(nameof(SyncStateText));
+        this.RaisePropertyChanged(nameof(OnlineStateText));
     }
 
     public static DeviceItemViewModel Create(
@@ -280,5 +319,4 @@ public sealed class DeviceItemViewModel : ReactiveObject
             toggleSyncAsync,
             unblockAsync,
             beginDisconnect);
-
 }

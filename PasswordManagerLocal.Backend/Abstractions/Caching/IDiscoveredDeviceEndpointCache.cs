@@ -6,6 +6,7 @@ public interface IDiscoveredDeviceEndpointCache
 {
     void AddOrUpdate(DiscoveredDeviceEndpoint endpoint);
     bool TryGetByFingerprint(string tlsFingerprint, out DiscoveredDeviceEndpoint? endpoint);
+    bool IsRecentlyDiscovered(string tlsFingerprint, TimeSpan maximumAge);
     bool TryRemove(string tlsFingerprint);
     void Clear();
 }

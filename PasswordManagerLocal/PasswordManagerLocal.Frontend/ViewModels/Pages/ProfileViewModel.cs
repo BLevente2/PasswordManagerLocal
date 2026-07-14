@@ -87,6 +87,14 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(DeviceSwitchOnLabel),
         nameof(DeviceSwitchOffLabel),
         nameof(DeviceSortLabel),
+        nameof(DeviceSortNameAscMenuLabel),
+        nameof(DeviceSortNameDescMenuLabel),
+        nameof(DeviceSortStatusOnlineFirstMenuLabel),
+        nameof(DeviceSortStatusIssuesFirstMenuLabel),
+        nameof(DeviceSortLinkedNewestMenuLabel),
+        nameof(DeviceSortLinkedOldestMenuLabel),
+        nameof(DeviceSortLastSyncNewestMenuLabel),
+        nameof(DeviceSortLastSyncOldestMenuLabel),
         nameof(DeviceSearchEmptyTitle),
         nameof(DeviceSearchEmptyDescription),
         nameof(BackToDevicesLabel),
@@ -108,6 +116,8 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(NotTrustedLabel),
         nameof(SyncEnabledLabel),
         nameof(SyncDisabledLabel),
+        nameof(OnlineLabel),
+        nameof(OfflineLabel),
         nameof(SyncToggleOnLabel),
         nameof(SyncToggleOffLabel),
         nameof(SaveDeviceNameLabel),
@@ -118,10 +128,10 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(WindowsPcDeviceTypeLabel),
         nameof(AndroidMobileDeviceTypeLabel),
         nameof(UnknownDeviceTypeLabel),
-        nameof(DeviceLastSeenLabel),
         nameof(DeviceLastLoginDateLabel),
         nameof(DeviceLastSyncLabel),
-        nameof(DeviceLinkedAtLabel),
+        nameof(CurrentDeviceLinkedAtLabel),
+        nameof(RemoteDeviceLinkedAtLabel),
         nameof(DeviceBlockedReasonLabel),
         nameof(DeviceBlockedAtLabel),
         nameof(DeviceInvalidAttemptsLabel),
@@ -780,6 +790,24 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string DeviceSortNameDescMenuLabel => BuildDeviceSortMenuLabel("name-desc", "Passwords_Sort_NameDesc");
 
+    public string DeviceSortStatusOnlineFirstMenuLabel =>
+        BuildDeviceSortMenuLabel("status-online-first", "Profile_Device_Sort_StatusOnlineFirst");
+
+    public string DeviceSortStatusIssuesFirstMenuLabel =>
+        BuildDeviceSortMenuLabel("status-issues-first", "Profile_Device_Sort_StatusIssuesFirst");
+
+    public string DeviceSortLinkedNewestMenuLabel =>
+        BuildDeviceSortMenuLabel("linked-desc", "Profile_Device_Sort_LinkedNewest");
+
+    public string DeviceSortLinkedOldestMenuLabel =>
+        BuildDeviceSortMenuLabel("linked-asc", "Profile_Device_Sort_LinkedOldest");
+
+    public string DeviceSortLastSyncNewestMenuLabel =>
+        BuildDeviceSortMenuLabel("last-sync-desc", "Profile_Device_Sort_LastSyncNewest");
+
+    public string DeviceSortLastSyncOldestMenuLabel =>
+        BuildDeviceSortMenuLabel("last-sync-asc", "Profile_Device_Sort_LastSyncOldest");
+
     public string DeviceSearchEmptyTitle => GetTranslation("Profile_Device_SearchEmpty_Title");
 
     public string DeviceSearchEmptyDescription => GetTranslation("Profile_Device_SearchEmpty_Description");
@@ -824,6 +852,10 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string SyncDisabledLabel => GetTranslation("Profile_Device_SyncDisabled");
 
+    public string OnlineLabel => GetTranslation("Profile_Device_Online");
+
+    public string OfflineLabel => GetTranslation("Profile_Device_Offline");
+
     public string SyncToggleOnLabel => GetTranslation("Common_On");
 
     public string SyncToggleOffLabel => GetTranslation("Common_Off");
@@ -844,13 +876,13 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string UnknownDeviceTypeLabel => GetTranslation("Profile_Device_Type_Unknown");
 
-    public string DeviceLastSeenLabel => GetTranslation("Profile_Device_LastSeen");
-
     public string DeviceLastLoginDateLabel => GetTranslation("Profile_LastLoginDate");
 
     public string DeviceLastSyncLabel => GetTranslation("Profile_Device_LastSync");
 
-    public string DeviceLinkedAtLabel => GetTranslation("Profile_Device_LinkedAt");
+    public string CurrentDeviceLinkedAtLabel => GetTranslation("Profile_Device_CurrentLinkedAt");
+
+    public string RemoteDeviceLinkedAtLabel => GetTranslation("Profile_Device_RemoteLinkedAt");
 
     public string DeviceBlockedReasonLabel => GetTranslation("Profile_Device_BlockedReason");
 
@@ -906,6 +938,13 @@ public sealed class ProfileViewModel : ViewModelBase
     {
         DiscardTransientNavigationState();
         CurrentMainPage = MainDevicesPage;
+        _ = RefreshDevicesAfterPageOpenAsync();
+    }
+
+    private async Task RefreshDevicesAfterPageOpenAsync()
+    {
+        if (_token != Guid.Empty)
+            await LoadDevicesAsync();
     }
 
     public void RequestDeviceListScrollToTop() => DeviceListScrollToTopRequested?.Invoke(this, EventArgs.Empty);
@@ -1330,6 +1369,8 @@ public sealed class ProfileViewModel : ViewModelBase
             NotTrustedLabel = NotTrustedLabel,
             SyncEnabledLabel = SyncEnabledLabel,
             SyncDisabledLabel = SyncDisabledLabel,
+            OnlineLabel = OnlineLabel,
+            OfflineLabel = OfflineLabel,
             SyncToggleOnLabel = SyncToggleOnLabel,
             SyncToggleOffLabel = SyncToggleOffLabel,
             WindowsPcLabel = WindowsPcDeviceTypeLabel,
@@ -1339,10 +1380,10 @@ public sealed class ProfileViewModel : ViewModelBase
             UnblockLabel = UnblockDeviceLabel,
             DisconnectLabel = DisconnectDeviceLabel,
             DeviceNameLabel = DeviceNameLabel,
-            DeviceLastSeenLabel = DeviceLastSeenLabel,
             DeviceLastLoginDateLabel = DeviceLastLoginDateLabel,
             DeviceLastSyncLabel = DeviceLastSyncLabel,
-            DeviceLinkedAtLabel = DeviceLinkedAtLabel,
+            CurrentDeviceLinkedAtLabel = CurrentDeviceLinkedAtLabel,
+            RemoteDeviceLinkedAtLabel = RemoteDeviceLinkedAtLabel,
             DeviceBlockedReasonLabel = DeviceBlockedReasonLabel,
             DeviceBlockedAtLabel = DeviceBlockedAtLabel,
             DeviceInvalidAttemptsLabel = DeviceInvalidAttemptsLabel
@@ -1746,11 +1787,7 @@ public sealed class ProfileViewModel : ViewModelBase
                 || IsDeviceSearchTypeEnabled && item.DeviceTypeText.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
         }
 
-        query = SelectedDeviceSortOption?.Key switch
-        {
-            "name-desc" => query.OrderByDescending(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
-            _ => query.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
-        };
+        query = ApplyDeviceSort(query, SelectedDeviceSortOption?.Key);
 
         var filtered = query.ToList();
         Devices.Clear();
@@ -1764,11 +1801,72 @@ public sealed class ProfileViewModel : ViewModelBase
             SelectedDevice = _allDevices.FirstOrDefault(item => item.DeviceId == preferredSelectionId.Value);
     }
 
+    private static IEnumerable<DeviceItemViewModel> ApplyDeviceSort(
+        IEnumerable<DeviceItemViewModel> devices,
+        string? sortKey)
+    {
+        return sortKey switch
+        {
+            "name-desc" => devices
+                .OrderByDescending(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "status-online-first" => devices
+                .OrderBy(GetOnlineFirstStatusRank)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "status-issues-first" => devices
+                .OrderBy(GetIssuesFirstStatusRank)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "linked-desc" => devices
+                .OrderByDescending(item => item.LinkedAt)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "linked-asc" => devices
+                .OrderBy(item => item.LinkedAt)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "last-sync-desc" => devices
+                .OrderBy(item => item.LastSync is null)
+                .ThenByDescending(item => item.LastSync)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            "last-sync-asc" => devices
+                .OrderByDescending(item => item.LastSync is null)
+                .ThenBy(item => item.LastSync)
+                .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase),
+            _ => devices
+                .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+        };
+    }
+
+    private static int GetOnlineFirstStatusRank(DeviceItemViewModel device)
+    {
+        if (device.IsBlocked)
+            return 3;
+
+        if (device.ShowNotTrustedStatus)
+            return 2;
+
+        return device.IsOnline ? 0 : 1;
+    }
+
+    private static int GetIssuesFirstStatusRank(DeviceItemViewModel device)
+    {
+        if (device.IsBlocked)
+            return 0;
+
+        if (device.ShowNotTrustedStatus)
+            return 1;
+
+        return device.IsOnline ? 3 : 2;
+    }
+
     private void RebuildDeviceSortOptions()
     {
         DeviceSortOptions.Clear();
         DeviceSortOptions.Add(new PasswordSortOptionViewModel("name-asc", GetTranslation("Passwords_Sort_NameAsc")));
         DeviceSortOptions.Add(new PasswordSortOptionViewModel("name-desc", GetTranslation("Passwords_Sort_NameDesc")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("status-online-first", GetTranslation("Profile_Device_Sort_StatusOnlineFirst")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("status-issues-first", GetTranslation("Profile_Device_Sort_StatusIssuesFirst")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("linked-desc", GetTranslation("Profile_Device_Sort_LinkedNewest")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("linked-asc", GetTranslation("Profile_Device_Sort_LinkedOldest")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("last-sync-desc", GetTranslation("Profile_Device_Sort_LastSyncNewest")));
+        DeviceSortOptions.Add(new PasswordSortOptionViewModel("last-sync-asc", GetTranslation("Profile_Device_Sort_LastSyncOldest")));
     }
 
     private void SelectDefaultDeviceSortOption() =>
@@ -1826,6 +1924,12 @@ public sealed class ProfileViewModel : ViewModelBase
     {
         this.RaisePropertyChanged(nameof(DeviceSortNameAscMenuLabel));
         this.RaisePropertyChanged(nameof(DeviceSortNameDescMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortStatusOnlineFirstMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortStatusIssuesFirstMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortLinkedNewestMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortLinkedOldestMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortLastSyncNewestMenuLabel));
+        this.RaisePropertyChanged(nameof(DeviceSortLastSyncOldestMenuLabel));
     }
 
     private void ApplyLocalizationToDeviceItems()

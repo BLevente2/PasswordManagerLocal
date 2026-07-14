@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Abstractions.Caching;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -8,6 +9,7 @@ using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
+using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -28,6 +30,7 @@ public sealed class DeviceService : IDeviceService
     private readonly ISyncQueueRepository _syncQueueItems;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly ISyncRuntimeService _syncRuntime;
+    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IUnitOfWork _uow;
 
     public DeviceService(
@@ -46,6 +49,7 @@ public sealed class DeviceService : IDeviceService
         ISyncQueueRepository syncQueueItems,
         ISyncDeviceIdentityService syncDeviceIdentities,
         ISyncRuntimeService syncRuntime,
+        IDiscoveredDeviceEndpointCache endpointCache,
         IUnitOfWork uow)
     {
         _userLookup = userLookup;
@@ -63,6 +67,7 @@ public sealed class DeviceService : IDeviceService
         _syncQueueItems = syncQueueItems;
         _syncDeviceIdentities = syncDeviceIdentities;
         _syncRuntime = syncRuntime;
+        _endpointCache = endpointCache;
         _uow = uow;
     }
 
@@ -134,16 +139,24 @@ public sealed class DeviceService : IDeviceService
 
         var encryptedDevices = userDevicesData.Devices.ToDictionary(d => d.Id);
         var result = new List<UserDeviceInfoResponse>();
+        var localCanSync = localLink.IsSyncOn && _identity.IsSyncOn;
         if (encryptedDevices.TryGetValue(_identity.LocalDeviceId, out var localDeviceData))
-            result.Add(BuildLocalResponse(localLink, localDeviceData));
+            result.Add(BuildLocalResponse(localLink, localDeviceData, localCanSync));
 
         foreach (var link in links.Where(x => !x.IsDeleted && x.Device is not null))
         {
             if (encryptedDevices.TryGetValue(link.DeviceId, out var deviceData))
-                result.Add(BuildRemoteResponse(link, link.Device!, deviceData));
+                result.Add(BuildRemoteResponse(
+                    link,
+                    link.Device!,
+                    deviceData,
+                    IsRemoteDeviceOnline(localCanSync, link, link.Device!)));
         }
 
-        return result.OrderByDescending(d => d.IsCurrentDevice).ThenByDescending(d => d.LastSeen).ToList();
+        return result
+            .OrderByDescending(d => d.IsCurrentDevice)
+            .ThenByDescending(d => d.LastSync ?? d.LastSeen ?? DateTime.MinValue)
+            .ToList();
     }
 
     public Task SetUserDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct = default) =>
@@ -341,45 +354,64 @@ public sealed class DeviceService : IDeviceService
     private Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct, bool enqueueSync = true) =>
         _userDataWriter.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
 
-    private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData) => new()
+    private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData, bool isOnline) => new()
     {
         DeviceId = _identity.LocalDeviceId,
         Name = deviceData.Name,
         DeviceType = _identity.DeviceType,
         TlsCertFingerprint = _identity.FingerprintHex,
-        LastSync = UtcDateTimeUtil.ToUtc(_identity.CreatedAt.UtcDateTime),
-        LastSeen = DateTime.UtcNow,
-        LastLoginDate = UtcDateTimeUtil.ToUtc(deviceData.LastLoginDate),
+        LastSync = null,
+        LastSeen = null,
+        LastLoginDate = ToMeaningfulUtc(deviceData.LastLoginDate),
         IsTrusted = true,
         IsBlocked = false,
         InvalidSyncAttemptCount = 0,
         IsSyncOn = link.IsSyncOn,
+        IsOnline = isOnline,
         IsDeleted = false,
         LinkedAt = UtcDateTimeUtil.ToUtc(deviceData.LinkedAt),
         DeletedAt = null,
         IsCurrentDevice = true
     };
 
-    private UserDeviceInfoResponse BuildRemoteResponse(UserDevice link, Device device, UserDeviceData deviceData) => new()
+    private UserDeviceInfoResponse BuildRemoteResponse(UserDevice link, Device device, UserDeviceData deviceData, bool isOnline) => new()
     {
         DeviceId = link.DeviceId,
         Name = deviceData.Name,
         DeviceType = device.DeviceType,
         TlsCertFingerprint = device.TlsCertFingerprint,
-        LastSync = UtcDateTimeUtil.ToUtc(device.LastSync),
-        LastSeen = UtcDateTimeUtil.ToUtc(device.LastSeen),
-        LastLoginDate = UtcDateTimeUtil.ToUtc(deviceData.LastLoginDate),
+        LastSync = ToMeaningfulUtc(device.LastSync),
+        LastSeen = ToMeaningfulUtc(device.LastSeen),
+        LastLoginDate = ToMeaningfulUtc(deviceData.LastLoginDate),
         IsTrusted = device.IsTrusted,
         IsBlocked = device.IsBlocked,
         BlockedReason = device.BlockedReason,
         BlockedAt = UtcDateTimeUtil.ToUtc(device.BlockedAt),
         InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
         IsSyncOn = link.IsSyncOn,
+        IsOnline = isOnline,
         IsDeleted = link.IsDeleted,
         LinkedAt = UtcDateTimeUtil.ToUtc(deviceData.LinkedAt),
         DeletedAt = UtcDateTimeUtil.ToUtc(link.DeletedAt),
         IsCurrentDevice = false
     };
+
+    private static DateTime? ToMeaningfulUtc(DateTime value) =>
+        value == default || value == UtcDateTimeUtil.MinDateTime
+            ? null
+            : UtcDateTimeUtil.ToUtc(value);
+
+    private bool IsRemoteDeviceOnline(bool localCanSync, UserDevice link, Device device) =>
+        localCanSync &&
+        link.IsSyncOn &&
+        !link.IsDeleted &&
+        device.IsTrusted &&
+        !device.IsBlocked &&
+        device.PublicKey.Length != 0 &&
+        device.SignPublicKey.Length != 0 &&
+        _endpointCache.IsRecentlyDiscovered(
+            device.TlsCertFingerprint,
+            TimeSpan.FromSeconds(LocalDiscoveryOnlineTimeoutSeconds));
 
     private Task EnqueueUserDeviceChangeAsync(UserDevice userDevice, SyncChangeType changeType, CancellationToken ct) =>
         _syncChanges.EnqueueAsync(new SyncItem

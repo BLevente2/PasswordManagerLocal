@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Caching.Memory;
 using PasswordManagerLocal.Backend;
 using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Backend.Abstractions.Caching;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Security;
@@ -8,6 +9,7 @@ using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Services;
+using PasswordManagerLocal.Backend.Caching;
 using PasswordManagerLocal.Test.Fakes;
 using System.Text;
 
@@ -54,6 +56,7 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IPendingSyncActivationService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
         sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
         sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
+        sc.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
 
         sc.AddSingleton<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();

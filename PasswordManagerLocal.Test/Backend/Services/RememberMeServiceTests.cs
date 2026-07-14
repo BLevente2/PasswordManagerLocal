@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using System.Linq;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
@@ -52,6 +54,41 @@ public sealed class RememberMeServiceTests
 
         MSTestAssert.IsTrue(tokens.TryGetUid(issuedToken, out var uid2));
         MSTestAssert.AreEqual(uid, uid2);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task InitializeRememberMeSession_UpdatesCurrentDeviceLastLoginDate()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var remember = host.Services.GetRequiredService<IRememberMeService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var devices = host.Services.GetRequiredService<IDeviceService>();
+        var identity = host.Services.GetRequiredService<IDeviceIdentityService>();
+
+        var registration = host.CreateValidRegistrationRequest("remember_login_date");
+        registration.RememberMe = true;
+        var token = await auth.RegisterAsync(registration);
+        var userId = users.GetUidFromToken(token);
+
+        var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
+        var localDevice = bundle.UserDevicesData.Devices.Single(device => device.Id == identity.LocalDeviceId);
+        var oldLoginDate = new DateTime(2001, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+        localDevice.LastLoginDate = oldLoginDate;
+        localDevice.LastUpdatedAt = new DateTimeOffset(oldLoginDate);
+        localDevice.GenerateIntegrityHash();
+        await users.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false);
+
+        var restoredToken = await remember.InitializeRememberMeSessionAsync(userId);
+        var restoredBundle = await users.GetLoadAndVerifyUserDataBundleAsync(restoredToken);
+        var restoredLocalDevice = restoredBundle.UserDevicesData.Devices.Single(device => device.Id == identity.LocalDeviceId);
+        var currentDeviceResponse = (await devices.GetUserDevicesAsync(restoredToken)).Single(device => device.IsCurrentDevice);
+
+        MSTestAssert.IsTrue(restoredLocalDevice.LastLoginDate > oldLoginDate);
+        MSTestAssert.IsNotNull(currentDeviceResponse.LastLoginDate);
+        MSTestAssert.AreEqual(restoredLocalDevice.LastLoginDate, currentDeviceResponse.LastLoginDate.Value);
     }
 
     [TestMethod]
