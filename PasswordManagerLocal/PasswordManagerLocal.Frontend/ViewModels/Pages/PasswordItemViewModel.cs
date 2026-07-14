@@ -25,6 +25,7 @@ public sealed class PasswordItemViewModel : MultiSelectableListItemViewModel
         Id = password.Id;
         Name = password.Name;
         Description = password.Description;
+        TagIds = password.TagIds.ToList();
         TagNames = tagNames;
         Color = password.Color;
         _colorName = colorName?.Trim() ?? string.Empty;
@@ -44,6 +45,8 @@ public sealed class PasswordItemViewModel : MultiSelectableListItemViewModel
     public string Name { get; }
 
     public string Description { get; }
+
+    public IReadOnlyList<Guid> TagIds { get; }
 
     public IReadOnlyList<string> TagNames { get; }
 

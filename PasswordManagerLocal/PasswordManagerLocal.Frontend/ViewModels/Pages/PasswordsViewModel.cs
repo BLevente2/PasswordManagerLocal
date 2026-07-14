@@ -16,7 +16,7 @@ using System.Text;
 
 namespace PasswordManagerLocal.Frontend.ViewModels.Pages;
 
-public sealed class PasswordsViewModel : ViewModelBase
+public sealed partial class PasswordsViewModel : ViewModelBase
 {
     private const string ListPane = "list";
     private const string EditorPane = "editor";
@@ -26,6 +26,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private const string ExportTargetPane = "export-target";
     private const string CustomColorKey = "custom";
     private const string SelectedCustomColorKey = "selected-custom";
+    private const int MaximumVisibleEditorTagSuggestions = 8;
 
     private static readonly string[] LocalizedPropertyNames =
     [
@@ -79,6 +80,37 @@ public sealed class PasswordsViewModel : ViewModelBase
         nameof(EditorPasswordPlaceholder),
         nameof(EditorPasswordHint),
         nameof(EditorPasswordVisibilityToggleText),
+        nameof(EditorTagsLabel),
+        nameof(EditorManageTagsLabel),
+        nameof(EditorManageTagsUnavailableToolTip),
+        nameof(EditorTagSearchPlaceholder),
+        nameof(EditorNoTagsAvailableMessage),
+        nameof(EditorNoMatchingTagsMessage),
+        nameof(EditorAllTagsSelectedMessage),
+        nameof(PasswordTagsTitle),
+        nameof(PasswordTagsBackToEditorLabel),
+        nameof(PasswordTagsEmptyTitle),
+        nameof(PasswordTagsEmptyDescription),
+        nameof(PasswordTagsEmptyAddLabel),
+        nameof(PasswordTagsSearchEmptyTitle),
+        nameof(PasswordTagsSearchEmptyDescription),
+        nameof(PasswordTagsSearchPlaceholder),
+        nameof(PasswordTagsSearchModeLabel),
+        nameof(PasswordTagsSearchModeNameLabel),
+        nameof(PasswordTagsSearchModeColorLabel),
+        nameof(PasswordTagsSortLabel),
+        nameof(PasswordTagsSortNameAscMenuLabel),
+        nameof(PasswordTagsSortNameDescMenuLabel),
+        nameof(AddPasswordTagLabel),
+        nameof(PasswordTagEditorTitle),
+        nameof(PasswordTagEditorNameLabel),
+        nameof(PasswordTagEditorNamePlaceholder),
+        nameof(PasswordTagEditorColorLabel),
+        nameof(PasswordTagEditorSaveLabel),
+        nameof(PasswordTagEditorBackLabel),
+        nameof(PasswordTagDeleteConfirmationTitle),
+        nameof(PasswordTagDeleteConfirmationMessage),
+        nameof(ConfirmDeletePasswordTagLabel),
         nameof(SearchLabel),
         nameof(SearchPlaceholder),
         nameof(SearchModeLabel),
@@ -148,6 +180,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     private readonly PasswordStrengthEstimator _passwordStrengthEstimator = new();
     private readonly MaximumStrengthPasswordGenerator _passwordGenerator;
     private readonly List<PasswordItemViewModel> _allPasswords = [];
+    private readonly List<PasswordTagItemViewModel> _allPasswordTags = [];
     private readonly List<CustomUserColorInfoResponse> _savedCustomColors = [];
     private readonly List<CustomColorItemViewModel> _allCustomColors = [];
 
@@ -173,6 +206,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     private string _editorDescription = string.Empty;
     private string _editorColor = PasswordColorUtility.DefaultColor;
     private string _editorPassword = string.Empty;
+    private string _editorTagSearchQuery = string.Empty;
+    private bool _isEditorTagSearchFocused;
     private bool _isEditorPasswordVisible;
     private bool _isEditorStoredPasswordRevealed;
     private int _editorPasswordStrength;
@@ -218,6 +253,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         _passwordGenerator = new MaximumStrengthPasswordGenerator(_passwordStrengthEstimator);
 
         Passwords = new ObservableCollection<PasswordItemViewModel>();
+        EditorSelectedTags = new ObservableCollection<PasswordTagItemViewModel>();
+        EditorTagSuggestions = new ObservableCollection<PasswordTagItemViewModel>();
         CustomColors = new ObservableCollection<CustomColorItemViewModel>();
         ExportTargetProfiles = new ObservableCollection<ExportTargetProfileItemViewModel>();
         PresetColors = new ObservableCollection<PasswordColorOptionViewModel>();
@@ -258,6 +295,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         BackFromExportTargetCommand = ReactiveCommand.Create(BackFromExportTarget);
         ConfirmExportCommand = ReactiveCommand.CreateFromTask(ConfirmExportAsync);
         CancelExportConfirmationCommand = ReactiveCommand.Create(CancelExportConfirmation);
+        InitializePasswordTagManagement();
 
         RebuildPresetColors();
         RebuildSortOptions();
@@ -266,6 +304,10 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
     public ObservableCollection<PasswordItemViewModel> Passwords { get; }
+
+    public ObservableCollection<PasswordTagItemViewModel> EditorSelectedTags { get; }
+
+    public ObservableCollection<PasswordTagItemViewModel> EditorTagSuggestions { get; }
 
     public ObservableCollection<CustomColorItemViewModel> CustomColors { get; }
 
@@ -306,17 +348,23 @@ public sealed class PasswordsViewModel : ViewModelBase
     }
 
     public bool IsMultiSelectionToolbarVisible =>
-        IsPasswordMultiSelectionActive || IsCustomColorMultiSelectionActive;
+        IsPasswordMultiSelectionActive
+        || IsCustomColorMultiSelectionActive
+        || IsPasswordTagMultiSelectionActive;
 
     public bool HasSelectedMultiSelectionItems => IsPasswordMultiSelectionActive
         ? _allPasswords.Any(item => item.IsSelected)
-        : IsCustomColorMultiSelectionActive && _allCustomColors.Any(item => item.IsSelected);
+        : IsCustomColorMultiSelectionActive
+            ? _allCustomColors.Any(item => item.IsSelected)
+            : IsPasswordTagMultiSelectionActive && _allManagedPasswordTags.Any(item => item.IsSelected);
 
     public bool AreAllVisibleMultiSelectionItemsSelected => IsPasswordMultiSelectionActive
         ? Passwords.Count > 0 && Passwords.All(item => item.IsSelected)
         : IsCustomColorMultiSelectionActive
-          && CustomColors.Count > 0
-          && CustomColors.All(item => item.IsSelected);
+            ? CustomColors.Count > 0 && CustomColors.All(item => item.IsSelected)
+            : IsPasswordTagMultiSelectionActive
+              && PasswordTags.Count > 0
+              && PasswordTags.All(item => item.IsSelected);
 
     public bool IsSelectAllMultiSelectionAction => !AreAllVisibleMultiSelectionItemsSelected;
 
@@ -479,6 +527,12 @@ public sealed class PasswordsViewModel : ViewModelBase
             ExitCustomColorMultiSelection();
         }
 
+        if (string.Equals(_currentPane, PasswordTagListPane, StringComparison.Ordinal)
+            && !string.Equals(value, PasswordTagListPane, StringComparison.Ordinal))
+        {
+            ExitPasswordTagMultiSelection();
+        }
+
         IsPaneTransitionReversed = isBackNavigation;
         ClearStatusMessage();
         this.RaiseAndSetIfChanged(ref _currentPane, value);
@@ -487,6 +541,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(IsDetailsPaneVisible));
         this.RaisePropertyChanged(nameof(IsCustomColorListPaneVisible));
         this.RaisePropertyChanged(nameof(IsColorPaneVisible));
+        this.RaisePropertyChanged(nameof(IsPasswordTagListPaneVisible));
+        this.RaisePropertyChanged(nameof(IsPasswordTagEditorPaneVisible));
         this.RaisePropertyChanged(nameof(IsExportTargetPaneVisible));
         this.RaisePropertyChanged(nameof(IsEditorOpen));
         this.RaisePropertyChanged(nameof(IsEditorClosed));
@@ -500,6 +556,8 @@ public sealed class PasswordsViewModel : ViewModelBase
             DetailsPane => new PasswordDetailsPaneTransitionViewModel(this),
             CustomColorListPane => new PasswordCustomColorListPaneTransitionViewModel(this),
             ColorPane => new PasswordColorPaneTransitionViewModel(this),
+            PasswordTagListPane => new PasswordTagListPaneTransitionViewModel(this),
+            PasswordTagEditorPane => new PasswordTagEditorPaneTransitionViewModel(this),
             ExportTargetPane => new PasswordExportTargetPaneTransitionViewModel(this),
             _ => new PasswordListPaneTransitionViewModel(this)
         };
@@ -544,6 +602,61 @@ public sealed class PasswordsViewModel : ViewModelBase
         get => _editorDescription;
         set => this.RaiseAndSetIfChanged(ref _editorDescription, value);
     }
+
+    public string EditorTagSearchQuery
+    {
+        get => _editorTagSearchQuery;
+        set
+        {
+            value ??= string.Empty;
+            if (string.Equals(_editorTagSearchQuery, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _editorTagSearchQuery, value);
+            RefreshEditorTagSuggestions();
+        }
+    }
+
+    public bool IsEditorTagSearchFocused
+    {
+        get => _isEditorTagSearchFocused;
+        set
+        {
+            if (_isEditorTagSearchFocused == value)
+            {
+                return;
+            }
+
+            this.RaiseAndSetIfChanged(ref _isEditorTagSearchFocused, value);
+            RaiseEditorTagStateChanged();
+        }
+    }
+
+    public bool HasAvailablePasswordTags => _allPasswordTags.Count > 0;
+
+    public bool HasSelectedEditorTags => EditorSelectedTags.Count > 0;
+
+    public bool AreAllEditorTagsSelected =>
+        HasAvailablePasswordTags && EditorSelectedTags.Count >= _allPasswordTags.Count;
+
+    public bool IsEditorTagSearchEnabled =>
+        HasAvailablePasswordTags && !AreAllEditorTagsSelected;
+
+    public bool IsEditorTagSuggestionPanelVisible =>
+        IsEditorTagSearchFocused && IsEditorTagSearchEnabled;
+
+    public bool HasEditorTagSuggestions => EditorTagSuggestions.Count > 0;
+
+    public bool IsEditorTagNoMatchesVisible =>
+        IsEditorTagSuggestionPanelVisible
+        && !HasEditorTagSuggestions
+        && !string.IsNullOrWhiteSpace(EditorTagSearchQuery);
+
+    public bool IsEditorTagEmptyStateVisible => !HasAvailablePasswordTags;
+
+    public bool IsEditorAllTagsSelectedVisible => AreAllEditorTagsSelected;
 
     public string EditorColor
     {
@@ -1053,6 +1166,21 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string EditorPasswordVisibilityToggleText => GetTranslation(IsEditorPasswordVisible ? "Common_Hide" : "Common_Show");
 
+    public string EditorTagsLabel => GetTranslation("Passwords_Editor_TagsLabel");
+
+    public string EditorManageTagsLabel => GetTranslation("Passwords_Editor_ManageTags");
+
+    public string EditorManageTagsUnavailableToolTip =>
+        GetTranslation("Passwords_Editor_ManageTagsUnavailableToolTip");
+
+    public string EditorTagSearchPlaceholder => GetTranslation("Passwords_Editor_TagSearchPlaceholder");
+
+    public string EditorNoTagsAvailableMessage => GetTranslation("Passwords_Editor_NoTagsAvailable");
+
+    public string EditorNoMatchingTagsMessage => GetTranslation("Passwords_Editor_NoMatchingTags");
+
+    public string EditorAllTagsSelectedMessage => GetTranslation("Passwords_Editor_AllTagsSelected");
+
     public string PasswordStrengthLabel => GetTranslation("PasswordStrength_Label");
 
     public string PasswordStrengthInfoTitle => GetTranslation("PasswordStrength_Info_Title");
@@ -1077,7 +1205,10 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public string CustomColorsTitle => GetTranslation("Passwords_CustomColors_Title");
 
-    public string CustomColorsBackToEditorLabel => GetTranslation("Passwords_CustomColors_BackToEditor");
+    public string CustomColorsBackToEditorLabel => GetTranslation(
+        _customColorListReturnPane == PasswordTagEditorPane
+            ? "Passwords_CustomColors_BackToTagEditor"
+            : "Passwords_CustomColors_BackToEditor");
 
     public string CustomColorsEmptyTitle => GetTranslation("Passwords_CustomColors_Empty_Title");
 
@@ -1170,7 +1301,9 @@ public sealed class PasswordsViewModel : ViewModelBase
         MultiSelectionExportKind.Passwords when _pendingExportItemIds.Count == 1 => "Passwords_Export_Target_Subtitle_Password",
         MultiSelectionExportKind.Passwords => "Passwords_Export_Target_Subtitle_Passwords",
         MultiSelectionExportKind.CustomColors when _pendingExportItemIds.Count == 1 => "Passwords_Export_Target_Subtitle_CustomColor",
-        _ => "Passwords_Export_Target_Subtitle_CustomColors"
+        MultiSelectionExportKind.CustomColors => "Passwords_Export_Target_Subtitle_CustomColors",
+        MultiSelectionExportKind.PasswordTags when _pendingExportItemIds.Count == 1 => "Passwords_Export_Target_Subtitle_Tag",
+        _ => "Passwords_Export_Target_Subtitle_Tags"
     });
 
     public string ExportTargetAccountsLabel => GetTranslation("Passwords_Export_Target_Accounts");
@@ -1189,7 +1322,9 @@ public sealed class PasswordsViewModel : ViewModelBase
             MultiSelectionExportKind.Passwords when _pendingExportItemIds.Count == 1 => "Passwords_Export_Confirm_Message_Password",
             MultiSelectionExportKind.Passwords => "Passwords_Export_Confirm_Message_Passwords",
             MultiSelectionExportKind.CustomColors when _pendingExportItemIds.Count == 1 => "Passwords_Export_Confirm_Message_CustomColor",
-            _ => "Passwords_Export_Confirm_Message_CustomColors"
+            MultiSelectionExportKind.CustomColors => "Passwords_Export_Confirm_Message_CustomColors",
+            MultiSelectionExportKind.PasswordTags when _pendingExportItemIds.Count == 1 => "Passwords_Export_Confirm_Message_Tag",
+            _ => "Passwords_Export_Confirm_Message_Tags"
         }),
         _selectedExportTargetDisplayName);
 
@@ -1239,6 +1374,9 @@ public sealed class PasswordsViewModel : ViewModelBase
             }
         }
 
+        foreach (var tag in _allPasswordTags)
+            tag.ApplyRemoveLabel(GetEditorRemoveTagLabel(tag.Name));
+
         foreach (var customColor in _allCustomColors)
             customColor.ApplyDeleteLabel(DeletePasswordLabel);
 
@@ -1252,6 +1390,7 @@ public sealed class PasswordsViewModel : ViewModelBase
         UpdateSortOptionSelectionMarks();
         RaiseSortMenuLabelProperties();
         RaiseCustomColorSortMenuLabelProperties();
+        ApplyPasswordTagLocalization();
         ApplyFiltersAndSorting(SelectedPassword?.Id, preserveSelection: true);
         ApplyCustomColorFiltersAndSorting();
     }
@@ -1273,16 +1412,26 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public void RequestListScrollToTop() => ListScrollToTopRequested?.Invoke(this, EventArgs.Empty);
 
+    public void SelectFirstEditorTagSuggestion()
+    {
+        if (EditorTagSuggestions.FirstOrDefault() is { } tag)
+        {
+            SelectEditorTag(tag);
+        }
+    }
+
     public void ShowMainPage()
     {
         ExitPasswordMultiSelection();
         ExitCustomColorMultiSelection();
+        ExitPasswordTagMultiSelection();
         IsDeleteConfirmationOpen = false;
         _passwordsPendingDeletion = [];
         PasswordPendingDeletion = null;
         IsCustomColorDeleteConfirmationOpen = false;
         _customColorsPendingDeletion = [];
         CustomColorPendingDeletion = null;
+        ResetPasswordTagDeleteState();
         ClearExportFlowState();
         SelectedPassword = null;
         RevealedPassword = null;
@@ -1291,6 +1440,8 @@ public sealed class PasswordsViewModel : ViewModelBase
         IsCreateMode = true;
         SetCustomColorPickerMode(null);
         ResetCustomColorPickerDraft();
+        ResetPasswordTagEditorDraft();
+        _customColorListReturnPane = EditorPane;
         CurrentPane = ListPane;
         ResetEditorFields();
     }
@@ -1300,32 +1451,45 @@ public sealed class PasswordsViewModel : ViewModelBase
         _token = Guid.Empty;
         ExitPasswordMultiSelection();
         ExitCustomColorMultiSelection();
+        ExitPasswordTagMultiSelection();
         ClearPasswordItems();
+        ClearPasswordTagItems();
+        ClearManagedPasswordTagItems();
         _savedCustomColors.Clear();
         ClearCustomColorItems();
         Passwords.Clear();
         CustomColors.Clear();
+        PasswordTags.Clear();
         RebuildPresetColors();
+        RebuildPasswordTagColorOptions();
         RaisePasswordCollectionStateChanged();
         RaiseCustomColorCollectionStateChanged();
+        RaisePasswordTagCollectionStateChanged();
         SelectedPassword = null;
         _passwordsPendingDeletion = [];
         PasswordPendingDeletion = null;
         _customColorsPendingDeletion = [];
         CustomColorPendingDeletion = null;
+        ResetPasswordTagDeleteState();
         ClearExportFlowState();
         RevealedPassword = null;
         ClearStatusMessage();
         IsCreateMode = true;
         IsDeleteConfirmationOpen = false;
         IsCustomColorDeleteConfirmationOpen = false;
+        IsPasswordTagDeleteConfirmationOpen = false;
         SearchQuery = string.Empty;
         CustomColorSearchQuery = string.Empty;
+        PasswordTagSearchQuery = string.Empty;
         _customColorSortKey = "name-asc";
+        _passwordTagSortKey = "name-asc";
         RaiseCustomColorSortMenuLabelProperties();
+        RaisePasswordTagSortMenuLabelProperties();
         SelectDefaultSortOption();
         SetCustomColorPickerMode(null);
         ResetCustomColorPickerDraft();
+        ResetPasswordTagEditorDraft();
+        _customColorListReturnPane = EditorPane;
         CurrentPane = ListPane;
         ResetEditorFields();
     }
@@ -1394,18 +1558,32 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
-        if (!IsCustomColorMultiSelectionActive)
+        if (IsCustomColorMultiSelectionActive)
+        {
+            var deselectAllCustomColors = IsDeselectAllMultiSelectionAction;
+            IEnumerable<CustomColorItemViewModel> affectedCustomColors =
+                deselectAllCustomColors ? _allCustomColors : CustomColors;
+
+            foreach (var customColor in affectedCustomColors)
+            {
+                customColor.IsSelected = !deselectAllCustomColors;
+            }
+
+            return;
+        }
+
+        if (!IsPasswordTagMultiSelectionActive)
         {
             return;
         }
 
-        var deselectAllCustomColors = IsDeselectAllMultiSelectionAction;
-        IEnumerable<CustomColorItemViewModel> affectedCustomColors =
-            deselectAllCustomColors ? _allCustomColors : CustomColors;
+        var deselectAllPasswordTags = IsDeselectAllMultiSelectionAction;
+        IEnumerable<PasswordTagManagementItemViewModel> affectedPasswordTags =
+            deselectAllPasswordTags ? _allManagedPasswordTags : PasswordTags;
 
-        foreach (var customColor in affectedCustomColors)
+        foreach (var tag in affectedPasswordTags)
         {
-            customColor.IsSelected = !deselectAllCustomColors;
+            tag.IsSelected = !deselectAllPasswordTags;
         }
     }
 
@@ -1426,6 +1604,11 @@ public sealed class PasswordsViewModel : ViewModelBase
         {
             selectedIds = _allCustomColors.Where(item => item.IsSelected).Select(item => item.Id).ToArray();
             _pendingExportKind = MultiSelectionExportKind.CustomColors;
+        }
+        else if (IsPasswordTagMultiSelectionActive)
+        {
+            selectedIds = _allManagedPasswordTags.Where(item => item.IsSelected).Select(item => item.Id).ToArray();
+            _pendingExportKind = MultiSelectionExportKind.PasswordTags;
         }
         else
         {
@@ -1579,7 +1762,12 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
 
         var exportKind = _pendingExportKind;
-        var sourcePane = exportKind == MultiSelectionExportKind.CustomColors ? CustomColorListPane : ListPane;
+        var sourcePane = exportKind switch
+        {
+            MultiSelectionExportKind.CustomColors => CustomColorListPane,
+            MultiSelectionExportKind.PasswordTags => PasswordTagListPane,
+            _ => ListPane
+        };
         var deleteOriginal = DeleteOriginalOnExport;
 
         try
@@ -1609,6 +1797,17 @@ public sealed class PasswordsViewModel : ViewModelBase
                         DeleteOriginal = deleteOriginal
                     });
             }
+            else if (exportKind == MultiSelectionExportKind.PasswordTags)
+            {
+                await _endpoints.ExportPasswordTagsToUserAsync(
+                    _token,
+                    new ExportPasswordTagsToUserRequest
+                    {
+                        TargetToken = _selectedExportTargetToken,
+                        PasswordTagIds = _pendingExportItemIds.ToArray(),
+                        DeleteOriginal = deleteOriginal
+                    });
+            }
             else
             {
                 return;
@@ -1628,7 +1827,9 @@ public sealed class PasswordsViewModel : ViewModelBase
                 (MultiSelectionExportKind.Passwords, false) => "Passwords_Export_Copy_Passwords_Success",
                 (MultiSelectionExportKind.Passwords, true) => "Passwords_Export_Move_Passwords_Success",
                 (MultiSelectionExportKind.CustomColors, false) => "Passwords_Export_Copy_CustomColors_Success",
-                _ => "Passwords_Export_Move_CustomColors_Success"
+                (MultiSelectionExportKind.CustomColors, true) => "Passwords_Export_Move_CustomColors_Success",
+                (MultiSelectionExportKind.PasswordTags, false) => "Passwords_Export_Copy_Tags_Success",
+                _ => "Passwords_Export_Move_Tags_Success"
             }));
         }
         catch (Exception ex)
@@ -1653,7 +1854,12 @@ public sealed class PasswordsViewModel : ViewModelBase
         CancelExportConfirmation();
         var exportKind = _pendingExportKind;
         var selectedIds = _pendingExportItemIds.ToHashSet();
-        var sourcePane = exportKind == MultiSelectionExportKind.CustomColors ? CustomColorListPane : ListPane;
+        var sourcePane = exportKind switch
+        {
+            MultiSelectionExportKind.CustomColors => CustomColorListPane,
+            MultiSelectionExportKind.PasswordTags => PasswordTagListPane,
+            _ => ListPane
+        };
         ClearExportFlowState();
         SetCurrentPane(sourcePane, true);
 
@@ -1666,11 +1872,20 @@ public sealed class PasswordsViewModel : ViewModelBase
                 item.IsSelected = selectedIds.Contains(item.Id);
             }
         }
-        else
+        else if (exportKind == MultiSelectionExportKind.CustomColors)
         {
             IsCustomColorMultiSelectionActive = true;
             SetSelectionMode(_allCustomColors, true);
             foreach (var item in _allCustomColors)
+            {
+                item.IsSelected = selectedIds.Contains(item.Id);
+            }
+        }
+        else
+        {
+            IsPasswordTagMultiSelectionActive = true;
+            SetSelectionMode(_allManagedPasswordTags, true);
+            foreach (var item in _allManagedPasswordTags)
             {
                 item.IsSelected = selectedIds.Contains(item.Id);
             }
@@ -1708,18 +1923,30 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
-        if (!IsCustomColorMultiSelectionActive)
+        if (IsCustomColorMultiSelectionActive)
+        {
+            var selectedCustomColors = _allCustomColors.Where(item => item.IsSelected).ToList();
+            if (selectedCustomColors.Count == 0)
+            {
+                return;
+            }
+
+            BeginDeleteCustomColors(selectedCustomColors);
+            return;
+        }
+
+        if (!IsPasswordTagMultiSelectionActive)
         {
             return;
         }
 
-        var selectedCustomColors = _allCustomColors.Where(item => item.IsSelected).ToList();
-        if (selectedCustomColors.Count == 0)
+        var selectedTags = _allManagedPasswordTags.Where(item => item.IsSelected).ToList();
+        if (selectedTags.Count == 0)
         {
             return;
         }
 
-        BeginDeleteCustomColors(selectedCustomColors);
+        BeginDeletePasswordTags(selectedTags);
     }
 
     private void ExitPasswordMultiSelection()
@@ -1774,6 +2001,12 @@ public sealed class PasswordsViewModel : ViewModelBase
 
     public bool TryExitMultiSelection()
     {
+        if (IsPasswordTagMultiSelectionActive)
+        {
+            ExitPasswordTagMultiSelection();
+            return true;
+        }
+
         if (IsCustomColorMultiSelectionActive)
         {
             ExitCustomColorMultiSelection();
@@ -1791,13 +2024,22 @@ public sealed class PasswordsViewModel : ViewModelBase
 
 
     internal bool HasConfirmableDialogOpen =>
-        IsCustomColorDeleteConfirmationOpen || IsDeleteConfirmationOpen || IsExportConfirmationOpen;
+        IsPasswordTagDeleteConfirmationOpen
+        || IsCustomColorDeleteConfirmationOpen
+        || IsDeleteConfirmationOpen
+        || IsExportConfirmationOpen;
 
     internal async Task ConfirmOpenDialogAsync()
     {
         if (IsExportConfirmationOpen)
         {
             await ConfirmExportAsync();
+            return;
+        }
+
+        if (IsPasswordTagDeleteConfirmationOpen)
+        {
+            await ConfirmDeletePasswordTagAsync();
             return;
         }
 
@@ -1817,6 +2059,12 @@ public sealed class PasswordsViewModel : ViewModelBase
         if (IsExportConfirmationOpen)
         {
             CancelExportConfirmation();
+            return true;
+        }
+
+        if (IsPasswordTagDeleteConfirmationOpen)
+        {
+            CancelDeletePasswordTag();
             return true;
         }
 
@@ -1853,6 +2101,18 @@ public sealed class PasswordsViewModel : ViewModelBase
             return true;
         }
 
+        if (IsPasswordTagEditorPaneVisible)
+        {
+            BackFromPasswordTagEditor();
+            return true;
+        }
+
+        if (IsPasswordTagListPaneVisible)
+        {
+            BackFromPasswordTagList();
+            return true;
+        }
+
         if (IsEditorPaneVisible)
         {
             CancelPasswordEditor();
@@ -1874,6 +2134,12 @@ public sealed class PasswordsViewModel : ViewModelBase
         if (IsExportConfirmationOpen)
         {
             await ConfirmExportAsync();
+            return;
+        }
+
+        if (IsPasswordTagDeleteConfirmationOpen)
+        {
+            await ConfirmDeletePasswordTagAsync();
             return;
         }
 
@@ -1907,6 +2173,18 @@ public sealed class PasswordsViewModel : ViewModelBase
             return;
         }
 
+        if (IsPasswordTagEditorPaneVisible)
+        {
+            await SavePasswordTagAsync();
+            return;
+        }
+
+        if (IsPasswordTagListPaneVisible)
+        {
+            ApplyPasswordTagFiltersAndSorting();
+            return;
+        }
+
         if (IsListPaneVisible)
         {
             ApplyCurrentSearch();
@@ -1924,19 +2202,26 @@ public sealed class PasswordsViewModel : ViewModelBase
         ClearStatusMessage();
         ExitPasswordMultiSelection();
         ExitCustomColorMultiSelection();
+        ExitPasswordTagMultiSelection();
         var selectedId = SelectedPassword?.Id;
 
         try
         {
             var response = await _endpoints.GetSavedPasswordsAsync(_token);
-            var tagNameById = response.Tags.ToDictionary(tag => tag.Id, tag => tag.Name);
+            var selectedEditorTagIds = EditorSelectedTags.Select(tag => tag.Id).ToArray();
+            RebuildPasswordTagItems(response.Tags, selectedEditorTagIds);
+            RebuildManagedPasswordTagItems(response.Tags);
+            var tagNameById = _allPasswordTags.ToDictionary(tag => tag.Id, tag => tag.Name);
             var currentEditorColor = EditorColor;
+            var currentPasswordTagEditorColor = PasswordTagEditorColor;
 
             _savedCustomColors.Clear();
             _savedCustomColors.AddRange(response.CustomColors);
             RebuildPresetColors();
+            RebuildPasswordTagColorOptions();
             RebuildCustomColorItems();
             ApplyEditorColor(currentEditorColor);
+            ApplyPasswordTagEditorColor(currentPasswordTagEditorColor);
 
             var colorNameByCode = BuildColorNameByCodeLookup(response.CustomColors);
 
@@ -2042,10 +2327,156 @@ public sealed class PasswordsViewModel : ViewModelBase
         EditorPassword = string.Empty;
         IsEditorPasswordVisible = false;
         IsEditorStoredPasswordRevealed = false;
+        SetEditorSelectedTags(password.TagIds);
         ApplyEditorColor(password.Color);
         CurrentPane = EditorPane;
         return Task.CompletedTask;
     }
+
+    private void SelectEditorTag(PasswordTagItemViewModel tag)
+    {
+        if (EditorSelectedTags.Any(selectedTag => selectedTag.Id == tag.Id))
+        {
+            return;
+        }
+
+        EditorSelectedTags.Add(tag);
+        SortEditorSelectedTags();
+
+        if (!string.IsNullOrEmpty(EditorTagSearchQuery))
+        {
+            EditorTagSearchQuery = string.Empty;
+        }
+        else
+        {
+            RefreshEditorTagSuggestions();
+        }
+
+        // A newly selected tag becomes the password's suggested visual color.
+        // The user can still choose any other password color afterwards.
+        ApplyEditorColor(tag.Color);
+    }
+
+    private void RemoveEditorTag(PasswordTagItemViewModel tag)
+    {
+        var selectedTag = EditorSelectedTags.FirstOrDefault(item => item.Id == tag.Id);
+        if (selectedTag is null)
+        {
+            return;
+        }
+
+        EditorSelectedTags.Remove(selectedTag);
+        RefreshEditorTagSuggestions();
+    }
+
+    private void RebuildPasswordTagItems(
+        IReadOnlyList<PasswordTagInfoResponse> tags,
+        IReadOnlyCollection<Guid> selectedTagIds)
+    {
+        _allPasswordTags.Clear();
+
+        foreach (var tag in tags.OrderBy(tag => tag.Name, StringComparer.CurrentCultureIgnoreCase))
+        {
+            _allPasswordTags.Add(PasswordTagItemViewModel.Create(
+                tag,
+                GetEditorRemoveTagLabel(tag.Name),
+                SelectEditorTag,
+                RemoveEditorTag));
+        }
+
+        SetEditorSelectedTags(selectedTagIds);
+    }
+
+    private void ClearPasswordTagItems()
+    {
+        _allPasswordTags.Clear();
+        ClearEditorTagSelection();
+        RaiseEditorTagStateChanged();
+    }
+
+    private void SetEditorSelectedTags(IEnumerable<Guid> tagIds)
+    {
+        var selectedTagIds = tagIds.ToHashSet();
+
+        EditorSelectedTags.Clear();
+        foreach (var tag in _allPasswordTags.Where(tag => selectedTagIds.Contains(tag.Id)))
+        {
+            EditorSelectedTags.Add(tag);
+        }
+
+        _editorTagSearchQuery = string.Empty;
+        this.RaisePropertyChanged(nameof(EditorTagSearchQuery));
+        RefreshEditorTagSuggestions();
+    }
+
+    private void ClearEditorTagSelection()
+    {
+        EditorSelectedTags.Clear();
+        _editorTagSearchQuery = string.Empty;
+        _isEditorTagSearchFocused = false;
+        this.RaisePropertyChanged(nameof(EditorTagSearchQuery));
+        this.RaisePropertyChanged(nameof(IsEditorTagSearchFocused));
+        RefreshEditorTagSuggestions();
+    }
+
+    private void SortEditorSelectedTags()
+    {
+        var sortedTags = EditorSelectedTags
+            .OrderBy(tag => tag.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
+
+        if (EditorSelectedTags.SequenceEqual(sortedTags))
+        {
+            return;
+        }
+
+        EditorSelectedTags.Clear();
+        foreach (var tag in sortedTags)
+        {
+            EditorSelectedTags.Add(tag);
+        }
+    }
+
+    private void RefreshEditorTagSuggestions()
+    {
+        var selectedTagIds = EditorSelectedTags.Select(tag => tag.Id).ToHashSet();
+        var searchTerm = EditorTagSearchQuery.Trim();
+
+        var suggestions = _allPasswordTags
+            .Where(tag => !selectedTagIds.Contains(tag.Id))
+            .Where(tag => string.IsNullOrWhiteSpace(searchTerm)
+                || tag.Name.Contains(searchTerm, StringComparison.CurrentCultureIgnoreCase))
+            .OrderBy(tag => tag.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Take(MaximumVisibleEditorTagSuggestions)
+            .ToArray();
+
+        EditorTagSuggestions.Clear();
+        foreach (var tag in suggestions)
+        {
+            EditorTagSuggestions.Add(tag);
+        }
+
+        RaiseEditorTagStateChanged();
+    }
+
+    private void RaiseEditorTagStateChanged()
+    {
+        this.RaisePropertyChanged(nameof(HasAvailablePasswordTags));
+        this.RaisePropertyChanged(nameof(HasSelectedEditorTags));
+        this.RaisePropertyChanged(nameof(AreAllEditorTagsSelected));
+        this.RaisePropertyChanged(nameof(IsEditorTagSearchEnabled));
+        this.RaisePropertyChanged(nameof(IsEditorTagSuggestionPanelVisible));
+        this.RaisePropertyChanged(nameof(HasEditorTagSuggestions));
+        this.RaisePropertyChanged(nameof(IsEditorTagNoMatchesVisible));
+        this.RaisePropertyChanged(nameof(IsEditorTagEmptyStateVisible));
+        this.RaisePropertyChanged(nameof(IsEditorAllTagsSelectedVisible));
+    }
+
+    private List<Guid> GetSelectedEditorTagIds() =>
+        EditorSelectedTags.Select(tag => tag.Id).Order().ToList();
+
+    private string GetEditorRemoveTagLabel(string tagName) =>
+        string.Format(GetTranslation("Passwords_Editor_RemoveTag"), tagName);
 
     private void BeginDeleteSelectedPassword()
     {
@@ -2287,7 +2718,7 @@ public sealed class PasswordsViewModel : ViewModelBase
                 Description = EditorDescription.Trim(),
                 Color = EditorColor,
                 Password = rawPassword,
-                TagIds = []
+                TagIds = GetSelectedEditorTagIds()
             });
         }
         finally
@@ -2311,7 +2742,7 @@ public sealed class PasswordsViewModel : ViewModelBase
                 Description = EditorDescription.Trim(),
                 Color = EditorColor,
                 Password = rawPassword,
-                TagIds = []
+                TagIds = GetSelectedEditorTagIds()
             });
         }
         finally
@@ -2375,6 +2806,7 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         EditorName = string.Empty;
         EditorDescription = string.Empty;
+        ClearEditorTagSelection();
         ApplyEditorColor(PasswordColorUtility.DefaultColor);
         EditorPassword = string.Empty;
         IsEditorPasswordVisible = false;
@@ -2663,8 +3095,10 @@ public sealed class PasswordsViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(CustomColorsSortNameDescMenuLabel));
     }
 
-    private void OpenCustomColorList()
+    private void OpenCustomColorList(string returnPane = EditorPane)
     {
+        _customColorListReturnPane = returnPane;
+        this.RaisePropertyChanged(nameof(CustomColorsBackToEditorLabel));
         ClearStatusMessage();
         IsCustomColorDeleteConfirmationOpen = false;
         _customColorsPendingDeletion = [];
@@ -2681,12 +3115,22 @@ public sealed class PasswordsViewModel : ViewModelBase
         }
 
         ClearStatusMessage();
-        SetCurrentPane(EditorPane, true);
+        var returnPane = _customColorListReturnPane;
+        _customColorListReturnPane = EditorPane;
+        this.RaisePropertyChanged(nameof(CustomColorsBackToEditorLabel));
+        SetCurrentPane(returnPane, true);
 
         // "Manage colors" is a navigation action, not a real color option.
-        // Re-notify the binding after returning so the ComboBox restores the
-        // actual color that was selected before the user opened this page.
-        this.RaisePropertyChanged(nameof(SelectedEditorColorOption));
+        // Re-notify the relevant binding after returning so the ComboBox restores
+        // the actual color selected before the user opened this page.
+        if (returnPane == PasswordTagEditorPane)
+        {
+            this.RaisePropertyChanged(nameof(SelectedPasswordTagColorOption));
+        }
+        else
+        {
+            this.RaisePropertyChanged(nameof(SelectedEditorColorOption));
+        }
     }
 
     private void OpenCustomColorPicker()
@@ -3075,7 +3519,8 @@ public sealed class PasswordsViewModel : ViewModelBase
     {
         None,
         Passwords,
-        CustomColors
+        CustomColors,
+        PasswordTags
     }
 
 }

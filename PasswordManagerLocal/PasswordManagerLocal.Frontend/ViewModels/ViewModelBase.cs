@@ -60,6 +60,8 @@ public abstract class ViewModelBase : ReactiveObject
             InvalidInputException => GetTranslation("Error_InvalidInput"),
             PasswordNotFoundException => GetTranslation("Error_NotFound"),
             DuplicatePasswordNameException => GetTranslation("Error_DuplicatePasswordName"),
+            DuplicatePasswordTagNameException => GetTranslation("Error_DuplicatePasswordTagName"),
+            PasswordTagNotFoundException => GetTranslation("Error_NotFound"),
             DuplicateCustomUserColorNameException => GetTranslation("Error_DuplicateCustomColorName"),
             DuplicateCustomUserColorCodeException => GetTranslation("Error_DuplicateCustomColorCode"),
             CustomUserColorNotFoundException => GetTranslation("Error_NotFound"),
