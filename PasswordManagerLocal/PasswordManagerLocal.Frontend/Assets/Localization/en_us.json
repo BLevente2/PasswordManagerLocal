@@ -79,6 +79,8 @@
   "Passwords_Details_Title": "Your entries",
   "Passwords_Details_Empty_Title": "No item selected",
   "Passwords_Details_Empty_Description": "Select a password from the list to see more details, or leave the list without a selection.",
+  "Passwords_Details_TagsLabel": "Tags",
+  "Passwords_Details_NoTags": "No tags are assigned to this password.",
   "Passwords_Reveal": "Reveal",
   "Passwords_Hide": "Hide",
   "Passwords_HiddenValue": "••••••••••••••••",

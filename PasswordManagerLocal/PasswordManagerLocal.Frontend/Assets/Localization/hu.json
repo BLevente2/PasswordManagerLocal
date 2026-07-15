@@ -79,6 +79,8 @@
   "Passwords_Details_Title": "Bejegyzések",
   "Passwords_Details_Empty_Title": "Nincs kiválasztott elem",
   "Passwords_Details_Empty_Description": "Válassz ki egy jelszót a listából a részletek megtekintéséhez, vagy hagyd a listát kijelölés nélkül.",
+  "Passwords_Details_TagsLabel": "Címkék",
+  "Passwords_Details_NoTags": "Ehhez a jelszóhoz nincs címke hozzárendelve.",
   "Passwords_Reveal": "Felfedés",
   "Passwords_Hide": "Elrejtés",
   "Passwords_HiddenValue": "••••••••••••••••",

@@ -43,6 +43,8 @@ public sealed partial class PasswordsViewModel : ViewModelBase
         nameof(DetailsTitle),
         nameof(DetailsEmptyTitle),
         nameof(DetailsEmptyDescription),
+        nameof(DetailsTagsLabel),
+        nameof(DetailsNoTagsMessage),
         nameof(NameLabel),
         nameof(PasswordLabel),
         nameof(DescriptionLabel),
@@ -253,6 +255,7 @@ public sealed partial class PasswordsViewModel : ViewModelBase
         _passwordGenerator = new MaximumStrengthPasswordGenerator(_passwordStrengthEstimator);
 
         Passwords = new ObservableCollection<PasswordItemViewModel>();
+        SelectedPasswordTags = new ObservableCollection<PasswordTagItemViewModel>();
         EditorSelectedTags = new ObservableCollection<PasswordTagItemViewModel>();
         EditorTagSuggestions = new ObservableCollection<PasswordTagItemViewModel>();
         CustomColors = new ObservableCollection<CustomColorItemViewModel>();
@@ -304,6 +307,8 @@ public sealed partial class PasswordsViewModel : ViewModelBase
     }
 
     public ObservableCollection<PasswordItemViewModel> Passwords { get; }
+
+    public ObservableCollection<PasswordTagItemViewModel> SelectedPasswordTags { get; }
 
     public ObservableCollection<PasswordTagItemViewModel> EditorSelectedTags { get; }
 
@@ -416,6 +421,7 @@ public sealed partial class PasswordsViewModel : ViewModelBase
             this.RaisePropertyChanged(nameof(IsPasswordHidden));
 
             HidePassword();
+            RefreshSelectedPasswordTags();
 
             if (value is not null && CurrentPane == ListPane)
             {
@@ -427,6 +433,10 @@ public sealed partial class PasswordsViewModel : ViewModelBase
     public bool HasSelection => SelectedPassword is not null;
 
     public bool IsSelectionEmpty => !HasSelection;
+
+    public bool HasSelectedPasswordTags => SelectedPasswordTags.Count > 0;
+
+    public bool HasNoSelectedPasswordTags => !HasSelectedPasswordTags;
 
     public PasswordItemViewModel? PasswordPendingDeletion
     {
@@ -1086,6 +1096,10 @@ public sealed partial class PasswordsViewModel : ViewModelBase
     public string DetailsEmptyTitle => GetTranslation("Passwords_Details_Empty_Title");
 
     public string DetailsEmptyDescription => GetTranslation("Passwords_Details_Empty_Description");
+
+    public string DetailsTagsLabel => GetTranslation("Passwords_Details_TagsLabel");
+
+    public string DetailsNoTagsMessage => GetTranslation("Passwords_Details_NoTags");
 
     public string NameLabel => GetTranslation("Common_Name");
 
@@ -2385,13 +2399,32 @@ public sealed partial class PasswordsViewModel : ViewModelBase
         }
 
         SetEditorSelectedTags(selectedTagIds);
+        RefreshSelectedPasswordTags();
     }
 
     private void ClearPasswordTagItems()
     {
         _allPasswordTags.Clear();
+        RefreshSelectedPasswordTags();
         ClearEditorTagSelection();
         RaiseEditorTagStateChanged();
+    }
+
+    private void RefreshSelectedPasswordTags()
+    {
+        SelectedPasswordTags.Clear();
+
+        if (SelectedPassword is not null)
+        {
+            var selectedTagIds = SelectedPassword.TagIds.ToHashSet();
+            foreach (var tag in _allPasswordTags.Where(tag => selectedTagIds.Contains(tag.Id)))
+            {
+                SelectedPasswordTags.Add(tag);
+            }
+        }
+
+        this.RaisePropertyChanged(nameof(HasSelectedPasswordTags));
+        this.RaisePropertyChanged(nameof(HasNoSelectedPasswordTags));
     }
 
     private void SetEditorSelectedTags(IEnumerable<Guid> tagIds)
