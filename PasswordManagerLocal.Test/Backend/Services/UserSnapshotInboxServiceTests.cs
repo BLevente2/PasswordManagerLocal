@@ -850,8 +850,8 @@ public sealed class UserSnapshotInboxServiceTests
         var user = new User
         {
             UId = Guid.NewGuid(),
-            UsernameHash = [0x01, 0x02],
-            UsernameSalt = [0x03, 0x04],
+            UsernameHash = Enumerable.Repeat((byte)0x01, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x03, 32).ToArray(),
             PasswordSalt = [0x05, 0x06],
             EncryptedPayload = [0x10],
             EncryptedGeneralUserDataPayload = [0x20],
@@ -859,6 +859,10 @@ public sealed class UserSnapshotInboxServiceTests
             EncryptedUserDevicesDataPayload = [0x40],
             KeyEpoch = 1,
             MembershipEpoch = 1,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = 1_000,
+            GeneralDataVersionLogicalCounter = 0,
+            GeneralDataVersionOriginDeviceId = Guid.Parse("D40D55E9-8AF1-46D0-B260-3461124F220A"),
+            GeneralDataVersionOriginInstanceId = Guid.Parse("54A6DFB6-203C-447C-B9CB-D0E92567FC6B"),
             LastModifiedAt = now,
             UserDataLastModifiedAt = now,
             GeneralUserDataLastModifiedAt = now,
@@ -886,6 +890,13 @@ public sealed class UserSnapshotInboxServiceTests
             UId = user.UId,
             UsernameHash = user.UsernameHash.ToArray(),
             UsernameSalt = user.UsernameSalt.ToArray(),
+            GeneralUserDataVersion = new()
+            {
+                PhysicalTimeUnixMilliseconds = 10_000 + revision,
+                LogicalCounter = 0,
+                OriginDeviceId = originDeviceId,
+                OriginInstanceId = originInstanceId
+            },
             PasswordSalt = user.PasswordSalt.ToArray(),
             EncryptedPayload = [marker, 0x01],
             EncryptedGeneralUserDataPayload = [marker, 0x02],

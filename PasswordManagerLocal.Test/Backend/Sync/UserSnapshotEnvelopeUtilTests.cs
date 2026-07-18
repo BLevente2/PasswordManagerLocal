@@ -37,6 +37,45 @@ public sealed class UserSnapshotEnvelopeUtilTests
             UserSnapshotEnvelopeUtil.VerifyWithSigningKey(envelope, trustedDevice.SignPublicKey));
     }
 
+
+    [TestMethod]
+    public void Verify_UsernameVersionChangedAfterSigning_RejectsEnvelope()
+    {
+        using var key = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var deviceId = Guid.NewGuid();
+        var instanceId = Guid.NewGuid();
+        var envelope = CreateEnvelope(deviceId, instanceId, key);
+        envelope.User.GeneralUserDataVersion = new()
+        {
+            PhysicalTimeUnixMilliseconds = 2_000,
+            LogicalCounter = 0,
+            OriginDeviceId = deviceId,
+            OriginInstanceId = instanceId
+        };
+        envelope.User.IntegrityHash = SyncCryptoUtil.CalculateUserHash(
+            envelope.User,
+            envelope.CreatedAtUtc.ToUnixTimeMilliseconds());
+
+        MSTestAssert.ThrowsExactly<InvalidDataException>(() =>
+            UserSnapshotEnvelopeUtil.VerifyWithSigningKey(envelope, key.PublicKey.Export(KeyBlobFormat.RawPublicKey)));
+    }
+
+    [TestMethod]
+    public void FillOriginAuthentication_MissingUsernameVersion_RejectsEnvelope()
+    {
+        using var key = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var deviceId = Guid.NewGuid();
+        var instanceId = Guid.NewGuid();
+        var envelope = CreateUnsignedEnvelope(deviceId, instanceId);
+        envelope.User.GeneralUserDataVersion = new();
+        envelope.User.IntegrityHash = SyncCryptoUtil.CalculateUserHash(
+            envelope.User,
+            envelope.CreatedAtUtc.ToUnixTimeMilliseconds());
+
+        MSTestAssert.ThrowsExactly<InvalidDataException>(() =>
+            UserSnapshotEnvelopeUtil.FillOriginAuthentication(envelope, CreateIdentity(deviceId, instanceId, key)));
+    }
+
     [TestMethod]
     public void FillOriginAuthentication_ForeignOriginIdentity_RejectsSigningAttempt()
     {
@@ -64,8 +103,15 @@ public sealed class UserSnapshotEnvelopeUtilTests
         var payload = new UserSyncPayload
         {
             UId = userId,
-            UsernameHash = [0x01],
-            UsernameSalt = [0x02],
+            UsernameHash = Enumerable.Repeat((byte)0x01, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x02, 32).ToArray(),
+            GeneralUserDataVersion = new()
+            {
+                PhysicalTimeUnixMilliseconds = 1_000,
+                LogicalCounter = 0,
+                OriginDeviceId = deviceId,
+                OriginInstanceId = instanceId
+            },
             PasswordSalt = [0x03],
             EncryptedPayload = [0x04],
             EncryptedGeneralUserDataPayload = [0x05],

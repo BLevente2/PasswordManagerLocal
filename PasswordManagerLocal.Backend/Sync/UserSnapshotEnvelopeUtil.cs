@@ -3,12 +3,13 @@ using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Utils;
 
 namespace PasswordManagerLocal.Backend.Sync;
 
 public static class UserSnapshotEnvelopeUtil
 {
-    private const string CanonicalDomain = "PasswordManagerLocal.Backend.UserSnapshot.Content.v2";
+    private const string CanonicalDomain = "PasswordManagerLocal.Backend.UserSnapshot.Content.v3";
 
     public static void FillOriginAuthentication(UserSnapshotEnvelope envelope, IDeviceIdentityService identity)
     {
@@ -87,7 +88,7 @@ public static class UserSnapshotEnvelopeUtil
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
 
-        writer.Write("PasswordManagerLocal.Backend.UserSnapshot.Signature.v2");
+        writer.Write("PasswordManagerLocal.Backend.UserSnapshot.Signature.v3");
         writer.Write(envelope.UserId.ToByteArray());
         writer.Write(envelope.OriginDeviceId.ToByteArray());
         writer.Write(envelope.OriginInstanceId.ToByteArray());
@@ -103,6 +104,10 @@ public static class UserSnapshotEnvelopeUtil
         writer.Write(payload.UId.ToByteArray());
         SyncCryptoUtil.WriteBytes(writer, payload.UsernameHash);
         SyncCryptoUtil.WriteBytes(writer, payload.UsernameSalt);
+        writer.Write(payload.GeneralUserDataVersion.PhysicalTimeUnixMilliseconds);
+        writer.Write(payload.GeneralUserDataVersion.LogicalCounter);
+        writer.Write(payload.GeneralUserDataVersion.OriginDeviceId.ToByteArray());
+        writer.Write(payload.GeneralUserDataVersion.OriginInstanceId.ToByteArray());
         SyncCryptoUtil.WriteBytes(writer, payload.PasswordSalt);
         SyncCryptoUtil.WriteBytes(writer, payload.EncryptedPayload);
         SyncCryptoUtil.WriteBytes(writer, payload.EncryptedGeneralUserDataPayload);
@@ -157,6 +162,11 @@ public static class UserSnapshotEnvelopeUtil
 
         if (envelope.User.UId != envelope.UserId)
             throw new InvalidDataException("User snapshot payload user id does not match the envelope.");
+
+        SyncVersionStampComparer.Validate(envelope.User.GeneralUserDataVersion);
+        if (envelope.User.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
+            envelope.User.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes)
+            throw new InvalidDataException("User snapshot username projection metadata is invalid.");
 
         if (envelope.User.IntegrityHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
             throw new InvalidDataException("User snapshot payload integrity hash is invalid.");

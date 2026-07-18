@@ -55,6 +55,8 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         var queueWriter = services.GetRequiredService<ISyncQueueWriterService>();
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
+        var loginIdentities = services.GetRequiredService<IUserLoginIdentityProjectionService>();
+        var versionClock = services.GetRequiredService<ISyncVersionClockService>();
 
         var existingState = await controlStates.GetAsync(snapshot.PrimaryUserId, ct);
         if (existingState is not null)
@@ -90,6 +92,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
                 await users.AddAsync(user, ct);
             }
             ApplyUser(validated.User, user);
+            await loginIdentities.SetCanonicalAsync(user, validated.User.GeneralUserDataVersion, ct);
 
             foreach (var groupSnapshot in snapshot.Groups)
             {
@@ -285,6 +288,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             syncState.LastPublishedContentHash = [];
             syncState.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
 
+            await loginIdentities.RecalculateUnderLifecycleAsync(snapshot.PrimaryUserId, ct);
             await unitOfWork.SaveChangesAsync(ct);
             user = await users.GetByIdAsync(snapshot.PrimaryUserId, ct)
                 ?? throw new InvalidDataException("The imported user disappeared before local snapshot publication.");
@@ -306,6 +310,11 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             unitOfWork.ClearTrackedChanges();
             throw;
         }
+
+        versionClock.Observe(
+            validated.PendingSnapshots
+                .Select(item => item.Envelope.User.GeneralUserDataVersion)
+                .Prepend(validated.User.GeneralUserDataVersion));
 
         foreach (var device in await devices.ListTrustedUnblockedAsync(ct))
             syncIdentities.TryAdd(device);
@@ -483,7 +492,10 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
 
     private static void VerifyUserSnapshot(DeviceEnrollmentUserSnapshot source)
     {
-        if (source.EncryptedPayload.Length == 0 || source.EncryptedGeneralUserDataPayload.Length == 0 ||
+        SyncVersionStampComparer.Validate(source.GeneralUserDataVersion);
+        if (source.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
+            source.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes ||
+            source.EncryptedPayload.Length == 0 || source.EncryptedGeneralUserDataPayload.Length == 0 ||
             source.EncryptedUserPasswordsDataPayload.Length == 0 || source.EncryptedUserDevicesDataPayload.Length == 0 ||
             source.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
             throw new InvalidDataException("The enrollment bootstrap contains incomplete encrypted user data.");
@@ -498,6 +510,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         target.UId = source.UId;
         target.UsernameHash = source.UsernameHash.ToArray();
         target.UsernameSalt = source.UsernameSalt.ToArray();
+        target.SetGeneralUserDataVersion(source.GeneralUserDataVersion);
         target.PasswordSalt = source.PasswordSalt.ToArray();
         target.EncryptedPayload = source.EncryptedPayload.ToArray();
         target.EncryptedGeneralUserDataPayload = source.EncryptedGeneralUserDataPayload.ToArray();

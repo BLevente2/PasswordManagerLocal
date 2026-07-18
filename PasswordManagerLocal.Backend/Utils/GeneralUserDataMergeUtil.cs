@@ -55,6 +55,7 @@ internal static class GeneralUserDataMergeUtil
         CryptographicOperations.ZeroMemory(existingUser.UsernameSalt);
         existingUser.UsernameHash = incomingUser.UsernameHash.ToArray();
         existingUser.UsernameSalt = incomingUser.UsernameSalt.ToArray();
+        existingUser.SetGeneralUserDataVersion(incoming.Version);
         return true;
     }
 

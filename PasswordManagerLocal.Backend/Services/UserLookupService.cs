@@ -2,8 +2,6 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Security;
-using System.Security.Cryptography;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -15,14 +13,17 @@ public sealed class UserLookupService : IUserLookupService
     private readonly IUserRepository _users;
     private readonly IUserSessionService _sessions;
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
+    private readonly IUserLoginIdentityProjectionService _loginIdentities;
 
     public UserLookupService(
         IUserRepository users,
         IUserSessionService sessions,
+        IUserLoginIdentityProjectionService loginIdentities,
         IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _users = users;
         _sessions = sessions;
+        _loginIdentities = loginIdentities;
         _deletionBarriers = deletionBarriers;
     }
 
@@ -46,29 +47,15 @@ public sealed class UserLookupService : IUserLookupService
     public Task<User> GetAndVerifyUserAsync(Guid token, CancellationToken ct = default) =>
         GetAndVerifyUserByUidAsync(_sessions.GetUidFromToken(token), ct);
 
+    public Task<UserLoginIdentityMatchResult> ResolveUsernameAsync(byte[] username, CancellationToken ct = default) =>
+        _loginIdentities.FindByUsernameAsync(username, ct);
+
     public async Task<User?> GetUserByUsernameAsync(byte[] username, CancellationToken ct = default)
     {
-        var lookupData = await _users.ListLoginLookupDataAsync(ct);
-
-        foreach (var candidate in lookupData)
-        {
-            var calculatedHash = Hashing.SHA256Hash(username, candidate.UsernameSalt);
-            try
-            {
-                if (!Hashing.Verify(candidate.UsernameHash, calculatedHash))
-                    continue;
-
-                if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(candidate.UId, ct))
-                    continue;
-                return await _users.GetByIdAsync(candidate.UId, ct);
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(calculatedHash);
-            }
-        }
-
-        return null;
+        var resolution = await ResolveUsernameAsync(username, ct);
+        if (resolution.State != UserLoginIdentityMatchState.Matched || !resolution.UserId.HasValue)
+            return null;
+        return await GetUserByUidAsync(resolution.UserId.Value, ct);
     }
 
     public async Task<User> GetAndVerifyUserByUsernameAsync(byte[] username, CancellationToken ct = default)

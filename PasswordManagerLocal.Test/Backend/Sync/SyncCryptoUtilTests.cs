@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 
@@ -250,8 +251,15 @@ public sealed class SyncCryptoUtilTests
         new()
         {
             UId = Guid.Parse("9FC68202-3041-45C5-80B2-2C82CF4662C8"),
-            UsernameHash = [1, 2, 3],
-            UsernameSalt = [4, 5, 6],
+            UsernameHash = Enumerable.Repeat((byte)0x11, Hashing.SHA256HashSizeInBytes).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x22, Hashing.SHA256HashSizeInBytes).ToArray(),
+            GeneralUserDataVersion = new SyncVersionStamp
+            {
+                PhysicalTimeUnixMilliseconds = 1_750_000_000_000L,
+                LogicalCounter = 0,
+                OriginDeviceId = Guid.Parse("12E1F0B2-529C-40D2-9EE4-A17AA70682F0"),
+                OriginInstanceId = Guid.Parse("3AB48C66-E0B7-4F34-B83B-7A8CDE70D5D9")
+            },
             PasswordSalt = [7, 8, 9],
             EncryptedPayload = [10, 11, 12]
         };

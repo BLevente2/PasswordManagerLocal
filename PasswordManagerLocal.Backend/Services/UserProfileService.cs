@@ -20,6 +20,7 @@ public class UserProfileService : IUserProfileService
     private readonly IUserDeletionService _deletion;
     private readonly IAuthService _authService;
     private readonly ISyncVersionClockService _versionClock;
+    private readonly IUserLifecycleCoordinator _lifecycle;
 
     public UserProfileService(
         IUserLookupService lookup,
@@ -28,7 +29,8 @@ public class UserProfileService : IUserProfileService
         IUserSessionService sessions,
         IUserDeletionService deletion,
         IAuthService authService,
-        ISyncVersionClockService versionClock)
+        ISyncVersionClockService versionClock,
+        IUserLifecycleCoordinator lifecycle)
     {
         _lookup = lookup;
         _reader = reader;
@@ -37,6 +39,7 @@ public class UserProfileService : IUserProfileService
         _deletion = deletion;
         _authService = authService;
         _versionClock = versionClock;
+        _lifecycle = lifecycle;
     }
 
 
@@ -66,27 +69,45 @@ public class UserProfileService : IUserProfileService
     }
 
 
-    public async Task ChangeUsernameAsync(Guid token, string newUsername, CancellationToken ct = default)
+    public Task ChangeUsernameAsync(Guid token, string newUsername, CancellationToken ct = default)
     {
         if (!IsValidUsername(newUsername))
             throw new InvalidInputException();
 
+        var userId = _sessions.GetUidFromToken(token);
+        return _lifecycle.ExecuteAsync(
+            userId,
+            innerCt => ChangeUsernameUnderLifecycleAsync(token, userId, newUsername, innerCt),
+            ct);
+    }
+
+    private async Task ChangeUsernameUnderLifecycleAsync(
+        Guid token,
+        Guid expectedUserId,
+        string newUsername,
+        CancellationToken ct)
+    {
         var user = await _lookup.GetAndVerifyUserAsync(token, ct);
+        if (user.UId != expectedUserId)
+            throw new InvalidTokenException();
+
         var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
         var usernameBytes = Encoding.UTF8.GetBytes(newUsername);
 
         try
         {
-            var existingUser = await _lookup.GetUserByUsernameAsync(usernameBytes, ct);
-            if (existingUser is not null && existingUser.UId != user.UId)
+            var resolution = await _lookup.ResolveUsernameAsync(usernameBytes, ct);
+            if (resolution.State == UserLoginIdentityMatchState.Matched && resolution.UserId != user.UId)
+                throw new InvalidInputException();
+            if (resolution.State is not UserLoginIdentityMatchState.NotFound and not UserLoginIdentityMatchState.Matched)
                 throw new InvalidInputException();
 
             bundle.GeneralUserData.Username = newUsername;
             bundle.GeneralUserData.LastUpdatedAt = DateTime.UtcNow;
             bundle.GeneralUserData.Version = _versionClock.Next();
+
             CryptographicOperations.ZeroMemory(user.UsernameSalt);
             CryptographicOperations.ZeroMemory(user.UsernameHash);
-
             user.UsernameSalt = Hashing.GenerateSalt();
             user.UsernameHash = Hashing.SHA256Hash(usernameBytes, user.UsernameSalt);
         }

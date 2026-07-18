@@ -399,7 +399,7 @@ public sealed class AuthoritativeAccountDeletionTests
         MSTestAssert.AreEqual(UserControlOperationStatus.StoredPending, stored!.Status);
         MSTestAssert.IsNotNull(await database.DeletedUserBarriers.GetAsync(user.UId));
         MSTestAssert.IsNotNull(await database.Users.GetByIdAsync(user.UId));
-        var failClosedLookup = new UserLookupService(database.Users, null!, database.DeletedUserBarriers);
+        var failClosedLookup = new UserLookupService(database.Users, null!, null!, database.DeletedUserBarriers);
         MSTestAssert.IsNull(await failClosedLookup.GetUserByUidAsync(user.UId));
         MSTestAssert.HasCount(1, auth.LogoutUserCalls);
     }
@@ -565,6 +565,7 @@ public sealed class AuthoritativeAccountDeletionTests
             UId = user.UId,
             UsernameHash = user.UsernameHash.ToArray(),
             UsernameSalt = user.UsernameSalt.ToArray(),
+            GeneralUserDataVersion = user.GetGeneralUserDataVersion(),
             PasswordSalt = user.PasswordSalt.ToArray(),
             EncryptedPayload = user.EncryptedPayload.ToArray(),
             EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload.ToArray(),
@@ -667,8 +668,8 @@ public sealed class AuthoritativeAccountDeletionTests
         var user = new User
         {
             UId = userId,
-            UsernameHash = [1],
-            UsernameSalt = [2],
+            UsernameHash = Enumerable.Repeat((byte)1, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)2, 32).ToArray(),
             PasswordSalt = [3],
             EncryptedPayload = [4],
             EncryptedGeneralUserDataPayload = [5],
@@ -677,6 +678,10 @@ public sealed class AuthoritativeAccountDeletionTests
             SavedKey = savedKey,
             KeyEpoch = 1,
             MembershipEpoch = 1,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = 1_000,
+            GeneralDataVersionLogicalCounter = 0,
+            GeneralDataVersionOriginDeviceId = Guid.Parse("D40D55E9-8AF1-46D0-B260-3461124F220A"),
+            GeneralDataVersionOriginInstanceId = Guid.Parse("54A6DFB6-203C-447C-B9CB-D0E92567FC6B"),
             LastModifiedAt = now,
             UserDataLastModifiedAt = now,
             GeneralUserDataLastModifiedAt = now,

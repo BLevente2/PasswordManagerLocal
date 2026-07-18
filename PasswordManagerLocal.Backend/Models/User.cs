@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using System.Security.Cryptography;
 
 namespace PasswordManagerLocal.Backend.Models;
@@ -16,6 +17,10 @@ public sealed class User : IntegrityCheckableBase
     public byte[]? SavedKey { get; set; } = null;
     public long KeyEpoch { get; set; }
     public long MembershipEpoch { get; set; }
+    public long GeneralDataVersionPhysicalTimeUnixMilliseconds { get; set; }
+    public long GeneralDataVersionLogicalCounter { get; set; }
+    public Guid GeneralDataVersionOriginDeviceId { get; set; }
+    public Guid GeneralDataVersionOriginInstanceId { get; set; }
     public DateTimeOffset LastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UserDataLastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset GeneralUserDataLastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -44,12 +49,34 @@ public sealed class User : IntegrityCheckableBase
             hash.WriteBytes(EncryptedUserDevicesDataPayload);
             hash.Write(KeyEpoch);
             hash.Write(MembershipEpoch);
+            hash.Write(GeneralDataVersionPhysicalTimeUnixMilliseconds);
+            hash.Write(GeneralDataVersionLogicalCounter);
+            hash.Write(GeneralDataVersionOriginDeviceId);
+            hash.Write(GeneralDataVersionOriginInstanceId);
             hash.Write(LastModifiedAt);
             hash.Write(UserDataLastModifiedAt);
             hash.Write(GeneralUserDataLastModifiedAt);
             hash.Write(UserPasswordsDataLastModifiedAt);
             hash.Write(UserDevicesDataLastModifiedAt);
         });
+
+
+    public SyncVersionStamp GetGeneralUserDataVersion() => new()
+    {
+        PhysicalTimeUnixMilliseconds = GeneralDataVersionPhysicalTimeUnixMilliseconds,
+        LogicalCounter = GeneralDataVersionLogicalCounter,
+        OriginDeviceId = GeneralDataVersionOriginDeviceId,
+        OriginInstanceId = GeneralDataVersionOriginInstanceId
+    };
+
+    public void SetGeneralUserDataVersion(SyncVersionStamp version)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+        GeneralDataVersionPhysicalTimeUnixMilliseconds = version.PhysicalTimeUnixMilliseconds;
+        GeneralDataVersionLogicalCounter = version.LogicalCounter;
+        GeneralDataVersionOriginDeviceId = version.OriginDeviceId;
+        GeneralDataVersionOriginInstanceId = version.OriginInstanceId;
+    }
 
 
     public void ClearEncryptedPayloads()

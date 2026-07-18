@@ -140,13 +140,18 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         var keyResolver = services.GetRequiredService<IUserSyncKeyResolverService>();
         var garbageCollector = services.GetRequiredService<IUserTombstoneGarbageCollector>();
         var trackedUser = await users.GetByIdWithRelationsAsync(userId, ct) ?? throw new UserNotFoundException();
-        if (keyResolver.TryResolve(trackedUser, out var activeKey) && activeKey is not null)
+        if (!keyResolver.TryResolve(trackedUser, out var activeKey) || activeKey is null)
+            throw new InvalidOperationException("Enrollment export requires an available user key so login projection metadata can be verified against decrypted canonical data.");
+
+        using (activeKey)
         {
-            using (activeKey)
-            {
-                await mergeCoordinator.TryMergePendingUnderLifecycleAsync(userId, activeKey, ct);
-                await garbageCollector.CollectAsync(userId, activeKey, ct);
-            }
+            await mergeCoordinator.TryMergePendingUnderLifecycleAsync(userId, activeKey, ct);
+            await garbageCollector.CollectAsync(userId, activeKey, ct);
+
+            var verifiedUser = await users.GetByIdAsync(userId, ct) ?? throw new UserNotFoundException();
+            using var verifiedBundle = await services.GetRequiredService<IUserDataReaderService>()
+                .GetAndVerifyUserDataBundleAsync(verifiedUser, activeKey, ct);
+            UserLoginIdentityMetadataUtil.Verify(verifiedUser, verifiedBundle.GeneralUserData);
         }
 
         var user = await users.GetByIdAsNoTrackingWithRelationsAsync(userId, ct) ?? throw new UserNotFoundException();
@@ -259,6 +264,7 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
                     UId = user.UId,
                     UsernameHash = user.UsernameHash.ToArray(),
                     UsernameSalt = user.UsernameSalt.ToArray(),
+                    GeneralUserDataVersion = user.GetGeneralUserDataVersion(),
                     PasswordSalt = user.PasswordSalt.ToArray(),
                     EncryptedPayload = user.EncryptedPayload.ToArray(),
                     EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload.ToArray(),

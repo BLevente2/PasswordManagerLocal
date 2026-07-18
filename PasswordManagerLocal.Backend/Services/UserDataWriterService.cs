@@ -28,6 +28,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
     private readonly IDeviceIdentityService _identity;
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUnitOfWork _uow;
+    private readonly IUserLoginIdentityProjectionService _loginIdentities;
 
     public UserDataWriterService(
         IUserRepository users,
@@ -41,7 +42,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
         IUserSyncStateRepository syncStates,
         IDeviceIdentityService identity,
         IUserLifecycleCoordinator lifecycle,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserLoginIdentityProjectionService loginIdentities)
     {
         _users = users;
         _cache = cache;
@@ -55,6 +57,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         _identity = identity;
         _lifecycle = lifecycle;
         _uow = uow;
+        _loginIdentities = loginIdentities;
     }
 
     public async Task AddNewUserAsync(User user, CancellationToken ct = default)
@@ -415,6 +418,13 @@ public sealed class UserDataWriterService : IUserDataWriterService
             user.EncryptedPayload,
             await userDataTask,
             value => user.EncryptedPayload = value);
+
+        if (rewriteGeneral)
+        {
+            user.SetGeneralUserDataVersion(bundle.GeneralUserData.Version);
+            await _loginIdentities.SetCanonicalAsync(user, bundle.GeneralUserData.Version, ct);
+        }
+
         if (preserveLogicalTimestamps)
         {
             user.GenerateIntegrityHash();

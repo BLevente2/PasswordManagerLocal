@@ -19,6 +19,8 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
+    private readonly IUserLoginIdentityProjectionService? _loginIdentities;
+    private readonly ISyncVersionClockService? _versionClock;
 
     public UserSnapshotInboxService(
         IUserRepository users,
@@ -28,7 +30,9 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         IUnitOfWork uow,
         IUserLifecycleCoordinator lifecycle,
         IUserMembershipAuthorizationService membershipAuthorization,
-        IDeletedUserBarrierRepository? deletionBarriers = null)
+        IDeletedUserBarrierRepository? deletionBarriers = null,
+        IUserLoginIdentityProjectionService? loginIdentities = null,
+        ISyncVersionClockService? versionClock = null)
     {
         _users = users;
         _snapshots = snapshots;
@@ -38,6 +42,8 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         _lifecycle = lifecycle;
         _membershipAuthorization = membershipAuthorization;
         _deletionBarriers = deletionBarriers;
+        _loginIdentities = loginIdentities;
+        _versionClock = versionClock;
     }
 
     public async Task<UserSnapshotReceiptResult> StoreAsync(
@@ -45,18 +51,52 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         Guid transportPeerDeviceId,
         CancellationToken ct = default)
     {
-        UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
-
         return await _lifecycle.ExecuteAsync(
             envelope.UserId,
             async token =>
             {
-                var receipt = await StoreCoreAsync(envelope, transportPeerDeviceId, token);
-                await _uow.SaveChangesAsync(token);
+                UserSnapshotReceiptResult receipt;
+                await using (var transaction = await _uow.BeginTransactionAsync(token))
+                {
+                    try
+                    {
+                        receipt = await StoreCoreAsync(envelope, transportPeerDeviceId, token);
+                        await _uow.SaveChangesAsync(token);
+                        if (_loginIdentities is not null &&
+                            receipt.State is not UserSnapshotReceiptState.Rejected and
+                            not UserSnapshotReceiptState.RejectedAccountDeleted and
+                            not UserSnapshotReceiptState.WrongKeyEpoch and
+                            not UserSnapshotReceiptState.WrongMembershipEpoch and
+                            not UserSnapshotReceiptState.ObsoleteRevision)
+                        {
+                            await _loginIdentities.RecalculateUnderLifecycleAsync(envelope.UserId, token);
+                            await _uow.SaveChangesAsync(token);
+                        }
+                        await transaction.CommitAsync(token);
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None);
+                        _uow.ClearTrackedChanges();
+                        throw;
+                    }
+                }
+
+                if (_versionClock is not null && IsAcceptedForVersionObservation(receipt.State))
+                    _versionClock.Observe([envelope.User.GeneralUserDataVersion]);
                 return receipt;
             },
             ct);
     }
+
+
+    private static bool IsAcceptedForVersionObservation(UserSnapshotReceiptState state) =>
+        state is UserSnapshotReceiptState.StoredPending or
+            UserSnapshotReceiptState.ReplacedOlderPending or
+            UserSnapshotReceiptState.AlreadyStored or
+            UserSnapshotReceiptState.MergedImmediately or
+            UserSnapshotReceiptState.NeedsKey or
+            UserSnapshotReceiptState.StoredMergedReceipt;
 
     private async Task<UserSnapshotReceiptResult> StoreCoreAsync(
         UserSnapshotEnvelope envelope,
@@ -70,6 +110,10 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             return Receipt(envelope, UserSnapshotReceiptState.RejectedAccountDeleted,
                 "The account identity is permanently deleted.");
         }
+
+        // Only active identities may cause immutable-envelope validation work. A permanent
+        // deletion barrier is authoritative even for malformed or stale replay traffic.
+        UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
 
         var user = await _users.GetByIdAsync(envelope.UserId, ct);
         if (user is null)

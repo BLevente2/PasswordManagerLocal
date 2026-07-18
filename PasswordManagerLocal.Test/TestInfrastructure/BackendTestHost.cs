@@ -21,7 +21,7 @@ public sealed class BackendTestHost : IDisposable
     private readonly ServiceProvider _sp;
     private readonly Key _signingKey;
 
-    public BackendTestHost()
+    public BackendTestHost(bool useRealSnapshotMergeCoordinator = false)
     {
         var sc = new ServiceCollection();
         _signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
@@ -69,7 +69,6 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
         sc.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
-        sc.AddSingleton<IUserSnapshotMergeCoordinator, FakeUserSnapshotMergeCoordinator>();
         sc.AddSingleton<IUserSyncSnapshotRepository, FakeUserSyncSnapshotRepository>();
         sc.AddSingleton<IUserSyncStateRepository, FakeUserSyncStateRepository>();
         sc.AddSingleton<IUserRevisionKnowledgeRepository, FakeUserRevisionKnowledgeRepository>();
@@ -86,9 +85,22 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserControlOperationWriterService, FakeUserControlOperationWriterService>();
         sc.AddSingleton<IUserSnapshotPublisherService, FakeUserSnapshotPublisherService>();
         sc.AddSingleton<ISyncQueueWriterService, FakeSyncQueueWriterService>();
+        sc.AddSingleton<IUserSnapshotInboxService, UserSnapshotInboxService>();
+        if (useRealSnapshotMergeCoordinator)
+        {
+            sc.AddSingleton<IUserPasswordsDataMergeService, UserPasswordsDataMergeService>();
+            sc.AddSingleton<IUserDevicesDataMergeService, UserDevicesDataMergeService>();
+            sc.AddSingleton<IUserDataBundleSyncService, UserDataBundleSyncService>();
+            sc.AddSingleton<IUserSnapshotMergeCoordinator, UserSnapshotMergeCoordinator>();
+        }
+        else
+        {
+            sc.AddSingleton<IUserSnapshotMergeCoordinator, FakeUserSnapshotMergeCoordinator>();
+        }
 
         sc.AddSingleton<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
         sc.AddSingleton<IUserSessionService, UserSessionService>();
+        sc.AddSingleton<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
         sc.AddSingleton<IUserLookupService, UserLookupService>();
         sc.AddSingleton<IUserDataReaderService, UserDataReaderService>();
         sc.AddSingleton<IUserDataPersistenceValidator, UserDataPersistenceValidator>();

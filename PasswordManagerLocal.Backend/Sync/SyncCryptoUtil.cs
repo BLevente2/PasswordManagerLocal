@@ -181,6 +181,7 @@ public static class SyncCryptoUtil
             hash.Write(payload.UId);
             hash.WriteBytes(payload.UsernameHash);
             hash.WriteBytes(payload.UsernameSalt);
+            payload.GeneralUserDataVersion.WriteTo(hash);
             hash.WriteBytes(payload.PasswordSalt);
             hash.WriteBytes(payload.EncryptedPayload);
             hash.WriteBytes(payload.EncryptedGeneralUserDataPayload);

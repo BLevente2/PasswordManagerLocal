@@ -208,6 +208,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
             UId = user.UId,
             UsernameHash = user.UsernameHash.ToArray(),
             UsernameSalt = user.UsernameSalt.ToArray(),
+            GeneralUserDataVersion = user.GetGeneralUserDataVersion(),
             PasswordSalt = user.PasswordSalt.ToArray(),
             EncryptedPayload = user.EncryptedPayload.ToArray(),
             EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload.ToArray(),
@@ -234,12 +235,13 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
     private static byte[] CalculatePublishedContentHash(User user, IReadOnlyList<UserSnapshotCoverageEntry> coverage) =>
         Hashing.SHA256Hash(hash =>
         {
-            hash.WriteString("PasswordManagerLocal.Backend.UserSnapshot.PublishedContent.v2");
+            hash.WriteString("PasswordManagerLocal.Backend.UserSnapshot.PublishedContent.v3");
             hash.Write(user.UId);
             hash.Write(user.KeyEpoch);
             hash.Write(user.MembershipEpoch);
             hash.WriteBytes(user.UsernameHash);
             hash.WriteBytes(user.UsernameSalt);
+            user.GetGeneralUserDataVersion().WriteTo(hash);
             hash.WriteBytes(user.PasswordSalt);
             hash.WriteBytes(user.EncryptedPayload);
             hash.WriteBytes(user.EncryptedGeneralUserDataPayload);

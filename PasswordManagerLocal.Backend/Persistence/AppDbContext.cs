@@ -38,6 +38,7 @@ public class AppDbContext : DbContext
     public DbSet<DeviceEnrollmentCommit> DeviceEnrollmentCommits => Set<DeviceEnrollmentCommit>();
     public DbSet<DeletedUserBarrier> DeletedUserBarriers => Set<DeletedUserBarrier>();
     public DbSet<SyncVersionClockState> SyncVersionClockStates => Set<SyncVersionClockState>();
+    public DbSet<UserLoginIdentityState> UserLoginIdentityStates => Set<UserLoginIdentityState>();
 
     public override int SaveChanges()
     {
@@ -69,6 +70,9 @@ public class AppDbContext : DbContext
         var mutableUserIds = ChangeTracker.Entries<User>()
             .Where(entry => entry.State is EntityState.Added or EntityState.Modified)
             .Select(entry => entry.Entity.UId)
+            .Concat(ChangeTracker.Entries<UserLoginIdentityState>()
+                .Where(entry => entry.State is EntityState.Added or EntityState.Modified)
+                .Select(entry => entry.Entity.UserId))
             .Where(userId => userId != Guid.Empty)
             .Distinct()
             .ToList();
@@ -186,6 +190,10 @@ public class AppDbContext : DbContext
         user.Property(u => u.UserDevicesDataLastModifiedAt).IsRequired();
         user.Property(u => u.KeyEpoch).IsRequired().IsConcurrencyToken();
         user.Property(u => u.MembershipEpoch).IsRequired().IsConcurrencyToken();
+        user.Property(u => u.GeneralDataVersionPhysicalTimeUnixMilliseconds).IsRequired();
+        user.Property(u => u.GeneralDataVersionLogicalCounter).IsRequired();
+        user.Property(u => u.GeneralDataVersionOriginDeviceId).IsRequired();
+        user.Property(u => u.GeneralDataVersionOriginInstanceId).IsRequired();
 
         model.Entity<User>()
             .HasMany(u => u.Groups)
@@ -235,6 +243,22 @@ public class AppDbContext : DbContext
         tombstone.Property(t => t.DeletedAtTs).IsRequired();
 
 
+
+        var loginIdentity = model.Entity<UserLoginIdentityState>();
+        loginIdentity.ToTable("UserLoginIdentityStates");
+        loginIdentity.HasKey(identity => identity.UserId);
+        loginIdentity.Property(identity => identity.UsernameHash).IsRequired().HasMaxLength(Security.Hashing.SHA256HashSizeInBytes);
+        loginIdentity.Property(identity => identity.UsernameSalt).IsRequired().HasMaxLength(Security.Hashing.SHA256HashSizeInBytes);
+        loginIdentity.Property(identity => identity.SourceSnapshotHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        loginIdentity.Property(identity => identity.Status).HasConversion<byte>().IsRequired();
+        loginIdentity.Property(identity => identity.StatusReason).HasMaxLength(512);
+        loginIdentity.Property(identity => identity.ConcurrencyVersion).IsRequired().IsConcurrencyToken();
+        loginIdentity.HasOne<User>()
+            .WithOne()
+            .HasForeignKey<UserLoginIdentityState>(identity => identity.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        loginIdentity.HasIndex(identity => identity.Status);
+        loginIdentity.HasIndex(identity => new { identity.KeyEpoch, identity.MembershipEpoch });
 
         var userSyncSnapshot = model.Entity<UserSyncSnapshot>();
         userSyncSnapshot.ToTable("UserSyncSnapshots");

@@ -39,13 +39,17 @@ public sealed class OutgoingDeltaBuilderServiceTests
         var user = new User
         {
             UId = Guid.NewGuid(),
-            UsernameHash = [1, 2],
-            UsernameSalt = [3, 4],
+            UsernameHash = Enumerable.Repeat((byte)0x01, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x02, 32).ToArray(),
             PasswordSalt = [5, 6],
             EncryptedPayload = [7, 8, 9],
             SavedKey = [99],
             KeyEpoch = 1,
             MembershipEpoch = 1,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = 1_000,
+            GeneralDataVersionLogicalCounter = 0,
+            GeneralDataVersionOriginDeviceId = sender.LocalDeviceId,
+            GeneralDataVersionOriginInstanceId = sender.OriginInstanceId,
             LastModifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
         };
         var link = new UserDevice
@@ -547,8 +551,8 @@ public sealed class OutgoingDeltaBuilderServiceTests
         var user = new User
         {
             UId = Guid.NewGuid(),
-            UsernameHash = [0x11],
-            UsernameSalt = [0x12],
+            UsernameHash = Enumerable.Repeat((byte)0x11, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x12, 32).ToArray(),
             PasswordSalt = [0x13],
             EncryptedPayload = [0x14],
             EncryptedGeneralUserDataPayload = [0x15],
@@ -556,6 +560,10 @@ public sealed class OutgoingDeltaBuilderServiceTests
             EncryptedUserDevicesDataPayload = [0x17],
             KeyEpoch = 2,
             MembershipEpoch = 1,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = 2_000,
+            GeneralDataVersionLogicalCounter = 0,
+            GeneralDataVersionOriginDeviceId = Guid.Parse("02D0E935-9300-42EF-8529-4B1F3513C384"),
+            GeneralDataVersionOriginInstanceId = Guid.Parse("6D29FD21-9137-45CD-8574-FEA81252BC31"),
             LastModifiedAt = now,
             UserDataLastModifiedAt = now,
             GeneralUserDataLastModifiedAt = now,
@@ -573,8 +581,15 @@ public sealed class OutgoingDeltaBuilderServiceTests
         var user = new UserSyncPayload
         {
             UId = userId,
-            UsernameHash = [0x01],
-            UsernameSalt = [0x02],
+            UsernameHash = Enumerable.Repeat((byte)0x01, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x02, 32).ToArray(),
+            GeneralUserDataVersion = new()
+            {
+                PhysicalTimeUnixMilliseconds = 1_000,
+                LogicalCounter = 0,
+                OriginDeviceId = originDeviceId,
+                OriginInstanceId = originInstanceId
+            },
             PasswordSalt = [0x03],
             EncryptedPayload = [0x04],
             EncryptedGeneralUserDataPayload = [0x05],

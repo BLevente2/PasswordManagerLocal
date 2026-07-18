@@ -27,6 +27,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
     private readonly IUserAccountDeletionCleanupService? _deletionCleanup;
     private readonly IDeviceEnrollmentService? _enrollment;
+    private readonly IUserLoginIdentityProjectionService? _loginIdentities;
+    private readonly ISyncVersionClockService? _versionClock;
 
     public UserControlOperationInboxService(
         IUserControlOperationRepository operations,
@@ -45,7 +47,9 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         ISyncRuntimeService syncRuntime,
         IDeletedUserBarrierRepository? deletionBarriers = null,
         IUserAccountDeletionCleanupService? deletionCleanup = null,
-        IDeviceEnrollmentService? enrollment = null)
+        IDeviceEnrollmentService? enrollment = null,
+        IUserLoginIdentityProjectionService? loginIdentities = null,
+        ISyncVersionClockService? versionClock = null)
     {
         _operations = operations;
         _states = states;
@@ -64,6 +68,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         _deletionBarriers = deletionBarriers;
         _deletionCleanup = deletionCleanup;
         _enrollment = enrollment;
+        _loginIdentities = loginIdentities;
+        _versionClock = versionClock;
     }
 
     public async Task<UserControlOperationReceiptResult> StoreAndApplyAsync(
@@ -584,8 +590,11 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             state.AppliedMembershipEpoch = Math.Max(state.AppliedMembershipEpoch, envelope.ResultingMembershipEpoch);
             state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
             _operations.Update(row);
+            if (_loginIdentities is not null)
+                await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
             await _uow.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+            _versionClock?.Observe([payload.GeneralUserDataVersion]);
             return Receipt(envelope, UserControlOperationReceiptState.Applied, row.StatusReason);
         }
 
@@ -633,9 +642,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         state.AppliedKeyEpoch = envelope.ResultingKeyEpoch;
         state.AppliedMembershipEpoch = envelope.ResultingMembershipEpoch;
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+        if (_loginIdentities is not null)
+            await _loginIdentities.SetCanonicalAsync(user, user.GetGeneralUserDataVersion(), ct);
 
         await _uow.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+        _versionClock?.Observe([payload.GeneralUserDataVersion]);
 
         // Session and Remember Me effects happen only after canonical replacement commits.
         _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfilePasswordChanged);
@@ -733,6 +745,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             if (authorization?.AdditionOperationId == envelope.OperationId && authorization.AdditionOperationHash is not null && HashEquals(authorization.AdditionOperationHash, envelope.OperationHash))
             {
                 MarkApplied(row, state, envelope, "The exact device addition was already reflected in canonical membership.");
+                if (_loginIdentities is not null)
+                    await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
                 await _uow.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
                 return Receipt(envelope, UserControlOperationReceiptState.Applied, row.StatusReason);
             }
@@ -766,6 +780,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         user.GenerateIntegrityHash();
         _users.Update(user);
         MarkApplied(row, state, envelope, null);
+        if (_loginIdentities is not null)
+            await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
         await _uow.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return Receipt(envelope, UserControlOperationReceiptState.Applied);
@@ -800,6 +816,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             if (payload.Origins.All(origin => ended.Any(auth => auth.AuthorizationId == origin.AuthorizationId && auth.RemovalOperationId == envelope.OperationId && auth.RemovalOperationHash is not null && HashEquals(auth.RemovalOperationHash, envelope.OperationHash))))
             {
                 MarkApplied(row, state, envelope, "The exact device removal was already reflected in canonical membership.");
+                if (_loginIdentities is not null)
+                    await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
                 await _uow.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
                 return Receipt(envelope, UserControlOperationReceiptState.Applied, row.StatusReason);
             }
@@ -832,6 +850,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         user.GenerateIntegrityHash();
         _users.Update(user);
         MarkApplied(row, state, envelope, null);
+        if (_loginIdentities is not null)
+            await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
         await _uow.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         if (removesLocalInstallation)

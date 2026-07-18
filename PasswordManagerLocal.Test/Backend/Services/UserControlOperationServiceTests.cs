@@ -38,6 +38,17 @@ public sealed class UserControlOperationServiceTests
         await database.Devices.AddAsync(authorDevice);
         await database.UserDevices.AddAsync(link);
         await database.UnitOfWork.SaveChangesAsync();
+        var lifecycle = new UserLifecycleCoordinator();
+        var membership = new FakeUserMembershipAuthorizationService();
+        var loginIdentities = new UserLoginIdentityProjectionService(
+            database.Users,
+            database.UserSyncSnapshots,
+            membership,
+            lifecycle,
+            database.UnitOfWork,
+            database.DeletedUserBarriers);
+        await loginIdentities.SetCanonicalAsync(canonical, canonical.GetGeneralUserDataVersion());
+        await database.UnitOfWork.SaveChangesAsync();
 
         var replacement = CreateReplacement(canonical, marker: 0x40);
         var envelope = CreateSignedKeyReplacement(replacement, author, originSequence: 1);
@@ -49,14 +60,15 @@ public sealed class UserControlOperationServiceTests
             database.Devices,
             database.UserDevices,
             database.UserSyncSnapshots,
-            new UserLifecycleCoordinator(),
+            lifecycle,
             auth,
             database.UnitOfWork,
-            new FakeUserMembershipAuthorizationService(),
+            membership,
             database.UserMembershipAuthorizations,
             database.LocalUserDevices,
             new FakeDeviceIdentityService(),
-            new FakeSyncRuntimeService());
+            new FakeSyncRuntimeService(),
+            loginIdentities: loginIdentities);
 
         var first = await service.StoreAndApplyAsync(envelope, authorDevice.Id);
         var duplicate = await service.StoreAndApplyAsync(envelope, authorDevice.Id);
@@ -64,6 +76,7 @@ public sealed class UserControlOperationServiceTests
         database.Db.ChangeTracker.Clear();
         var reloaded = await database.Db.Users.SingleAsync(user => user.UId == canonical.UId);
         var stored = await database.Db.UserControlOperations.SingleAsync(operation => operation.OperationId == envelope.OperationId);
+        var loginIdentity = await database.Users.GetLoginIdentityStateAsync(canonical.UId);
 
         MSTestAssert.AreEqual(UserControlOperationReceiptState.Applied, first.State);
         MSTestAssert.AreEqual(UserControlOperationReceiptState.Applied, duplicate.State);
@@ -73,6 +86,11 @@ public sealed class UserControlOperationServiceTests
         CollectionAssert.AreEqual(replacement.EncryptedPayload, reloaded.EncryptedPayload);
         CollectionAssert.AreEqual(replacement.IntegrityHash, reloaded.IntegrityHash);
         MSTestAssert.AreEqual(UserControlOperationStatus.Applied, stored.Status);
+        MSTestAssert.IsNotNull(loginIdentity);
+        MSTestAssert.AreEqual(replacement.KeyEpoch, loginIdentity!.KeyEpoch);
+        MSTestAssert.AreEqual(replacement.GetGeneralUserDataVersion(), loginIdentity.Version);
+        CollectionAssert.AreEqual(replacement.UsernameHash, loginIdentity.UsernameHash);
+        CollectionAssert.AreEqual(replacement.UsernameSalt, loginIdentity.UsernameSalt);
         MSTestAssert.HasCount(1, auth.LogoutUserCalls);
         MSTestAssert.AreEqual(AuthSessionInvalidationReason.ProfilePasswordChanged, auth.LogoutUserCalls[0].Reason);
     }
@@ -411,8 +429,8 @@ public sealed class UserControlOperationServiceTests
         var user = new User
         {
             UId = Guid.NewGuid(),
-            UsernameHash = [marker, 0x01],
-            UsernameSalt = [marker, 0x02],
+            UsernameHash = Enumerable.Repeat(marker, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)(marker ^ 0x5A), 32).ToArray(),
             PasswordSalt = [marker, 0x03],
             EncryptedPayload = [marker, 0x10],
             EncryptedGeneralUserDataPayload = [marker, 0x20],
@@ -421,6 +439,10 @@ public sealed class UserControlOperationServiceTests
             SavedKey = savedKey,
             KeyEpoch = keyEpoch,
             MembershipEpoch = 1,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = 1_000,
+            GeneralDataVersionLogicalCounter = 0,
+            GeneralDataVersionOriginDeviceId = Guid.Parse("B05F46DB-0F20-4B63-AF2E-9E88F231C57C"),
+            GeneralDataVersionOriginInstanceId = Guid.Parse("54C33A5E-5091-4BB1-9517-FDA006123088"),
             LastModifiedAt = now,
             UserDataLastModifiedAt = now,
             GeneralUserDataLastModifiedAt = now,
@@ -437,8 +459,8 @@ public sealed class UserControlOperationServiceTests
         var replacement = new User
         {
             UId = canonical.UId,
-            UsernameHash = [marker, 0x01],
-            UsernameSalt = [marker, 0x02],
+            UsernameHash = canonical.UsernameHash.ToArray(),
+            UsernameSalt = canonical.UsernameSalt.ToArray(),
             PasswordSalt = [marker, 0x03],
             EncryptedPayload = [marker, 0x10],
             EncryptedGeneralUserDataPayload = [marker, 0x20],
@@ -446,6 +468,10 @@ public sealed class UserControlOperationServiceTests
             EncryptedUserDevicesDataPayload = [marker, 0x40],
             KeyEpoch = canonical.KeyEpoch + 1,
             MembershipEpoch = canonical.MembershipEpoch,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = canonical.GeneralDataVersionPhysicalTimeUnixMilliseconds,
+            GeneralDataVersionLogicalCounter = canonical.GeneralDataVersionLogicalCounter,
+            GeneralDataVersionOriginDeviceId = canonical.GeneralDataVersionOriginDeviceId,
+            GeneralDataVersionOriginInstanceId = canonical.GeneralDataVersionOriginInstanceId,
             LastModifiedAt = now,
             UserDataLastModifiedAt = now,
             GeneralUserDataLastModifiedAt = now,

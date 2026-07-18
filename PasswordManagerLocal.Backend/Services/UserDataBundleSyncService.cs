@@ -50,6 +50,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             .ToArray();
 
         var canonicalBundle = await ReadAndVerifyUserDataBundleForSyncAsync(existing, key, ct);
+        UserLoginIdentityMetadataUtil.Verify(existing, canonicalBundle.GeneralUserData);
         var incomingBundles = new List<UserDataBundle>(ordered.Length);
         var results = new List<UserSnapshotMergeEntryResult>(ordered.Length);
         var changedBlobs = UserDataBlobKind.None;
@@ -78,6 +79,21 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                 }
                 catch (Exception ex) when (IsSnapshotVerificationFailure(ex))
                 {
+                    results.Add(Failed(snapshot, ex.Message));
+                    continue;
+                }
+
+                try
+                {
+                    UserLoginIdentityMetadataUtil.Verify(
+                        snapshot.User.UsernameHash,
+                        snapshot.User.UsernameSalt,
+                        snapshot.User.GeneralUserDataVersion,
+                        incomingBundle.GeneralUserData);
+                }
+                catch (Exception ex) when (IsSnapshotVerificationFailure(ex))
+                {
+                    incomingBundle.Dispose();
                     results.Add(Failed(snapshot, ex.Message));
                     continue;
                 }
@@ -383,6 +399,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         target.UId = source.UId;
         target.UsernameHash = source.UsernameHash;
         target.UsernameSalt = source.UsernameSalt;
+        target.SetGeneralUserDataVersion(source.GeneralUserDataVersion);
         target.PasswordSalt = source.PasswordSalt;
         target.EncryptedPayload = source.EncryptedPayload;
         target.EncryptedGeneralUserDataPayload = source.EncryptedGeneralUserDataPayload;
@@ -396,6 +413,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
     }
 
 
-    private DateTimeOffset FromTimestamp(long ts) =>
+
+    private static DateTimeOffset FromTimestamp(long ts) =>
         DateTimeOffset.FromUnixTimeMilliseconds(ts);
 }

@@ -24,6 +24,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
+    private readonly IUserLoginIdentityProjectionService? _loginIdentities;
 
     public UserSnapshotMergeCoordinator(
         IUserRepository users,
@@ -37,7 +38,8 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         IUnitOfWork uow,
         IUserLifecycleCoordinator lifecycle,
         IDeletedUserBarrierRepository? deletionBarriers = null,
-        IUserTombstoneGarbageCollector? garbageCollector = null)
+        IUserTombstoneGarbageCollector? garbageCollector = null,
+        IUserLoginIdentityProjectionService? loginIdentities = null)
     {
         _users = users;
         _membershipAuthorization = membershipAuthorization;
@@ -51,6 +53,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _lifecycle = lifecycle;
         _deletionBarriers = deletionBarriers;
         _garbageCollector = garbageCollector;
+        _loginIdentities = loginIdentities;
     }
 
     public Task<bool> TryMergePendingAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
@@ -108,6 +111,11 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         if (candidates.Count == 0)
         {
             await _uow.SaveChangesAsync(ct);
+            if (_loginIdentities is not null)
+            {
+                await _loginIdentities.RecalculateUnderLifecycleAsync(userId, ct);
+                await _uow.SaveChangesAsync(ct);
+            }
             await transaction.CommitAsync(ct);
             return false;
         }
@@ -164,6 +172,11 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         if (mergedRows.Count == 0)
         {
             await _uow.SaveChangesAsync(ct);
+            if (_loginIdentities is not null)
+            {
+                await _loginIdentities.RecalculateUnderLifecycleAsync(userId, ct);
+                await _uow.SaveChangesAsync(ct);
+            }
             await transaction.CommitAsync(ct);
             return false;
         }
@@ -213,6 +226,11 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             return false;
         }
         await _uow.SaveChangesAsync(ct);
+        if (_loginIdentities is not null)
+        {
+            await _loginIdentities.RecalculateUnderLifecycleAsync(userId, ct);
+            await _uow.SaveChangesAsync(ct);
+        }
         await transaction.CommitAsync(ct);
 
         if (_garbageCollector is not null)

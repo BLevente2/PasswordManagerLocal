@@ -397,6 +397,7 @@ public sealed class DeterministicItemVersionMergeTests
                 new DeviceEnrollmentUserSnapshot
                 {
                     UId = userId,
+                    GeneralUserDataVersion = version,
                     KeyEpoch = 1,
                     MembershipEpoch = 1,
                     EncryptedUserPasswordsDataPayload = encryptedPayloadBytes
@@ -414,6 +415,7 @@ public sealed class DeterministicItemVersionMergeTests
         CollectionAssert.AreEqual(
             encryptedPayloadBytes,
             restoredSnapshot.Users.Single().EncryptedUserPasswordsDataPayload);
+        MSTestAssert.AreEqual(version, restoredSnapshot.Users.Single().GeneralUserDataVersion);
 
         using var restoredPasswords = JsonSerializer.Deserialize(
             restoredSnapshot.Users.Single().EncryptedUserPasswordsDataPayload,

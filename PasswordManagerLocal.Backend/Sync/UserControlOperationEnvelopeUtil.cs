@@ -10,8 +10,8 @@ namespace PasswordManagerLocal.Backend.Sync;
 
 public static class UserControlOperationEnvelopeUtil
 {
-    private const string ContentDomain = "PasswordManagerLocal.Backend.UserControlOperation.Content.v1";
-    private const string SignatureDomain = "PasswordManagerLocal.Backend.UserControlOperation.Signature.v1";
+    private const string ContentDomain = "PasswordManagerLocal.Backend.UserControlOperation.Content.v2";
+    private const string SignatureDomain = "PasswordManagerLocal.Backend.UserControlOperation.Signature.v2";
 
     public static void FillOriginAuthentication(UserControlOperationEnvelope envelope, IDeviceIdentityService identity)
     {
@@ -114,6 +114,7 @@ public static class UserControlOperationEnvelopeUtil
             MembershipEpoch = user.MembershipEpoch,
             UsernameHash = user.UsernameHash.ToArray(),
             UsernameSalt = user.UsernameSalt.ToArray(),
+            GeneralUserDataVersion = user.GetGeneralUserDataVersion(),
             PasswordSalt = user.PasswordSalt.ToArray(),
             EncryptedPayload = user.EncryptedPayload.ToArray(),
             EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload.ToArray(),
@@ -136,6 +137,7 @@ public static class UserControlOperationEnvelopeUtil
                payload.MembershipEpoch == user.MembershipEpoch &&
                payload.UsernameHash.SequenceEqual(user.UsernameHash) &&
                payload.UsernameSalt.SequenceEqual(user.UsernameSalt) &&
+               SyncVersionStampComparer.Instance.Equals(payload.GeneralUserDataVersion, user.GetGeneralUserDataVersion()) &&
                payload.PasswordSalt.SequenceEqual(user.PasswordSalt) &&
                payload.EncryptedPayload.SequenceEqual(user.EncryptedPayload) &&
                payload.EncryptedGeneralUserDataPayload.SequenceEqual(user.EncryptedGeneralUserDataPayload) &&
@@ -157,6 +159,7 @@ public static class UserControlOperationEnvelopeUtil
 
         user.UsernameHash = payload.UsernameHash.ToArray();
         user.UsernameSalt = payload.UsernameSalt.ToArray();
+        user.SetGeneralUserDataVersion(payload.GeneralUserDataVersion);
         user.PasswordSalt = payload.PasswordSalt.ToArray();
         user.EncryptedPayload = payload.EncryptedPayload.ToArray();
         user.EncryptedGeneralUserDataPayload = payload.EncryptedGeneralUserDataPayload.ToArray();
@@ -555,7 +558,9 @@ public static class UserControlOperationEnvelopeUtil
             throw new InvalidDataException("The key-epoch replacement identity or epochs are invalid.");
         }
 
-        if (payload.UsernameHash.Length == 0 || payload.UsernameSalt.Length == 0 ||
+        SyncVersionStampComparer.Validate(payload.GeneralUserDataVersion);
+        if (payload.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
+            payload.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes ||
             payload.PasswordSalt.Length == 0 || payload.EncryptedPayload.Length == 0 ||
             payload.EncryptedGeneralUserDataPayload.Length == 0 ||
             payload.EncryptedUserPasswordsDataPayload.Length == 0 ||
@@ -570,6 +575,10 @@ public static class UserControlOperationEnvelopeUtil
             UId = payload.UserId,
             UsernameHash = payload.UsernameHash,
             UsernameSalt = payload.UsernameSalt,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = payload.GeneralUserDataVersion.PhysicalTimeUnixMilliseconds,
+            GeneralDataVersionLogicalCounter = payload.GeneralUserDataVersion.LogicalCounter,
+            GeneralDataVersionOriginDeviceId = payload.GeneralUserDataVersion.OriginDeviceId,
+            GeneralDataVersionOriginInstanceId = payload.GeneralUserDataVersion.OriginInstanceId,
             PasswordSalt = payload.PasswordSalt,
             EncryptedPayload = payload.EncryptedPayload,
             EncryptedGeneralUserDataPayload = payload.EncryptedGeneralUserDataPayload,

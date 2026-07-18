@@ -30,6 +30,7 @@ public sealed class FakeUserSnapshotPublisherService : IUserSnapshotPublisherSer
             UId = user.UId,
             UsernameHash = user.UsernameHash.ToArray(),
             UsernameSalt = user.UsernameSalt.ToArray(),
+            GeneralUserDataVersion = user.GetGeneralUserDataVersion(),
             PasswordSalt = user.PasswordSalt.ToArray(),
             EncryptedPayload = user.EncryptedPayload.ToArray(),
             EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload.ToArray(),

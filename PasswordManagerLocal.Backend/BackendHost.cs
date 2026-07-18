@@ -256,6 +256,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserSessionService, UserSessionService>();
+            services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
             services.AddScoped<IUserLookupService, UserLookupService>();
             services.AddScoped<IUserDataReaderService, UserDataReaderService>();
             services.AddScoped<IUserDataPersistenceValidator, UserDataPersistenceValidator>();

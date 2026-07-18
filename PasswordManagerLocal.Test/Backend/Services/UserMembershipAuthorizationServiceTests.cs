@@ -201,7 +201,9 @@ public sealed class UserMembershipAuthorizationServiceTests
         var payload = new UserSyncPayload
         {
             UId = userId,
-            UsernameHash = [0x01], UsernameSalt = [0x02], PasswordSalt = [0x03],
+            UsernameHash = Enumerable.Repeat((byte)0x01, 32).ToArray(), UsernameSalt = Enumerable.Repeat((byte)0x02, 32).ToArray(),
+            GeneralUserDataVersion = new() { PhysicalTimeUnixMilliseconds = 1_000 + revision, LogicalCounter = 0, OriginDeviceId = deviceId, OriginInstanceId = originId },
+            PasswordSalt = [0x03],
             EncryptedPayload = [0x04], EncryptedGeneralUserDataPayload = [0x05],
             EncryptedUserPasswordsDataPayload = [0x06], EncryptedUserDevicesDataPayload = [0x07],
             UserDataLastModifiedAt = createdAt, GeneralUserDataLastModifiedAt = createdAt,

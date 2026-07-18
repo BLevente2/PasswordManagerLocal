@@ -125,8 +125,8 @@ public sealed class UserSnapshotPublisherServiceTests
         var user = new User
         {
             UId = Guid.NewGuid(),
-            UsernameHash = [0x01],
-            UsernameSalt = [0x02],
+            UsernameHash = Enumerable.Repeat((byte)0x01, 32).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x02, 32).ToArray(),
             PasswordSalt = [0x03],
             EncryptedPayload = [0x10],
             EncryptedGeneralUserDataPayload = [0x20],
@@ -134,6 +134,10 @@ public sealed class UserSnapshotPublisherServiceTests
             EncryptedUserDevicesDataPayload = [0x40],
             KeyEpoch = 1,
             MembershipEpoch = 1,
+            GeneralDataVersionPhysicalTimeUnixMilliseconds = 1_000,
+            GeneralDataVersionLogicalCounter = 0,
+            GeneralDataVersionOriginDeviceId = Guid.Parse("B7566B3E-EC72-42A3-A3E5-64F5CFF413CF"),
+            GeneralDataVersionOriginInstanceId = Guid.Parse("D959DA77-A434-481E-A5CE-EAB1A5F01701"),
             LastModifiedAt = now,
             UserDataLastModifiedAt = now,
             GeneralUserDataLastModifiedAt = now,

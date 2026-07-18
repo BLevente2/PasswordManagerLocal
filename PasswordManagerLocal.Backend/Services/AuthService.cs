@@ -42,6 +42,7 @@ public sealed class AuthService : IAuthService
     private readonly IUserSyncStateRepository _syncStates;
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
+    private readonly IUserLoginIdentityProjectionService _loginIdentities;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -69,6 +70,7 @@ public sealed class AuthService : IAuthService
         IUserControlStateRepository controlStates,
         IUserSyncStateRepository syncStates,
         ISyncVersionClockService versionClock,
+        IUserLoginIdentityProjectionService loginIdentities,
         IUserTombstoneGarbageCollector? garbageCollector = null)
     {
         _userLookup = userLookup;
@@ -96,6 +98,7 @@ public sealed class AuthService : IAuthService
         _controlStates = controlStates;
         _syncStates = syncStates;
         _versionClock = versionClock;
+        _loginIdentities = loginIdentities;
         _garbageCollector = garbageCollector;
     }
 
@@ -124,8 +127,8 @@ public sealed class AuthService : IAuthService
 
     private async Task ThrowIfUsernameExistsAsync(byte[] usernameBytes, CancellationToken ct)
     {
-        var foundUser = await _userLookup.GetUserByUsernameAsync(usernameBytes, ct);
-        if (foundUser is not null)
+        var resolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+        if (resolution.State != UserLoginIdentityMatchState.NotFound)
             throw new InvalidInputException();
     }
 
@@ -227,7 +230,11 @@ public sealed class AuthService : IAuthService
                 UserDataLastModifiedAt = linkedAt,
                 GeneralUserDataLastModifiedAt = linkedAt,
                 UserPasswordsDataLastModifiedAt = linkedAt,
-                UserDevicesDataLastModifiedAt = linkedAt
+                UserDevicesDataLastModifiedAt = linkedAt,
+                GeneralDataVersionPhysicalTimeUnixMilliseconds = bundle.GeneralUserData.Version.PhysicalTimeUnixMilliseconds,
+                GeneralDataVersionLogicalCounter = bundle.GeneralUserData.Version.LogicalCounter,
+                GeneralDataVersionOriginDeviceId = bundle.GeneralUserData.Version.OriginDeviceId,
+                GeneralDataVersionOriginInstanceId = bundle.GeneralUserData.Version.OriginInstanceId
             };
         }
         catch
@@ -255,6 +262,7 @@ public sealed class AuthService : IAuthService
             user.GenerateIntegrityHash();
             _rememberMe.SetRememberMe(user, rememberMe, key);
             await _userDataWriter.AddNewUserAsync(user, ct);
+            await _loginIdentities.SetCanonicalAsync(user, user.GetGeneralUserDataVersion(), ct);
             await AddLocalUserDeviceLinkAsync(user.UId, ct);
             await _membershipAuthorization.CreateGenesisAsync(user, ct);
             await _controlStates.AddAsync(new UserControlState
@@ -312,10 +320,39 @@ public sealed class AuthService : IAuthService
             throw new InvalidInputException();
 
         var usernameBytes = Encoding.UTF8.GetBytes(request.Username);
-        var user = await _userLookup.GetAndVerifyUserByUsernameAsync(usernameBytes, ct);
+        try
+        {
+            var initialResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+            if (initialResolution.State != UserLoginIdentityMatchState.Matched || !initialResolution.UserId.HasValue)
+                throw new UserNotFoundException();
+
+            var userId = initialResolution.UserId.Value;
+            return await _lifecycle.ExecuteAsync(
+                userId,
+                token => LoginResolvedUnderLifecycleAsync(request, usernameBytes, userId, token),
+                ct);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(usernameBytes);
+        }
+    }
+
+    private async Task<Guid> LoginResolvedUnderLifecycleAsync(
+        LoginRequest request,
+        byte[] usernameBytes,
+        Guid expectedUserId,
+        CancellationToken ct)
+    {
+        var prePasswordResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+        if (prePasswordResolution.State != UserLoginIdentityMatchState.Matched ||
+            prePasswordResolution.UserId != expectedUserId)
+            throw new UsernameChangedDuringLoginException();
+
+        var user = await _userLookup.GetAndVerifyUserByUidAsync(expectedUserId, ct);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
 
-        await _snapshotMerge.TryMergePendingAsync(user.UId, key, ct);
+        await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, ct);
         if (_garbageCollector is not null)
         {
             try
@@ -327,20 +364,42 @@ public sealed class AuthService : IAuthService
                 // Login must remain available when conservative maintenance cannot complete.
             }
         }
+
         user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
         var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
-        var modifiedBlobs = UserDataBlobKind.None;
-        UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
-            bundle.UserDevicesData,
-            _identity.LocalDeviceId,
-            DateTimeOffset.UtcNow,
-            _versionClock.Next());
-        modifiedBlobs |= UserDataBlobKind.Devices;
-        _rememberMe.SetRememberMe(user, request.RememberMe, key);
-        await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
+        try
+        {
+            UserLoginIdentityMetadataUtil.Verify(user, bundle.GeneralUserData);
+            var postMergeResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+            if (postMergeResolution.State != UserLoginIdentityMatchState.Matched ||
+                postMergeResolution.UserId != expectedUserId)
+                throw new UsernameChangedDuringLoginException();
 
-        return CreateAuthenticatedSession(user.UId, key, bundle);
+            var modifiedBlobs = UserDataBlobKind.None;
+            UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
+                bundle.UserDevicesData,
+                _identity.LocalDeviceId,
+                DateTimeOffset.UtcNow,
+                _versionClock.Next());
+            modifiedBlobs |= UserDataBlobKind.Devices;
+            _rememberMe.SetRememberMe(user, request.RememberMe, key);
+            await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
+
+            var finalResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+            if (finalResolution.State != UserLoginIdentityMatchState.Matched ||
+                finalResolution.UserId != expectedUserId)
+                throw new UsernameChangedDuringLoginException();
+
+            return CreateAuthenticatedSession(user.UId, key, bundle);
+        }
+        catch
+        {
+            bundle.Dispose();
+            throw;
+        }
     }
+
+
 
 
     public Task<Guid> RenewSessionAsync(Guid token, CancellationToken ct = default)
@@ -665,6 +724,10 @@ public sealed class AuthService : IAuthService
         private readonly byte[] _integrityHash;
         private readonly long _keyEpoch;
         private readonly long _membershipEpoch;
+        private readonly long _generalVersionPhysicalTimeUnixMilliseconds;
+        private readonly long _generalVersionLogicalCounter;
+        private readonly Guid _generalVersionOriginDeviceId;
+        private readonly Guid _generalVersionOriginInstanceId;
         private readonly DateTimeOffset _lastModifiedAt;
         private readonly DateTimeOffset _userDataLastModifiedAt;
         private readonly DateTimeOffset _generalLastModifiedAt;
@@ -684,6 +747,10 @@ public sealed class AuthService : IAuthService
             _integrityHash = user.IntegrityHash.ToArray();
             _keyEpoch = user.KeyEpoch;
             _membershipEpoch = user.MembershipEpoch;
+            _generalVersionPhysicalTimeUnixMilliseconds = user.GeneralDataVersionPhysicalTimeUnixMilliseconds;
+            _generalVersionLogicalCounter = user.GeneralDataVersionLogicalCounter;
+            _generalVersionOriginDeviceId = user.GeneralDataVersionOriginDeviceId;
+            _generalVersionOriginInstanceId = user.GeneralDataVersionOriginInstanceId;
             _lastModifiedAt = user.LastModifiedAt;
             _userDataLastModifiedAt = user.UserDataLastModifiedAt;
             _generalLastModifiedAt = user.GeneralUserDataLastModifiedAt;
@@ -716,6 +783,10 @@ public sealed class AuthService : IAuthService
             user.IntegrityHash = _integrityHash.ToArray();
             user.KeyEpoch = _keyEpoch;
             user.MembershipEpoch = _membershipEpoch;
+            user.GeneralDataVersionPhysicalTimeUnixMilliseconds = _generalVersionPhysicalTimeUnixMilliseconds;
+            user.GeneralDataVersionLogicalCounter = _generalVersionLogicalCounter;
+            user.GeneralDataVersionOriginDeviceId = _generalVersionOriginDeviceId;
+            user.GeneralDataVersionOriginInstanceId = _generalVersionOriginInstanceId;
             user.LastModifiedAt = _lastModifiedAt;
             user.UserDataLastModifiedAt = _userDataLastModifiedAt;
             user.GeneralUserDataLastModifiedAt = _generalLastModifiedAt;

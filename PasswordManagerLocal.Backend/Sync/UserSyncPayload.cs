@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 
 namespace PasswordManagerLocal.Backend.Sync;
 
@@ -7,6 +8,7 @@ public sealed class UserSyncPayload
     public Guid UId { get; set; }
     public byte[] UsernameHash { get; set; } = [];
     public byte[] UsernameSalt { get; set; } = [];
+    public SyncVersionStamp GeneralUserDataVersion { get; set; } = new();
     public byte[] PasswordSalt { get; set; } = [];
     public byte[] EncryptedPayload { get; set; } = [];
     public byte[] EncryptedGeneralUserDataPayload { get; set; } = [];
