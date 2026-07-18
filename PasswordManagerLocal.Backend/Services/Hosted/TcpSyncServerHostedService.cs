@@ -242,6 +242,20 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                         await HandlePushDeltaAsync(stream, context, ct);
                         return;
 
+                    case SyncTcpMessageType.UserSnapshotInventoryRequest:
+                        if (!context.SyncHelloAccepted)
+                            throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "A successful sync hello is required before exchanging snapshot inventory.");
+
+                        await HandleUserSnapshotInventoryAsync(stream, frame, context, ct);
+                        return;
+
+                    case SyncTcpMessageType.UserSnapshotRequestBatch:
+                        if (!context.SyncHelloAccepted)
+                            throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "A successful sync hello is required before requesting snapshots.");
+
+                        await HandleUserSnapshotRequestsAsync(stream, frame, context, ct);
+                        return;
+
                     case SyncTcpMessageType.GetDeviceEnrollmentInfoRequest:
                         await HandleGetDeviceEnrollmentInfoAsync(stream, frame, ct);
                         return;
@@ -305,6 +319,33 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
 
             yield return frame.Parse(DeltaChunk.Parser);
         }
+    }
+
+
+    private async Task HandleUserSnapshotInventoryAsync(
+        Stream stream,
+        SyncTcpFrame frame,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        var request = frame.Parse(UserSnapshotInventoryExchangeRequest.Parser);
+        var reply = await _handler.ExchangeUserSnapshotInventoryAsync(request, context, ct);
+        await WriteFrameAsync(stream, SyncTcpMessageType.UserSnapshotInventoryReply, reply, ct);
+    }
+
+
+    private async Task HandleUserSnapshotRequestsAsync(
+        Stream stream,
+        SyncTcpFrame frame,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        var request = frame.Parse(UserSnapshotRequestBatch.Parser);
+        var deltas = await _handler.RequestUserSnapshotsAsync(request, context, ct);
+        await WriteFrameAsync(stream, SyncTcpMessageType.UserSnapshotRelayStart, ct);
+        foreach (var delta in deltas)
+            await WriteFrameAsync(stream, SyncTcpMessageType.DeltaChunk, DeltaMapping.ToProto(delta), ct);
+        await WriteFrameAsync(stream, SyncTcpMessageType.UserSnapshotRelayEnd, ct);
     }
 
 

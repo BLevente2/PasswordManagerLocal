@@ -44,29 +44,75 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
     public async Task<NetworkDelta> BuildAsync(SyncItem item, Device device, CancellationToken ct = default)
     {
-        if (!_identity.IsSyncOn)
-            throw new InvalidOperationException("Local synchronization is disabled.");
+        ValidateTargetDevice(device);
+        var timestamp = item.ChangedAtTs > 0
+            ? item.ChangedAtTs
+            : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var payload = await BuildPayloadAsync(item, device.Id, timestamp, ct);
+        return BuildEncryptedDelta(payload, device, timestamp);
+    }
 
-        if (device.Id == Guid.Empty)
-            throw new InvalidOperationException("Target device is invalid.");
 
-        if (device.PublicKey.Length == 0)
-            throw new InvalidOperationException("Target device agreement key is missing.");
+    public async Task<NetworkDelta> BuildUserSnapshotRelayAsync(
+        UserSyncSnapshot snapshot,
+        Device device,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ValidateTargetDevice(device);
 
-        if (!device.IsTrusted)
-            throw new InvalidOperationException("Target device is not trusted.");
+        if (snapshot.Status is not (UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished))
+            throw new InvalidOperationException("Only pending or locally published user snapshots can be relayed.");
 
-        if (device.IsBlocked)
-            throw new InvalidOperationException("Target device is blocked.");
+        var envelope = DeserializeSnapshot(snapshot);
+        if (envelope.UserId != snapshot.UserId ||
+            envelope.OriginDeviceId != snapshot.OriginDeviceId ||
+            envelope.OriginInstanceId != snapshot.OriginInstanceId ||
+            envelope.OriginRevision != snapshot.OriginRevision ||
+            envelope.UserKeyEpoch != snapshot.UserKeyEpoch ||
+            envelope.MembershipEpoch != snapshot.MembershipEpoch ||
+            !Hashing.Verify(envelope.SnapshotHash, snapshot.SnapshotHash))
+        {
+            throw new InvalidDataException("Stored user snapshot metadata does not match its immutable envelope.");
+        }
 
-        if (IsLocalDevice(device))
-            throw new InvalidOperationException("The local device cannot be a synchronization target.");
+        var originDevice = envelope.OriginDeviceId == _identity.LocalDeviceId
+            ? BuildLocalOriginDevice()
+            : await _devices.GetByIdAsync(envelope.OriginDeviceId, ct);
+        if (originDevice is null)
+            throw new UnauthorizedAccessException("Stored user snapshot origin device is unknown.");
+        UserSnapshotEnvelopeUtil.Verify(envelope, originDevice);
 
-        var ts = item.ChangedAtTs > 0 ? item.ChangedAtTs : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var payload = await BuildPayloadAsync(item, device.Id, ts, ct);
-        SyncCryptoUtil.ValidatePayloadIntegrity(payload, ts);
+        var payload = new SyncDeltaPayload
+        {
+            ModelId = envelope.UserId,
+            ModelType = SyncModelType.User,
+            ChangeType = SyncChangeType.Updated,
+            UserSnapshot = envelope
+        };
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        return BuildEncryptedDelta(payload, device, timestamp);
+    }
 
+
+    private Device BuildLocalOriginDevice() =>
+        new()
+        {
+            Id = _identity.LocalDeviceId,
+            SignPublicKey = _identity.SignPublicKey.ToArray(),
+            PublicKey = _identity.AgreementPublicKey.ToArray(),
+            TlsCertFingerprint = _identity.FingerprintHex,
+            IsTrusted = true,
+            IsBlocked = false
+        };
+
+
+    private NetworkDelta BuildEncryptedDelta(SyncDeltaPayload payload, Device device, long timestamp)
+    {
+        SyncCryptoUtil.ValidatePayloadIntegrity(payload, timestamp);
         UtcDateTimeUtil.NormalizeObjectGraph(payload);
+
         var plaintextPayload = JsonSerializer.SerializeToUtf8Bytes(
             payload,
             BackendJsonSerializerContext.Default.SyncDeltaPayload);
@@ -78,7 +124,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             var networkDelta = new NetworkDelta
             {
                 Entity = BuildEntityName(payload),
-                Ts = ts,
+                Ts = timestamp,
                 DeviceId = _identity.DeviceIdHex,
                 SignPub = _identity.SignPublicKey,
                 RecipientDeviceId = device.Id.ToString("N"),
@@ -114,6 +160,23 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         {
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintextPayload);
         }
+    }
+
+
+    private void ValidateTargetDevice(Device device)
+    {
+        if (!_identity.IsSyncOn)
+            throw new InvalidOperationException("Local synchronization is disabled.");
+        if (device.Id == Guid.Empty)
+            throw new InvalidOperationException("Target device is invalid.");
+        if (device.PublicKey.Length == 0)
+            throw new InvalidOperationException("Target device agreement key is missing.");
+        if (!device.IsTrusted)
+            throw new InvalidOperationException("Target device is not trusted.");
+        if (device.IsBlocked)
+            throw new InvalidOperationException("Target device is blocked.");
+        if (IsLocalDevice(device))
+            throw new InvalidOperationException("The local device cannot be a synchronization target.");
     }
 
 

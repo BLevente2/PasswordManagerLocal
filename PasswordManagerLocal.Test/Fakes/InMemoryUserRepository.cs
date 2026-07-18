@@ -110,6 +110,8 @@ public sealed class InMemoryUserRepository : IUserRepository
             EncryptedUserPasswordsDataPayload = u.EncryptedUserPasswordsDataPayload.ToArray(),
             EncryptedUserDevicesDataPayload = u.EncryptedUserDevicesDataPayload.ToArray(),
             SavedKey = u.SavedKey is null ? null : u.SavedKey.ToArray(),
+            KeyEpoch = u.KeyEpoch,
+            MembershipEpoch = u.MembershipEpoch,
             LastModifiedAt = u.LastModifiedAt,
             UserDataLastModifiedAt = u.UserDataLastModifiedAt,
             GeneralUserDataLastModifiedAt = u.GeneralUserDataLastModifiedAt,

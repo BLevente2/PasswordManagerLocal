@@ -117,6 +117,101 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
+    public async Task<UserSnapshotInventoryExchangeReply> ExchangeUserSnapshotInventoryAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        UserSnapshotInventoryExchangeRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Users.Count > SyncConstants.MaxUserSnapshotInventoryUsers ||
+            request.Users.Sum(user => user.Revisions.Count) > SyncConstants.MaxUserSnapshotInventoryEntries)
+        {
+            throw new InvalidDataException("The user snapshot inventory exceeds the protocol limits.");
+        }
+
+        await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
+        await SendHelloAsync(connection.Stream, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserSnapshotInventoryRequest, request, ct);
+        var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserSnapshotInventoryReply, ct);
+        var reply = frame.Parse(UserSnapshotInventoryExchangeReply.Parser);
+        if (reply.Users.Count > SyncConstants.MaxUserSnapshotInventoryUsers ||
+            reply.Users.Sum(user => user.Revisions.Count) > SyncConstants.MaxUserSnapshotInventoryEntries ||
+            reply.RequestedSnapshots.Count > SyncConstants.MaxUserSnapshotRequestsPerCall)
+        {
+            throw new InvalidDataException("The remote user snapshot inventory exceeds the protocol limits.");
+        }
+
+        return reply;
+    }
+
+
+    public async Task<IReadOnlyList<NetworkDelta>> RequestUserSnapshotsAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        UserSnapshotRequestBatch request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Requests.Count > SyncConstants.MaxUserSnapshotRequestsPerCall)
+            throw new InvalidDataException("Too many user snapshots were requested.");
+
+        await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
+        await SendHelloAsync(connection.Stream, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserSnapshotRequestBatch, request, ct);
+        await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserSnapshotRelayStart, ct);
+
+        var deltas = new List<NetworkDelta>();
+        long totalBytes = 0;
+        while (true)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpIdleTimeoutSeconds));
+            var frame = await SyncTcpFrameIo.ReadAsync(connection.Stream, timeout.Token)
+                ?? throw new EndOfStreamException();
+            if (frame.Type == SyncTcpMessageType.UserSnapshotRelayEnd)
+                break;
+            if (frame.Type == SyncTcpMessageType.Error)
+            {
+                var error = frame.Parse(SyncError.Parser);
+                throw new InvalidDataException(string.IsNullOrWhiteSpace(error.Message) ? error.Code : error.Message);
+            }
+            if (frame.Type != SyncTcpMessageType.DeltaChunk)
+                throw new InvalidDataException("Unexpected frame in the user snapshot relay stream.");
+
+            if (deltas.Count >= SyncConstants.MaxUserSnapshotRequestsPerCall)
+                throw new InvalidDataException("The remote user snapshot relay stream contains too many deltas.");
+
+            var delta = DeltaMapping.FromProto(frame.Parse(DeltaChunk.Parser));
+            totalBytes += delta.Payload.Length;
+            if (totalBytes > SyncConstants.MaxIncomingDeltaTotalBytesPerCall)
+                throw new InvalidDataException("The remote user snapshot relay stream is too large.");
+            deltas.Add(delta);
+        }
+
+        return deltas;
+    }
+
+
+    private async Task SendHelloAsync(Stream stream, CancellationToken ct)
+    {
+        await WriteFrameAsync(stream, SyncTcpMessageType.HelloRequest, new HelloRequest
+        {
+            DeviceId = _identity.DeviceIdHex,
+            SignPub = ByteString.CopyFrom(_identity.SignPublicKey),
+            DatabaseVersion = DatabaseConstants.CurrentDbVersion,
+            ProtocolVersion = SyncConstants.SyncProtocolVersion
+        }, ct);
+
+        var helloFrame = await ReadRequiredAsync(stream, SyncTcpMessageType.HelloReply, ct);
+        var hello = helloFrame.Parse(HelloReply.Parser);
+        if (!hello.Ok || hello.ProtocolVersion != SyncConstants.SyncProtocolVersion)
+            throw new InvalidDataException("The remote peer rejected the synchronization hello.");
+    }
+
+
     private static bool IsDurableSnapshotReceipt(UserSnapshotReceiptStateProto state) =>
         state is
             UserSnapshotReceiptStateProto.UserSnapshotReceiptStoredPending or

@@ -33,6 +33,7 @@ public sealed class FakeDeviceIdentityRepository : IDeviceIdentityRepository
         new()
         {
             Id = identity.Id,
+            OriginInstanceId = identity.OriginInstanceId,
             AgreementPrivateKeyBlob = identity.AgreementPrivateKeyBlob.ToArray(),
             SignPrivateKeyBlob = identity.SignPrivateKeyBlob.ToArray(),
             PFXCertificate = identity.PFXCertificate.ToArray(),

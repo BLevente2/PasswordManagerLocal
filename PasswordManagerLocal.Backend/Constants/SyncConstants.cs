@@ -5,7 +5,7 @@ public static class SyncConstants
     public const string PFXPassword = "";
 
     public const int SyncPort = 26688;
-    public const int SyncProtocolVersion = 2;
+    public const int SyncProtocolVersion = 3;
     public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
     public const int LocalDiscoveryPort = 26689;
     public const int LocalDiscoveryProtocolVersion = 1;
@@ -43,6 +43,9 @@ public static class SyncConstants
     public const int SyncDeltaEd25519PublicKeyBytes = 32;
     public const int SyncDeltaEd25519SignatureBytes = 64;
     public const int MaxIncomingDeltaCountPerCall = 256;
+    public const int MaxUserSnapshotInventoryUsers = 256;
+    public const int MaxUserSnapshotInventoryEntries = 4096;
+    public const int MaxUserSnapshotRequestsPerCall = 256;
     public const int MaxSyncTcpFrameBytes = MaxIncomingDeltaPayloadBytes + 4096;
     public const int MaxIncomingDeltaFutureSeconds = 300;
     public const int MaxInvalidIncomingSyncAttempts = 5;

@@ -45,6 +45,47 @@ public sealed class SyncTcpFrameIoTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Security")]
+    public async Task WriteThenRead_RoundTripsUserSnapshotInventoryRequest()
+    {
+        var userId = Guid.NewGuid();
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var request = new UserSnapshotInventoryExchangeRequest();
+        var user = new UserSnapshotUserInventory
+        {
+            UserId = userId.ToString("N"),
+            UserKeyEpoch = 1,
+            MembershipEpoch = 2
+        };
+        user.Revisions.Add(new UserSnapshotRevisionInventory
+        {
+            OriginDeviceId = originDeviceId.ToString("N"),
+            OriginInstanceId = originInstanceId.ToString("N"),
+            UserKeyEpoch = 1,
+            HighestStoredRevision = 15,
+            HighestStoredSnapshotHash = Google.Protobuf.ByteString.CopyFrom(Enumerable.Repeat((byte)0x15, 32).ToArray()),
+            HighestMergedRevision = 12
+        });
+        request.Users.Add(user);
+        await using var stream = new MemoryStream();
+
+        await SyncTcpFrameIo.WriteAsync(stream, SyncTcpMessageType.UserSnapshotInventoryRequest, request, CancellationToken.None);
+        stream.Position = 0;
+        var frame = await SyncTcpFrameIo.ReadAsync(stream, CancellationToken.None);
+
+        MSTestAssert.IsNotNull(frame);
+        MSTestAssert.AreEqual(SyncTcpMessageType.UserSnapshotInventoryRequest, frame.Type);
+        var restored = frame.Parse(UserSnapshotInventoryExchangeRequest.Parser);
+        MSTestAssert.HasCount(1, restored.Users);
+        MSTestAssert.AreEqual(userId, Guid.Parse(restored.Users[0].UserId));
+        MSTestAssert.HasCount(1, restored.Users[0].Revisions);
+        MSTestAssert.AreEqual(15L, restored.Users[0].Revisions[0].HighestStoredRevision);
+        MSTestAssert.AreEqual(12L, restored.Users[0].Revisions[0].HighestMergedRevision);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
     public async Task ReadAsync_WhenTransportFragmentsEveryByte_ReassemblesFrame()
     {
         await using var source = new MemoryStream();

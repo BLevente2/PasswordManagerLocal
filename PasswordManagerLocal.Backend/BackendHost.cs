@@ -294,6 +294,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserSnapshotPublisherService, UserSnapshotPublisherService>();
             services.AddScoped<IUserSnapshotInboxService, UserSnapshotInboxService>();
             services.AddScoped<IUserSnapshotMergeCoordinator, UserSnapshotMergeCoordinator>();
+            services.AddScoped<IUserSnapshotAntiEntropyService, UserSnapshotAntiEntropyService>();
             services.AddScoped<IUserSyncKeyResolverService, UserSyncKeyResolverService>();
             services.AddScoped<IUserDeltaApplierService, UserDeltaApplierService>();
             services.AddScoped<INetworkDeltaProtocolService, NetworkDeltaProtocolService>();

@@ -223,11 +223,14 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             UserKeyEpoch = keyEpoch
         };
 
-        if (revision > item.HighestStoredRevision)
+        // Stored knowledge is advanced only when this exact immutable envelope and hash were
+        // durably present. Coverage can advance merged knowledge without claiming that the
+        // covered envelope itself is retained locally.
+        if (snapshotHash.Length == Constants.SyncConstants.SyncDeltaPayloadHashBytes &&
+            revision > item.HighestStoredRevision)
         {
             item.HighestStoredRevision = revision;
-            if (snapshotHash.Length != 0)
-                item.HighestStoredSnapshotHash = snapshotHash.ToArray();
+            item.HighestStoredSnapshotHash = snapshotHash.ToArray();
         }
         item.HighestMergedRevision = Math.Max(item.HighestMergedRevision, revision);
         item.LastUpdatedAtUtc = DateTimeOffset.UtcNow;

@@ -14,5 +14,10 @@ public enum SyncTcpMessageType : byte
     CompleteDeviceEnrollmentChunk = 31,
     CompleteDeviceEnrollmentEnd = 32,
     CompleteDeviceEnrollmentReply = 33,
+    UserSnapshotInventoryRequest = 40,
+    UserSnapshotInventoryReply = 41,
+    UserSnapshotRequestBatch = 42,
+    UserSnapshotRelayStart = 43,
+    UserSnapshotRelayEnd = 44,
     Error = 100
 }

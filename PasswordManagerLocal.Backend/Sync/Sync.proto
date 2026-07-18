@@ -50,6 +50,51 @@ message UserSnapshotReceipt {
 
 message Ack { int64 last_synced_ts = 1; repeated UserSnapshotReceipt user_snapshot_receipts = 2; }
 
+
+message UserSnapshotRevisionInventory {
+  string origin_device_id = 1;
+  string origin_instance_id = 2;
+  int64 user_key_epoch = 3;
+  int64 highest_stored_revision = 4;
+  bytes highest_stored_snapshot_hash = 5;
+  int64 highest_merged_revision = 6;
+  int64 quarantined_revision = 7;
+  bytes quarantined_snapshot_hash = 8;
+  bytes conflicting_snapshot_hash = 9;
+  int64 known_snapshot_revision = 10;
+  bytes known_snapshot_hash = 11;
+}
+
+message UserSnapshotUserInventory {
+  string user_id = 1;
+  int64 user_key_epoch = 2;
+  int64 membership_epoch = 3;
+  repeated UserSnapshotRevisionInventory revisions = 4;
+}
+
+message UserSnapshotInventoryExchangeRequest {
+  repeated UserSnapshotUserInventory users = 1;
+}
+
+message UserSnapshotRequest {
+  string user_id = 1;
+  string origin_device_id = 2;
+  string origin_instance_id = 3;
+  int64 origin_revision = 4;
+  int64 user_key_epoch = 5;
+  int64 membership_epoch = 6;
+  bytes expected_snapshot_hash = 7;
+}
+
+message UserSnapshotInventoryExchangeReply {
+  repeated UserSnapshotUserInventory users = 1;
+  repeated UserSnapshotRequest requested_snapshots = 2;
+}
+
+message UserSnapshotRequestBatch {
+  repeated UserSnapshotRequest requests = 1;
+}
+
 message GetDeviceEnrollmentInfoRequest {
   string session_id = 1;
   bytes code_proof = 2;

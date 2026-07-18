@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using NSec.Cryptography;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Security;
@@ -290,6 +291,95 @@ public sealed class OutgoingDeltaBuilderServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
+    [TestCategory("Security")]
+    public async Task BuildUserSnapshotRelay_PreservesImmutableOriginEnvelopeAndSignsOuterTransportAsRelay()
+    {
+        using var relayProvider = CreateIdentityProvider();
+        using var recipientProvider = CreateIdentityProvider();
+        using var originSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var relay = CreateIdentity(relayProvider);
+        var recipient = CreateIdentity(recipientProvider);
+        await relay.InitializeAsync();
+        await relay.SetSyncOnAsync(true);
+        await recipient.InitializeAsync();
+        var target = CreateTargetDevice(recipient);
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var envelope = CreateSignedForeignEnvelope(originDeviceId, originInstanceId, originSigningKey);
+        var trustedOrigin = new Device
+        {
+            Id = originDeviceId,
+            SignPublicKey = originSigningKey.PublicKey.Export(KeyBlobFormat.RawPublicKey),
+            PublicKey = new byte[32],
+            TlsCertFingerprint = new string('A', 64),
+            IsTrusted = true,
+            IsBlocked = false
+        };
+        trustedOrigin.GenerateIntegrityHash();
+        var devices = new FakeDeviceRepository();
+        devices.Seed(trustedOrigin);
+        var serializedEnvelope = JsonSerializer.SerializeToUtf8Bytes(
+            envelope,
+            BackendJsonSerializerContext.Default.UserSnapshotEnvelope);
+        var stored = new UserSyncSnapshot
+        {
+            UserId = envelope.UserId,
+            OriginDeviceId = envelope.OriginDeviceId,
+            OriginInstanceId = envelope.OriginInstanceId,
+            OriginRevision = envelope.OriginRevision,
+            UserKeyEpoch = envelope.UserKeyEpoch,
+            MembershipEpoch = envelope.MembershipEpoch,
+            CreatedAtUtc = envelope.CreatedAtUtc,
+            SnapshotHash = envelope.SnapshotHash.ToArray(),
+            OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray(),
+            OriginSignature = envelope.OriginSignature.ToArray(),
+            EnvelopePayload = serializedEnvelope,
+            Status = UserSyncSnapshotStatus.Pending
+        };
+        var userDevices = new FakeUserDeviceRepository();
+        var localUsers = new FakeLocalUserDeviceRepository();
+        var builder = new OutgoingDeltaBuilderService(
+            new InMemoryUserRepository(),
+            new FakeGroupRepository(),
+            devices,
+            userDevices,
+            new FakeSyncRouteRepository(userDevices, localUsers),
+            relay);
+
+        var delta = await builder.BuildUserSnapshotRelayAsync(stored, target);
+
+        MSTestAssert.AreEqual(relay.DeviceIdHex, delta.DeviceId);
+        MSTestAssert.AreEqual(target.Id.ToString("N"), delta.RecipientDeviceId);
+        MSTestAssert.AreEqual(originDeviceId, delta.SnapshotOriginDeviceId);
+        MSTestAssert.AreEqual(originInstanceId, delta.SnapshotOriginInstanceId);
+        MSTestAssert.AreEqual(envelope.OriginRevision, delta.SnapshotOriginRevision);
+        CollectionAssert.AreEqual(envelope.SnapshotHash, delta.SnapshotHash);
+        MSTestAssert.IsTrue(NetDeltaSigner.VerifySignature(delta));
+
+        var plaintext = recipient.DecryptFromDevice(
+            delta.Payload,
+            delta.EphemeralPublicKey,
+            delta.Nonce,
+            delta.Tag,
+            SyncCryptoUtil.BuildAssociatedData(delta));
+        var payload = JsonSerializer.Deserialize(
+            plaintext,
+            BackendJsonSerializerContext.Default.SyncDeltaPayload);
+        MSTestAssert.IsNotNull(payload?.UserSnapshot);
+        var relayed = payload!.UserSnapshot!;
+        MSTestAssert.AreEqual(envelope.UserId, relayed.UserId);
+        MSTestAssert.AreEqual(envelope.OriginDeviceId, relayed.OriginDeviceId);
+        MSTestAssert.AreEqual(envelope.OriginInstanceId, relayed.OriginInstanceId);
+        MSTestAssert.AreEqual(envelope.OriginRevision, relayed.OriginRevision);
+        CollectionAssert.AreEqual(envelope.SnapshotHash, relayed.SnapshotHash);
+        CollectionAssert.AreEqual(envelope.OriginSignature, relayed.OriginSignature);
+        CollectionAssert.AreEqual(envelope.OriginSignPublicKey, relayed.OriginSignPublicKey);
+        UserSnapshotEnvelopeUtil.Verify(relayed, trustedOrigin);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
     public async Task Build_RejectsBlockedUntrustedAndLocalTargets()
     {
         using var senderProvider = CreateIdentityProvider();
@@ -332,6 +422,49 @@ public sealed class OutgoingDeltaBuilderServiceTests
         await ExpectThrowsAsync<InvalidOperationException>(() => builder.BuildAsync(item, local));
     }
 
+
+
+    private static UserSnapshotEnvelope CreateSignedForeignEnvelope(Guid originDeviceId, Guid originInstanceId, Key signingKey)
+    {
+        var createdAt = DateTimeOffset.UtcNow;
+        var userId = Guid.NewGuid();
+        var user = new UserSyncPayload
+        {
+            UId = userId,
+            UsernameHash = [0x01],
+            UsernameSalt = [0x02],
+            PasswordSalt = [0x03],
+            EncryptedPayload = [0x04],
+            EncryptedGeneralUserDataPayload = [0x05],
+            EncryptedUserPasswordsDataPayload = [0x06],
+            EncryptedUserDevicesDataPayload = [0x07],
+            UserDataLastModifiedAt = createdAt,
+            GeneralUserDataLastModifiedAt = createdAt,
+            UserPasswordsDataLastModifiedAt = createdAt,
+            UserDevicesDataLastModifiedAt = createdAt,
+            DeviceIds = [originDeviceId]
+        };
+        user.IntegrityHash = SyncCryptoUtil.CalculateUserHash(user, createdAt.ToUnixTimeMilliseconds());
+        var envelope = new UserSnapshotEnvelope
+        {
+            UserId = userId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            OriginRevision = 15,
+            UserKeyEpoch = 1,
+            MembershipEpoch = 1,
+            CreatedAtUtc = createdAt,
+            User = user
+        };
+        UserSnapshotEnvelopeUtil.FillOriginAuthentication(envelope, new FakeDeviceIdentityService
+        {
+            LocalDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            SignPublicKey = signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey),
+            SignHandler = data => SignatureAlgorithm.Ed25519.Sign(signingKey, data)
+        });
+        return envelope;
+    }
 
     private static void AddSourceLink(Device sourceDevice, Guid userId, bool isSyncOn)
     {

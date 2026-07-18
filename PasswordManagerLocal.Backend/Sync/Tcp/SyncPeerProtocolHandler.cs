@@ -149,6 +149,90 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
+    public async Task<UserSnapshotInventoryExchangeReply> ExchangeUserSnapshotInventoryAsync(
+        UserSnapshotInventoryExchangeRequest request,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        using var scope = _root.CreateScope();
+        Device? remoteDevice = null;
+        try
+        {
+            ValidateAuthenticatedSyncContext(context);
+            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
+            var antiEntropy = scope.ServiceProvider.GetRequiredService<IUserSnapshotAntiEntropyService>();
+            return await antiEntropy.BuildInventoryReplyAsync(remoteDevice.Id, request, ct);
+        }
+        catch (InvalidDataException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, ex.Message);
+        }
+    }
+
+
+    public async Task<IReadOnlyList<NetworkDelta>> RequestUserSnapshotsAsync(
+        UserSnapshotRequestBatch request,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        using var scope = _root.CreateScope();
+        Device? remoteDevice = null;
+        try
+        {
+            ValidateAuthenticatedSyncContext(context);
+            if (request.Requests.Count > SyncConstants.MaxUserSnapshotRequestsPerCall)
+                throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Too many user snapshots were requested.");
+
+            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
+            var antiEntropy = scope.ServiceProvider.GetRequiredService<IUserSnapshotAntiEntropyService>();
+            return await antiEntropy.BuildRequestedSnapshotDeltasAsync(remoteDevice.Id, request.Requests, ct);
+        }
+        catch (InvalidDataException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, ex.Message);
+        }
+    }
+
+
+    private static void ValidateAuthenticatedSyncContext(PeerConnectionContext context)
+    {
+        if (!context.SyncHelloAccepted || !context.RemoteDatabaseVersion.HasValue || !context.RemoteProtocolVersion.HasValue)
+            throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "A successful synchronization hello is required.");
+
+        ValidateIncomingProtocolVersion(context.RemoteProtocolVersion.Value);
+        if (!DatabaseVersionCompatibilityUtil.IsIncomingDatabaseVersionSupported(context.RemoteDatabaseVersion.Value))
+        {
+            throw new SyncProtocolException(
+                SyncProtocolStatusCode.FailedPrecondition,
+                DatabaseVersionCompatibilityUtil.BuildIncomingDatabaseVersionUnsupportedMessage(context.RemoteDatabaseVersion.Value));
+        }
+    }
+
+
     private static UserSnapshotReceipt ToProtoReceipt(UserSnapshotReceiptResult receipt) =>
         new()
         {

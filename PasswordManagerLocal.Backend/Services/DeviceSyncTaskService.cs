@@ -136,11 +136,22 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     {
         try
         {
-            while (!ct.IsCancellationRequested && _identity.IsSyncOn)
+            while (!ct.IsCancellationRequested && _identity.IsSyncOn &&
+                   await TrySendNextAsync(endpoint, targetDevice, ct))
             {
-                var sent = await TrySendNextAsync(endpoint, targetDevice, ct);
-                if (!sent)
-                    break;
+            }
+
+            if (!ct.IsCancellationRequested && _identity.IsSyncOn &&
+                !await TryRunAntiEntropyAsync(endpoint, targetDevice, ct))
+            {
+                return;
+            }
+
+            // A successful immediate merge can publish a fresh local origin revision and enqueue
+            // ordinary outgoing work. Drain that work before ending this target-device session.
+            while (!ct.IsCancellationRequested && _identity.IsSyncOn &&
+                   await TrySendNextAsync(endpoint, targetDevice, ct))
+            {
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -211,7 +222,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             return true;
         }
 
-        if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, validItems[0].SyncItem, endpoint, ct))
+        if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, endpoint, ct))
             return false;
 
         var sendItems = new List<(SyncQueueItem QueueItem, SyncItem SyncItem, NetworkDelta Delta)>();
@@ -293,7 +304,114 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     }
 
 
-    private async Task<bool> RefreshAndValidateTargetDeviceAsync(IServiceProvider services, Device targetDevice, SyncItem syncItem, DiscoveredDeviceEndpoint endpoint, CancellationToken ct)
+    private async Task<bool> TryRunAntiEntropyAsync(
+        DiscoveredDeviceEndpoint endpoint,
+        Device targetDevice,
+        CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var antiEntropy = scope.ServiceProvider.GetService<IUserSnapshotAntiEntropyService>();
+        if (antiEntropy is null)
+            return true;
+
+        if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, endpoint, ct))
+            return false;
+
+        var localInventory = await antiEntropy.BuildInventoryAsync(targetDevice.Id, ct);
+        var exchange = await _syncTransport.ExchangeUserSnapshotInventoryAsync(
+            endpoint.Host,
+            endpoint.Port,
+            targetDevice.TlsCertFingerprint,
+            localInventory,
+            ct);
+
+        if (exchange.RequestedSnapshots.Count > 0)
+        {
+            var requestedDeltas = await antiEntropy.BuildRequestedSnapshotDeltasAsync(
+                targetDevice.Id,
+                exchange.RequestedSnapshots,
+                ct);
+            if (requestedDeltas.Count != exchange.RequestedSnapshots.Count)
+                throw new InvalidDataException("Not every requested user snapshot could be relayed exactly.");
+
+            if (!await _syncTransport.SendDeltasAsync(
+                    endpoint.Host,
+                    endpoint.Port,
+                    targetDevice.TlsCertFingerprint,
+                    requestedDeltas,
+                    ct))
+            {
+                _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+                return false;
+            }
+        }
+
+        var missing = antiEntropy.FindMissingSnapshots(localInventory, exchange.Users);
+        if (missing.Count == 0)
+            return true;
+
+        var requestBatch = new UserSnapshotRequestBatch();
+        requestBatch.Requests.AddRange(missing);
+        var receivedDeltas = await _syncTransport.RequestUserSnapshotsAsync(
+            endpoint.Host,
+            endpoint.Port,
+            targetDevice.TlsCertFingerprint,
+            requestBatch,
+            ct);
+        if (receivedDeltas.Count == 0)
+            return false;
+
+        var expected = missing.ToDictionary(
+            request => BuildSnapshotRequestKey(request),
+            request => request.ExpectedSnapshotHash.ToByteArray());
+        var fulfilled = new HashSet<(Guid UserId, Guid OriginDeviceId, Guid OriginInstanceId, long Revision)>();
+        var applier = scope.ServiceProvider.GetRequiredService<IIncomingDeltaApplierService>();
+
+        foreach (var delta in receivedDeltas.OrderBy(delta => delta.Ts))
+        {
+            var result = await applier.ApplyAsync(delta, ct);
+            var receipt = result.UserSnapshotReceipt
+                ?? throw new InvalidDataException("A relayed user snapshot did not produce an explicit receipt.");
+            var key = (receipt.UserId, receipt.OriginDeviceId, receipt.OriginInstanceId, receipt.OriginRevision);
+            if (!expected.TryGetValue(key, out var expectedHash) ||
+                !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(expectedHash, receipt.SnapshotHash))
+            {
+                throw new InvalidDataException("A relayed user snapshot did not match an exact outstanding request.");
+            }
+
+            if (!IsDurableSnapshotReceipt(receipt.State))
+                throw new InvalidDataException($"A relayed user snapshot was not durably accepted: {receipt.State}.");
+            if (!fulfilled.Add(key))
+                throw new InvalidDataException("The relay returned the same requested user snapshot more than once.");
+        }
+
+        return fulfilled.Count == expected.Count;
+    }
+
+
+    private static (Guid UserId, Guid OriginDeviceId, Guid OriginInstanceId, long Revision) BuildSnapshotRequestKey(
+        UserSnapshotRequest request)
+    {
+        if (!Guid.TryParse(request.UserId, out var userId) ||
+            !Guid.TryParse(request.OriginDeviceId, out var originDeviceId) ||
+            !Guid.TryParse(request.OriginInstanceId, out var originInstanceId))
+        {
+            throw new InvalidDataException("The user snapshot request identity is invalid.");
+        }
+
+        return (userId, originDeviceId, originInstanceId, request.OriginRevision);
+    }
+
+
+    private static bool IsDurableSnapshotReceipt(UserSnapshotReceiptState state) =>
+        state is UserSnapshotReceiptState.StoredPending or
+            UserSnapshotReceiptState.ReplacedOlderPending or
+            UserSnapshotReceiptState.AlreadyStored or
+            UserSnapshotReceiptState.MergedImmediately or
+            UserSnapshotReceiptState.ObsoleteRevision;
+
+
+    private async Task<bool> RefreshAndValidateTargetDeviceAsync(IServiceProvider services, Device targetDevice, DiscoveredDeviceEndpoint endpoint, CancellationToken ct)
     {
         var devices = services.GetRequiredService<IDeviceRepository>();
         var freshDevice = await devices.GetByIdWithUserDevicesAsync(targetDevice.Id, ct);
