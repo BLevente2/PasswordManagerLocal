@@ -143,6 +143,12 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             return false;
         }
 
+        // Persist the canonical merge and newly created revision-knowledge rows inside the
+        // still-open transaction before the publisher queries coverage. EF queries do not
+        // include Added rows that have not yet been saved, which previously caused the fresh
+        // local snapshot to omit the exact remote revisions it had just merged.
+        await _uow.SaveChangesAsync(ct);
+
         var localSnapshot = await _publisher.GetOrCreateAsync(user, ct);
 
         await _queueWriter.EnqueueAsync(

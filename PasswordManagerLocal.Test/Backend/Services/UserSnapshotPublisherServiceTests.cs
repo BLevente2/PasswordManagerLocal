@@ -40,6 +40,10 @@ public sealed class UserSnapshotPublisherServiceTests
             first.EnvelopePayload,
             BackendJsonSerializerContext.Default.UserSnapshotEnvelope);
         var unchanged = await service.GetOrCreateAsync(user);
+        var firstId = first.Id;
+        var firstRevision = first.OriginRevision;
+        var unchangedId = unchanged.Id;
+        var unchangedRevision = unchanged.OriginRevision;
 
         user.EncryptedUserPasswordsDataPayload = [0x99, 0x01];
         user.UserPasswordsDataLastModifiedAt = DateTimeOffset.UtcNow.AddMinutes(1);
@@ -60,15 +64,15 @@ public sealed class UserSnapshotPublisherServiceTests
             identity.OriginInstanceId,
             user.KeyEpoch);
 
-        MSTestAssert.AreEqual(1L, first.OriginRevision);
+        MSTestAssert.AreEqual(1L, firstRevision);
         MSTestAssert.IsNotNull(firstEnvelope);
         var selfCoverage = firstEnvelope.Coverage.Single(entry =>
             entry.OriginDeviceId == identity.LocalDeviceId &&
             entry.OriginInstanceId == identity.OriginInstanceId &&
             entry.UserKeyEpoch == user.KeyEpoch);
         MSTestAssert.AreEqual(1L, selfCoverage.OriginRevision);
-        MSTestAssert.AreEqual(first.Id, unchanged.Id);
-        MSTestAssert.AreEqual(1L, unchanged.OriginRevision);
+        MSTestAssert.AreEqual(firstId, unchangedId);
+        MSTestAssert.AreEqual(1L, unchangedRevision);
         MSTestAssert.AreEqual(2L, second.OriginRevision);
         MSTestAssert.HasCount(1, snapshots);
         MSTestAssert.AreEqual(2L, snapshots[0].OriginRevision);

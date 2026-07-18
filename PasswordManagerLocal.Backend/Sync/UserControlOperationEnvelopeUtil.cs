@@ -309,6 +309,7 @@ public static class UserControlOperationEnvelopeUtil
 
     public static byte[] CalculateOperationHash(UserControlOperationEnvelope envelope)
     {
+        ValidateUnsigned(envelope);
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         writer.Write(ContentDomain);

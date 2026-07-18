@@ -55,6 +55,7 @@ public sealed class BackendTestHost : IDisposable
         {
             AgreementPublicKey = Enumerable.Repeat((byte)0xA5, 32).ToArray(),
             SignPublicKey = _signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey),
+            FingerprintHex = Convert.ToHexString(Enumerable.Repeat((byte)0x5A, 32).ToArray()),
             SignHandler = bytes => SignatureAlgorithm.Ed25519.Sign(_signingKey, bytes)
         });
         sc.AddSingleton<FakeSyncQueueService>();

@@ -7,7 +7,8 @@ namespace PasswordManagerLocal.Test.Fakes;
 public sealed class FakeSyncTransportClientService : ISyncTransportClientService
 {
     public bool SendResult { get; set; } = true;
-    public int SendCalls { get; private set; }
+    private int _sendCalls;
+    public int SendCalls => Volatile.Read(ref _sendCalls);
     public string? LastHost { get; private set; }
     public int LastPort { get; private set; }
     public string? LastFingerprint { get; private set; }
@@ -17,7 +18,7 @@ public sealed class FakeSyncTransportClientService : ISyncTransportClientService
 
     public async Task<bool> SendDeltasAsync(string host, int port, string serverFingerprintHex, IEnumerable<NetworkDelta> deltas, CancellationToken ct = default)
     {
-        SendCalls++;
+        Interlocked.Increment(ref _sendCalls);
         LastHost = host;
         LastPort = port;
         LastFingerprint = serverFingerprintHex;

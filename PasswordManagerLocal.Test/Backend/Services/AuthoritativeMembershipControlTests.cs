@@ -75,6 +75,17 @@ public sealed class AuthoritativeMembershipControlTests
         var target = CreateIdentity(targetSigningKey, Guid.NewGuid(), Guid.NewGuid(), 'B');
         var user = CreateUser(membershipEpoch: 2, savedKey: [0xAA]);
         var targetDevice = CreateDevice(target);
+        var localIdentity = new LocalDeviceIdentity
+        {
+            Id = target.LocalDeviceId,
+            OriginInstanceId = target.OriginInstanceId,
+            AgreementPrivateKeyBlob = [0x01],
+            SignPrivateKeyBlob = [0x02],
+            PFXCertificate = [0x03],
+            DeviceType = target.DeviceType,
+            IsSyncOn = true
+        };
+        localIdentity.GenerateIntegrityHash();
         var targetLink = new UserDevice { UserId = user.UId, DeviceId = target.LocalDeviceId, IsSyncOn = true, IsDeleted = false };
         targetLink.GenerateIntegrityHash();
         var localLink = new LocalUserDevice { UserId = user.UId, LocalDeviceIdentityId = target.LocalDeviceId, IsSyncOn = true };
@@ -88,6 +99,7 @@ public sealed class AuthoritativeMembershipControlTests
 
         await database.Users.AddAsync(user);
         await database.Devices.AddAsync(targetDevice);
+        await database.Db.LocalDeviceIdentities.AddAsync(localIdentity);
         await database.UserDevices.AddAsync(targetLink);
         await database.LocalUserDevices.AddAsync(localLink);
         await database.UserMembershipAuthorizations.AddAsync(sourceAuthorization);

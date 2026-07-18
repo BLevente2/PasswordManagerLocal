@@ -150,6 +150,16 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             {
             }
 
+            // A false send result can mean that transport or target validation failed, not only
+            // that the queue is empty. If ordinary durable work remains, stop this worker session
+            // and let discovery/a later kick retry it. Continuing into anti-entropy and the final
+            // drain used to send the same failed batch again immediately.
+            if (!ct.IsCancellationRequested && _identity.IsSyncOn &&
+                await HasPendingAsync(targetDevice.Id, ct))
+            {
+                return;
+            }
+
             if (!ct.IsCancellationRequested && _identity.IsSyncOn &&
                 !await TryRunAntiEntropyAsync(endpoint, targetDevice, ct))
             {

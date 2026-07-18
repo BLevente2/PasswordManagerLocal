@@ -7,9 +7,14 @@ namespace PasswordManagerLocal.Backend.Repositories;
 
 public sealed class UserMembershipAuthorizationRepository : IUserMembershipAuthorizationRepository
 {
+    private readonly AppDbContext _context;
     private readonly DbSet<UserMembershipAuthorization> _rows;
 
-    public UserMembershipAuthorizationRepository(AppDbContext context) => _rows = context.UserMembershipAuthorizations;
+    public UserMembershipAuthorizationRepository(AppDbContext context)
+    {
+        _context = context;
+        _rows = context.UserMembershipAuthorizations;
+    }
 
     public Task<UserMembershipAuthorization?> GetByIdAsync(Guid authorizationId, CancellationToken ct = default) =>
         _rows.FirstOrDefaultAsync(row => row.AuthorizationId == authorizationId, ct);
@@ -35,5 +40,15 @@ public sealed class UserMembershipAuthorizationRepository : IUserMembershipAutho
     public Task AddAsync(UserMembershipAuthorization authorization, CancellationToken ct = default) =>
         _rows.AddAsync(authorization, ct).AsTask();
 
-    public void Update(UserMembershipAuthorization authorization) => _rows.Update(authorization);
+    public void Update(UserMembershipAuthorization authorization)
+    {
+        var entry = _context.Entry(authorization);
+        if (entry.State == EntityState.Added)
+            return;
+
+        if (entry.State == EntityState.Detached)
+            _rows.Attach(authorization);
+
+        entry.State = EntityState.Modified;
+    }
 }

@@ -306,7 +306,7 @@ public sealed class DeviceServiceTests
             Id = Guid.NewGuid(),
             PublicKey = Enumerable.Repeat((byte)1, 32).ToArray(),
             SignPublicKey = Guid.NewGuid().ToByteArray().Concat(Guid.NewGuid().ToByteArray()).ToArray(),
-            TlsCertFingerprint = Convert.ToHexString(Guid.NewGuid().ToByteArray()),
+            TlsCertFingerprint = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
             DeviceType = DeviceType.AndroidMobile,
             IsTrusted = true,
             LastSeen = DateTime.UtcNow,

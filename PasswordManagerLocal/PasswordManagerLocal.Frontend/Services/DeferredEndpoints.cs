@@ -134,10 +134,10 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default)
+    public async Task<DeviceRemovalResultResponse> DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        await endpoints.DisconnectUserDeviceAsync(token, deviceId, masterPassword, ct);
+        return await endpoints.DisconnectUserDeviceAsync(token, deviceId, masterPassword, ct);
     }
 
 

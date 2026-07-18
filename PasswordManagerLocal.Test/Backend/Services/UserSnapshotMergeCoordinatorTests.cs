@@ -33,8 +33,8 @@ public sealed class UserSnapshotMergeCoordinatorTests
         var user = await AddUserAndMembershipAsync(
             database,
             localIdentity,
-            (firstOrigin.DeviceId, firstSigningKey),
-            (secondOrigin.DeviceId, secondSigningKey));
+            (firstOrigin.DeviceId, firstOrigin.InstanceId, firstSigningKey),
+            (secondOrigin.DeviceId, secondOrigin.InstanceId, secondSigningKey));
 
         await AddPendingAsync(database, CreateEnvelope(user, firstOrigin.DeviceId, firstOrigin.InstanceId, 2, firstSigningKey, 0x21));
         await AddPendingAsync(database, CreateEnvelope(user, secondOrigin.DeviceId, secondOrigin.InstanceId, 5, secondSigningKey, 0x52));
@@ -71,7 +71,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
         var activation = new FakeSyncQueueService();
         var coordinator = new UserSnapshotMergeCoordinator(
             database.Users,
-            new FakeUserMembershipAuthorizationService(),
+            CreateMembershipAuthorizationService(database, localIdentity),
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             bundleSync,
@@ -136,8 +136,8 @@ public sealed class UserSnapshotMergeCoordinatorTests
         var user = await AddUserAndMembershipAsync(
             database,
             localIdentity,
-            (validOrigin.DeviceId, validSigningKey),
-            (invalidOrigin.DeviceId, trustedButDifferentKey));
+            (validOrigin.DeviceId, validOrigin.InstanceId, validSigningKey),
+            (invalidOrigin.DeviceId, invalidOrigin.InstanceId, trustedButDifferentKey));
 
         await AddPendingAsync(database, CreateEnvelope(user, validOrigin.DeviceId, validOrigin.InstanceId, 3, validSigningKey, 0x33));
         await AddPendingAsync(database, CreateEnvelope(user, invalidOrigin.DeviceId, invalidOrigin.InstanceId, 4, invalidEnvelopeKey, 0x44));
@@ -153,7 +153,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
             lifecycle);
         var coordinator = new UserSnapshotMergeCoordinator(
             database.Users,
-            new FakeUserMembershipAuthorizationService(),
+            CreateMembershipAuthorizationService(database, localIdentity),
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             new FakeUserDataBundleSyncService(),
@@ -187,7 +187,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
         using var originSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var localIdentity = CreateIdentity(Guid.NewGuid(), Guid.NewGuid(), localSigningKey);
         var origin = (DeviceId: Guid.NewGuid(), InstanceId: Guid.NewGuid());
-        var user = await AddUserAndMembershipAsync(database, localIdentity, (origin.DeviceId, originSigningKey));
+        var user = await AddUserAndMembershipAsync(database, localIdentity, (origin.DeviceId, origin.InstanceId, originSigningKey));
         var originalGeneral = user.EncryptedGeneralUserDataPayload.ToArray();
         await AddPendingAsync(database, CreateEnvelope(user, origin.DeviceId, origin.InstanceId, 9, originSigningKey, 0x99));
         await database.UnitOfWork.SaveChangesAsync();
@@ -200,7 +200,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
         var queue = new FakeSyncQueueWriterService();
         var coordinator = new UserSnapshotMergeCoordinator(
             database.Users,
-            new FakeUserMembershipAuthorizationService(),
+            CreateMembershipAuthorizationService(database, localIdentity),
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             bundleSync,
@@ -233,7 +233,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
     private static async Task<User> AddUserAndMembershipAsync(
         SqliteIntegrationTestDatabase database,
         FakeDeviceIdentityService localIdentity,
-        params (Guid DeviceId, Key SigningKey)[] remoteDevices)
+        params (Guid DeviceId, Guid InstanceId, Key SigningKey)[] remoteDevices)
     {
         var now = DateTimeOffset.UtcNow;
         var user = new User
@@ -260,18 +260,68 @@ public sealed class UserSnapshotMergeCoordinatorTests
         var localDevice = CreateTrustedDevice(localIdentity.LocalDeviceId, localIdentity.SignPublicKey);
         await database.Devices.AddAsync(localDevice);
         await AddLinkAsync(database, user.UId, localDevice.Id);
+        await AddAuthorizationAsync(
+            database,
+            user,
+            localIdentity.LocalDeviceId,
+            localIdentity.OriginInstanceId,
+            localIdentity.SignPublicKey,
+            isGenesis: true);
+
         foreach (var remote in remoteDevices)
         {
             var publicKey = remote.SigningKey.PublicKey.Export(KeyBlobFormat.RawPublicKey);
             var device = CreateTrustedDevice(remote.DeviceId, publicKey);
             await database.Devices.AddAsync(device);
             await AddLinkAsync(database, user.UId, device.Id);
+            await AddAuthorizationAsync(
+                database,
+                user,
+                remote.DeviceId,
+                remote.InstanceId,
+                publicKey,
+                isGenesis: false);
         }
 
         await database.UnitOfWork.SaveChangesAsync();
         database.Db.ChangeTracker.Clear();
         return await database.Users.GetByIdAsync(user.UId)
             ?? throw new InvalidOperationException("The test user could not be reloaded.");
+    }
+
+    private static UserMembershipAuthorizationService CreateMembershipAuthorizationService(
+        SqliteIntegrationTestDatabase database,
+        FakeDeviceIdentityService localIdentity) =>
+        new(
+            database.UserMembershipAuthorizations,
+            database.UserOriginRemovalCutoffs,
+            localIdentity);
+
+    private static Task AddAuthorizationAsync(
+        SqliteIntegrationTestDatabase database,
+        User user,
+        Guid deviceId,
+        Guid originInstanceId,
+        byte[] signingPublicKey,
+        bool isGenesis)
+    {
+        var authorization = new UserMembershipAuthorization
+        {
+            UserId = user.UId,
+            DeviceId = deviceId,
+            OriginInstanceId = originInstanceId,
+            SignPublicKey = signingPublicKey.ToArray(),
+            SignPublicKeyHash = Hashing.SHA256Hash(signingPublicKey),
+            AgreementPublicKeyHash = Hashing.SHA256Hash([0xA1, 0xA2, 0xA3]),
+            TlsCertFingerprint = deviceId.ToString("N"),
+            DeviceType = DeviceType.WindowsPc,
+            StartedMembershipEpoch = user.MembershipEpoch,
+            MinimumKeyEpoch = user.KeyEpoch,
+            IsActive = true,
+            IsGenesis = isGenesis,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        return database.UserMembershipAuthorizations.AddAsync(authorization);
     }
 
     private static Device CreateTrustedDevice(Guid id, byte[] signingPublicKey)

@@ -330,7 +330,9 @@ public sealed class UserControlOperationServiceTests
         using var signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var identity = CreateIdentity(signingKey);
         var user = CreateUser(keyEpoch: 2, marker: 0x50);
+        var authorization = CreateActiveAuthorization(user.UId, identity, minimumKeyEpoch: 1);
         await database.Users.AddAsync(user);
+        await database.UserMembershipAuthorizations.AddAsync(authorization);
         await database.UnitOfWork.SaveChangesAsync();
 
         var writer = new UserControlOperationWriterService(
@@ -356,13 +358,35 @@ public sealed class UserControlOperationServiceTests
         CollectionAssert.AreEqual(envelope.OperationHash, retained.OperationHash);
     }
 
-    private static FakeDeviceIdentityService CreateIdentity(Key signingKey) =>
+    private static FakeDeviceIdentityService CreateIdentity(Key signingKey)
+    {
+        var deviceId = Guid.NewGuid();
+        return new FakeDeviceIdentityService
+        {
+            LocalDeviceId = deviceId,
+            OriginInstanceId = Guid.NewGuid(),
+            AgreementPublicKey = Enumerable.Repeat((byte)0x33, 32).ToArray(),
+            SignPublicKey = signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey),
+            FingerprintHex = Convert.ToHexString(deviceId.ToByteArray().Concat(deviceId.ToByteArray()).ToArray()),
+            SignHandler = bytes => SignatureAlgorithm.Ed25519.Sign(signingKey, bytes)
+        };
+    }
+
+    private static UserMembershipAuthorization CreateActiveAuthorization(Guid userId, FakeDeviceIdentityService identity, long minimumKeyEpoch) =>
         new()
         {
-            LocalDeviceId = Guid.NewGuid(),
-            OriginInstanceId = Guid.NewGuid(),
-            SignPublicKey = signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey),
-            SignHandler = bytes => SignatureAlgorithm.Ed25519.Sign(signingKey, bytes)
+            UserId = userId,
+            DeviceId = identity.LocalDeviceId,
+            OriginInstanceId = identity.OriginInstanceId,
+            SignPublicKey = identity.SignPublicKey.ToArray(),
+            SignPublicKeyHash = PasswordManagerLocal.Backend.Security.Hashing.SHA256Hash(identity.SignPublicKey),
+            AgreementPublicKeyHash = PasswordManagerLocal.Backend.Security.Hashing.SHA256Hash(identity.AgreementPublicKey),
+            TlsCertFingerprint = identity.FingerprintHex,
+            DeviceType = identity.DeviceType,
+            StartedMembershipEpoch = 1,
+            MinimumKeyEpoch = minimumKeyEpoch,
+            IsActive = true,
+            IsGenesis = true
         };
 
     private static Device CreateTrustedDevice(Guid id, byte[] signPublicKey)
@@ -372,7 +396,7 @@ public sealed class UserControlOperationServiceTests
             Id = id,
             PublicKey = Enumerable.Repeat((byte)0x22, 32).ToArray(),
             SignPublicKey = signPublicKey.ToArray(),
-            TlsCertFingerprint = new string('A', 64),
+            TlsCertFingerprint = Convert.ToHexString(id.ToByteArray().Concat(id.ToByteArray()).ToArray()),
             DeviceType = DeviceType.WindowsPc,
             IsTrusted = true,
             IsBlocked = false

@@ -44,6 +44,8 @@ public sealed class OutgoingDeltaBuilderServiceTests
             PasswordSalt = [5, 6],
             EncryptedPayload = [7, 8, 9],
             SavedKey = [99],
+            KeyEpoch = 1,
+            MembershipEpoch = 1,
             LastModifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
         };
         var link = new UserDevice

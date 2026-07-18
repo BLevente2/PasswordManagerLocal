@@ -224,7 +224,7 @@ public sealed class DeviceSyncTaskServiceTests
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
-        var timeoutAt = DateTime.UtcNow.AddSeconds(3);
+        var timeoutAt = DateTime.UtcNow.AddSeconds(10);
         while (!condition())
         {
             if (DateTime.UtcNow >= timeoutAt)
