@@ -243,7 +243,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
 
     private static DeletedPasswordData Clone(DeletedPasswordData source)
     {
-        var clone = new DeletedPasswordData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version };
+        var clone = new DeletedPasswordData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version, CausalReference = source.CausalReference };
         clone.GenerateIntegrityHash();
         return clone;
     }
@@ -264,7 +264,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
 
     private static DeletedCustomUserColorData Clone(DeletedCustomUserColorData source)
     {
-        var clone = new DeletedCustomUserColorData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version };
+        var clone = new DeletedCustomUserColorData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version, CausalReference = source.CausalReference };
         clone.GenerateIntegrityHash();
         return clone;
     }
@@ -285,7 +285,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
 
     private static DeletedPasswordTagData Clone(DeletedPasswordTagData source)
     {
-        var clone = new DeletedPasswordTagData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version };
+        var clone = new DeletedPasswordTagData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version, CausalReference = source.CausalReference };
         clone.GenerateIntegrityHash();
         return clone;
     }

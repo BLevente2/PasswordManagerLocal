@@ -2,6 +2,7 @@ using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Constants;
 using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
 using static PasswordManagerLocal.Backend.Constants.TombstoneConstants;
 using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
@@ -15,7 +16,8 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
 {
     public void EnsureUserDataCanBePersisted(UserData userData, User user)
     {
-        if (userData.UId == Guid.Empty || userData.UId != user.UId)
+        if (userData.FormatVersion != SyncConstants.EncryptedUserDataFormatVersion ||
+            userData.UId == Guid.Empty || userData.UId != user.UId)
             throw new InvalidOperationException("Refusing to persist invalid user data.");
 
         if (userData.GeneralUserDataKey.Length == 0 ||
@@ -51,9 +53,9 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         if (passwordsData.Tags.Count > MaxNumberOfPasswordTags)
             throw new InvalidOperationException("Refusing to persist too many password tags.");
 
-        if (passwordsData.DeletedPasswords.Count > MaxUserDataTombstonesPerList ||
-            passwordsData.DeletedCustomColors.Count > MaxUserDataTombstonesPerList ||
-            passwordsData.DeletedTags.Count > MaxUserDataTombstonesPerList)
+        if (passwordsData.DeletedPasswords.Count > MaxRetainedUserDataTombstonesPerList ||
+            passwordsData.DeletedCustomColors.Count > MaxRetainedUserDataTombstonesPerList ||
+            passwordsData.DeletedTags.Count > MaxRetainedUserDataTombstonesPerList)
             throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
     }
 
@@ -62,7 +64,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         if (userDevicesData is null)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
 
-        if (userDevicesData.DeletedDevices.Count > MaxUserDataTombstonesPerList)
+        if (userDevicesData.DeletedDevices.Count > MaxRetainedUserDataTombstonesPerList)
             throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
 
         if (userDevicesData.Devices.Any(device =>

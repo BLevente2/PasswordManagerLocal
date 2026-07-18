@@ -5,7 +5,7 @@ public static class SyncConstants
     public const string PFXPassword = "";
 
     public const int SyncPort = 26688;
-    public const int SyncProtocolVersion = 7;
+    public const int SyncProtocolVersion = 8;
     public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
     public const int LocalDiscoveryPort = 26689;
     public const int LocalDiscoveryProtocolVersion = 2;
@@ -37,6 +37,9 @@ public static class SyncConstants
     public const int MaxDeviceEnrollmentSnapshotBytes = 64 * 1024 * 1024;
     public const int DeviceEnrollmentSnapshotChunkBytes = 64 * 1024;
 
+    public const int EncryptedUserDataFormatVersion = 2;
+    public const int DeviceEnrollmentPayloadVersion = 2;
+
     public const int SyncDeltaEncryptionVersion = 1;
     public const int SyncDeltaNonceBytes = 12;
     public const int SyncDeltaTagBytes = 16;
@@ -63,7 +66,7 @@ public static class SyncConstants
     public const int SyncTcpIdleTimeoutSeconds = 30;
     public const int SyncTcpWriteTimeoutSeconds = 30;
 
-    public const int EnrollmentSnapshotEncryptionVersion = 3;
+    public const int EnrollmentSnapshotEncryptionVersion = 4;
     public const int EnrollmentSnapshotEncryptionNonceBytes = 12;
     public const int EnrollmentSnapshotEncryptionTagBytes = 16;
     public const int EnrollmentCodeNoiseBytes = 16;

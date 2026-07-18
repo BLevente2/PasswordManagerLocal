@@ -4,20 +4,6 @@ namespace PasswordManagerLocal.Backend.Utils;
 
 public static class TombstoneCleanupUtil
 {
-    // Tombstones are retained conservatively until causal stability can be proven from merged-revision knowledge.
-    // Time-based and fixed-count cleanup would allow a long-offline device to resurrect deleted data.
-    public static UserDataBlobKind CleanupExpiredUserDataTombstones(UserDataBundle bundle, DateTimeOffset utcNow) =>
-        UserDataBlobKind.None;
-
-    public static bool CleanupExpiredUserPasswordsDataTombstones(UserPasswordsData passwords, DateTimeOffset utcNow) => false;
-    public static bool CleanupExpiredUserDevicesDataTombstones(UserDevicesData devices, DateTimeOffset utcNow) => false;
-    public static bool EnforceUserPasswordsDataTombstoneLimits(UserPasswordsData passwords) => false;
-    public static bool EnforceUserDevicesDataTombstoneLimits(UserDevicesData devices) => false;
-    public static bool EnforceDeletedPasswordTombstoneLimit(List<DeletedPasswordData> tombstones, Guid? protectedId = null) => false;
-    public static bool EnforceDeletedCustomUserColorTombstoneLimit(List<DeletedCustomUserColorData> tombstones, Guid? protectedId = null) => false;
-    public static bool EnforceDeletedPasswordTagTombstoneLimit(List<DeletedPasswordTagData> tombstones, Guid? protectedId = null) => false;
-    public static bool EnforceDeletedUserDeviceTombstoneLimit(List<DeletedUserDeviceData> tombstones, Guid? protectedId = null) => false;
-
 
     public static void AddOrUpdateDeletedPassword(UserPasswordsData passwords, Guid passwordId, DateTime deletedAt, SyncVersionStamp version)
     {
@@ -33,8 +19,8 @@ public static class TombstoneCleanupUtil
         SyncVersionStampComparer.Validate(version);
         tombstone.DeletedAt = deletedAt;
         tombstone.Version = version;
+        tombstone.CausalReference = new();
         tombstone.GenerateIntegrityHash();
-        EnforceDeletedPasswordTombstoneLimit(passwords.DeletedPasswords, passwordId);
     }
 
 
@@ -52,8 +38,8 @@ public static class TombstoneCleanupUtil
         SyncVersionStampComparer.Validate(version);
         tombstone.DeletedAt = deletedAt;
         tombstone.Version = version;
+        tombstone.CausalReference = new();
         tombstone.GenerateIntegrityHash();
-        EnforceDeletedCustomUserColorTombstoneLimit(passwords.DeletedCustomColors, customUserColorId);
     }
 
 
@@ -71,8 +57,8 @@ public static class TombstoneCleanupUtil
         SyncVersionStampComparer.Validate(version);
         tombstone.DeletedAt = deletedAt;
         tombstone.Version = version;
+        tombstone.CausalReference = new();
         tombstone.GenerateIntegrityHash();
-        EnforceDeletedPasswordTagTombstoneLimit(passwords.DeletedTags, passwordTagId);
     }
 
 
@@ -90,8 +76,8 @@ public static class TombstoneCleanupUtil
         SyncVersionStampComparer.Validate(version);
         tombstone.DeletedAt = deletedAt;
         tombstone.Version = version;
+        tombstone.CausalReference = new();
         tombstone.GenerateIntegrityHash();
-        EnforceDeletedUserDeviceTombstoneLimit(devices.DeletedDevices, deviceId);
     }
 
 }

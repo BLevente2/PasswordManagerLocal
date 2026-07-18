@@ -21,7 +21,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
-    public async Task TryMergePendingAsync_MultipleOrigins_DeletesExactRowsPublishesCoverageAndQueuesAtomically()
+    public async Task TryMergePendingAsync_MultipleOrigins_RetainsMergedReceiptsPublishesCoverageAndQueuesAtomically()
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
         using var localSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
@@ -101,7 +101,14 @@ public sealed class UserSnapshotMergeCoordinatorTests
 
         MSTestAssert.IsTrue(merged);
         MSTestAssert.IsFalse(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.Pending));
-        MSTestAssert.HasCount(1, rows);
+        MSTestAssert.HasCount(3, rows);
+        MSTestAssert.AreEqual(2, rows.Count(snapshot => snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
+        MSTestAssert.IsTrue(rows.Any(snapshot =>
+            snapshot.OriginDeviceId == firstOrigin.DeviceId &&
+            snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
+        MSTestAssert.IsTrue(rows.Any(snapshot =>
+            snapshot.OriginDeviceId == secondOrigin.DeviceId &&
+            snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
         MSTestAssert.IsNotNull(firstKnowledge);
         MSTestAssert.IsNotNull(secondKnowledge);
         MSTestAssert.IsNotNull(localKnowledge);
@@ -174,6 +181,8 @@ public sealed class UserSnapshotMergeCoordinatorTests
         MSTestAssert.IsFalse(string.IsNullOrWhiteSpace(quarantined.QuarantineReason));
         MSTestAssert.IsFalse(rows.Any(snapshot =>
             snapshot.OriginDeviceId == validOrigin.DeviceId && snapshot.Status == UserSyncSnapshotStatus.Pending));
+        MSTestAssert.IsTrue(rows.Any(snapshot =>
+            snapshot.OriginDeviceId == validOrigin.DeviceId && snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
         MSTestAssert.IsTrue(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
     }
 

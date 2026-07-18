@@ -65,8 +65,8 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         ArgumentNullException.ThrowIfNull(snapshot);
         ValidateTargetDevice(device);
 
-        if (snapshot.Status is not (UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished))
-            throw new InvalidOperationException("Only pending or locally published user snapshots can be relayed.");
+        if (snapshot.Status is not (UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished or UserSyncSnapshotStatus.MergedReceipt))
+            throw new InvalidOperationException("Only pending, locally published, or merged-receipt user snapshots can be relayed.");
 
         var envelope = DeserializeSnapshot(snapshot);
         if (envelope.UserId != snapshot.UserId ||

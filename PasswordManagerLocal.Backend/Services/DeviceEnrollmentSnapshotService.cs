@@ -41,7 +41,7 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         "PrivateKeyBlob"
     ];
 
-    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity) : this(identity, new EphemeralSyncVersionClockService()) { }
+    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity) : this(identity, new EphemeralSyncVersionClockService(identity)) { }
 
     public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity, ISyncVersionClockService versionClock)
     {
@@ -85,6 +85,8 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
                 BackendJsonSerializerContext.Default.DeviceEnrollmentSnapshot);
             if (snapshot is null || snapshot.PrimaryUserId == Guid.Empty)
                 throw new InvalidDataException("The received profile data is empty.");
+            if (snapshot.PayloadVersion != SyncConstants.DeviceEnrollmentPayloadVersion)
+                throw new InvalidDataException("The enrollment payload version is invalid.");
 
             return UtcDateTimeUtil.NormalizeObjectGraph(snapshot);
         }
@@ -130,6 +132,22 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         var statesRepository = services.GetRequiredService<IUserControlStateRepository>();
         var knowledgeRepository = services.GetRequiredService<IUserRevisionKnowledgeRepository>();
         var snapshotsRepository = services.GetRequiredService<IUserSyncSnapshotRepository>();
+
+        // Enrollment exports a canonical baseline. While the user key is available, first true-merge
+        // every valid pending snapshot and compact only causally stable tombstones under the same
+        // re-entrant per-user lifecycle lock.
+        var mergeCoordinator = services.GetRequiredService<IUserSnapshotMergeCoordinator>();
+        var keyResolver = services.GetRequiredService<IUserSyncKeyResolverService>();
+        var garbageCollector = services.GetRequiredService<IUserTombstoneGarbageCollector>();
+        var trackedUser = await users.GetByIdWithRelationsAsync(userId, ct) ?? throw new UserNotFoundException();
+        if (keyResolver.TryResolve(trackedUser, out var activeKey) && activeKey is not null)
+        {
+            using (activeKey)
+            {
+                await mergeCoordinator.TryMergePendingUnderLifecycleAsync(userId, activeKey, ct);
+                await garbageCollector.CollectAsync(userId, activeKey, ct);
+            }
+        }
 
         var user = await users.GetByIdAsNoTrackingWithRelationsAsync(userId, ct) ?? throw new UserNotFoundException();
         if (user.KeyEpoch <= 0 || user.MembershipEpoch <= 0)
@@ -215,6 +233,13 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         var knowledge = await knowledgeRepository.ListForUserAsync(userId, ct);
         var cutoffs = await cutoffsRepository.ListForUserAsync(userId, ct);
         var retainedSnapshots = await snapshotsRepository.ListForUserAsync(userId, ct);
+        if (authorizations.Count > TombstoneConstants.MaxMembershipHistoryRowsPerUser ||
+            cutoffs.Count > TombstoneConstants.MaxRemovalCutoffRowsPerUser ||
+            knowledge.Count > TombstoneConstants.MaxRevisionKnowledgeRowsPerUser ||
+            retainedSnapshots.Count > TombstoneConstants.MaxCausalSnapshotEvidenceRowsPerUser)
+        {
+            throw new InvalidDataException("The enrollment causal-evidence baseline exceeds safe limits.");
+        }
 
         return new DeviceEnrollmentSnapshot
         {

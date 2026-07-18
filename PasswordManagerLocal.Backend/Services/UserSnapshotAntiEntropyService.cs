@@ -60,11 +60,6 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         await ValidatePeerAsync(peerDeviceId, ct);
         var result = new UserSnapshotInventoryExchangeRequest();
         var eligibleUsers = await LoadEligibleUsersAsync(peerDeviceId, ct);
-        var activeLinks = await _userDevices.ListByUsersWithDevicesAsync(eligibleUsers.Select(user => user.UId).ToArray(), ct);
-        var activeOriginsByUser = activeLinks
-            .Where(link => !link.IsDeleted && link.IsSyncOn && link.Device is { IsTrusted: true, IsBlocked: false })
-            .GroupBy(link => link.UserId)
-            .ToDictionary(group => group.Key, group => group.Select(link => link.DeviceId).ToHashSet());
 
         var totalEntries = 0;
         foreach (var user in eligibleUsers.OrderBy(user => user.UId))
@@ -76,13 +71,8 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                 MembershipEpoch = user.MembershipEpoch
             };
 
-            activeOriginsByUser.TryGetValue(user.UId, out var activeOrigins);
-            activeOrigins ??= [];
-            activeOrigins.Add(_identity.LocalDeviceId);
-
             var entries = await _knowledge.ListAsync(user.UId, user.KeyEpoch, ct);
             foreach (var item in entries
-                         .Where(item => activeOrigins.Contains(item.OriginDeviceId))
                          .OrderBy(item => item.OriginDeviceId)
                          .ThenBy(item => item.OriginInstanceId))
             {
@@ -111,9 +101,11 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                 var quarantinedRevision = 0L;
                 byte[] quarantinedHash = [];
                 byte[] conflictingHash = [];
-                if (retained is not null && retained.MembershipEpoch == user.MembershipEpoch)
+                if (retained is not null)
                 {
-                    if (retained.Status is UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished)
+                    if (retained.MembershipEpoch <= 0 || retained.MembershipEpoch > user.MembershipEpoch)
+                        throw new InvalidDataException("A retained user snapshot has an invalid historical membership epoch.");
+                    if (retained.Status is UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished or UserSyncSnapshotStatus.MergedReceipt)
                     {
                         if (retained.OriginRevision <= 0 || retained.SnapshotHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
                             throw new InvalidDataException("A retained user snapshot has invalid revision metadata.");
@@ -162,7 +154,8 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                     QuarantinedSnapshotHash = ByteString.CopyFrom(quarantinedHash),
                     ConflictingSnapshotHash = ByteString.CopyFrom(conflictingHash),
                     KnownSnapshotRevision = item.HighestStoredRevision,
-                    KnownSnapshotHash = ByteString.CopyFrom(item.HighestStoredSnapshotHash)
+                    KnownSnapshotHash = ByteString.CopyFrom(item.HighestStoredSnapshotHash),
+                    RetainedMembershipEpoch = storedRevision > 0 ? retained!.MembershipEpoch : 0
                 });
             }
 
@@ -218,7 +211,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                          .OrderBy(entry => ParseGuid(entry.OriginDeviceId, "origin device"))
                          .ThenBy(entry => ParseGuid(entry.OriginInstanceId, "origin instance")))
             {
-                ValidateRevision(remoteEntry, remoteUser.UserKeyEpoch);
+                ValidateRevision(remoteEntry, remoteUser.UserKeyEpoch, remoteUser.MembershipEpoch);
                 if (remoteEntry.HighestStoredRevision <= 0)
                     continue;
 
@@ -265,7 +258,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                     OriginInstanceId = originInstanceId.ToString("N"),
                     OriginRevision = remoteEntry.HighestStoredRevision,
                     UserKeyEpoch = remoteEntry.UserKeyEpoch,
-                    MembershipEpoch = remoteUser.MembershipEpoch,
+                    MembershipEpoch = remoteEntry.RetainedMembershipEpoch,
                     ExpectedSnapshotHash = remoteEntry.HighestStoredSnapshotHash
                 });
 
@@ -333,7 +326,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                 request.OriginRevision,
                 ct) ?? throw new InvalidDataException("The requested exact user snapshot is not stored locally.");
 
-            if (snapshot.Status is not (UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished))
+            if (snapshot.Status is not (UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished or UserSyncSnapshotStatus.MergedReceipt))
                 throw new InvalidDataException("The requested user snapshot is not relayable.");
             if (snapshot.MembershipEpoch != request.MembershipEpoch)
                 throw new InvalidDataException("The requested user snapshot membership epoch does not match.");
@@ -414,14 +407,17 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                 entryCount++;
                 if (entryCount > SyncConstants.MaxUserSnapshotInventoryEntries)
                     throw new InvalidDataException("The remote user snapshot inventory contains too many revision entries.");
-                ValidateRevision(entry, user.UserKeyEpoch);
+                ValidateRevision(entry, user.UserKeyEpoch, user.MembershipEpoch);
                 if (!seenEntries.Add(ParseRevisionKey(entry)))
                     throw new InvalidDataException("The remote inventory contains duplicate origin revision namespaces.");
             }
         }
     }
 
-    private static void ValidateRevision(UserSnapshotRevisionInventory entry, long expectedKeyEpoch)
+    private static void ValidateRevision(
+        UserSnapshotRevisionInventory entry,
+        long expectedKeyEpoch,
+        long currentMembershipEpoch)
     {
         _ = ParseGuid(entry.OriginDeviceId, "origin device");
         _ = ParseGuid(entry.OriginInstanceId, "origin instance");
@@ -433,6 +429,13 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
             throw new InvalidDataException("The inventory stored revision hash is invalid.");
         if (entry.HighestStoredRevision == 0 && entry.HighestStoredSnapshotHash.Length != 0)
             throw new InvalidDataException("The inventory contains a hash without a stored revision.");
+        if (entry.HighestStoredRevision > 0 &&
+            (entry.RetainedMembershipEpoch <= 0 || entry.RetainedMembershipEpoch > currentMembershipEpoch))
+        {
+            throw new InvalidDataException("The inventory retained snapshot membership epoch is invalid.");
+        }
+        if (entry.HighestStoredRevision == 0 && entry.RetainedMembershipEpoch != 0)
+            throw new InvalidDataException("The inventory contains a retained membership epoch without a stored revision.");
         if (entry.QuarantinedRevision < 0)
             throw new InvalidDataException("The inventory quarantine revision is invalid.");
         if (entry.QuarantinedRevision > 0 && entry.QuarantinedSnapshotHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)

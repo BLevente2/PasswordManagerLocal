@@ -176,16 +176,16 @@ public class AppDbContext : DbContext
         queue.HasIndex(q => new { q.DeviceId, q.SyncItemId }).IsUnique();
 
         var user = model.Entity<User>();
-        user.Property(u => u.EncryptedPayload).IsRequired();
-        user.Property(u => u.EncryptedGeneralUserDataPayload).IsRequired();
-        user.Property(u => u.EncryptedUserPasswordsDataPayload).IsRequired();
-        user.Property(u => u.EncryptedUserDevicesDataPayload).IsRequired();
+        user.Property(u => u.EncryptedPayload).IsRequired().IsConcurrencyToken();
+        user.Property(u => u.EncryptedGeneralUserDataPayload).IsRequired().IsConcurrencyToken();
+        user.Property(u => u.EncryptedUserPasswordsDataPayload).IsRequired().IsConcurrencyToken();
+        user.Property(u => u.EncryptedUserDevicesDataPayload).IsRequired().IsConcurrencyToken();
         user.Property(u => u.UserDataLastModifiedAt).IsRequired();
         user.Property(u => u.GeneralUserDataLastModifiedAt).IsRequired();
         user.Property(u => u.UserPasswordsDataLastModifiedAt).IsRequired();
         user.Property(u => u.UserDevicesDataLastModifiedAt).IsRequired();
-        user.Property(u => u.KeyEpoch).IsRequired();
-        user.Property(u => u.MembershipEpoch).IsRequired();
+        user.Property(u => u.KeyEpoch).IsRequired().IsConcurrencyToken();
+        user.Property(u => u.MembershipEpoch).IsRequired().IsConcurrencyToken();
 
         model.Entity<User>()
             .HasMany(u => u.Groups)
@@ -268,8 +268,8 @@ public class AppDbContext : DbContext
         userSyncState.ToTable("UserSyncStates");
         userSyncState.HasKey(state => state.UserId);
         userSyncState.Property(state => state.LocalOriginInstanceId).IsRequired();
-        userSyncState.Property(state => state.NextOriginRevision).IsRequired().HasDefaultValue(1L);
-        userSyncState.Property(state => state.LastPublishedContentHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        userSyncState.Property(state => state.NextOriginRevision).IsRequired().HasDefaultValue(1L).IsConcurrencyToken();
+        userSyncState.Property(state => state.LastPublishedContentHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes).IsConcurrencyToken();
         userSyncState.Property(state => state.LastUpdatedAtUtc).IsRequired();
         userSyncState.HasOne<User>()
             .WithOne()

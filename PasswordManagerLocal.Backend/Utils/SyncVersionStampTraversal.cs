@@ -36,11 +36,13 @@ public static class SyncVersionStampTraversal
     {
         foreach (var stamp in Enumerate(data))
             SyncVersionStampComparer.Validate(stamp);
+        TombstoneCausalReferenceUtil.Validate(data);
     }
 
     public static void Validate(UserDevicesData data)
     {
         foreach (var stamp in Enumerate(data))
             SyncVersionStampComparer.Validate(stamp);
+        TombstoneCausalReferenceUtil.Validate(data);
     }
 }

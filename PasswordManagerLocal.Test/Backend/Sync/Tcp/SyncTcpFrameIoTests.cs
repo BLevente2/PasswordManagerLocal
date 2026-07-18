@@ -64,7 +64,8 @@ public sealed class SyncTcpFrameIoTests
             UserKeyEpoch = 1,
             HighestStoredRevision = 15,
             HighestStoredSnapshotHash = Google.Protobuf.ByteString.CopyFrom(Enumerable.Repeat((byte)0x15, 32).ToArray()),
-            HighestMergedRevision = 12
+            HighestMergedRevision = 12,
+            RetainedMembershipEpoch = 2
         });
         request.Users.Add(user);
         await using var stream = new MemoryStream();
@@ -81,6 +82,7 @@ public sealed class SyncTcpFrameIoTests
         MSTestAssert.HasCount(1, restored.Users[0].Revisions);
         MSTestAssert.AreEqual(15L, restored.Users[0].Revisions[0].HighestStoredRevision);
         MSTestAssert.AreEqual(12L, restored.Users[0].Revisions[0].HighestMergedRevision);
+        MSTestAssert.AreEqual(2L, restored.Users[0].Revisions[0].RetainedMembershipEpoch);
     }
 
     [TestMethod]

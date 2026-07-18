@@ -310,6 +310,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserControlOperationInboxService, UserControlOperationInboxService>();
             services.AddScoped<IUserControlOperationAntiEntropyService, UserControlOperationAntiEntropyService>();
             services.AddScoped<IUserSyncKeyResolverService, UserSyncKeyResolverService>();
+            services.AddScoped<IUserTombstoneGarbageCollector, UserTombstoneGarbageCollector>();
             services.AddScoped<IUserDeltaApplierService, UserDeltaApplierService>();
             services.AddScoped<INetworkDeltaProtocolService, NetworkDeltaProtocolService>();
             services.AddScoped<INetworkDeltaReplayService, NetworkDeltaReplayService>();

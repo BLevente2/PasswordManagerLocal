@@ -21,6 +21,7 @@ public class RememberMeService : IRememberMeService
     private readonly IDeviceIdentityService _identity;
     private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
     private readonly ISyncVersionClockService _versionClock;
+    private readonly IUserTombstoneGarbageCollector? _garbageCollector;
 
     public RememberMeService(
         ITokenService tokens,
@@ -32,7 +33,8 @@ public class RememberMeService : IRememberMeService
         IUserDataReaderService reader,
         IDeviceIdentityService identity,
         IUserSnapshotMergeCoordinator snapshotMerge,
-        ISyncVersionClockService versionClock)
+        ISyncVersionClockService versionClock,
+        IUserTombstoneGarbageCollector? garbageCollector = null)
     {
         _tokens = tokens;
         _keys = keys;
@@ -44,6 +46,7 @@ public class RememberMeService : IRememberMeService
         _identity = identity;
         _snapshotMerge = snapshotMerge;
         _versionClock = versionClock;
+        _garbageCollector = garbageCollector;
     }
 
 
@@ -127,6 +130,17 @@ public class RememberMeService : IRememberMeService
             rawKey = _protector.Unprotect(user.SavedKey);
             using var key = EncryptionKey.FromRaw(rawKey);
             await _snapshotMerge.TryMergePendingAsync(user.UId, key, ct);
+            if (_garbageCollector is not null)
+            {
+                try
+                {
+                    await _garbageCollector.CollectAsync(user.UId, key, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Remember Me unlock remains available when maintenance is conservatively blocked.
+                }
+            }
             user = await _lookup.GetAndVerifyUserByUidAsync(user.UId, ct);
             var bundle = await _reader.GetAndVerifyUserDataBundleAsync(user, key, ct);
             UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(

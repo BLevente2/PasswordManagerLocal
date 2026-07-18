@@ -24,6 +24,9 @@ public sealed class UserDataWriterService : IUserDataWriterService
     private readonly ISyncChangeQueueService _syncQueue;
     private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUserDataPersistenceValidator _validator;
+    private readonly IUserSyncStateRepository _syncStates;
+    private readonly IDeviceIdentityService _identity;
+    private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUnitOfWork _uow;
 
     public UserDataWriterService(
@@ -35,6 +38,9 @@ public sealed class UserDataWriterService : IUserDataWriterService
         ISyncChangeQueueService syncQueue,
         IUserDataBundleIntegrityService integrity,
         IUserDataPersistenceValidator validator,
+        IUserSyncStateRepository syncStates,
+        IDeviceIdentityService identity,
+        IUserLifecycleCoordinator lifecycle,
         IUnitOfWork uow)
     {
         _users = users;
@@ -45,6 +51,9 @@ public sealed class UserDataWriterService : IUserDataWriterService
         _syncQueue = syncQueue;
         _integrity = integrity;
         _validator = validator;
+        _syncStates = syncStates;
+        _identity = identity;
+        _lifecycle = lifecycle;
         _uow = uow;
     }
 
@@ -142,16 +151,37 @@ public sealed class UserDataWriterService : IUserDataWriterService
         CancellationToken ct = default) =>
         UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, false, ct);
 
-    public async Task UpdateUserDataBundleAsync(
+    public Task UpdateUserDataBundleAsync(
         UserDataBundle bundle,
         User user,
         EncryptionKey key,
         UserDataBlobKind modifiedBlobs,
         bool enqueueSync,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        _lifecycle.ExecuteAsync(
+            user.UId,
+            token => UpdateUserDataBundleUnderLifecycleAsync(bundle, user, key, modifiedBlobs, enqueueSync, token),
+            ct);
+
+    private async Task UpdateUserDataBundleUnderLifecycleAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey key,
+        UserDataBlobKind modifiedBlobs,
+        bool enqueueSync,
+        CancellationToken ct)
     {
+        await AssignTombstoneCausalReferencesAsync(bundle, user, modifiedBlobs, ct);
         _validator.EnsureUserDataBundleCanBePersisted(bundle, user);
-        await PersistUserDataBundleAsync(bundle, user, key, modifiedBlobs, false, enqueueSync, ct);
+        await PersistUserDataBundleAsync(
+            bundle,
+            user,
+            key,
+            modifiedBlobs,
+            forceRewriteAllBlobs: false,
+            enqueueSync: enqueueSync,
+            preserveLogicalTimestamps: false,
+            ct: ct);
     }
 
     public Task UpdateUserDataBundleAsync(
@@ -175,6 +205,42 @@ public sealed class UserDataWriterService : IUserDataWriterService
         _cache.SetUserDataBundle(token, bundle);
     }
 
+
+    public Task CompactUserDataBundleAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey key,
+        UserDataBlobKind modifiedBlobs,
+        CancellationToken ct = default) =>
+        _lifecycle.ExecuteAsync(
+            user.UId,
+            token => CompactUserDataBundleUnderLifecycleAsync(bundle, user, key, modifiedBlobs, token),
+            ct);
+
+    private async Task CompactUserDataBundleUnderLifecycleAsync(
+        UserDataBundle bundle,
+        User user,
+        EncryptionKey key,
+        UserDataBlobKind modifiedBlobs,
+        CancellationToken ct)
+    {
+        if (modifiedBlobs.HasFlag(UserDataBlobKind.Passwords))
+            TombstoneCausalReferenceUtil.Validate(bundle.UserPasswordsData);
+        if (modifiedBlobs.HasFlag(UserDataBlobKind.Devices))
+            TombstoneCausalReferenceUtil.Validate(bundle.UserDevicesData);
+
+        _validator.EnsureUserDataBundleCanBePersisted(bundle, user);
+        await PersistUserDataBundleAsync(
+            bundle,
+            user,
+            key,
+            modifiedBlobs,
+            forceRewriteAllBlobs: false,
+            enqueueSync: false,
+            preserveLogicalTimestamps: true,
+            ct: ct);
+    }
+
     public async Task ReencryptUserDataBundleWithNewKeysAsync(
         UserDataBundle bundle,
         User user,
@@ -190,9 +256,62 @@ public sealed class UserDataWriterService : IUserDataWriterService
             user,
             newUserKey,
             UserDataBlobKind.None,
-            true,
-            enqueueSync,
-            ct);
+            forceRewriteAllBlobs: true,
+            enqueueSync: enqueueSync,
+            preserveLogicalTimestamps: false,
+            ct: ct);
+    }
+
+    private async Task AssignTombstoneCausalReferencesAsync(
+        UserDataBundle bundle,
+        User user,
+        UserDataBlobKind modifiedBlobs,
+        CancellationToken ct)
+    {
+        if (!modifiedBlobs.HasFlag(UserDataBlobKind.Passwords) &&
+            !modifiedBlobs.HasFlag(UserDataBlobKind.Devices))
+        {
+            return;
+        }
+
+        var state = await _syncStates.GetAsync(user.UId, ct);
+        var isNew = state is null;
+        if (state is null)
+        {
+            state = new UserSyncState
+            {
+                UserId = user.UId,
+                LocalOriginInstanceId = _identity.OriginInstanceId,
+                NextOriginRevision = 1,
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            await _syncStates.AddAsync(state, ct);
+        }
+        else if (state.LocalOriginInstanceId != _identity.OriginInstanceId)
+        {
+            state.LocalOriginInstanceId = _identity.OriginInstanceId;
+            state.NextOriginRevision = 1;
+            state.LastPublishedContentHash = [];
+            state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+            _syncStates.Update(state);
+        }
+
+        if (state.NextOriginRevision <= 0)
+            throw new InvalidOperationException("The next local user snapshot revision is invalid.");
+
+        var changed = TombstoneCausalReferenceUtil.AssignAndValidate(
+            bundle,
+            _identity.LocalDeviceId,
+            _identity.OriginInstanceId,
+            user.KeyEpoch,
+            user.MembershipEpoch,
+            state.NextOriginRevision,
+            modifiedBlobs);
+        if (changed != UserDataBlobKind.None && !isNew)
+        {
+            state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+            _syncStates.Update(state);
+        }
     }
 
     private async Task PersistUserDataBundleAsync(
@@ -202,6 +321,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         UserDataBlobKind modifiedBlobs,
         bool forceRewriteAllBlobs,
         bool enqueueSync,
+        bool preserveLogicalTimestamps,
         CancellationToken ct)
     {
         _integrity.UpdateModifiedBlobIntegrity(bundle, modifiedBlobs);
@@ -258,12 +378,13 @@ public sealed class UserDataWriterService : IUserDataWriterService
         }
 
         var now = DateTimeOffset.UtcNow;
-        if (modifiedBlobs != UserDataBlobKind.None || forceRewriteAllBlobs)
+        if (!preserveLogicalTimestamps && (modifiedBlobs != UserDataBlobKind.None || forceRewriteAllBlobs))
             user.UserDataLastModifiedAt = now;
 
         if (generalTask is not null)
         {
-            user.GeneralUserDataLastModifiedAt = now;
+            if (!preserveLogicalTimestamps)
+                user.GeneralUserDataLastModifiedAt = now;
             ReplaceEncryptedPayload(
                 user.EncryptedGeneralUserDataPayload,
                 await generalTask,
@@ -272,7 +393,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
 
         if (passwordsTask is not null)
         {
-            user.UserPasswordsDataLastModifiedAt = now;
+            if (!preserveLogicalTimestamps)
+                user.UserPasswordsDataLastModifiedAt = now;
             ReplaceEncryptedPayload(
                 user.EncryptedUserPasswordsDataPayload,
                 await passwordsTask,
@@ -281,7 +403,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
 
         if (devicesTask is not null)
         {
-            user.UserDevicesDataLastModifiedAt = now;
+            if (!preserveLogicalTimestamps)
+                user.UserDevicesDataLastModifiedAt = now;
             ReplaceEncryptedPayload(
                 user.EncryptedUserDevicesDataPayload,
                 await devicesTask,
@@ -292,7 +415,16 @@ public sealed class UserDataWriterService : IUserDataWriterService
             user.EncryptedPayload,
             await userDataTask,
             value => user.EncryptedPayload = value);
-        await UpdateUserAsync(user, enqueueSync, ct);
+        if (preserveLogicalTimestamps)
+        {
+            user.GenerateIntegrityHash();
+            _users.Update(user);
+            await _uow.SaveChangesAsync(ct);
+        }
+        else
+        {
+            await UpdateUserAsync(user, enqueueSync, ct);
+        }
     }
 
     private static async Task<byte[]> EncryptBlobAsync<T>(

@@ -26,6 +26,7 @@ public sealed class UserSnapshotAntiEntropyServiceTests
         var retainedOriginId = Guid.NewGuid();
         var mergedOnlyOriginId = Guid.NewGuid();
         var quarantinedOriginId = Guid.NewGuid();
+        var historicalOriginId = Guid.NewGuid();
         var user = new User
         {
             UId = Guid.NewGuid(),
@@ -91,13 +92,16 @@ public sealed class UserSnapshotAntiEntropyServiceTests
         var retainedInstance = Guid.NewGuid();
         var mergedOnlyInstance = Guid.NewGuid();
         var quarantinedInstance = Guid.NewGuid();
+        var historicalInstance = Guid.NewGuid();
         database.Db.AddRange(
             Knowledge(user.UId, retainedOriginId, retainedInstance, stored: 16, merged: 10, marker: 0x16),
             Knowledge(user.UId, mergedOnlyOriginId, mergedOnlyInstance, stored: 15, merged: 15, marker: 0x15),
-            Knowledge(user.UId, quarantinedOriginId, quarantinedInstance, stored: 9, merged: 8, marker: 0x31));
+            Knowledge(user.UId, quarantinedOriginId, quarantinedInstance, stored: 9, merged: 8, marker: 0x31),
+            Knowledge(user.UId, historicalOriginId, historicalInstance, stored: 7, merged: 7, marker: 0x07));
         database.Db.AddRange(
-            Snapshot(user, retainedOriginId, retainedInstance, 16, UserSyncSnapshotStatus.Pending, 0x16),
-            Snapshot(user, quarantinedOriginId, quarantinedInstance, 9, UserSyncSnapshotStatus.Quarantined, 0x31, 0x32));
+            Snapshot(user, retainedOriginId, retainedInstance, 16, UserSyncSnapshotStatus.MergedReceipt, 0x16),
+            Snapshot(user, quarantinedOriginId, quarantinedInstance, 9, UserSyncSnapshotStatus.Quarantined, 0x31, 0x32),
+            Snapshot(user, historicalOriginId, historicalInstance, 7, UserSyncSnapshotStatus.MergedReceipt, 0x07, membershipEpoch: 1));
         await database.UnitOfWork.SaveChangesAsync();
 
         var service = new UserSnapshotAntiEntropyService(
@@ -117,6 +121,10 @@ public sealed class UserSnapshotAntiEntropyServiceTests
         var entries = inventory.Users[0].Revisions.ToDictionary(entry => Guid.Parse(entry.OriginDeviceId));
         MSTestAssert.AreEqual(16L, entries[retainedOriginId].HighestStoredRevision);
         MSTestAssert.AreEqual(10L, entries[retainedOriginId].HighestMergedRevision);
+        MSTestAssert.AreEqual(2L, entries[retainedOriginId].RetainedMembershipEpoch);
+        MSTestAssert.AreEqual(7L, entries[historicalOriginId].HighestStoredRevision);
+        MSTestAssert.AreEqual(7L, entries[historicalOriginId].HighestMergedRevision);
+        MSTestAssert.AreEqual(1L, entries[historicalOriginId].RetainedMembershipEpoch);
         MSTestAssert.AreEqual(0L, entries[mergedOnlyOriginId].HighestStoredRevision);
         MSTestAssert.AreEqual(15L, entries[mergedOnlyOriginId].HighestMergedRevision);
         MSTestAssert.AreEqual(15L, entries[mergedOnlyOriginId].KnownSnapshotRevision);
@@ -268,6 +276,24 @@ public sealed class UserSnapshotAntiEntropyServiceTests
 
     [TestMethod]
     [TestCategory("Backend")]
+    public void FindMissingSnapshots_RequestsHistoricalReceiptUsingItsOriginalMembershipEpoch()
+    {
+        var userId = Guid.NewGuid();
+        var origin = Guid.NewGuid();
+        var instance = Guid.NewGuid();
+        var local = Inventory(userId, 1, 3);
+        var remoteRevision = Revision(origin, instance, stored: 4, merged: 4, marker: 0x04, retainedMembershipEpoch: 2);
+        var remote = Inventory(userId, 1, 3, remoteRevision);
+
+        var requests = CreateService().FindMissingSnapshots(local, remote.Users);
+
+        MSTestAssert.HasCount(1, requests);
+        MSTestAssert.AreEqual(2L, requests[0].MembershipEpoch);
+    }
+
+
+    [TestMethod]
+    [TestCategory("Backend")]
     public void FindMissingSnapshots_RejectsDuplicateRemoteOriginNamespaces()
     {
         var userId = Guid.NewGuid();
@@ -332,7 +358,8 @@ public sealed class UserSnapshotAntiEntropyServiceTests
         long revision,
         UserSyncSnapshotStatus status,
         byte marker,
-        byte? conflictingMarker = null) =>
+        byte? conflictingMarker = null,
+        long? membershipEpoch = null) =>
         new()
         {
             UserId = user.UId,
@@ -340,7 +367,7 @@ public sealed class UserSnapshotAntiEntropyServiceTests
             OriginInstanceId = originInstanceId,
             OriginRevision = revision,
             UserKeyEpoch = user.KeyEpoch,
-            MembershipEpoch = user.MembershipEpoch,
+            MembershipEpoch = membershipEpoch ?? user.MembershipEpoch,
             CreatedAtUtc = DateTimeOffset.UtcNow,
             ReceivedAtUtc = DateTimeOffset.UtcNow,
             SnapshotHash = Hash(marker),
@@ -377,7 +404,8 @@ public sealed class UserSnapshotAntiEntropyServiceTests
         Guid originInstanceId,
         long stored,
         long merged,
-        byte marker) =>
+        byte marker,
+        long retainedMembershipEpoch = 1) =>
         new()
         {
             OriginDeviceId = originDeviceId.ToString("N"),
@@ -387,7 +415,8 @@ public sealed class UserSnapshotAntiEntropyServiceTests
             HighestStoredSnapshotHash = stored == 0 ? ByteString.Empty : ByteString.CopyFrom(Hash(marker)),
             HighestMergedRevision = merged,
             KnownSnapshotRevision = stored,
-            KnownSnapshotHash = stored == 0 ? ByteString.Empty : ByteString.CopyFrom(Hash(marker))
+            KnownSnapshotHash = stored == 0 ? ByteString.Empty : ByteString.CopyFrom(Hash(marker)),
+            RetainedMembershipEpoch = stored == 0 ? 0 : retainedMembershipEpoch
         };
 
     private static byte[] Hash(byte marker) =>

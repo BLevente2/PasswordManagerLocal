@@ -307,6 +307,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             UserSnapshotReceiptStateProto.UserSnapshotReceiptStoredPending or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptReplacedOlderPending or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptAlreadyStored or
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptStoredMergedReceipt or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptMergedImmediately or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptObsoleteRevision or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptRejectedAccountDeleted;

@@ -8,7 +8,7 @@ namespace PasswordManagerLocal.Backend.Sync;
 
 public static class UserSnapshotEnvelopeUtil
 {
-    private const string CanonicalDomain = "PasswordManagerLocal.Backend.UserSnapshot.Content.v1";
+    private const string CanonicalDomain = "PasswordManagerLocal.Backend.UserSnapshot.Content.v2";
 
     public static void FillOriginAuthentication(UserSnapshotEnvelope envelope, IDeviceIdentityService identity)
     {
@@ -87,7 +87,7 @@ public static class UserSnapshotEnvelopeUtil
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
 
-        writer.Write("PasswordManagerLocal.Backend.UserSnapshot.Signature.v1");
+        writer.Write("PasswordManagerLocal.Backend.UserSnapshot.Signature.v2");
         writer.Write(envelope.UserId.ToByteArray());
         writer.Write(envelope.OriginDeviceId.ToByteArray());
         writer.Write(envelope.OriginInstanceId.ToByteArray());
@@ -186,6 +186,7 @@ public static class UserSnapshotEnvelopeUtil
                 entry.OriginDeviceId == Guid.Empty ||
                 entry.OriginInstanceId == Guid.Empty ||
                 entry.UserKeyEpoch <= 0 ||
+                entry.UserKeyEpoch > envelope.UserKeyEpoch ||
                 entry.OriginRevision <= 0) ||
             envelope.Coverage.Count != envelope.Coverage
                 .Select(entry => (entry.OriginDeviceId, entry.OriginInstanceId, entry.UserKeyEpoch))

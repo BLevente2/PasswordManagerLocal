@@ -4,5 +4,6 @@ public enum UserSyncSnapshotStatus : byte
 {
     Pending = 0,
     LocalPublished = 1,
-    Quarantined = 2
+    Quarantined = 2,
+    MergedReceipt = 3
 }

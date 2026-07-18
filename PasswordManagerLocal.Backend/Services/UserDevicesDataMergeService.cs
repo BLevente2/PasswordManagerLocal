@@ -135,7 +135,8 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
         {
             Id = source.Id,
             DeletedAt = source.DeletedAt,
-            Version = source.Version
+            Version = source.Version,
+            CausalReference = source.CausalReference
         };
         clone.GenerateIntegrityHash();
         return clone;

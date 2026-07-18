@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
@@ -30,6 +31,8 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
     public async Task ImportAsync(IServiceProvider services, DeviceEnrollmentSnapshot snapshot, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.PayloadVersion != Constants.SyncConstants.DeviceEnrollmentPayloadVersion)
+            throw new InvalidDataException("The enrollment payload version is invalid.");
         var deletionBarriers = services.GetRequiredService<IDeletedUserBarrierRepository>();
         if (snapshot.PrimaryUserId != Guid.Empty && await deletionBarriers.ExistsAsync(snapshot.PrimaryUserId, ct))
             throw new InvalidDataException("Enrollment cannot import a permanently deleted account identity.");
@@ -329,6 +332,13 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
 
         var userSnapshot = snapshot.Users.SingleOrDefault(row => row.UId == snapshot.PrimaryUserId)
             ?? throw new InvalidDataException("The enrollment bootstrap must contain exactly one primary user.");
+        if (snapshot.MembershipAuthorizations.Count > TombstoneConstants.MaxMembershipHistoryRowsPerUser ||
+            snapshot.RemovalCutoffs.Count > TombstoneConstants.MaxRemovalCutoffRowsPerUser ||
+            snapshot.RevisionKnowledge.Count > TombstoneConstants.MaxRevisionKnowledgeRowsPerUser ||
+            snapshot.PendingSnapshots.Count > TombstoneConstants.MaxCausalSnapshotEvidenceRowsPerUser)
+        {
+            throw new InvalidDataException("The enrollment causal-evidence baseline exceeds safe limits.");
+        }
         if (snapshot.Users.Count(row => row.UId == snapshot.PrimaryUserId) != 1 || userSnapshot.KeyEpoch <= 0 || userSnapshot.MembershipEpoch <= 0)
             throw new InvalidDataException("The enrollment bootstrap contains invalid or default epochs.");
         VerifyUserSnapshot(userSnapshot);
@@ -410,6 +420,21 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         var pendingItems = new List<ValidatedPendingSnapshot>();
         foreach (var pending in snapshot.PendingSnapshots)
         {
+            if (!Enum.IsDefined(pending.Status))
+                throw new InvalidDataException("A retained user snapshot has an invalid status.");
+            if (pending.Status == UserSyncSnapshotStatus.Quarantined)
+            {
+                if (string.IsNullOrWhiteSpace(pending.QuarantineReason) ||
+                    pending.ConflictingSnapshotHash is { Length: not Hashing.SHA256HashSizeInBytes })
+                {
+                    throw new InvalidDataException("Quarantined snapshot evidence contains invalid diagnostics.");
+                }
+            }
+            else if (pending.QuarantineReason is not null || pending.ConflictingSnapshotHash is not null)
+            {
+                throw new InvalidDataException("Non-quarantined snapshot evidence contains quarantine metadata.");
+            }
+
             var envelope = JsonSerializer.Deserialize(pending.EnvelopePayload, BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
                 ?? throw new InvalidDataException("A retained user snapshot envelope is invalid.");
             UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
@@ -430,7 +455,6 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         {
             if (knowledge.UserId != snapshot.PrimaryUserId || knowledge.OriginDeviceId == Guid.Empty || knowledge.OriginInstanceId == Guid.Empty ||
                 knowledge.UserKeyEpoch <= 0 || knowledge.HighestStoredRevision < 0 || knowledge.HighestMergedRevision < 0 ||
-                knowledge.HighestMergedRevision > knowledge.HighestStoredRevision ||
                 (knowledge.HighestStoredRevision > 0 && knowledge.HighestStoredSnapshotHash.Length != Hashing.SHA256HashSizeInBytes))
                 throw new InvalidDataException("The enrollment bootstrap contains invalid revision knowledge.");
         }
@@ -646,7 +670,9 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray(),
         OriginSignature = envelope.OriginSignature.ToArray(),
         EnvelopePayload = item.Snapshot.EnvelopePayload.ToArray(),
-        Status = item.Snapshot.Status,
+        Status = item.Snapshot.Status == UserSyncSnapshotStatus.LocalPublished
+            ? UserSyncSnapshotStatus.MergedReceipt
+            : item.Snapshot.Status,
         QuarantineReason = item.Snapshot.QuarantineReason,
         ConflictingSnapshotHash = item.Snapshot.ConflictingSnapshotHash?.ToArray()
     };

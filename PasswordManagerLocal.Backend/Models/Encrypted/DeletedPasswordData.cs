@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
 using PasswordManagerLocal.Backend.Utils;
+using System.Text.Json.Serialization;
 
 namespace PasswordManagerLocal.Backend.Models.Encrypted;
 
@@ -11,6 +12,8 @@ public sealed class DeletedPasswordData : IntegrityCheckableBase, IDisposable
     public Guid Id { get; set; }
     public DateTime DeletedAt { get; set; } = DateTime.UtcNow;
     public SyncVersionStamp Version { get; set; } = new();
+    [JsonRequired]
+    public TombstoneCausalReference CausalReference { get; set; } = new();
 
     public void Dispose()
     {
@@ -20,6 +23,7 @@ public sealed class DeletedPasswordData : IntegrityCheckableBase, IDisposable
         Id = Guid.Empty;
         DeletedAt = UtcDateTimeUtil.MinDateTime;
         Version = new();
+        CausalReference = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -31,5 +35,6 @@ public sealed class DeletedPasswordData : IntegrityCheckableBase, IDisposable
             hash.Write(Id);
             hash.Write(DeletedAt);
             Version.WriteTo(hash);
+            CausalReference.WriteTo(hash);
         });
 }

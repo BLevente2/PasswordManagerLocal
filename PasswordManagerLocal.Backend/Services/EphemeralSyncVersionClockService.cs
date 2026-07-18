@@ -8,10 +8,19 @@ namespace PasswordManagerLocal.Backend.Services;
 internal sealed class EphemeralSyncVersionClockService : ISyncVersionClockService
 {
     private static readonly object Gate = new();
-    private static readonly Guid DeviceId = new("11111111-1111-1111-1111-111111111111");
-    private static readonly Guid InstanceId = new("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid FallbackDeviceId = new("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid FallbackInstanceId = new("22222222-2222-2222-2222-222222222222");
     private static long _physical;
     private static long _logical;
+
+    private readonly IDeviceIdentityService? _identity;
+
+    public EphemeralSyncVersionClockService()
+    {
+    }
+
+    public EphemeralSyncVersionClockService(IDeviceIdentityService identity) =>
+        _identity = identity ?? throw new ArgumentNullException(nameof(identity));
 
     public SyncVersionStamp Next()
     {
@@ -27,12 +36,19 @@ internal sealed class EphemeralSyncVersionClockService : ISyncVersionClockServic
             {
                 _logical++;
             }
+            var deviceId = _identity is { IsInitialized: true, LocalDeviceId: var localDeviceId } && localDeviceId != Guid.Empty
+                ? localDeviceId
+                : FallbackDeviceId;
+            var originInstanceId = _identity is { IsInitialized: true, OriginInstanceId: var localOriginInstanceId } && localOriginInstanceId != Guid.Empty
+                ? localOriginInstanceId
+                : FallbackInstanceId;
+
             return new SyncVersionStamp
             {
                 PhysicalTimeUnixMilliseconds = _physical,
                 LogicalCounter = _logical,
-                OriginDeviceId = DeviceId,
-                OriginInstanceId = InstanceId
+                OriginDeviceId = deviceId,
+                OriginInstanceId = originInstanceId
             };
         }
     }

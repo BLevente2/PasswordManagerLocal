@@ -139,6 +139,58 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
         }
 
+        if (knowledge is not null &&
+            knowledge.HighestMergedRevision >= envelope.OriginRevision &&
+            knowledge.HighestStoredRevision <= envelope.OriginRevision &&
+            (existing is null || existing.OriginRevision < envelope.OriginRevision))
+        {
+            byte[] mergedReceiptPayload;
+            try
+            {
+                mergedReceiptPayload = SerializeEnvelope(envelope);
+            }
+            catch (InvalidDataException ex)
+            {
+                return Receipt(envelope, UserSnapshotReceiptState.Rejected, ex.Message);
+            }
+
+            var receiptReceivedAtUtc = DateTimeOffset.UtcNow;
+            var mergedReceipt = existing ?? new UserSyncSnapshot
+            {
+                UserId = envelope.UserId,
+                OriginDeviceId = envelope.OriginDeviceId,
+                OriginInstanceId = envelope.OriginInstanceId,
+                UserKeyEpoch = envelope.UserKeyEpoch
+            };
+            mergedReceipt.OriginRevision = envelope.OriginRevision;
+            mergedReceipt.MembershipEpoch = envelope.MembershipEpoch;
+            mergedReceipt.CreatedAtUtc = envelope.CreatedAtUtc;
+            mergedReceipt.ReceivedAtUtc = receiptReceivedAtUtc;
+            mergedReceipt.LastReceivedFromDeviceId = transportPeerDeviceId;
+            mergedReceipt.SnapshotHash = envelope.SnapshotHash.ToArray();
+            mergedReceipt.OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray();
+            mergedReceipt.OriginSignature = envelope.OriginSignature.ToArray();
+            mergedReceipt.EnvelopePayload = mergedReceiptPayload;
+            mergedReceipt.Status = UserSyncSnapshotStatus.MergedReceipt;
+            mergedReceipt.QuarantineReason = null;
+            mergedReceipt.ConflictingSnapshotHash = null;
+
+            if (existing is null)
+                await _snapshots.AddAsync(mergedReceipt, ct);
+            else
+                _snapshots.Update(mergedReceipt);
+
+            knowledge.HighestStoredRevision = envelope.OriginRevision;
+            knowledge.HighestStoredSnapshotHash = envelope.SnapshotHash.ToArray();
+            knowledge.LastUpdatedAtUtc = receiptReceivedAtUtc;
+            _knowledge.Update(knowledge);
+
+            return Receipt(
+                envelope,
+                UserSnapshotReceiptState.StoredMergedReceipt,
+                "The authenticated reporting snapshot was retained as merged-coverage evidence.");
+        }
+
         if (knowledge is not null && knowledge.HighestMergedRevision >= envelope.OriginRevision)
             return Receipt(envelope, UserSnapshotReceiptState.ObsoleteRevision, "The revision is already included in canonical state.");
         if (knowledge is not null && knowledge.HighestStoredRevision > envelope.OriginRevision)

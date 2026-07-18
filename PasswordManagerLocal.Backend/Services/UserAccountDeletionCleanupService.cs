@@ -91,10 +91,20 @@ public sealed class UserAccountDeletionCleanupService : IUserAccountDeletionClea
         if (user is null)
             return;
 
+        // The encrypted payload columns are optimistic-concurrency tokens. Preserve independent
+        // snapshots of their database values before zeroing the tracked arrays; otherwise mutating
+        // a byte[] in place can also mutate the value EF uses in the DELETE predicate and produce a
+        // false DbUpdateConcurrencyException even though no concurrent writer touched the account.
+        var userEntry = _db.Entry(user);
+        userEntry.Property(item => item.EncryptedPayload).OriginalValue = userEntry.Property(item => item.EncryptedPayload).OriginalValue.ToArray();
+        userEntry.Property(item => item.EncryptedGeneralUserDataPayload).OriginalValue = userEntry.Property(item => item.EncryptedGeneralUserDataPayload).OriginalValue.ToArray();
+        userEntry.Property(item => item.EncryptedUserPasswordsDataPayload).OriginalValue = userEntry.Property(item => item.EncryptedUserPasswordsDataPayload).OriginalValue.ToArray();
+        userEntry.Property(item => item.EncryptedUserDevicesDataPayload).OriginalValue = userEntry.Property(item => item.EncryptedUserDevicesDataPayload).OriginalValue.ToArray();
+
+        _db.Users.Remove(user);
         if (user.SavedKey is not null)
             CryptographicOperations.ZeroMemory(user.SavedKey);
         user.SavedKey = null;
         user.ClearEncryptedPayloads();
-        _db.Users.Remove(user);
     }
 }

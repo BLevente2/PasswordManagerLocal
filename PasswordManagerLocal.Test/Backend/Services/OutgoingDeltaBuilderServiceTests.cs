@@ -301,7 +301,7 @@ public sealed class OutgoingDeltaBuilderServiceTests
     [TestCategory("Backend")]
     [TestCategory("Integration")]
     [TestCategory("Security")]
-    public async Task BuildUserSnapshotRelay_PreservesImmutableOriginEnvelopeAndSignsOuterTransportAsRelay()
+    public async Task BuildUserSnapshotRelay_MergedReceiptPreservesImmutableOriginEnvelopeAndSignsOuterTransportAsRelay()
     {
         using var relayProvider = CreateIdentityProvider();
         using var recipientProvider = CreateIdentityProvider();
@@ -343,7 +343,7 @@ public sealed class OutgoingDeltaBuilderServiceTests
             OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray(),
             OriginSignature = envelope.OriginSignature.ToArray(),
             EnvelopePayload = serializedEnvelope,
-            Status = UserSyncSnapshotStatus.Pending
+            Status = UserSyncSnapshotStatus.MergedReceipt
         };
         var userDevices = new FakeUserDeviceRepository();
         var localUsers = new FakeLocalUserDeviceRepository();

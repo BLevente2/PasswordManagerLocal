@@ -7,6 +7,7 @@ namespace PasswordManagerLocal.Backend.Utils;
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(UserData))]
 [JsonSerializable(typeof(SyncVersionStamp))]
+[JsonSerializable(typeof(TombstoneCausalReference))]
 [JsonSerializable(typeof(GeneralUserData))]
 [JsonSerializable(typeof(UserPasswordsData))]
 [JsonSerializable(typeof(UserDevicesData))]

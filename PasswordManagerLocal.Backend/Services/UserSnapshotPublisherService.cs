@@ -77,11 +77,13 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
             _states.Update(state);
         }
 
-        var remoteCoverage = (await _knowledge.ListAsync(user.UId, user.KeyEpoch, ct))
+        var remoteCoverage = (await _knowledge.ListForUserAsync(user.UId, ct))
             .Where(item =>
                 item.HighestMergedRevision > 0 &&
+                item.UserKeyEpoch <= user.KeyEpoch &&
                 (item.OriginDeviceId != _identity.LocalDeviceId ||
-                 item.OriginInstanceId != _identity.OriginInstanceId))
+                 item.OriginInstanceId != _identity.OriginInstanceId ||
+                 item.UserKeyEpoch != user.KeyEpoch))
             .Select(item => new UserSnapshotCoverageEntry
             {
                 OriginDeviceId = item.OriginDeviceId,
@@ -232,7 +234,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
     private static byte[] CalculatePublishedContentHash(User user, IReadOnlyList<UserSnapshotCoverageEntry> coverage) =>
         Hashing.SHA256Hash(hash =>
         {
-            hash.WriteString("PasswordManagerLocal.Backend.UserSnapshot.PublishedContent.v1");
+            hash.WriteString("PasswordManagerLocal.Backend.UserSnapshot.PublishedContent.v2");
             hash.Write(user.UId);
             hash.Write(user.KeyEpoch);
             hash.Write(user.MembershipEpoch);

@@ -123,6 +123,41 @@ public sealed class IntegrityProtectionTests
         ExpectThrows<InvalidDataIntegrityException>(data.VerifyIntegrity);
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void DeletedPassword_CausalReferenceTamperingIsDetected()
+    {
+        var deviceId = Guid.NewGuid();
+        var instanceId = Guid.NewGuid();
+        using var tombstone = new DeletedPasswordData
+        {
+            Id = Guid.NewGuid(),
+            Version = new SyncVersionStamp
+            {
+                PhysicalTimeUnixMilliseconds = 1_700_000_000_000,
+                LogicalCounter = 1,
+                OriginDeviceId = deviceId,
+                OriginInstanceId = instanceId
+            },
+            CausalReference = new TombstoneCausalReference
+            {
+                OriginDeviceId = deviceId,
+                OriginInstanceId = instanceId,
+                UserKeyEpoch = 1,
+                MembershipEpoch = 1,
+                OriginRevision = 4
+            }
+        };
+        tombstone.GenerateIntegrityHash();
+
+        tombstone.CausalReference = tombstone.CausalReference with { OriginRevision = 5 };
+
+        MSTestAssert.IsFalse(tombstone.IsIntegrityValid());
+        ExpectThrows<InvalidDataIntegrityException>(tombstone.VerifyIntegrity);
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Security")]

@@ -1,9 +1,13 @@
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Constants;
+using System.Text.Json.Serialization;
 
 namespace PasswordManagerLocal.Backend.Sync;
 
 public sealed class DeviceEnrollmentSnapshot
 {
+    [JsonRequired]
+    public int PayloadVersion { get; set; } = SyncConstants.DeviceEnrollmentPayloadVersion;
     public Guid PrimaryUserId { get; set; }
     public Guid TargetDeviceId { get; set; }
     public Guid TargetOriginInstanceId { get; set; }

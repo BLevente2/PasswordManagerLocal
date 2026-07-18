@@ -23,6 +23,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
     private readonly IUnitOfWork _uow;
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
+    private readonly IUserTombstoneGarbageCollector? _garbageCollector;
 
     public UserSnapshotMergeCoordinator(
         IUserRepository users,
@@ -35,7 +36,8 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         IPendingSyncActivationService activation,
         IUnitOfWork uow,
         IUserLifecycleCoordinator lifecycle,
-        IDeletedUserBarrierRepository? deletionBarriers = null)
+        IDeletedUserBarrierRepository? deletionBarriers = null,
+        IUserTombstoneGarbageCollector? garbageCollector = null)
     {
         _users = users;
         _membershipAuthorization = membershipAuthorization;
@@ -48,6 +50,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _uow = uow;
         _lifecycle = lifecycle;
         _deletionBarriers = deletionBarriers;
+        _garbageCollector = garbageCollector;
     }
 
     public Task<bool> TryMergePendingAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
@@ -194,7 +197,15 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             activateTargets: false,
             ct);
 
-        _snapshots.DeleteRange(mergedRows);
+        // Keep the latest immutable envelope from each remote origin as an authenticated,
+        // relayable merged-coverage receipt. One row per origin/key namespace bounds storage.
+        foreach (var mergedRow in mergedRows)
+        {
+            mergedRow.Status = UserSyncSnapshotStatus.MergedReceipt;
+            mergedRow.QuarantineReason = null;
+            mergedRow.ConflictingSnapshotHash = null;
+            _snapshots.Update(mergedRow);
+        }
         if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
         {
             await transaction.RollbackAsync(ct);
@@ -203,6 +214,20 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         }
         await _uow.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
+
+        if (_garbageCollector is not null)
+        {
+            try
+            {
+                await _garbageCollector.CollectAsync(userId, key, CancellationToken.None);
+            }
+            catch
+            {
+                // The canonical merge is already committed. Tombstone compaction is conservative
+                // maintenance and may be retried at the next safe key-available trigger.
+            }
+        }
+
         try
         {
             // The queue row is durable. Activation is only a wake-up optimization and must not
@@ -228,7 +253,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             ct);
 
         foreach (var covered in envelope.Coverage
-                     .Where(item => item.UserKeyEpoch == envelope.UserKeyEpoch && item.OriginRevision > 0)
+                     .Where(item => item.UserKeyEpoch <= envelope.UserKeyEpoch && item.OriginRevision > 0)
                      .OrderBy(item => item.OriginDeviceId)
                      .ThenBy(item => item.OriginInstanceId))
         {

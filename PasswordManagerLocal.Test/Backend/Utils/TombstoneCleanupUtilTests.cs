@@ -1,5 +1,4 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Utils;
 
@@ -11,79 +10,45 @@ namespace PasswordManagerLocal.Test.Backend.Utils;
 public sealed class TombstoneCleanupUtilTests
 {
     [TestMethod]
-    public void CleanupExpiredUserDataTombstones_PreservesLongOfflineDeletionKnowledge()
+    public void AddOrUpdateDeletedPassword_DoesNotDiscardExistingTombstones()
     {
-        var now = DateTimeOffset.UtcNow;
-        var oldDateTime = now.AddYears(-5).UtcDateTime;
-        var oldDateTimeOffset = now.AddYears(-5);
-        var passwordId = Guid.NewGuid();
-        var colorId = Guid.NewGuid();
-        var tagId = Guid.NewGuid();
-        var deviceId = Guid.NewGuid();
-        var bundle = new UserDataBundle
-        {
-            UserData = new UserData { UId = Guid.NewGuid() },
-            GeneralUserData = new GeneralUserData(),
-            UserPasswordsData = new UserPasswordsData
-            {
-                DeletedPasswords = [new DeletedPasswordData { Id = passwordId, DeletedAt = oldDateTime }],
-                DeletedCustomColors = [new DeletedCustomUserColorData { Id = colorId, DeletedAt = oldDateTime }],
-                DeletedTags = [new DeletedPasswordTagData { Id = tagId, DeletedAt = oldDateTime }]
-            },
-            UserDevicesData = new UserDevicesData
-            {
-                DeletedDevices = [new DeletedUserDeviceData { Id = deviceId, DeletedAt = oldDateTimeOffset }]
-            }
-        };
+        var now = DateTime.UtcNow;
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var passwords = new UserPasswordsData();
 
-        var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, now);
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, firstId, now.AddYears(-5), Stamp(now.AddYears(-5)));
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, secondId, now, Stamp(now, 1));
 
-        MSTestAssert.AreEqual(UserDataBlobKind.None, modifiedBlobs);
-        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedPasswords.Any(deleted => deleted.Id == passwordId));
-        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedCustomColors.Any(deleted => deleted.Id == colorId));
-        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedTags.Any(deleted => deleted.Id == tagId));
-        MSTestAssert.IsTrue(bundle.UserDevicesData.DeletedDevices.Any(deleted => deleted.Id == deviceId));
+        MSTestAssert.HasCount(2, passwords.DeletedPasswords);
+        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(item => item.Id == firstId));
+        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(item => item.Id == secondId));
     }
 
     [TestMethod]
-    public void AddOrUpdateDeletedPasswordAndPasswordTag_WhenLegacyLimitReached_PreservesAllTombstones()
+    public void AddOrUpdateDeletedPassword_NewLogicalDeletionClearsPreviousCausalAnchor()
     {
         var now = DateTime.UtcNow;
+        var id = Guid.NewGuid();
         var passwords = new UserPasswordsData();
-        var oldestPasswordId = FillDeletedPasswordsToLimit(passwords, now);
-        var newPasswordId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, newPasswordId, now, Stamp(now));
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, id, now.AddDays(-1), Stamp(now.AddDays(-1)));
+        passwords.DeletedPasswords[0].CausalReference = Reference(3);
 
-        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList + 1, passwords.DeletedPasswords);
-        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == oldestPasswordId));
-        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == newPasswordId));
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, id, now, Stamp(now, 2));
 
-        var oldestTagId = FillDeletedPasswordTagsToLimit(passwords, now);
-        var newTagId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, newTagId, now, Stamp(now));
-
-        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList + 1, passwords.DeletedTags);
-        MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == oldestTagId));
-        MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == newTagId));
+        MSTestAssert.IsFalse(passwords.DeletedPasswords[0].CausalReference.IsValid);
+        MSTestAssert.AreEqual(2, passwords.DeletedPasswords[0].Version.LogicalCounter);
     }
 
-    private static Guid FillDeletedPasswordsToLimit(UserPasswordsData passwords, DateTime now)
+    private static TombstoneCausalReference Reference(long revision) => new()
     {
-        var oldestId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, oldestId, now.AddDays(-1), Stamp(now.AddDays(-1)));
-        for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
-            TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, Guid.NewGuid(), now.AddMinutes(-i), Stamp(now.AddMinutes(-i), i));
-        return oldestId;
-    }
+        OriginDeviceId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+        OriginInstanceId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+        UserKeyEpoch = 1,
+        MembershipEpoch = 1,
+        OriginRevision = revision
+    };
 
-    private static Guid FillDeletedPasswordTagsToLimit(UserPasswordsData passwords, DateTime now)
-    {
-        var oldestId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, oldestId, now.AddDays(-1), Stamp(now.AddDays(-1)));
-        for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
-            TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, Guid.NewGuid(), now.AddMinutes(-i), Stamp(now.AddMinutes(-i), i));
-        return oldestId;
-    }
     private static SyncVersionStamp Stamp(DateTime value, long logical = 0) => new()
     {
         PhysicalTimeUnixMilliseconds = new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)).ToUnixTimeMilliseconds(),
@@ -91,5 +56,4 @@ public sealed class TombstoneCleanupUtilTests
         OriginDeviceId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
         OriginInstanceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
     };
-
 }

@@ -521,6 +521,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         state is UserSnapshotReceiptState.StoredPending or
             UserSnapshotReceiptState.ReplacedOlderPending or
             UserSnapshotReceiptState.AlreadyStored or
+            UserSnapshotReceiptState.StoredMergedReceipt or
             UserSnapshotReceiptState.MergedImmediately or
             UserSnapshotReceiptState.ObsoleteRevision or
             UserSnapshotReceiptState.RejectedAccountDeleted;

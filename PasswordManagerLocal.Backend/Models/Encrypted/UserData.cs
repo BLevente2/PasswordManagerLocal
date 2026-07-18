@@ -1,5 +1,7 @@
 using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Constants;
 using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 
 namespace PasswordManagerLocal.Backend.Models.Encrypted;
 
@@ -7,6 +9,8 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
 {
     private bool _disposed;
 
+    [JsonRequired]
+    public int FormatVersion { get; set; } = SyncConstants.EncryptedUserDataFormatVersion;
     public Guid UId { get; set; } = Guid.NewGuid();
     public byte[] GeneralUserDataKey { get; set; } = [];
     public byte[] GeneralUserDataIntegrityHash { get; set; } = [];
@@ -26,6 +30,7 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
         if (_disposed)
             return;
 
+        FormatVersion = 0;
         UId = Guid.Empty;
         CryptographicOperations.ZeroMemory(GeneralUserDataKey);
         CryptographicOperations.ZeroMemory(GeneralUserDataIntegrityHash);
@@ -41,6 +46,7 @@ public sealed class UserData : IntegrityCheckableBase, IDisposable
     public override byte[] CalculateIntegrityHash() =>
         Hashing.SHA256Hash(hash =>
         {
+            hash.Write(FormatVersion);
             hash.Write(UId);
             hash.WriteBytes(GeneralUserDataKey);
             hash.WriteBytes(GeneralUserDataIntegrityHash);

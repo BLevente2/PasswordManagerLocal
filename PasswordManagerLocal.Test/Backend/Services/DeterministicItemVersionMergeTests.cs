@@ -515,23 +515,32 @@ public sealed class DeterministicItemVersionMergeTests
         return item;
     }
 
+    private static TombstoneCausalReference Reference(SyncVersionStamp version) => new()
+    {
+        OriginDeviceId = version.OriginDeviceId,
+        OriginInstanceId = version.OriginInstanceId,
+        UserKeyEpoch = 1,
+        MembershipEpoch = 1,
+        OriginRevision = Math.Max(1, version.LogicalCounter + 1)
+    };
+
     private static DeletedPasswordData DeletedPassword(Guid id, SyncVersionStamp version)
     {
-        var item = new DeletedPasswordData { Id = id, DeletedAt = DateTime.UtcNow, Version = version };
+        var item = new DeletedPasswordData { Id = id, DeletedAt = DateTime.UtcNow, Version = version, CausalReference = Reference(version) };
         item.GenerateIntegrityHash();
         return item;
     }
 
     private static DeletedPasswordTagData DeletedTag(Guid id, SyncVersionStamp version)
     {
-        var item = new DeletedPasswordTagData { Id = id, DeletedAt = DateTime.UtcNow, Version = version };
+        var item = new DeletedPasswordTagData { Id = id, DeletedAt = DateTime.UtcNow, Version = version, CausalReference = Reference(version) };
         item.GenerateIntegrityHash();
         return item;
     }
 
     private static DeletedCustomUserColorData DeletedColor(Guid id, SyncVersionStamp version)
     {
-        var item = new DeletedCustomUserColorData { Id = id, DeletedAt = DateTime.UtcNow, Version = version };
+        var item = new DeletedCustomUserColorData { Id = id, DeletedAt = DateTime.UtcNow, Version = version, CausalReference = Reference(version) };
         item.GenerateIntegrityHash();
         return item;
     }
@@ -557,7 +566,8 @@ public sealed class DeterministicItemVersionMergeTests
         {
             Id = id,
             DeletedAt = DateTimeOffset.UtcNow,
-            Version = version
+            Version = version,
+            CausalReference = Reference(version)
         };
         item.GenerateIntegrityHash();
         return item;
@@ -613,7 +623,7 @@ public sealed class DeterministicItemVersionMergeTests
         }
         foreach (var item in source.DeletedPasswords)
         {
-            var clone = new DeletedPasswordData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version };
+            var clone = new DeletedPasswordData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version, CausalReference = item.CausalReference };
             clone.GenerateIntegrityHash();
             data.DeletedPasswords.Add(clone);
         }
@@ -632,7 +642,7 @@ public sealed class DeterministicItemVersionMergeTests
         }
         foreach (var item in source.DeletedTags)
         {
-            var clone = new DeletedPasswordTagData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version };
+            var clone = new DeletedPasswordTagData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version, CausalReference = item.CausalReference };
             clone.GenerateIntegrityHash();
             data.DeletedTags.Add(clone);
         }
@@ -651,7 +661,7 @@ public sealed class DeterministicItemVersionMergeTests
         }
         foreach (var item in source.DeletedCustomColors)
         {
-            var clone = new DeletedCustomUserColorData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version };
+            var clone = new DeletedCustomUserColorData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version, CausalReference = item.CausalReference };
             clone.GenerateIntegrityHash();
             data.DeletedCustomColors.Add(clone);
         }
@@ -678,7 +688,7 @@ public sealed class DeterministicItemVersionMergeTests
         }
         foreach (var item in source.DeletedDevices)
         {
-            var clone = new DeletedUserDeviceData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version };
+            var clone = new DeletedUserDeviceData { Id = item.Id, DeletedAt = item.DeletedAt, Version = item.Version, CausalReference = item.CausalReference };
             clone.GenerateIntegrityHash();
             data.DeletedDevices.Add(clone);
         }

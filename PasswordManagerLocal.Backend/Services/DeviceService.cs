@@ -45,6 +45,7 @@ public sealed class DeviceService : IDeviceService
     private readonly IKeyVaultService _keyVault;
     private readonly IUserSyncSnapshotRepository _snapshots;
     private readonly ISyncVersionClockService _versionClock;
+    private readonly IUserTombstoneGarbageCollector? _garbageCollector;
 
     public DeviceService(
         IUserLookupService userLookup,
@@ -76,7 +77,8 @@ public sealed class DeviceService : IDeviceService
         IPendingSyncActivationService activation,
         IKeyVaultService keyVault,
         IUserSyncSnapshotRepository snapshots,
-        ISyncVersionClockService versionClock)
+        ISyncVersionClockService versionClock,
+        IUserTombstoneGarbageCollector? garbageCollector = null)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -108,6 +110,7 @@ public sealed class DeviceService : IDeviceService
         _keyVault = keyVault;
         _snapshots = snapshots;
         _versionClock = versionClock;
+        _garbageCollector = garbageCollector;
     }
 
     public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
@@ -365,6 +368,10 @@ public sealed class DeviceService : IDeviceService
                     await RemovePendingSyncsForUserToDeviceAsync(user.UId, deviceId, lifecycleToken);
                     await _uow.SaveChangesAsync(lifecycleToken);
                     await transaction.CommitAsync(lifecycleToken);
+                    if (_garbageCollector is not null)
+                    {
+                        try { await _garbageCollector.CollectAsync(user.UId, key, CancellationToken.None); } catch { }
+                    }
                     try { await _activation.ActivatePendingAsync(CancellationToken.None); } catch { }
                     return new DeviceRemovalResultResponse
                     {

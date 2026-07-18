@@ -27,6 +27,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly IUserControlOperationInboxService _controlOperationInbox;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
+    private readonly IUserTombstoneGarbageCollector? _garbageCollector;
 
     public NetworkDeltaService(
         IOutgoingDeltaBuilderService outgoingDeltaBuilder,
@@ -42,7 +43,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         IUserRepository users,
         IUserRevisionKnowledgeRepository revisionKnowledge,
         IAuthService auth,
-        IUserControlOperationInboxService controlOperationInbox)
+        IUserControlOperationInboxService controlOperationInbox,
+        IUserTombstoneGarbageCollector? garbageCollector = null)
     {
         _outgoingDeltaBuilder = outgoingDeltaBuilder;
         _protocol = protocol;
@@ -58,6 +60,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _revisionKnowledge = revisionKnowledge;
         _auth = auth;
         _controlOperationInbox = controlOperationInbox;
+        _garbageCollector = garbageCollector;
     }
 
     public Task<NetworkDelta> BuildAsync(SyncItem item, Device device, CancellationToken ct = default) =>
@@ -136,6 +139,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             UserSnapshotReceiptState.StoredPending or
             UserSnapshotReceiptState.ReplacedOlderPending or
             UserSnapshotReceiptState.AlreadyStored or
+            UserSnapshotReceiptState.StoredMergedReceipt or
             UserSnapshotReceiptState.ObsoleteRevision or
             UserSnapshotReceiptState.RejectedAccountDeleted;
         if (!durable)
@@ -148,7 +152,22 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         using (key)
         {
             if (!await mergeCoordinator.TryMergePendingAsync(envelope.UserId, key, ct))
+            {
+                if (receipt.State == UserSnapshotReceiptState.StoredMergedReceipt && _garbageCollector is not null)
+                {
+                    try
+                    {
+                        await _garbageCollector.CollectAsync(envelope.UserId, key, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // The authenticated receipt is already durable. Conservative cleanup can
+                        // be retried during login, Remember Me unlock, enrollment, or maintenance.
+                    }
+                }
+
                 return new NetworkDeltaApplyResult(transportTimestamp, receipt);
+            }
         }
 
         // A batch merge can succeed because of a different origin while this exact candidate

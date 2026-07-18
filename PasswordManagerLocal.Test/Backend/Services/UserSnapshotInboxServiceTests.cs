@@ -219,6 +219,54 @@ public sealed class UserSnapshotInboxServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
+    public async Task StoreAsync_ExactSnapshotAlreadyMergedThroughCoverage_RetainsAuthenticatedMergedReceipt()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 0,
+            HighestStoredSnapshotHash = [],
+            HighestMergedRevision = 5
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+        var envelope = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 5, originKey, marker: 0x54);
+
+        var receipt = await service.StoreAsync(envelope, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        var knowledge = await database.UserRevisionKnowledge.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, receipt.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.MergedReceipt, row.Status);
+        MSTestAssert.AreEqual(5L, row.OriginRevision);
+        MSTestAssert.IsNotNull(knowledge);
+        MSTestAssert.AreEqual(5L, knowledge.HighestStoredRevision);
+        MSTestAssert.AreEqual(5L, knowledge.HighestMergedRevision);
+        CollectionAssert.AreEqual(envelope.SnapshotHash, knowledge.HighestStoredSnapshotHash);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
     public async Task StoreAsync_RelayedSnapshot_RetainsOriginalOriginAndOnlyUpdatesLastRelayDiagnostic()
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();

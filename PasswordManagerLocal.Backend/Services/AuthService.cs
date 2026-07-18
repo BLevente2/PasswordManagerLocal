@@ -41,6 +41,7 @@ public sealed class AuthService : IAuthService
     private readonly IUserControlStateRepository _controlStates;
     private readonly IUserSyncStateRepository _syncStates;
     private readonly ISyncVersionClockService _versionClock;
+    private readonly IUserTombstoneGarbageCollector? _garbageCollector;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -67,7 +68,8 @@ public sealed class AuthService : IAuthService
         IUserMembershipAuthorizationService membershipAuthorization,
         IUserControlStateRepository controlStates,
         IUserSyncStateRepository syncStates,
-        ISyncVersionClockService versionClock)
+        ISyncVersionClockService versionClock,
+        IUserTombstoneGarbageCollector? garbageCollector = null)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -94,6 +96,7 @@ public sealed class AuthService : IAuthService
         _controlStates = controlStates;
         _syncStates = syncStates;
         _versionClock = versionClock;
+        _garbageCollector = garbageCollector;
     }
 
 
@@ -313,9 +316,20 @@ public sealed class AuthService : IAuthService
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
 
         await _snapshotMerge.TryMergePendingAsync(user.UId, key, ct);
+        if (_garbageCollector is not null)
+        {
+            try
+            {
+                await _garbageCollector.CollectAsync(user.UId, key, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Login must remain available when conservative maintenance cannot complete.
+            }
+        }
         user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
         var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
-        var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, DateTimeOffset.UtcNow);
+        var modifiedBlobs = UserDataBlobKind.None;
         UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
             bundle.UserDevicesData,
             _identity.LocalDeviceId,
@@ -475,6 +489,12 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException(
                 "The master password cannot be changed while a current-epoch snapshot origin is quarantined or unresolved.");
         }
+
+        // Tombstone causal references target the next snapshot in the epoch where the deletion
+        // was authored. Publish the current canonical bytes before rotating the key so no local
+        // deletion anchor can be orphaned by the epoch transition. The replacement snapshot then
+        // carries this old-epoch merged knowledge forward in its authenticated coverage vector.
+        await _snapshotPublisher.GetOrCreateAsync(user, ct);
 
         _cache.InvalidateToken(request.Token);
         var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct, user);
