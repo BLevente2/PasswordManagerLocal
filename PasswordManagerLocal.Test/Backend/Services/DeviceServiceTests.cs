@@ -9,6 +9,7 @@ using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;
+using System.Security.Cryptography;
 using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
@@ -249,12 +250,24 @@ public sealed class DeviceServiceTests
         var service = host.Services.GetRequiredService<IDeviceService>();
         var userDevices = (FakeUserDeviceRepository)host.Services.GetRequiredService<IUserDeviceRepository>();
         var devices = (FakeDeviceRepository)host.Services.GetRequiredService<IDeviceRepository>();
-        var queue = (FakeSyncQueueService)host.Services.GetRequiredService<ISyncQueueService>();
+        var membership = host.Services.GetRequiredService<IUserMembershipAuthorizationService>();
+        var membershipRows = host.Services.GetRequiredService<IUserMembershipAuthorizationRepository>();
+        var cutoffs = host.Services.GetRequiredService<IUserOriginRemovalCutoffRepository>();
+        var userRepository = host.Services.GetRequiredService<IUserRepository>();
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("disconnect_device"));
         var userId = users.GetUidFromToken(token);
         var remote = CreateRemoteDevice();
+        var remoteOrigin = Guid.NewGuid();
         devices.Seed(remote);
         await userDevices.AddAsync(CreateLink(userId, remote, true, false));
+        var canonical = await userRepository.GetByIdAsync(userId) ?? throw new AssertFailedException("Registered user missing.");
+        var addition = UserControlOperationEnvelopeUtil.CreateDeviceAdditionPayload(
+            userId, canonical.KeyEpoch, canonical.MembershipEpoch, remote.Id, remoteOrigin,
+            remote.SignPublicKey, remote.PublicKey, remote.TlsCertFingerprint, remote.DeviceType);
+        await membership.AuthorizeAdditionAsync(addition, Guid.NewGuid(), RandomNumberGenerator.GetBytes(32));
+        canonical.MembershipEpoch = addition.ResultingMembershipEpoch;
+        canonical.GenerateIntegrityHash();
+        userRepository.Update(canonical);
         await service.GetUserDevicesAsync(token);
 
         await ExpectThrowsAsync<InvalidInputException>(() =>
@@ -264,15 +277,21 @@ public sealed class DeviceServiceTests
         MSTestAssert.IsNotNull(unchanged);
         MSTestAssert.IsFalse(unchanged.IsDeleted);
 
-        await service.DisconnectUserDeviceAsync(token, remote.Id, Encoding.UTF8.GetBytes("P@ssw0rd12345678"));
+        var removal = await service.DisconnectUserDeviceAsync(token, remote.Id, Encoding.UTF8.GetBytes("P@ssw0rd12345678"));
 
         var deleted = await userDevices.GetAsync(userId, remote.Id);
         MSTestAssert.IsNotNull(deleted);
         MSTestAssert.IsTrue(deleted.IsDeleted);
         MSTestAssert.IsFalse(deleted.IsSyncOn);
         MSTestAssert.IsNotNull(deleted.DeletedAt);
-        MSTestAssert.IsTrue(queue.EnqueuedItems.Any(item =>
-            item.ModelType == SyncModelType.UserDevice && item.ChangeType == SyncChangeType.Deleted));
+        MSTestAssert.IsTrue(removal.Removed);
+        MSTestAssert.IsTrue(removal.MayContainUnobservedChanges);
+        MSTestAssert.AreNotEqual(Guid.Empty, removal.OperationId);
+        MSTestAssert.AreEqual(3L, removal.ResultingMembershipEpoch);
+        var endedAuthorization = (await membershipRows.ListForUserAsync(userId)).Single(row => row.DeviceId == remote.Id && row.OriginInstanceId == remoteOrigin);
+        MSTestAssert.IsFalse(endedAuthorization.IsActive);
+        MSTestAssert.IsNotNull(endedAuthorization.RemovalOperationId);
+        MSTestAssert.IsNotEmpty(await cutoffs.ListForOriginAsync(userId, remote.Id, remoteOrigin));
         var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);
         MSTestAssert.IsFalse(bundle.UserDevicesData.Devices.Any(device => device.Id == remote.Id));
         MSTestAssert.IsTrue(bundle.UserDevicesData.DeletedDevices.Any(device => device.Id == remote.Id));

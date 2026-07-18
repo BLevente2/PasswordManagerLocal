@@ -81,10 +81,12 @@ public sealed class NetworkDeltaServiceTests
         var auth = new FakeAuthService();
         var unitOfWork = new FakeUnitOfWork();
 
-        var relationships = new SyncRelationshipReconciliationService(users, groups, devices, userDevices, identity);
+        var membership = new FakeUserMembershipAuthorizationService();
+        var membershipRepository = new FakeUserMembershipAuthorizationRepository();
+        var relationships = new SyncRelationshipReconciliationService(users, groups, devices, userDevices, identity, membershipRepository);
         var userDeltaApplier = new UserDeltaApplierService(users, tombstones, syncQueueService);
-        var protocol = new NetworkDeltaProtocolService(devices, groups, userDevices, authorization, identity);
-        var replay = new NetworkDeltaReplayService(users, groups, devices, userDevices, tombstones, identity);
+        var protocol = new NetworkDeltaProtocolService(devices, groups, userDevices, authorization, identity, membership);
+        var replay = new NetworkDeltaReplayService(groups, devices, userDevices, tombstones);
         var payloadApplier = new NetworkDeltaPayloadApplierService(
             userDeltaApplier,
             users,
@@ -98,7 +100,8 @@ public sealed class NetworkDeltaServiceTests
             identity,
             authorization,
             auth,
-            relationships);
+            relationships,
+            membershipRepository);
         var lifecycle = new NetworkDeltaLifecycleService(
             users,
             devices,
@@ -121,7 +124,14 @@ public sealed class NetworkDeltaServiceTests
             payloadApplier,
             lifecycle,
             identity,
-            unitOfWork);
+            unitOfWork,
+            new FakeUserSnapshotInboxService(),
+            new FakeUserSnapshotMergeCoordinator(),
+            new FakeUserSyncKeyResolverService(),
+            users,
+            new FakeUserRevisionKnowledgeRepository(),
+            auth,
+            new FakeUserControlOperationInboxService());
     }
 
     private static async Task<ValidDeltaSetup> CreateValidDeltaAsync()
@@ -152,7 +162,9 @@ public sealed class NetworkDeltaServiceTests
             new FakeDeviceRepository(),
             userDevices,
             new FakeSyncRouteRepository(userDevices, localUsers),
-            sender);
+            sender,
+            new FakeUserSnapshotPublisherService(sender),
+            new FakeUserMembershipAuthorizationService());
         var delta = await builder.BuildAsync(new SyncItem
         {
             ModelId = Guid.NewGuid(),

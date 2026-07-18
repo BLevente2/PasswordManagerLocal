@@ -1,10 +1,12 @@
 using global::PasswordManagerLocal.Test.TestInfrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Test.Fakes;
 using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
@@ -14,6 +16,44 @@ namespace PasswordManagerLocal.Test.Backend.Services;
 [TestClass]
 public sealed class AuthServiceTests
 {
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    [TestCategory("Security")]
+    public async Task Register_CreatesGenesisAuthorizationAndExactLocalSequencingState()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var userRepository = host.Services.GetRequiredService<IUserRepository>();
+        var identity = host.Services.GetRequiredService<IDeviceIdentityService>();
+        var authorizations = host.Services.GetRequiredService<IUserMembershipAuthorizationRepository>();
+        var controlStates = host.Services.GetRequiredService<IUserControlStateRepository>();
+        var syncStates = host.Services.GetRequiredService<IUserSyncStateRepository>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("genesis_member"));
+        var userId = users.GetUidFromToken(token);
+        var user = await userRepository.GetByIdAsync(userId);
+        var authorization = await authorizations.GetActiveAsync(userId, identity.LocalDeviceId, identity.OriginInstanceId);
+        var controlState = await controlStates.GetAsync(userId);
+        var syncState = await syncStates.GetAsync(userId);
+
+        MSTestAssert.IsNotNull(user);
+        MSTestAssert.AreEqual(1L, user.MembershipEpoch);
+        MSTestAssert.IsNotNull(authorization);
+        MSTestAssert.IsTrue(authorization.IsGenesis);
+        MSTestAssert.AreEqual(identity.OriginInstanceId, authorization.OriginInstanceId);
+        CollectionAssert.AreEqual(identity.SignPublicKey, authorization.SignPublicKey);
+        MSTestAssert.IsNotNull(controlState);
+        MSTestAssert.AreEqual(identity.OriginInstanceId, controlState.LocalOriginInstanceId);
+        MSTestAssert.AreEqual(1L, controlState.NextOriginSequence);
+        MSTestAssert.AreEqual(user.KeyEpoch, controlState.AppliedKeyEpoch);
+        MSTestAssert.AreEqual(1L, controlState.AppliedMembershipEpoch);
+        MSTestAssert.IsNotNull(syncState);
+        MSTestAssert.AreEqual(identity.OriginInstanceId, syncState.LocalOriginInstanceId);
+        MSTestAssert.AreEqual(1L, syncState.NextOriginRevision);
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
@@ -153,6 +193,17 @@ public sealed class AuthServiceTests
 
         await auth.ChangeMasterPasswordAsync(request);
 
+        var users = host.Services.GetRequiredService<IUserService>();
+        var changedUser = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("dave"));
+        var merge = host.Services.GetRequiredService<IUserSnapshotMergeCoordinator>() as FakeUserSnapshotMergeCoordinator;
+        var controlWriter = host.Services.GetRequiredService<IUserControlOperationWriterService>() as FakeUserControlOperationWriterService;
+        var queueWriter = host.Services.GetRequiredService<ISyncQueueWriterService>() as FakeSyncQueueWriterService;
+        MSTestAssert.IsNotNull(changedUser);
+        MSTestAssert.AreEqual(2L, changedUser.KeyEpoch);
+        MSTestAssert.AreEqual(1, merge?.Calls);
+        MSTestAssert.AreEqual(1, controlWriter?.Calls);
+        MSTestAssert.HasCount(1, queueWriter?.EnqueuedItems ?? []);
+
         var login = new LoginRequest
         {
             Username = "dave",
@@ -195,6 +246,84 @@ public sealed class AuthServiceTests
         MSTestAssert.IsFalse(cache.TryGetUserData(otherToken, out _));
         MSTestAssert.IsTrue(tokens.TryGetInvalidationReason(otherToken, out var reason));
         MSTestAssert.AreEqual(AuthSessionInvalidationReason.ProfilePasswordChanged, reason);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    [TestCategory("Security")]
+    public async Task ChangeMasterPassword_CurrentEpochQuarantine_BlocksBeforeRotation()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var snapshots = host.Services.GetRequiredService<IUserSyncSnapshotRepository>() as FakeUserSyncSnapshotRepository;
+        var controlWriter = host.Services.GetRequiredService<IUserControlOperationWriterService>() as FakeUserControlOperationWriterService;
+        var tokens = host.Services.GetRequiredService<ITokenService>();
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("quarantined_rotation"));
+        var user = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("quarantined_rotation"));
+        MSTestAssert.IsNotNull(user);
+        MSTestAssert.IsNotNull(snapshots);
+        await snapshots.AddAsync(new UserSyncSnapshot
+        {
+            UserId = user.UId,
+            OriginDeviceId = Guid.NewGuid(),
+            OriginInstanceId = Guid.NewGuid(),
+            OriginRevision = 1,
+            UserKeyEpoch = user.KeyEpoch,
+            MembershipEpoch = user.MembershipEpoch,
+            SnapshotHash = new byte[32],
+            OriginSignPublicKey = new byte[32],
+            OriginSignature = new byte[64],
+            EnvelopePayload = [0x01],
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ReceivedAtUtc = DateTimeOffset.UtcNow,
+            Status = UserSyncSnapshotStatus.Quarantined
+        });
+
+        await ExpectThrowsAsync<InvalidOperationException>(() => auth.ChangeMasterPasswordAsync(new MasterPasswordChangeRequest
+        {
+            Token = token,
+            Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
+            NewPassword = Encoding.UTF8.GetBytes("N3wP@ssw0rd_123456")
+        }));
+
+        var unchanged = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("quarantined_rotation"));
+        MSTestAssert.IsNotNull(unchanged);
+        MSTestAssert.AreEqual(1L, unchanged.KeyEpoch);
+        MSTestAssert.AreEqual(0, controlWriter?.Calls);
+        MSTestAssert.IsTrue(tokens.Validate(token));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    [TestCategory("Security")]
+    public async Task ChangeMasterPassword_RememberMeEnabled_RewritesSavedKeyForNewEpoch()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var users = host.Services.GetRequiredService<IUserService>();
+        var registration = host.CreateValidRegistrationRequest("remembered_rotation");
+        registration.RememberMe = true;
+        var token = await auth.RegisterAsync(registration);
+        var before = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("remembered_rotation"));
+        MSTestAssert.IsNotNull(before);
+        MSTestAssert.IsNotNull(before.SavedKey);
+        var oldSavedKey = before.SavedKey.ToArray();
+
+        await auth.ChangeMasterPasswordAsync(new MasterPasswordChangeRequest
+        {
+            Token = token,
+            Password = Encoding.UTF8.GetBytes("P@ssw0rd12345678"),
+            NewPassword = Encoding.UTF8.GetBytes("N3wP@ssw0rd_123456")
+        });
+
+        var after = await users.GetUserByUsernameAsync(Encoding.UTF8.GetBytes("remembered_rotation"));
+        MSTestAssert.IsNotNull(after);
+        MSTestAssert.IsNotNull(after.SavedKey);
+        MSTestAssert.AreEqual(2L, after.KeyEpoch);
+        MSTestAssert.IsFalse(oldSavedKey.SequenceEqual(after.SavedKey));
     }
 
     [TestMethod]

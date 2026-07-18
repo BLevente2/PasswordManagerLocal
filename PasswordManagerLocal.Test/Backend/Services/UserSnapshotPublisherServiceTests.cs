@@ -32,7 +32,8 @@ public sealed class UserSnapshotPublisherServiceTests
             database.UserSyncStates,
             database.UserRevisionKnowledge,
             identity,
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator());
 
         var first = await service.GetOrCreateAsync(user);
         var firstEnvelope = JsonSerializer.Deserialize(
@@ -94,7 +95,8 @@ public sealed class UserSnapshotPublisherServiceTests
             database.UserSyncStates,
             database.UserRevisionKnowledge,
             identity,
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator());
 
         var first = await service.GetOrCreateAsync(user);
         var oldInstance = identity.OriginInstanceId;

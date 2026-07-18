@@ -13,4 +13,10 @@ public sealed class FakeUserSnapshotMergeCoordinator : IUserSnapshotMergeCoordin
         Calls++;
         return Task.FromResult(Result);
     }
+
+    public Task<bool> TryMergePendingUnderLifecycleAsync(Guid userId, EncryptionKey key, CancellationToken ct = default)
+    {
+        Calls++;
+        return Task.FromResult(Result);
+    }
 }

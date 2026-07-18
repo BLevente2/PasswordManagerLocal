@@ -19,6 +19,11 @@ public sealed class FakeUnitOfWork : IUnitOfWork
         return Task.FromResult(1);
     }
 
+
+    public void ClearTrackedChanges()
+    {
+    }
+
     private sealed class FakeUnitOfWorkTransaction : IUnitOfWorkTransaction
     {
         public Task CommitAsync(CancellationToken ct = default) => Task.CompletedTask;

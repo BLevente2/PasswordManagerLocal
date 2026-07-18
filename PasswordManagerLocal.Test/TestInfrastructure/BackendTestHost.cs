@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Caching.Memory;
+using NSec.Cryptography;
 using PasswordManagerLocal.Backend;
 using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Backend.Abstractions.Caching;
@@ -18,10 +19,12 @@ namespace PasswordManagerLocal.Test.TestInfrastructure;
 public sealed class BackendTestHost : IDisposable
 {
     private readonly ServiceProvider _sp;
+    private readonly Key _signingKey;
 
     public BackendTestHost()
     {
         var sc = new ServiceCollection();
+        _signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
 
         sc.AddSingleton<IMemoryCache>(_ => new MemoryCache(new MemoryCacheOptions { SizeLimit = 100_000 }));
         sc.AddSingleton<SafeMemoryCache>();
@@ -48,7 +51,12 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<FakeLocalUserDeviceRepository>();
         sc.AddSingleton<ILocalUserDeviceRepository>(sp => sp.GetRequiredService<FakeLocalUserDeviceRepository>());
         sc.AddSingleton<ISyncRouteRepository, FakeSyncRouteRepository>();
-        sc.AddSingleton<IDeviceIdentityService, FakeDeviceIdentityService>();
+        sc.AddSingleton<IDeviceIdentityService>(new FakeDeviceIdentityService
+        {
+            AgreementPublicKey = Enumerable.Repeat((byte)0xA5, 32).ToArray(),
+            SignPublicKey = _signingKey.PublicKey.Export(KeyBlobFormat.RawPublicKey),
+            SignHandler = bytes => SignatureAlgorithm.Ed25519.Sign(_signingKey, bytes)
+        });
         sc.AddSingleton<FakeSyncQueueService>();
         sc.AddSingleton<ISyncQueueService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
         sc.AddSingleton<ISyncChangeQueueService>(sp => sp.GetRequiredService<FakeSyncQueueService>());
@@ -59,6 +67,20 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         sc.AddSingleton<IUserSnapshotMergeCoordinator, FakeUserSnapshotMergeCoordinator>();
+        sc.AddSingleton<IUserSyncSnapshotRepository, FakeUserSyncSnapshotRepository>();
+        sc.AddSingleton<IUserSyncStateRepository, FakeUserSyncStateRepository>();
+        sc.AddSingleton<IUserRevisionKnowledgeRepository, FakeUserRevisionKnowledgeRepository>();
+        sc.AddSingleton<IUserControlOperationRepository, FakeUserControlOperationRepository>();
+        sc.AddSingleton<IUserControlStateRepository, FakeUserControlStateRepository>();
+        sc.AddSingleton<FakeUserMembershipAuthorizationRepository>();
+        sc.AddSingleton<IUserMembershipAuthorizationRepository>(sp => sp.GetRequiredService<FakeUserMembershipAuthorizationRepository>());
+        sc.AddSingleton<IUserOriginRemovalCutoffRepository, FakeUserOriginRemovalCutoffRepository>();
+        sc.AddSingleton<IDeviceEnrollmentCommitRepository, FakeDeviceEnrollmentCommitRepository>();
+        sc.AddSingleton<IUserMembershipAuthorizationService, UserMembershipAuthorizationService>();
+        sc.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
+        sc.AddSingleton<IUserControlOperationWriterService, FakeUserControlOperationWriterService>();
+        sc.AddSingleton<IUserSnapshotPublisherService, FakeUserSnapshotPublisherService>();
+        sc.AddSingleton<ISyncQueueWriterService, FakeSyncQueueWriterService>();
 
         sc.AddSingleton<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
         sc.AddSingleton<IUserSessionService, UserSessionService>();
@@ -109,6 +131,9 @@ public sealed class BackendTestHost : IDisposable
         };
 
 
-    public void Dispose() =>
+    public void Dispose()
+    {
         _sp.Dispose();
+        _signingKey.Dispose();
+    }
 }

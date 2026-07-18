@@ -108,7 +108,8 @@ public sealed class UserSnapshotAntiEntropyServiceTests
             database.UserSyncSnapshots,
             database.Devices,
             new FakeOutgoingDeltaBuilderService(),
-            new FakeDeviceIdentityService { LocalDeviceId = localDeviceId });
+            new FakeDeviceIdentityService { LocalDeviceId = localDeviceId },
+            new FakeUserMembershipAuthorizationService());
 
         var inventory = await service.BuildInventoryAsync(peerDeviceId);
 
@@ -351,7 +352,7 @@ public sealed class UserSnapshotAntiEntropyServiceTests
         };
 
     private static UserSnapshotAntiEntropyService CreateService() =>
-        new(null!, null!, null!, null!, null!, null!, null!, null!);
+        new(null!, null!, null!, null!, null!, null!, null!, null!, null!);
 
     private static UserSnapshotInventoryExchangeRequest Inventory(
         Guid userId,

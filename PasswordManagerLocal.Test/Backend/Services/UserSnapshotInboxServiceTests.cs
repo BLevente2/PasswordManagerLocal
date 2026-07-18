@@ -31,7 +31,9 @@ public sealed class UserSnapshotInboxServiceTests
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             localIdentity,
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
 
         using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var originDeviceId = Guid.NewGuid();
@@ -80,7 +82,9 @@ public sealed class UserSnapshotInboxServiceTests
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
         using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var originDeviceId = Guid.NewGuid();
         var originInstanceId = Guid.NewGuid();
@@ -130,7 +134,9 @@ public sealed class UserSnapshotInboxServiceTests
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
         using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var originDeviceId = Guid.NewGuid();
         var originInstanceId = Guid.NewGuid();
@@ -174,7 +180,9 @@ public sealed class UserSnapshotInboxServiceTests
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
         using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var originDeviceId = Guid.NewGuid();
         var originInstanceId = Guid.NewGuid();
@@ -220,7 +228,9 @@ public sealed class UserSnapshotInboxServiceTests
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
         using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var originDeviceId = Guid.NewGuid();
         var originInstanceId = Guid.NewGuid();
@@ -264,7 +274,9 @@ public sealed class UserSnapshotInboxServiceTests
             database.UserSyncSnapshots,
             database.UserRevisionKnowledge,
             localIdentity,
-            database.UnitOfWork);
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
         var envelope = CreateSignedEnvelope(user, localDeviceId, localInstanceId, 2, localKey, marker: 0x66);
 
         var receipt = await service.StoreAsync(envelope, Guid.NewGuid());

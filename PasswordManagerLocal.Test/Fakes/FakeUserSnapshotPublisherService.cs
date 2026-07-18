@@ -21,7 +21,7 @@ public sealed class FakeUserSnapshotPublisherService : IUserSnapshotPublisherSer
 
     public Task<UserSyncSnapshot> GetOrCreateAsync(User user, CancellationToken ct = default)
     {
-        if (_latest is not null)
+        if (_latest is { UserId: var id, UserKeyEpoch: var epoch } && id == user.UId && epoch == user.KeyEpoch)
             return Task.FromResult(_latest);
 
         var createdAt = DateTimeOffset.UtcNow;

@@ -20,7 +20,7 @@ public sealed class UserSnapshotEnvelopeUtilTests
         var envelope = CreateEnvelope(deviceId, instanceId, key);
         var trustedDevice = CreateTrustedDevice(deviceId, key);
 
-        UserSnapshotEnvelopeUtil.Verify(envelope, trustedDevice);
+        UserSnapshotEnvelopeUtil.VerifyWithSigningKey(envelope, trustedDevice.SignPublicKey);
     }
 
     [TestMethod]
@@ -34,7 +34,7 @@ public sealed class UserSnapshotEnvelopeUtilTests
         envelope.User.EncryptedUserPasswordsDataPayload[0] ^= 0x7F;
 
         MSTestAssert.ThrowsExactly<InvalidDataException>(() =>
-            UserSnapshotEnvelopeUtil.Verify(envelope, trustedDevice));
+            UserSnapshotEnvelopeUtil.VerifyWithSigningKey(envelope, trustedDevice.SignPublicKey));
     }
 
     [TestMethod]

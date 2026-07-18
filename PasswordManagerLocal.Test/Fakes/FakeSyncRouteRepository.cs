@@ -46,6 +46,17 @@ public sealed class FakeSyncRouteRepository : ISyncRouteRepository
     public Task<bool> HasEligibleUserForDeviceAsync(Guid deviceId, CancellationToken ct = default) =>
         Task.FromResult(deviceId != Guid.Empty && EligibleRoutes(deviceId).Any());
 
+    public Task<IReadOnlyList<Guid>> ListAllEligibleUserIdsAsync(Guid remoteDeviceId, CancellationToken ct = default)
+    {
+        if (remoteDeviceId == Guid.Empty)
+            return Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
+
+        return Task.FromResult((IReadOnlyList<Guid>)EligibleRoutes(remoteDeviceId)
+            .Select(link => link.UserId)
+            .Distinct()
+            .ToList());
+    }
+
     private static Guid[] NormalizeUserIds(IReadOnlyCollection<Guid> userIds) =>
         userIds.Where(id => id != Guid.Empty).Distinct().ToArray();
 

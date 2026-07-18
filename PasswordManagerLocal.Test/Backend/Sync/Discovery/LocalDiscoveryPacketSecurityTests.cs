@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
 using PasswordManagerLocal.Backend.Constants;
+using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.Sync.Discovery.Protocol;
 using System.Net;
@@ -82,11 +83,15 @@ public sealed class LocalDiscoveryPacketSecurityTests
         var signPublicKey = Enumerable.Repeat((byte)0x33, SyncConstants.SyncDeltaEd25519PublicKeyBytes).ToArray();
         var agreementPublicKey = Enumerable.Repeat((byte)0x44, SyncConstants.SyncDeltaX25519PublicKeyBytes).ToArray();
         var deviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        const DeviceType deviceType = DeviceType.WindowsPc;
         var authenticatedBytes = LocalDiscoveryPacketCodec.BuildEnrollmentResponseAuthenticatedBytes(
             123456789,
             nonce,
             "ABCDEFG2",
             deviceId,
+            originInstanceId,
+            deviceType,
             fingerprint,
             signPublicKey,
             agreementPublicKey,
@@ -96,6 +101,8 @@ public sealed class LocalDiscoveryPacketSecurityTests
 
         MSTestAssert.IsTrue(LocalDiscoveryPacketCodec.TryDecodeEnrollmentResponse(payload, out var decoded));
         MSTestAssert.AreEqual(deviceId, decoded.DeviceId);
+        MSTestAssert.AreEqual(originInstanceId, decoded.OriginInstanceId);
+        MSTestAssert.AreEqual(deviceType, decoded.DeviceType);
         MSTestAssert.AreEqual("ABCDEFG2", decoded.SessionId);
         CollectionAssert.AreEqual(fingerprint, decoded.TlsFingerprint);
         CollectionAssert.AreEqual(signPublicKey, decoded.SignPublicKey);

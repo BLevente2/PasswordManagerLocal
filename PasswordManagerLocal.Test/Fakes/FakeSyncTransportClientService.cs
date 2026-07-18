@@ -57,6 +57,33 @@ public sealed class FakeSyncTransportClientService : ISyncTransportClientService
         return Task.FromResult(RequestedSnapshotDeltas);
     }
 
+    public UserControlOperationInventoryExchangeReply ControlOperationInventoryReply { get; set; } = new();
+    public IReadOnlyList<NetworkDelta> RequestedControlOperationDeltas { get; set; } = [];
+    public int ControlOperationInventoryCalls { get; private set; }
+    public int ControlOperationRequestCalls { get; private set; }
+
+    public Task<UserControlOperationInventoryExchangeReply> ExchangeUserControlOperationInventoryAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        UserControlOperationInventoryExchangeRequest request,
+        CancellationToken ct = default)
+    {
+        ControlOperationInventoryCalls++;
+        return Task.FromResult(ControlOperationInventoryReply);
+    }
+
+    public Task<IReadOnlyList<NetworkDelta>> RequestUserControlOperationsAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        UserControlOperationRequestBatch request,
+        CancellationToken ct = default)
+    {
+        ControlOperationRequestCalls++;
+        return Task.FromResult(RequestedControlOperationDeltas);
+    }
+
     public Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(string host, int port, string serverFingerprintHex, GetDeviceEnrollmentInfoRequest request, CancellationToken ct = default) =>
         throw new NotSupportedException();
 

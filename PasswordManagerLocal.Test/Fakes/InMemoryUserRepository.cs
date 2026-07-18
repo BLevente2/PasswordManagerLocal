@@ -77,6 +77,18 @@ public sealed class InMemoryUserRepository : IUserRepository
     public Task<User?> GetByIdAsNoTrackingWithRelationsAsync(Guid id, CancellationToken ct = default)
         => GetByIdAsync(id, ct);
 
+
+    public Task UpdateSavedKeyAsync(Guid id, byte[]? savedKey, CancellationToken ct = default)
+    {
+        if (_store.TryGetValue(id, out var user))
+        {
+            var replacement = Clone(user);
+            replacement.SavedKey = savedKey?.ToArray();
+            _store[id] = replacement;
+        }
+        return Task.CompletedTask;
+    }
+
     public Task<IReadOnlyList<User>> ListAllAsync(CancellationToken ct = default)
     {
         Interlocked.Increment(ref _listAllCallCount);

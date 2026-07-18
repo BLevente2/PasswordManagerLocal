@@ -142,7 +142,7 @@ public sealed class SyncCryptoUtilTests
         {
             ModelType = SyncModelType.User,
             ChangeType = SyncChangeType.Deleted,
-            User = new UserSyncPayload()
+            Group = new GroupSyncPayload()
         }));
 
         SyncCryptoUtil.ValidatePayloadShape(new SyncDeltaPayload
@@ -184,12 +184,26 @@ public sealed class SyncCryptoUtilTests
         const long timestamp = 1_750_000_000_000L;
         var user = CreateUserPayload();
         user.IntegrityHash = SyncCryptoUtil.CalculateUserHash(user, timestamp);
+        var envelope = new UserSnapshotEnvelope
+        {
+            UserId = user.UId,
+            OriginDeviceId = Guid.NewGuid(),
+            OriginInstanceId = Guid.NewGuid(),
+            OriginRevision = 1,
+            UserKeyEpoch = 1,
+            MembershipEpoch = 1,
+            CreatedAtUtc = DateTimeOffset.FromUnixTimeMilliseconds(timestamp),
+            User = user,
+            OriginSignPublicKey = new byte[SyncConstants.SyncDeltaEd25519PublicKeyBytes],
+            OriginSignature = new byte[SyncConstants.SyncDeltaEd25519SignatureBytes]
+        };
+        envelope.SnapshotHash = UserSnapshotEnvelopeUtil.CalculateSnapshotHash(envelope);
         var payload = new SyncDeltaPayload
         {
             ModelId = user.UId,
             ModelType = SyncModelType.User,
             ChangeType = SyncChangeType.Updated,
-            User = user
+            UserSnapshot = envelope
         };
 
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, timestamp);

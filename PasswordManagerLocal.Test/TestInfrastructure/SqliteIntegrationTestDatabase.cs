@@ -30,6 +30,11 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
         UserSyncSnapshots = new UserSyncSnapshotRepository(db);
         UserSyncStates = new UserSyncStateRepository(db);
         UserRevisionKnowledge = new UserRevisionKnowledgeRepository(db);
+        UserControlOperations = new UserControlOperationRepository(db);
+        UserControlStates = new UserControlStateRepository(db);
+        UserMembershipAuthorizations = new UserMembershipAuthorizationRepository(db);
+        UserOriginRemovalCutoffs = new UserOriginRemovalCutoffRepository(db);
+        DeviceEnrollmentCommits = new DeviceEnrollmentCommitRepository(db);
     }
 
     public AppDbContext Db { get; }
@@ -46,6 +51,11 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
     public UserSyncSnapshotRepository UserSyncSnapshots { get; }
     public UserSyncStateRepository UserSyncStates { get; }
     public UserRevisionKnowledgeRepository UserRevisionKnowledge { get; }
+    public UserControlOperationRepository UserControlOperations { get; }
+    public UserControlStateRepository UserControlStates { get; }
+    public UserMembershipAuthorizationRepository UserMembershipAuthorizations { get; }
+    public UserOriginRemovalCutoffRepository UserOriginRemovalCutoffs { get; }
+    public DeviceEnrollmentCommitRepository DeviceEnrollmentCommits { get; }
 
     public static async Task<SqliteIntegrationTestDatabase> CreateAsync()
     {

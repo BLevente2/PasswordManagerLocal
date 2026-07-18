@@ -401,6 +401,8 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
             query.Nonce,
             parsed.SessionId,
             Guid.NewGuid(),
+            Guid.NewGuid(),
+            DeviceType.WindowsPc,
             Enumerable.Repeat((byte)0x44, 32).ToArray(),
             Enumerable.Repeat((byte)0x33, SyncConstants.SyncDeltaEd25519PublicKeyBytes).ToArray(),
             Enumerable.Repeat((byte)0x55, SyncConstants.SyncDeltaX25519PublicKeyBytes).ToArray(),

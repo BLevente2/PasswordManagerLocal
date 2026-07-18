@@ -29,4 +29,13 @@ public sealed class FakeOutgoingDeltaBuilderService : IOutgoingDeltaBuilderServi
         return Task.FromResult(Result);
     }
 
+    public Task<NetworkDelta> BuildUserControlOperationRelayAsync(UserControlOperation operation, Device device, CancellationToken ct = default)
+    {
+        LastDevice = device;
+        if (ExceptionToThrow is not null)
+            throw ExceptionToThrow;
+
+        return Task.FromResult(Result);
+    }
+
 }
