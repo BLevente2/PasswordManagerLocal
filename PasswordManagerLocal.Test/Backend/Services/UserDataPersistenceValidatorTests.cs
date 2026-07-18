@@ -12,13 +12,14 @@ namespace PasswordManagerLocal.Test.Backend.Services;
 public sealed class UserDataPersistenceValidatorTests
 {
     [TestMethod]
-    public async Task EnsureUserDataBundleCanBePersisted_DuplicateDeviceNames_Throws()
+    public async Task EnsureUserDataBundleCanBePersisted_DuplicateDeviceNames_AreAllowedForDerivedPresentationResolution()
     {
         using var host = new BackendTestHost();
         var auth = host.Services.GetRequiredService<IAuthService>();
         var lookup = host.Services.GetRequiredService<IUserLookupService>();
         var reader = host.Services.GetRequiredService<IUserDataReaderService>();
         var validator = host.Services.GetRequiredService<IUserDataPersistenceValidator>();
+        var versionClock = host.Services.GetRequiredService<ISyncVersionClockService>();
 
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("validator_user"));
         var user = await lookup.GetAndVerifyUserAsync(token);
@@ -29,10 +30,36 @@ public sealed class UserDataPersistenceValidatorTests
             Id = Guid.NewGuid(),
             Name = existing.Name,
             LinkedAt = DateTimeOffset.UtcNow,
-            LastUpdatedAt = DateTimeOffset.UtcNow
+            LastUpdatedAt = DateTimeOffset.UtcNow,
+            Version = versionClock.Next()
         });
 
-        MSTestAssert.ThrowsExactly<InvalidOperationException>(
-            () => validator.EnsureUserDataBundleCanBePersisted(bundle, user));
+        validator.EnsureUserDataBundleCanBePersisted(bundle, user);
     }
+
+    [TestMethod]
+    public async Task EnsureUserDataBundleCanBePersisted_ConcurrentDuplicateTagAndColorFields_AreAllowed()
+    {
+        using var host = new BackendTestHost();
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var lookup = host.Services.GetRequiredService<IUserLookupService>();
+        var reader = host.Services.GetRequiredService<IUserDataReaderService>();
+        var validator = host.Services.GetRequiredService<IUserDataPersistenceValidator>();
+        var versionClock = host.Services.GetRequiredService<ISyncVersionClockService>();
+
+        var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("validator_duplicate_fields"));
+        var user = await lookup.GetAndVerifyUserAsync(token);
+        var bundle = await reader.GetLoadAndVerifyUserDataBundleAsync(token, user: user);
+        bundle.UserPasswordsData.Tags.AddRange([
+            new PasswordTag { Id = Guid.NewGuid(), Name = "Shared", Color = "#FF14B8A6", Version = versionClock.Next() },
+            new PasswordTag { Id = Guid.NewGuid(), Name = "Shared", Color = "#FF14B8A6", Version = versionClock.Next() }
+        ]);
+        bundle.UserPasswordsData.CustomColors.AddRange([
+            new CustomUserColor { Id = Guid.NewGuid(), ColorName = "Shared", ColorCode = "#FF123456", Version = versionClock.Next() },
+            new CustomUserColor { Id = Guid.NewGuid(), ColorName = "Shared", ColorCode = "#FF123456", Version = versionClock.Next() }
+        ]);
+
+        validator.EnsureUserDataBundleCanBePersisted(bundle, user);
+    }
+
 }

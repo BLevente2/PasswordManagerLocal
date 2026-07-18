@@ -20,6 +20,7 @@ public class RememberMeService : IRememberMeService
     private readonly IUserDataReaderService _reader;
     private readonly IDeviceIdentityService _identity;
     private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
+    private readonly ISyncVersionClockService _versionClock;
 
     public RememberMeService(
         ITokenService tokens,
@@ -30,7 +31,8 @@ public class RememberMeService : IRememberMeService
         IUserDataWriterService writer,
         IUserDataReaderService reader,
         IDeviceIdentityService identity,
-        IUserSnapshotMergeCoordinator snapshotMerge)
+        IUserSnapshotMergeCoordinator snapshotMerge,
+        ISyncVersionClockService versionClock)
     {
         _tokens = tokens;
         _keys = keys;
@@ -41,6 +43,7 @@ public class RememberMeService : IRememberMeService
         _reader = reader;
         _identity = identity;
         _snapshotMerge = snapshotMerge;
+        _versionClock = versionClock;
     }
 
 
@@ -129,7 +132,8 @@ public class RememberMeService : IRememberMeService
             UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
                 bundle.UserDevicesData,
                 _identity.LocalDeviceId,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                _versionClock.Next());
             await _writer.UpdateUserDataBundleAsync(
                 bundle,
                 user,

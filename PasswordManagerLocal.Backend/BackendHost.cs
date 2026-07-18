@@ -270,6 +270,8 @@ namespace PasswordManagerLocal.Backend
 
             services.AddSingleton<IKeyVaultService, KeyVaultService>();
             services.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
+            services.AddSingleton(TimeProvider.System);
+            services.AddSingleton<ISyncVersionClockService, SyncVersionClockService>();
             services.AddMemoryCache();
             services.AddSingleton<SafeMemoryCache>();
             services.AddSingleton<IDataCachingService, DataCachingService>();

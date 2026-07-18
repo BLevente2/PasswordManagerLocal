@@ -44,6 +44,7 @@ public sealed class DeviceService : IDeviceService
     private readonly IPendingSyncActivationService _activation;
     private readonly IKeyVaultService _keyVault;
     private readonly IUserSyncSnapshotRepository _snapshots;
+    private readonly ISyncVersionClockService _versionClock;
 
     public DeviceService(
         IUserLookupService userLookup,
@@ -74,7 +75,8 @@ public sealed class DeviceService : IDeviceService
         ISyncQueueWriterService queueWriter,
         IPendingSyncActivationService activation,
         IKeyVaultService keyVault,
-        IUserSyncSnapshotRepository snapshots)
+        IUserSyncSnapshotRepository snapshots,
+        ISyncVersionClockService versionClock)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -105,6 +107,7 @@ public sealed class DeviceService : IDeviceService
         _activation = activation;
         _keyVault = keyVault;
         _snapshots = snapshots;
+        _versionClock = versionClock;
     }
 
     public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
@@ -174,10 +177,21 @@ public sealed class DeviceService : IDeviceService
             await PersistUserDeviceDataAsync(bundle, token, ct);
 
         var encryptedDevices = userDevicesData.Devices.ToDictionary(d => d.Id);
+        var visibleDeviceIds = links
+            .Where(link => !link.IsDeleted)
+            .Select(link => link.DeviceId)
+            .Append(_identity.LocalDeviceId)
+            .ToHashSet();
+        var presentationNames = UserDevicePresentationUtil.ResolveNames(
+            userDevicesData.Devices.Where(device => visibleDeviceIds.Contains(device.Id)));
         var result = new List<UserDeviceInfoResponse>();
         var localCanSync = localLink.IsSyncOn && _identity.IsSyncOn;
         if (encryptedDevices.TryGetValue(_identity.LocalDeviceId, out var localDeviceData))
-            result.Add(BuildLocalResponse(localLink, localDeviceData, localCanSync));
+            result.Add(BuildLocalResponse(
+                localLink,
+                localDeviceData,
+                presentationNames[_identity.LocalDeviceId],
+                localCanSync));
 
         foreach (var link in links.Where(x => !x.IsDeleted && x.Device is not null))
         {
@@ -186,6 +200,7 @@ public sealed class DeviceService : IDeviceService
                     link,
                     link.Device!,
                     deviceData,
+                    presentationNames[link.DeviceId],
                     IsRemoteDeviceOnline(localCanSync, link, link.Device!)));
         }
 
@@ -330,7 +345,7 @@ public sealed class DeviceService : IDeviceService
                     var encryptedDevice = bundle.UserDevicesData.Devices.FirstOrDefault(item => item.Id == deviceId);
                     if (encryptedDevice is not null)
                     {
-                        TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(bundle.UserDevicesData, encryptedDevice.Id, now);
+                        TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(bundle.UserDevicesData, encryptedDevice.Id, now, _versionClock.Next());
                         encryptedDevice.Dispose();
                         bundle.UserDevicesData.Devices.Remove(encryptedDevice);
                         await _userDataWriter.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, lifecycleToken);
@@ -394,12 +409,14 @@ public sealed class DeviceService : IDeviceService
         var encryptedDevice = userDevicesData.Devices.FirstOrDefault(d => d.Id == deviceId);
         if (encryptedDevice is null)
         {
+            var version = _versionClock.Next();
             encryptedDevice = new UserDeviceData
             {
                 Id = deviceId,
                 Name = normalizedName,
                 LinkedAt = remoteLink?.LastModifiedAt ?? DateTimeOffset.UtcNow,
-                LastUpdatedAt = DateTimeOffset.UtcNow
+                LastUpdatedAt = DateTimeOffset.UtcNow,
+                Version = version
             };
             userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == encryptedDevice.Id);
             userDevicesData.Devices.Add(encryptedDevice);
@@ -410,6 +427,7 @@ public sealed class DeviceService : IDeviceService
         {
             encryptedDevice.Name = normalizedName;
             encryptedDevice.LastUpdatedAt = DateTimeOffset.UtcNow;
+            encryptedDevice.Version = _versionClock.Next();
         }
 
         encryptedDevice.GenerateIntegrityHash();
@@ -440,12 +458,14 @@ public sealed class DeviceService : IDeviceService
             return false;
 
         var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
+        var version = _versionClock.Next();
         var deviceData = new UserDeviceData
         {
             Id = deviceId,
             Name = BuildUniqueEncryptedDeviceName(userDevicesData, baseName, deviceId),
             LinkedAt = linkedAt == default ? DateTimeOffset.UtcNow : linkedAt,
-            LastUpdatedAt = DateTimeOffset.UtcNow
+            LastUpdatedAt = DateTimeOffset.UtcNow,
+            Version = version
         };
         deviceData.GenerateIntegrityHash();
         userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == deviceData.Id);
@@ -472,10 +492,14 @@ public sealed class DeviceService : IDeviceService
     private Task PersistUserDeviceDataAsync(UserDataBundle bundle, Guid token, CancellationToken ct, bool enqueueSync = true) =>
         _userDataWriter.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, enqueueSync, ct);
 
-    private UserDeviceInfoResponse BuildLocalResponse(LocalUserDevice link, UserDeviceData deviceData, bool isOnline) => new()
+    private UserDeviceInfoResponse BuildLocalResponse(
+        LocalUserDevice link,
+        UserDeviceData deviceData,
+        string presentationName,
+        bool isOnline) => new()
     {
         DeviceId = _identity.LocalDeviceId,
-        Name = deviceData.Name,
+        Name = presentationName,
         DeviceType = _identity.DeviceType,
         TlsCertFingerprint = _identity.FingerprintHex,
         LastSync = null,
@@ -492,10 +516,15 @@ public sealed class DeviceService : IDeviceService
         IsCurrentDevice = true
     };
 
-    private UserDeviceInfoResponse BuildRemoteResponse(UserDevice link, Device device, UserDeviceData deviceData, bool isOnline) => new()
+    private UserDeviceInfoResponse BuildRemoteResponse(
+        UserDevice link,
+        Device device,
+        UserDeviceData deviceData,
+        string presentationName,
+        bool isOnline) => new()
     {
         DeviceId = link.DeviceId,
-        Name = deviceData.Name,
+        Name = presentationName,
         DeviceType = device.DeviceType,
         TlsCertFingerprint = device.TlsCertFingerprint,
         LastSync = ToMeaningfulUtc(device.LastSync),

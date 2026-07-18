@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
@@ -117,12 +118,22 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
                 key,
                 ct);
         }
+        catch (DeterministicSyncConflictException)
+        {
+            // Exact-version/content disagreement is an impossible state under valid local
+            // generation. Roll back all canonical work and surface the non-secret conflict
+            // diagnostics instead of silently resolving or quarantining by arrival order.
+            await transaction.RollbackAsync(CancellationToken.None);
+            _uow.ClearTrackedChanges();
+            throw;
+        }
         catch (Exception ex) when (IsCandidateFailure(ex))
         {
-            // The active key or canonical state could not be opened. Keep every valid candidate pending;
-            // pre-validation quarantines are still durable and no canonical state is changed.
-            await _uow.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
+            // A decryption/integrity failure may occur after an in-memory candidate has begun
+            // merging. Roll the whole unit back so no partial canonical metadata can be
+            // persisted; the immutable candidates remain pending.
+            await transaction.RollbackAsync(CancellationToken.None);
+            _uow.ClearTrackedChanges();
             return false;
         }
 

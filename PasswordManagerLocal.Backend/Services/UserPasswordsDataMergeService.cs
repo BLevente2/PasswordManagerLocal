@@ -1,18 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
-using PasswordManagerLocal.Backend.Abstractions.Persistence;
-using PasswordManagerLocal.Backend.Abstractions.Security;
-using PasswordManagerLocal.Backend.Abstractions.Repositories;
-using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Models.Projections;
-using PasswordManagerLocal.Backend.Security;
-using PasswordManagerLocal.Backend.Sync;
-using System.Security.Cryptography;
-using System.Text.Json;
-using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -20,519 +9,294 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
 {
     public bool Merge(UserPasswordsData local, UserPasswordsData incoming)
     {
-        if (!local.PasswordKey.SequenceEqual(incoming.PasswordKey))
+        ArgumentNullException.ThrowIfNull(local);
+        ArgumentNullException.ThrowIfNull(incoming);
+        SyncVersionStampTraversal.Validate(local);
+        SyncVersionStampTraversal.Validate(incoming);
+
+        var passwords = MergeVersionedCollection(
+            local.Passwords,
+            incoming.Passwords,
+            local.DeletedPasswords,
+            incoming.DeletedPasswords,
+            item => item.Id,
+            item => item.Version,
+            deleted => deleted.Id,
+            deleted => deleted.Version,
+            item => item.CalculateIntegrityHash(),
+            deleted => deleted.CalculateIntegrityHash(),
+            Clone,
+            Clone,
+            "password");
+
+        var colors = MergeVersionedCollection(
+            local.CustomColors,
+            incoming.CustomColors,
+            local.DeletedCustomColors,
+            incoming.DeletedCustomColors,
+            item => item.Id,
+            item => item.Version,
+            deleted => deleted.Id,
+            deleted => deleted.Version,
+            item => item.CalculateIntegrityHash(),
+            deleted => deleted.CalculateIntegrityHash(),
+            Clone,
+            Clone,
+            "custom-color");
+
+        var tags = MergeVersionedCollection(
+            local.Tags,
+            incoming.Tags,
+            local.DeletedTags,
+            incoming.DeletedTags,
+            item => item.Id,
+            item => item.Version,
+            deleted => deleted.Id,
+            deleted => deleted.Version,
+            item => item.CalculateIntegrityHash(),
+            deleted => deleted.CalculateIntegrityHash(),
+            Clone,
+            Clone,
+            "password-tag");
+
+        var changed =
+            local.Passwords.Any(password => !password.TagIds.SequenceEqual(password.TagIds.Order())) ||
+            !Equivalent(local.Passwords, passwords.Live, item => item.Id, item => item.CalculateIntegrityHash()) ||
+            !Equivalent(local.DeletedPasswords, passwords.Deleted, item => item.Id, item => item.CalculateIntegrityHash()) ||
+            !Equivalent(local.CustomColors, colors.Live, item => item.Id, item => item.CalculateIntegrityHash()) ||
+            !Equivalent(local.DeletedCustomColors, colors.Deleted, item => item.Id, item => item.CalculateIntegrityHash()) ||
+            !Equivalent(local.Tags, tags.Live, item => item.Id, item => item.CalculateIntegrityHash()) ||
+            !Equivalent(local.DeletedTags, tags.Deleted, item => item.Id, item => item.CalculateIntegrityHash());
+
+        if (!changed)
+        {
+            DisposeAll(passwords.Live, passwords.Deleted, colors.Live, colors.Deleted, tags.Live, tags.Deleted);
             return false;
+        }
 
-        var passwordEntriesChanged = MergePasswordEntriesForSync(local, incoming);
-        var customColorsChanged = MergeCustomColorsForSync(local, incoming);
-        var tagsChanged = MergePasswordTagsForSync(local, incoming);
-        var tagReferencesChanged = RemoveInvalidPasswordTagReferencesForSync(local);
-        return passwordEntriesChanged || customColorsChanged || tagsChanged || tagReferencesChanged;
+        local.Passwords.ForEach(item => item.Dispose());
+        local.DeletedPasswords.ForEach(item => item.Dispose());
+        local.CustomColors.ForEach(item => item.Dispose());
+        local.DeletedCustomColors.ForEach(item => item.Dispose());
+        local.Tags.ForEach(item => item.Dispose());
+        local.DeletedTags.ForEach(item => item.Dispose());
+
+        local.Passwords = passwords.Live;
+        local.DeletedPasswords = passwords.Deleted;
+        local.CustomColors = colors.Live;
+        local.DeletedCustomColors = colors.Deleted;
+        local.Tags = tags.Live;
+        local.DeletedTags = tags.Deleted;
+        local.GenerateIntegrityHash();
+        return true;
     }
 
-
-    private bool MergePasswordEntriesForSync(UserPasswordsData local, UserPasswordsData incoming)
+    private static MergeResult<TLive, TDeleted> MergeVersionedCollection<TLive, TDeleted>(
+        IReadOnlyList<TLive> localLive,
+        IReadOnlyList<TLive> incomingLive,
+        IReadOnlyList<TDeleted> localDeleted,
+        IReadOnlyList<TDeleted> incomingDeleted,
+        Func<TLive, Guid> liveId,
+        Func<TLive, SyncVersionStamp> liveVersion,
+        Func<TDeleted, Guid> deletedId,
+        Func<TDeleted, SyncVersionStamp> deletedVersion,
+        Func<TLive, byte[]> liveHash,
+        Func<TDeleted, byte[]> deletedHash,
+        Func<TLive, TLive> cloneLive,
+        Func<TDeleted, TDeleted> cloneDeleted,
+        string itemType)
+        where TLive : class
+        where TDeleted : class
     {
-        var changed = false;
-        var localPasswords = local.Passwords.ToDictionary(password => password.Id);
-        var incomingPasswords = incoming.Passwords.ToDictionary(password => password.Id);
-        var localDeleted = local.DeletedPasswords.ToDictionary(deleted => deleted.Id);
-        var incomingDeleted = incoming.DeletedPasswords.ToDictionary(deleted => deleted.Id);
-        var ids = localPasswords.Keys
-            .Concat(incomingPasswords.Keys)
-            .Concat(localDeleted.Keys)
-            .Concat(incomingDeleted.Keys)
+        var localLiveById = ToUniqueDictionary(localLive, liveId, itemType, "live");
+        var incomingLiveById = ToUniqueDictionary(incomingLive, liveId, itemType, "live");
+        var localDeletedById = ToUniqueDictionary(localDeleted, deletedId, itemType, "deletion");
+        var incomingDeletedById = ToUniqueDictionary(incomingDeleted, deletedId, itemType, "deletion");
+        var ids = localLiveById.Keys
+            .Concat(incomingLiveById.Keys)
+            .Concat(localDeletedById.Keys)
+            .Concat(incomingDeletedById.Keys)
             .Where(id => id != Guid.Empty)
             .Distinct()
-            .ToList();
+            .Order()
+            .ToArray();
 
-        var mergedPasswords = new List<SecurePassword>();
-        var mergedDeleted = new List<DeletedPasswordData>();
+        var mergedLive = new List<TLive>(ids.Length);
+        var mergedDeleted = new List<TDeleted>();
         foreach (var id in ids)
         {
-            localPasswords.TryGetValue(id, out var localPassword);
-            incomingPasswords.TryGetValue(id, out var incomingPassword);
-            localDeleted.TryGetValue(id, out var localDeletion);
-            incomingDeleted.TryGetValue(id, out var incomingDeletion);
+            localLiveById.TryGetValue(id, out var firstLive);
+            incomingLiveById.TryGetValue(id, out var secondLive);
+            localDeletedById.TryGetValue(id, out var firstDeleted);
+            incomingDeletedById.TryGetValue(id, out var secondDeleted);
 
-            var newestPassword = NewerPassword(localPassword, incomingPassword);
-            var newestDeletion = NewerDeletedPassword(localDeletion, incomingDeletion);
-            var passwordTime = newestPassword?.LastUpdatedAt ?? UtcDateTimeUtil.MinDateTime;
-            var deletionTime = newestDeletion?.DeletedAt ?? UtcDateTimeUtil.MinDateTime;
-
-            if (newestDeletion is not null && deletionTime >= passwordTime)
+            var live = SelectSameKind(firstLive, secondLive, id, itemType, liveVersion, liveHash);
+            var deleted = SelectSameKind(firstDeleted, secondDeleted, id, itemType + "-deletion", deletedVersion, deletedHash);
+            if (live is null && deleted is null)
+                continue;
+            if (live is null)
             {
-                mergedDeleted.Add(newestDeletion);
-                if (localPassword is not null || !ReferenceEquals(localDeletion, newestDeletion))
-                    changed = true;
+                mergedDeleted.Add(cloneDeleted(deleted!));
+                continue;
+            }
+            if (deleted is null)
+            {
+                mergedLive.Add(cloneLive(live));
                 continue;
             }
 
-            if (newestPassword is not null)
+            var comparison = SyncVersionStampComparer.Instance.Compare(liveVersion(live), deletedVersion(deleted));
+            if (comparison == 0)
             {
-                mergedPasswords.Add(newestPassword);
-                if (!ReferenceEquals(localPassword, newestPassword) || localDeletion is not null)
-                    changed = true;
+                throw new DeterministicSyncConflictException(
+                    itemType,
+                    id,
+                    liveVersion(live),
+                    liveHash(live),
+                    deletedHash(deleted));
             }
+
+            if (comparison > 0)
+                mergedLive.Add(cloneLive(live));
+            else
+                mergedDeleted.Add(cloneDeleted(deleted));
         }
 
-        changed |= local.Passwords.Count != mergedPasswords.Count || local.DeletedPasswords.Count != mergedDeleted.Count;
-        if (!changed)
-            return TombstoneCleanupUtil.EnforceDeletedPasswordTombstoneLimit(local.DeletedPasswords);
+        return new MergeResult<TLive, TDeleted>(mergedLive, mergedDeleted);
+    }
 
-        DisposeItemsNotKept(local.Passwords, mergedPasswords);
-        DisposeItemsNotKept(local.DeletedPasswords, mergedDeleted);
-        local.Passwords = mergedPasswords.OrderBy(password => password.Name, StringComparer.OrdinalIgnoreCase).ThenBy(password => password.Id).ToList();
-        local.DeletedPasswords = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
-        TombstoneCleanupUtil.EnforceDeletedPasswordTombstoneLimit(local.DeletedPasswords);
+    private static T? SelectSameKind<T>(
+        T? first,
+        T? second,
+        Guid itemId,
+        string itemType,
+        Func<T, SyncVersionStamp> version,
+        Func<T, byte[]> contentHash)
+        where T : class
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+
+        var comparison = SyncVersionStampComparer.Instance.Compare(version(first), version(second));
+        if (comparison != 0)
+            return comparison > 0 ? first : second;
+
+        var firstHash = contentHash(first);
+        var secondHash = contentHash(second);
+        if (!firstHash.AsSpan().SequenceEqual(secondHash))
+            throw new DeterministicSyncConflictException(itemType, itemId, version(first), firstHash, secondHash);
+        return first;
+    }
+
+    private static Dictionary<Guid, T> ToUniqueDictionary<T>(
+        IEnumerable<T> source,
+        Func<T, Guid> idSelector,
+        string itemType,
+        string candidateKind)
+    {
+        var result = new Dictionary<Guid, T>();
+        foreach (var item in source)
+        {
+            var id = idSelector(item);
+            if (id == Guid.Empty || !result.TryAdd(id, item))
+                throw new InvalidDataException($"Duplicate or empty {itemType} {candidateKind} identifier {id:N}.");
+        }
+        return result;
+    }
+
+    private static bool Equivalent<T>(
+        IReadOnlyList<T> first,
+        IReadOnlyList<T> second,
+        Func<T, Guid> id,
+        Func<T, byte[]> hash)
+    {
+        if (first.Count != second.Count)
+            return false;
+        for (var index = 0; index < first.Count; index++)
+        {
+            if (id(first[index]) != id(second[index]) ||
+                !hash(first[index]).AsSpan().SequenceEqual(hash(second[index])))
+                return false;
+        }
         return true;
     }
 
-
-    private bool MergeCustomColorsForSync(UserPasswordsData local, UserPasswordsData incoming)
+    private static SecurePassword Clone(SecurePassword source)
     {
-        var localColors = local.CustomColors.ToDictionary(color => color.Id);
-        var incomingColors = incoming.CustomColors.ToDictionary(color => color.Id);
-        var localDeleted = local.DeletedCustomColors.ToDictionary(deleted => deleted.Id);
-        var incomingDeleted = incoming.DeletedCustomColors.ToDictionary(deleted => deleted.Id);
-        var ids = GetCustomColorMergeIds(localColors, incomingColors, localDeleted, incomingDeleted);
-
-        var changed = false;
-        var mergedColors = new List<CustomUserColor>();
-        var mergedDeleted = new List<DeletedCustomUserColorData>();
-        foreach (var id in ids)
-            changed |= MergeCustomColorEntryForSync(
-                id, localColors, incomingColors, localDeleted, incomingDeleted, mergedColors, mergedDeleted);
-
-        return ApplyMergedCustomColorsForSync(local, mergedColors, mergedDeleted, changed);
-    }
-
-
-    private List<Guid> GetCustomColorMergeIds(
-        Dictionary<Guid, CustomUserColor> localColors,
-        Dictionary<Guid, CustomUserColor> incomingColors,
-        Dictionary<Guid, DeletedCustomUserColorData> localDeleted,
-        Dictionary<Guid, DeletedCustomUserColorData> incomingDeleted) =>
-        localColors.Keys
-            .Concat(incomingColors.Keys)
-            .Concat(localDeleted.Keys)
-            .Concat(incomingDeleted.Keys)
-            .Where(id => id != Guid.Empty)
-            .Distinct()
-            .ToList();
-
-
-    private bool MergeCustomColorEntryForSync(
-        Guid id,
-        Dictionary<Guid, CustomUserColor> localColors,
-        Dictionary<Guid, CustomUserColor> incomingColors,
-        Dictionary<Guid, DeletedCustomUserColorData> localDeleted,
-        Dictionary<Guid, DeletedCustomUserColorData> incomingDeleted,
-        List<CustomUserColor> mergedColors,
-        List<DeletedCustomUserColorData> mergedDeleted)
-    {
-        localColors.TryGetValue(id, out var localColor);
-        incomingColors.TryGetValue(id, out var incomingColor);
-        localDeleted.TryGetValue(id, out var localDeletion);
-        incomingDeleted.TryGetValue(id, out var incomingDeletion);
-
-        var newestColor = NewerCustomColor(localColor, incomingColor);
-        var newestDeletion = NewerDeletedCustomColor(localDeletion, incomingDeletion);
-        if (ShouldKeepCustomColorDeletion(newestColor, newestDeletion))
-            return AddMergedCustomColorDeletion(localColor, localDeletion, newestDeletion!, mergedDeleted);
-
-        return newestColor is not null
-            && AddMergedCustomColor(localColor, localDeletion, newestColor, mergedColors);
-    }
-
-
-    private bool ShouldKeepCustomColorDeletion(
-        CustomUserColor? newestColor,
-        DeletedCustomUserColorData? newestDeletion)
-    {
-        var colorTime = newestColor?.LastUpdatedAt ?? UtcDateTimeUtil.MinDateTime;
-        var deletionTime = newestDeletion?.DeletedAt ?? UtcDateTimeUtil.MinDateTime;
-        return newestDeletion is not null && deletionTime >= colorTime;
-    }
-
-
-    private bool AddMergedCustomColorDeletion(
-        CustomUserColor? localColor,
-        DeletedCustomUserColorData? localDeletion,
-        DeletedCustomUserColorData newestDeletion,
-        List<DeletedCustomUserColorData> mergedDeleted)
-    {
-        mergedDeleted.Add(newestDeletion);
-        return localColor is not null || !ReferenceEquals(localDeletion, newestDeletion);
-    }
-
-
-    private bool AddMergedCustomColor(
-        CustomUserColor? localColor,
-        DeletedCustomUserColorData? localDeletion,
-        CustomUserColor newestColor,
-        List<CustomUserColor> mergedColors)
-    {
-        var normalizedCode = NormalizeCustomColorCodeForSync(newestColor.ColorCode);
-        var normalizedName = NormalizeCustomColorNameForSync(newestColor.ColorName);
-        var changed = newestColor.ColorCode != normalizedCode || newestColor.ColorName != normalizedName;
-
-        newestColor.ColorCode = normalizedCode;
-        newestColor.ColorName = normalizedName;
-        mergedColors.Add(newestColor);
-        return changed || !ReferenceEquals(localColor, newestColor) || localDeletion is not null;
-    }
-
-
-    private bool ApplyMergedCustomColorsForSync(
-        UserPasswordsData local,
-        List<CustomUserColor> mergedColors,
-        List<DeletedCustomUserColorData> mergedDeleted,
-        bool changed)
-    {
-        var deduplicatedColors = ResolveDuplicateCustomColorsForSync(mergedColors);
-        changed |= deduplicatedColors.Count != mergedColors.Count;
-        changed |= local.CustomColors.Count != deduplicatedColors.Count || local.DeletedCustomColors.Count != mergedDeleted.Count;
-        if (!changed)
-            return TombstoneCleanupUtil.EnforceDeletedCustomUserColorTombstoneLimit(local.DeletedCustomColors);
-
-        DisposeItemsNotKept(local.CustomColors, deduplicatedColors);
-        DisposeItemsNotKept(local.DeletedCustomColors, mergedDeleted);
-        local.CustomColors = deduplicatedColors
-            .OrderBy(color => color.ColorName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(color => color.ColorCode, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(color => color.Id)
-            .ToList();
-        local.DeletedCustomColors = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
-        TombstoneCleanupUtil.EnforceDeletedCustomUserColorTombstoneLimit(local.DeletedCustomColors);
-        return true;
-    }
-
-
-    private bool MergePasswordTagsForSync(UserPasswordsData local, UserPasswordsData incoming)
-    {
-        var localTags = local.Tags.ToDictionary(tag => tag.Id);
-        var incomingTags = incoming.Tags.ToDictionary(tag => tag.Id);
-        var localDeleted = local.DeletedTags.ToDictionary(deleted => deleted.Id);
-        var incomingDeleted = incoming.DeletedTags.ToDictionary(deleted => deleted.Id);
-        var ids = GetPasswordTagMergeIds(localTags, incomingTags, localDeleted, incomingDeleted);
-
-        var changed = false;
-        var mergedTags = new List<PasswordTag>();
-        var mergedDeleted = new List<DeletedPasswordTagData>();
-        foreach (var id in ids)
-            changed |= MergePasswordTagEntryForSync(
-                id, localTags, incomingTags, localDeleted, incomingDeleted, mergedTags, mergedDeleted);
-
-        return ApplyMergedPasswordTagsForSync(local, mergedTags, mergedDeleted, changed);
-    }
-
-
-    private List<Guid> GetPasswordTagMergeIds(
-        Dictionary<Guid, PasswordTag> localTags,
-        Dictionary<Guid, PasswordTag> incomingTags,
-        Dictionary<Guid, DeletedPasswordTagData> localDeleted,
-        Dictionary<Guid, DeletedPasswordTagData> incomingDeleted) =>
-        localTags.Keys
-            .Concat(incomingTags.Keys)
-            .Concat(localDeleted.Keys)
-            .Concat(incomingDeleted.Keys)
-            .Where(id => id != Guid.Empty)
-            .Distinct()
-            .ToList();
-
-
-    private bool MergePasswordTagEntryForSync(
-        Guid id,
-        Dictionary<Guid, PasswordTag> localTags,
-        Dictionary<Guid, PasswordTag> incomingTags,
-        Dictionary<Guid, DeletedPasswordTagData> localDeleted,
-        Dictionary<Guid, DeletedPasswordTagData> incomingDeleted,
-        List<PasswordTag> mergedTags,
-        List<DeletedPasswordTagData> mergedDeleted)
-    {
-        localTags.TryGetValue(id, out var localTag);
-        incomingTags.TryGetValue(id, out var incomingTag);
-        localDeleted.TryGetValue(id, out var localDeletion);
-        incomingDeleted.TryGetValue(id, out var incomingDeletion);
-
-        var newestTag = NewerPasswordTag(localTag, incomingTag);
-        var newestDeletion = NewerDeletedPasswordTag(localDeletion, incomingDeletion);
-        if (ShouldKeepPasswordTagDeletion(newestTag, newestDeletion))
-            return AddMergedPasswordTagDeletion(localTag, localDeletion, newestDeletion!, mergedDeleted);
-
-        return newestTag is not null
-            && AddMergedPasswordTag(localTag, localDeletion, newestTag, mergedTags);
-    }
-
-
-    private bool ShouldKeepPasswordTagDeletion(PasswordTag? newestTag, DeletedPasswordTagData? newestDeletion)
-    {
-        var tagTime = newestTag?.LastUpdatedAt ?? UtcDateTimeUtil.MinDateTime;
-        var deletionTime = newestDeletion?.DeletedAt ?? UtcDateTimeUtil.MinDateTime;
-        return newestDeletion is not null && deletionTime >= tagTime;
-    }
-
-
-    private bool AddMergedPasswordTagDeletion(
-        PasswordTag? localTag,
-        DeletedPasswordTagData? localDeletion,
-        DeletedPasswordTagData newestDeletion,
-        List<DeletedPasswordTagData> mergedDeleted)
-    {
-        mergedDeleted.Add(newestDeletion);
-        return localTag is not null || !ReferenceEquals(localDeletion, newestDeletion);
-    }
-
-
-    private bool AddMergedPasswordTag(
-        PasswordTag? localTag,
-        DeletedPasswordTagData? localDeletion,
-        PasswordTag newestTag,
-        List<PasswordTag> mergedTags)
-    {
-        var normalizedName = NormalizePasswordTagNameForSync(newestTag.Name);
-        var normalizedColor = NormalizePasswordTagColorForSync(newestTag.Color);
-        var changed = newestTag.Name != normalizedName || newestTag.Color != normalizedColor;
-
-        newestTag.Name = normalizedName;
-        newestTag.Color = normalizedColor;
-        mergedTags.Add(newestTag);
-        return changed || !ReferenceEquals(localTag, newestTag) || localDeletion is not null;
-    }
-
-
-    private bool ApplyMergedPasswordTagsForSync(
-        UserPasswordsData local,
-        List<PasswordTag> mergedTags,
-        List<DeletedPasswordTagData> mergedDeleted,
-        bool changed)
-    {
-        var deduplicatedTags = ResolveDuplicatePasswordTagsForSync(mergedTags);
-        changed |= deduplicatedTags.Count != mergedTags.Count;
-        changed |= local.Tags.Count != deduplicatedTags.Count || local.DeletedTags.Count != mergedDeleted.Count;
-        if (!changed)
-            return TombstoneCleanupUtil.EnforceDeletedPasswordTagTombstoneLimit(local.DeletedTags);
-
-        DisposeItemsNotKept(local.Tags, deduplicatedTags);
-        DisposeItemsNotKept(local.DeletedTags, mergedDeleted);
-        local.Tags = deduplicatedTags
-            .OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(tag => tag.Id)
-            .ToList();
-        local.DeletedTags = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
-        TombstoneCleanupUtil.EnforceDeletedPasswordTagTombstoneLimit(local.DeletedTags);
-        return true;
-    }
-
-
-    private bool RemoveInvalidPasswordTagReferencesForSync(UserPasswordsData data)
-    {
-        var validTagIds = data.Tags.Select(tag => tag.Id).ToHashSet();
-        var changed = false;
-
-        foreach (var password in data.Passwords)
+        var clone = new SecurePassword
         {
-            var cleanedTagIds = password.TagIds
-                .Where(tagId => tagId != Guid.Empty && validTagIds.Contains(tagId))
-                .Distinct()
-                .Order()
-                .ToList();
-
-            if (password.TagIds.SequenceEqual(cleanedTagIds))
-                continue;
-
-            password.TagIds = cleanedTagIds;
-            password.LastUpdatedAt = DateTime.UtcNow;
-            password.GenerateIntegrityHash();
-            changed = true;
-        }
-
-        return changed;
+            Id = source.Id,
+            Name = source.Name,
+            Description = source.Description,
+            Color = source.Color,
+            Password = source.Password.ToArray(),
+            TagIds = source.TagIds.Order().ToList(),
+            CreatedAt = source.CreatedAt,
+            LastUpdatedAt = source.LastUpdatedAt,
+            Version = source.Version
+        };
+        clone.GenerateIntegrityHash();
+        return clone;
     }
 
-
-    private PasswordTag? NewerPasswordTag(PasswordTag? first, PasswordTag? second)
+    private static DeletedPasswordData Clone(DeletedPasswordData source)
     {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.LastUpdatedAt > first.LastUpdatedAt)
-            return second;
-        return first;
+        var clone = new DeletedPasswordData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version };
+        clone.GenerateIntegrityHash();
+        return clone;
     }
 
-
-    private DeletedPasswordTagData? NewerDeletedPasswordTag(DeletedPasswordTagData? first, DeletedPasswordTagData? second)
+    private static CustomUserColor Clone(CustomUserColor source)
     {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.DeletedAt > first.DeletedAt)
-            return second;
-        return first;
-    }
-
-
-    private List<PasswordTag> ResolveDuplicatePasswordTagsForSync(List<PasswordTag> tags)
-    {
-        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var kept = new List<PasswordTag>();
-
-        foreach (var tag in tags.OrderByDescending(tag => tag.LastUpdatedAt).ThenBy(tag => tag.Id))
+        var clone = new CustomUserColor
         {
-            var normalizedName = NormalizePasswordTagNameForSync(tag.Name);
-            var normalizedColor = NormalizePasswordTagColorForSync(tag.Color);
-            if (normalizedName.Length == 0 || normalizedColor.Length == 0 || usedNames.Contains(normalizedName))
-                continue;
+            Id = source.Id,
+            ColorName = source.ColorName,
+            ColorCode = source.ColorCode,
+            LastUpdatedAt = source.LastUpdatedAt,
+            Version = source.Version
+        };
+        clone.GenerateIntegrityHash();
+        return clone;
+    }
 
-            tag.Name = normalizedName;
-            tag.Color = normalizedColor;
-            usedNames.Add(normalizedName);
-            kept.Add(tag);
-        }
+    private static DeletedCustomUserColorData Clone(DeletedCustomUserColorData source)
+    {
+        var clone = new DeletedCustomUserColorData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version };
+        clone.GenerateIntegrityHash();
+        return clone;
+    }
 
-        foreach (var tag in tags)
+    private static PasswordTag Clone(PasswordTag source)
+    {
+        var clone = new PasswordTag
         {
-            if (!kept.Any(keptTag => ReferenceEquals(keptTag, tag)))
-                tag.Dispose();
-        }
-
-        return kept;
+            Id = source.Id,
+            Name = source.Name,
+            Color = source.Color,
+            LastUpdatedAt = source.LastUpdatedAt,
+            Version = source.Version
+        };
+        clone.GenerateIntegrityHash();
+        return clone;
     }
 
-
-    private string NormalizePasswordTagNameForSync(string tagName)
+    private static DeletedPasswordTagData Clone(DeletedPasswordTagData source)
     {
-        var normalized = tagName.Trim();
-        return normalized.Length <= PasswordTagNameMaxLength ? normalized : string.Empty;
+        var clone = new DeletedPasswordTagData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version };
+        clone.GenerateIntegrityHash();
+        return clone;
     }
 
-
-    private string NormalizePasswordTagColorForSync(string color)
+    private static void DisposeAll(params System.Collections.IEnumerable[] collections)
     {
-        var normalized = color.Trim().ToUpperInvariant();
-        if (normalized.Length != ARGBColorLength || normalized[0] != '#')
-            return string.Empty;
-
-        return uint.TryParse(normalized.AsSpan(1), System.Globalization.NumberStyles.HexNumber, null, out _)
-            ? normalized
-            : string.Empty;
+        foreach (var collection in collections)
+            foreach (var item in collection)
+                if (item is IDisposable disposable)
+                    disposable.Dispose();
     }
 
-
-    private CustomUserColor? NewerCustomColor(CustomUserColor? first, CustomUserColor? second)
-    {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.LastUpdatedAt > first.LastUpdatedAt)
-            return second;
-        return first;
-    }
-
-
-    private DeletedCustomUserColorData? NewerDeletedCustomColor(DeletedCustomUserColorData? first, DeletedCustomUserColorData? second)
-    {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.DeletedAt > first.DeletedAt)
-            return second;
-        return first;
-    }
-
-
-    private List<CustomUserColor> ResolveDuplicateCustomColorsForSync(List<CustomUserColor> colors)
-    {
-        var usedCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var kept = new List<CustomUserColor>();
-
-        foreach (var color in colors.OrderByDescending(color => color.LastUpdatedAt).ThenBy(color => color.Id))
-        {
-            var normalizedCode = NormalizeCustomColorCodeForSync(color.ColorCode);
-            if (normalizedCode.Length == 0 || usedCodes.Contains(normalizedCode))
-                continue;
-
-            var normalizedName = NormalizeCustomColorNameForSync(color.ColorName);
-            if (normalizedName is not null && usedNames.Contains(normalizedName))
-                continue;
-
-            color.ColorCode = normalizedCode;
-            color.ColorName = normalizedName;
-            usedCodes.Add(normalizedCode);
-            if (normalizedName is not null)
-                usedNames.Add(normalizedName);
-            kept.Add(color);
-        }
-
-        foreach (var color in colors)
-        {
-            if (!kept.Any(keptColor => ReferenceEquals(keptColor, color)))
-                color.Dispose();
-        }
-
-        return kept;
-    }
-
-
-    private string NormalizeCustomColorCodeForSync(string colorCode)
-    {
-        var normalized = colorCode.Trim().ToUpperInvariant();
-        if (normalized.Length != ARGBColorLength || normalized[0] != '#')
-            return string.Empty;
-
-        return uint.TryParse(normalized.AsSpan(1), System.Globalization.NumberStyles.HexNumber, null, out _)
-            ? normalized
-            : string.Empty;
-    }
-
-
-    private string? NormalizeCustomColorNameForSync(string? colorName)
-    {
-        if (colorName is null)
-            return null;
-
-        var trimmed = colorName.Trim();
-        return trimmed.Length == 0 ? null : trimmed;
-    }
-
-
-    private void DisposeItemsNotKept<T>(IEnumerable<T> currentItems, IReadOnlyCollection<T> keptItems) where T : class, IDisposable
-    {
-        foreach (var current in currentItems)
-        {
-            if (!keptItems.Any(kept => ReferenceEquals(kept, current)))
-                current.Dispose();
-        }
-    }
-
-
-    private SecurePassword? NewerPassword(SecurePassword? first, SecurePassword? second)
-    {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.LastUpdatedAt > first.LastUpdatedAt)
-            return second;
-        return first;
-    }
-
-
-    private DeletedPasswordData? NewerDeletedPassword(DeletedPasswordData? first, DeletedPasswordData? second)
-    {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.DeletedAt > first.DeletedAt)
-            return second;
-        return first;
-    }
+    private sealed record MergeResult<TLive, TDeleted>(List<TLive> Live, List<TDeleted> Deleted);
 }

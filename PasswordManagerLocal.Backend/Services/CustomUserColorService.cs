@@ -10,6 +10,15 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class CustomUserColorService : ICustomUserColorService
 {
+    private readonly ISyncVersionClockService _versionClock;
+
+    public CustomUserColorService() : this(new EphemeralSyncVersionClockService()) { }
+
+    public CustomUserColorService(ISyncVersionClockService versionClock)
+    {
+        _versionClock = versionClock;
+    }
+
     public IReadOnlyList<CustomUserColorInfoResponse> ConvertToCustomUserColorInfoResponses(UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
@@ -47,7 +56,8 @@ public sealed class CustomUserColorService : ICustomUserColorService
                 Id = Guid.NewGuid(),
                 ColorName = colorName,
                 ColorCode = colorCode,
-                LastUpdatedAt = now
+                LastUpdatedAt = now,
+                Version = _versionClock.Next()
             };
             customColor.GenerateIntegrityHash();
             passwords.CustomColors.Add(customColor);
@@ -81,7 +91,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
         var deletedAt = DateTime.UtcNow;
         foreach (var color in colorsToDelete)
         {
-            TombstoneCleanupUtil.AddOrUpdateDeletedCustomUserColor(passwords, color.Id, deletedAt);
+            TombstoneCleanupUtil.AddOrUpdateDeletedCustomUserColor(passwords, color.Id, deletedAt, _versionClock.Next());
             passwords.CustomColors.Remove(color);
             color.Dispose();
         }
@@ -113,7 +123,8 @@ public sealed class CustomUserColorService : ICustomUserColorService
                     Id = Guid.NewGuid(),
                     ColorName = NormalizeOptionalColorName(color.ColorName),
                     ColorCode = NormalizeColorCode(color.ColorCode),
-                    LastUpdatedAt = now
+                    LastUpdatedAt = now,
+                    Version = _versionClock.Next()
                 };
                 copiedColor.GenerateIntegrityHash();
                 return copiedColor;
@@ -166,6 +177,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
         color.ColorCode = newColorCode;
         passwords.DeletedCustomColors.RemoveAll(deleted => deleted.Id == color.Id);
         color.LastUpdatedAt = DateTime.UtcNow;
+        color.Version = _versionClock.Next();
         color.GenerateIntegrityHash();
         passwords.GenerateCustomColorsIntegrityHash();
     }

@@ -17,19 +17,22 @@ public sealed class UserDataReaderService : IUserDataReaderService
     private readonly IUserSessionService _sessions;
     private readonly IUserLookupService _users;
     private readonly IUserDataBundleIntegrityService _integrity;
+    private readonly ISyncVersionClockService _versionClock;
 
     public UserDataReaderService(
         IDataCachingService cache,
         IKeyVaultService keys,
         IUserSessionService sessions,
         IUserLookupService users,
-        IUserDataBundleIntegrityService integrity)
+        IUserDataBundleIntegrityService integrity,
+        ISyncVersionClockService versionClock)
     {
         _cache = cache;
         _keys = keys;
         _sessions = sessions;
         _users = users;
         _integrity = integrity;
+        _versionClock = versionClock;
     }
 
     public async Task<UserData> GetAndVerifyUserDataAsync(User user, EncryptionKey key, CancellationToken ct = default)
@@ -83,6 +86,7 @@ public sealed class UserDataReaderService : IUserDataReaderService
             };
 
             _integrity.VerifyBundleLinks(bundle);
+            _versionClock.Observe(SyncVersionStampTraversal.Enumerate(bundle));
             return bundle;
         }
         catch
@@ -121,6 +125,7 @@ public sealed class UserDataReaderService : IUserDataReaderService
         if (_cache.TryGetUserDataBundle(token, out var foundBundle) && foundBundle is not null)
         {
             _integrity.VerifyUntrustedBundle(foundBundle);
+            _versionClock.Observe(SyncVersionStampTraversal.Enumerate(foundBundle));
             bundle = foundBundle;
             return true;
         }

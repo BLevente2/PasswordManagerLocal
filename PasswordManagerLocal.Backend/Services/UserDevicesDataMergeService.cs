@@ -1,18 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Utils;
-using PasswordManagerLocal.Backend.Abstractions.Persistence;
-using PasswordManagerLocal.Backend.Abstractions.Security;
-using PasswordManagerLocal.Backend.Abstractions.Repositories;
-using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Models.Projections;
-using PasswordManagerLocal.Backend.Security;
-using PasswordManagerLocal.Backend.Sync;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
-using System.Security.Cryptography;
-using System.Text.Json;
-using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -20,144 +9,170 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
 {
     public bool Merge(UserDevicesData local, UserDevicesData incoming)
     {
-        var changed = false;
-        var localDevices = local.Devices.ToDictionary(device => device.Id);
-        var incomingDevices = incoming.Devices.ToDictionary(device => device.Id);
-        var localDeleted = local.DeletedDevices.ToDictionary(deleted => deleted.Id);
-        var incomingDeleted = incoming.DeletedDevices.ToDictionary(deleted => deleted.Id);
-        var ids = localDevices.Keys
-            .Concat(incomingDevices.Keys)
+        ArgumentNullException.ThrowIfNull(local);
+        ArgumentNullException.ThrowIfNull(incoming);
+        SyncVersionStampTraversal.Validate(local);
+        SyncVersionStampTraversal.Validate(incoming);
+
+        var localLive = ToUniqueDictionary(local.Devices, item => item.Id, "user-device");
+        var incomingLive = ToUniqueDictionary(incoming.Devices, item => item.Id, "user-device");
+        var localDeleted = ToUniqueDictionary(local.DeletedDevices, item => item.Id, "user-device-deletion");
+        var incomingDeleted = ToUniqueDictionary(incoming.DeletedDevices, item => item.Id, "user-device-deletion");
+        var ids = localLive.Keys
+            .Concat(incomingLive.Keys)
             .Concat(localDeleted.Keys)
             .Concat(incomingDeleted.Keys)
             .Where(id => id != Guid.Empty)
             .Distinct()
-            .ToList();
+            .Order()
+            .ToArray();
 
-        var mergedDevices = new List<UserDeviceData>();
+        var mergedLive = new List<UserDeviceData>(ids.Length);
         var mergedDeleted = new List<DeletedUserDeviceData>();
         foreach (var id in ids)
         {
-            localDevices.TryGetValue(id, out var localDevice);
-            incomingDevices.TryGetValue(id, out var incomingDevice);
-            localDeleted.TryGetValue(id, out var localDeletion);
-            incomingDeleted.TryGetValue(id, out var incomingDeletion);
+            localLive.TryGetValue(id, out var firstLive);
+            incomingLive.TryGetValue(id, out var secondLive);
+            localDeleted.TryGetValue(id, out var firstDeleted);
+            incomingDeleted.TryGetValue(id, out var secondDeleted);
 
-            var newestDevice = NewerDevice(localDevice, incomingDevice);
-            var newestDeletion = NewerDeletedDevice(localDeletion, incomingDeletion);
-            var deviceTime = newestDevice?.LastUpdatedAt ?? DateTimeOffset.MinValue;
-            var deletionTime = newestDeletion?.DeletedAt ?? DateTimeOffset.MinValue;
-
-            if (newestDeletion is not null && deletionTime >= deviceTime)
+            var live = SelectSameKind(firstLive, secondLive, id, "user-device");
+            var deleted = SelectSameKind(firstDeleted, secondDeleted, id, "user-device-deletion");
+            if (live is null && deleted is null)
+                continue;
+            if (live is null)
             {
-                mergedDeleted.Add(newestDeletion);
-                if (localDevice is not null || !ReferenceEquals(localDeletion, newestDeletion))
-                    changed = true;
+                mergedDeleted.Add(Clone(deleted!));
+                continue;
+            }
+            if (deleted is null)
+            {
+                mergedLive.Add(Clone(live));
                 continue;
             }
 
-            if (newestDevice is not null)
+            var comparison = SyncVersionStampComparer.Instance.Compare(live.Version, deleted.Version);
+            if (comparison == 0)
             {
-                if (localDevice is not null && incomingDevice is not null)
-                {
-                    var newestLogin = localDevice.LastLoginDate >= incomingDevice.LastLoginDate
-                        ? localDevice.LastLoginDate
-                        : incomingDevice.LastLoginDate;
-                    if (newestDevice.LastLoginDate != newestLogin)
-                    {
-                        newestDevice.LastLoginDate = newestLogin;
-                        changed = true;
-                    }
-                }
-
-                mergedDevices.Add(newestDevice);
-                if (!ReferenceEquals(localDevice, newestDevice) || localDeletion is not null)
-                    changed = true;
+                throw new DeterministicSyncConflictException(
+                    "user-device",
+                    id,
+                    live.Version,
+                    live.CalculateIntegrityHash(),
+                    deleted.CalculateIntegrityHash());
             }
+
+            if (comparison > 0)
+                mergedLive.Add(Clone(live));
+            else
+                mergedDeleted.Add(Clone(deleted));
         }
 
-        changed |= local.Devices.Count != mergedDevices.Count || local.DeletedDevices.Count != mergedDeleted.Count;
+        var changed =
+            !Equivalent(local.Devices, mergedLive, item => item.Id) ||
+            !Equivalent(local.DeletedDevices, mergedDeleted, item => item.Id);
         if (!changed)
-            return TombstoneCleanupUtil.EnforceDeletedUserDeviceTombstoneLimit(local.DeletedDevices);
+        {
+            mergedLive.ForEach(item => item.Dispose());
+            mergedDeleted.ForEach(item => item.Dispose());
+            return false;
+        }
 
-        DisposeItemsNotKept(local.Devices, mergedDevices);
-        DisposeItemsNotKept(local.DeletedDevices, mergedDeleted);
-        local.Devices = ResolveDuplicateDeviceNamesForSync(mergedDevices);
-        local.DeletedDevices = mergedDeleted.OrderBy(deleted => deleted.DeletedAt).ThenBy(deleted => deleted.Id).ToList();
-        TombstoneCleanupUtil.EnforceDeletedUserDeviceTombstoneLimit(local.DeletedDevices);
+        local.Devices.ForEach(item => item.Dispose());
+        local.DeletedDevices.ForEach(item => item.Dispose());
+        local.Devices = mergedLive;
+        local.DeletedDevices = mergedDeleted;
+        local.GenerateIntegrityHash();
         return true;
     }
 
-
-    private UserDeviceData? NewerDevice(UserDeviceData? first, UserDeviceData? second)
+    private static T? SelectSameKind<T>(T? first, T? second, Guid id, string itemType)
+        where T : PasswordManagerLocal.Backend.Security.IntegrityCheckableBase
     {
         if (first is null)
             return second;
         if (second is null)
             return first;
-        if (second.LastUpdatedAt > first.LastUpdatedAt)
-            return second;
+
+        var firstVersion = GetVersion(first);
+        var secondVersion = GetVersion(second);
+        var comparison = SyncVersionStampComparer.Instance.Compare(firstVersion, secondVersion);
+        if (comparison != 0)
+            return comparison > 0 ? first : second;
+
+        var firstHash = first.CalculateIntegrityHash();
+        var secondHash = second.CalculateIntegrityHash();
+        if (!firstHash.AsSpan().SequenceEqual(secondHash))
+            throw new DeterministicSyncConflictException(itemType, id, firstVersion, firstHash, secondHash);
         return first;
     }
 
-
-    private DeletedUserDeviceData? NewerDeletedDevice(DeletedUserDeviceData? first, DeletedUserDeviceData? second)
+    private static SyncVersionStamp GetVersion<T>(T item) => item switch
     {
-        if (first is null)
-            return second;
-        if (second is null)
-            return first;
-        if (second.DeletedAt > first.DeletedAt)
-            return second;
-        return first;
+        UserDeviceData device => device.Version,
+        DeletedUserDeviceData deleted => deleted.Version,
+        _ => throw new InvalidOperationException($"Unsupported versioned device item type {typeof(T).Name}.")
+    };
+
+    private static UserDeviceData Clone(UserDeviceData source)
+    {
+        var clone = new UserDeviceData
+        {
+            Id = source.Id,
+            Name = source.Name,
+            LinkedAt = source.LinkedAt,
+            LastLoginDate = source.LastLoginDate,
+            LastUpdatedAt = source.LastUpdatedAt,
+            Version = source.Version
+        };
+        clone.GenerateIntegrityHash();
+        return clone;
     }
 
-
-    private List<UserDeviceData> ResolveDuplicateDeviceNamesForSync(List<UserDeviceData> devices)
+    private static DeletedUserDeviceData Clone(DeletedUserDeviceData source)
     {
-        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var device in devices.OrderByDescending(device => device.LastUpdatedAt).ThenBy(device => device.Id))
+        var clone = new DeletedUserDeviceData
         {
-            var baseName = string.IsNullOrWhiteSpace(device.Name) ? DeviceNameUtil.BuildDefaultDeviceName(device.Id) : device.Name.Trim();
-            device.Name = BuildUniqueDeviceNameForSync(baseName, usedNames, device.Id);
-            usedNames.Add(device.Name);
-        }
-
-        return devices.OrderBy(device => device.Name, StringComparer.OrdinalIgnoreCase).ThenBy(device => device.Id).ToList();
+            Id = source.Id,
+            DeletedAt = source.DeletedAt,
+            Version = source.Version
+        };
+        clone.GenerateIntegrityHash();
+        return clone;
     }
 
-
-    private string BuildUniqueDeviceNameForSync(string requestedName, HashSet<string> usedNames, Guid deviceId)
+    private static Dictionary<Guid, T> ToUniqueDictionary<T>(
+        IEnumerable<T> source,
+        Func<T, Guid> id,
+        string itemType)
     {
-        var baseName = requestedName.Trim();
-        if (baseName.Length == 0)
-            baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
-
-        if (baseName.Length > UserDeviceNameMaxLength)
-            baseName = baseName[..UserDeviceNameMaxLength];
-
-        if (!usedNames.Contains(baseName))
-            return baseName;
-
-        var suffixSeed = deviceId.ToString("N")[..6];
-        for (var i = 2; i < 100; i++)
+        var result = new Dictionary<Guid, T>();
+        foreach (var item in source)
         {
-            var suffix = $"-{suffixSeed}-{i}";
-            var prefixLength = Math.Max(1, UserDeviceNameMaxLength - suffix.Length);
-            var candidate = baseName[..Math.Min(baseName.Length, prefixLength)] + suffix;
-            if (!usedNames.Contains(candidate))
-                return candidate;
+            var itemId = id(item);
+            if (itemId == Guid.Empty || !result.TryAdd(itemId, item))
+                throw new InvalidDataException($"Duplicate or empty {itemType} identifier {itemId:N}.");
         }
-
-        return deviceId.ToString("N")[..UserDeviceNameMaxLength];
+        return result;
     }
 
-
-    private void DisposeItemsNotKept<T>(IEnumerable<T> currentItems, IReadOnlyCollection<T> keptItems) where T : class, IDisposable
+    private static bool Equivalent<T>(
+        IReadOnlyList<T> first,
+        IReadOnlyList<T> second,
+        Func<T, Guid> id)
+        where T : PasswordManagerLocal.Backend.Security.IntegrityCheckableBase
     {
-        foreach (var current in currentItems)
+        if (first.Count != second.Count)
+            return false;
+        for (var index = 0; index < first.Count; index++)
         {
-            if (!keptItems.Any(kept => ReferenceEquals(kept, current)))
-                current.Dispose();
+            if (id(first[index]) != id(second[index]))
+                return false;
+            var firstHash = first[index].CalculateIntegrityHash();
+            var secondHash = second[index].CalculateIntegrityHash();
+            if (!firstHash.AsSpan().SequenceEqual(secondHash))
+                return false;
         }
+        return true;
     }
 }

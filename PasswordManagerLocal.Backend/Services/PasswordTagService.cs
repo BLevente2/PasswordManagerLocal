@@ -10,6 +10,15 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class PasswordTagService : IPasswordTagService
 {
+    private readonly ISyncVersionClockService _versionClock;
+
+    public PasswordTagService() : this(new EphemeralSyncVersionClockService()) { }
+
+    public PasswordTagService(ISyncVersionClockService versionClock)
+    {
+        _versionClock = versionClock;
+    }
+
     public IReadOnlyList<PasswordTagInfoResponse> ConvertToPasswordTagInfoResponses(UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
@@ -41,7 +50,8 @@ public sealed class PasswordTagService : IPasswordTagService
             Id = Guid.NewGuid(),
             Name = tagName,
             Color = color,
-            LastUpdatedAt = DateTime.UtcNow
+            LastUpdatedAt = DateTime.UtcNow,
+            Version = _versionClock.Next()
         };
         tag.GenerateIntegrityHash();
 
@@ -54,23 +64,9 @@ public sealed class PasswordTagService : IPasswordTagService
     public void DeletePasswordTag(Guid passwordTagId, UserPasswordsData passwords)
     {
         using var tag = GetAndVerifyPasswordTagById(passwordTagId, passwords);
-        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, tag.Id, DateTime.UtcNow);
+        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, tag.Id, DateTime.UtcNow, _versionClock.Next());
         passwords.Tags.Remove(tag);
 
-        var removedFromAnyPassword = false;
-        foreach (var password in passwords.Passwords)
-        {
-            password.VerifyIntegrity();
-            if (password.TagIds.RemoveAll(id => id == passwordTagId) == 0)
-                continue;
-
-            removedFromAnyPassword = true;
-            password.LastUpdatedAt = DateTime.UtcNow;
-            password.GenerateIntegrityHash();
-        }
-
-        if (removedFromAnyPassword)
-            passwords.GeneratePasswordsIntegrityHash();
         passwords.GeneratePasswordTagsIntegrityHash();
     }
 
@@ -98,7 +94,8 @@ public sealed class PasswordTagService : IPasswordTagService
                     Id = Guid.NewGuid(),
                     Name = NormalizeTagName(tag.Name),
                     Color = NormalizeColorCode(tag.Color),
-                    LastUpdatedAt = now
+                    LastUpdatedAt = now,
+                    Version = _versionClock.Next()
                 };
                 copiedTag.GenerateIntegrityHash();
                 return copiedTag;
@@ -146,6 +143,7 @@ public sealed class PasswordTagService : IPasswordTagService
 
         passwords.DeletedTags.RemoveAll(deleted => deleted.Id == tag.Id);
         tag.LastUpdatedAt = DateTime.UtcNow;
+        tag.Version = _versionClock.Next();
         tag.GenerateIntegrityHash();
         passwords.GeneratePasswordTagsIntegrityHash();
     }

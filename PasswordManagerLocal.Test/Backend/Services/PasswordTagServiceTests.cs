@@ -190,7 +190,7 @@ public sealed class PasswordTagServiceTests
 
 
     [TestMethod]
-    public void DeletePasswordTag_RemovesTagFromPasswordsAndCreatesTombstone()
+    public void DeletePasswordTag_RetainsDerivedReferencesAndCreatesTombstone()
     {
         var service = new PasswordTagService();
         var passwords = CreateEmptyPasswords();
@@ -221,7 +221,8 @@ public sealed class PasswordTagServiceTests
         MSTestAssert.IsEmpty(passwords.Tags);
         MSTestAssert.HasCount(1, passwords.DeletedTags);
         MSTestAssert.AreEqual(tagId, passwords.DeletedTags[0].Id);
-        MSTestAssert.IsEmpty(passwords.Passwords[0].TagIds);
+        CollectionAssert.AreEqual(new[] { tagId }, passwords.Passwords[0].TagIds);
+        MSTestAssert.IsEmpty(new PasswordService().ConvertToPasswordInfoResponses(passwords)[0].TagIds);
         passwords.DeletedTags[0].VerifyIntegrity();
         passwords.Passwords[0].VerifyIntegrity();
         passwords.VerifyIntegrity();

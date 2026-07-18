@@ -17,6 +17,7 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
     public List<Guid> TagIds { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
 
     public void Dispose()
@@ -36,6 +37,7 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
         Color = string.Empty;
         CreatedAt = UtcDateTimeUtil.MinDateTime;
         LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
+        Version = new();
         CryptographicOperations.ZeroMemory(Password);
         TagIds.Clear();
         CryptographicOperations.ZeroMemory(IntegrityHash);
@@ -58,6 +60,7 @@ public sealed class SecurePassword : IntegrityCheckableBase, IDisposable
                 hash.Write(tagId);
             hash.Write(CreatedAt);
             hash.Write(LastUpdatedAt);
+            Version.WriteTo(hash);
         });
 
 }

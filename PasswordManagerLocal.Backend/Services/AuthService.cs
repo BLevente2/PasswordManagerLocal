@@ -40,6 +40,7 @@ public sealed class AuthService : IAuthService
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
     private readonly IUserControlStateRepository _controlStates;
     private readonly IUserSyncStateRepository _syncStates;
+    private readonly ISyncVersionClockService _versionClock;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -65,7 +66,8 @@ public sealed class AuthService : IAuthService
         IPendingSyncActivationService activation,
         IUserMembershipAuthorizationService membershipAuthorization,
         IUserControlStateRepository controlStates,
-        IUserSyncStateRepository syncStates)
+        IUserSyncStateRepository syncStates,
+        ISyncVersionClockService versionClock)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -91,6 +93,7 @@ public sealed class AuthService : IAuthService
         _membershipAuthorization = membershipAuthorization;
         _controlStates = controlStates;
         _syncStates = syncStates;
+        _versionClock = versionClock;
     }
 
 
@@ -152,7 +155,8 @@ public sealed class AuthService : IAuthService
             LastName = request.LastName,
             Email = request.Email,
             RegistrationDate = now,
-            LastUpdatedAt = now
+            LastUpdatedAt = now,
+            Version = _versionClock.Next()
         };
 
 
@@ -167,13 +171,15 @@ public sealed class AuthService : IAuthService
 
     private UserDevicesData CreateInitialUserDevicesData(DateTime now, DateTimeOffset linkedAt)
     {
+        var version = _versionClock.Next();
         var localDeviceData = new UserDeviceData
         {
             Id = _identity.LocalDeviceId,
             Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
             LinkedAt = linkedAt,
             LastLoginDate = now,
-            LastUpdatedAt = linkedAt
+            LastUpdatedAt = linkedAt,
+            Version = version
         };
         localDeviceData.GenerateIntegrityHash();
 
@@ -313,7 +319,8 @@ public sealed class AuthService : IAuthService
         UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
             bundle.UserDevicesData,
             _identity.LocalDeviceId,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            _versionClock.Next());
         modifiedBlobs |= UserDataBlobKind.Devices;
         _rememberMe.SetRememberMe(user, request.RememberMe, key);
         await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);

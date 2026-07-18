@@ -19,7 +19,7 @@ public static class TombstoneCleanupUtil
     public static bool EnforceDeletedUserDeviceTombstoneLimit(List<DeletedUserDeviceData> tombstones, Guid? protectedId = null) => false;
 
 
-    public static void AddOrUpdateDeletedPassword(UserPasswordsData passwords, Guid passwordId, DateTime deletedAt)
+    public static void AddOrUpdateDeletedPassword(UserPasswordsData passwords, Guid passwordId, DateTime deletedAt, SyncVersionStamp version)
     {
         deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
 
@@ -30,15 +30,15 @@ public static class TombstoneCleanupUtil
             passwords.DeletedPasswords.Add(tombstone);
         }
 
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
+        SyncVersionStampComparer.Validate(version);
+        tombstone.DeletedAt = deletedAt;
+        tombstone.Version = version;
         tombstone.GenerateIntegrityHash();
         EnforceDeletedPasswordTombstoneLimit(passwords.DeletedPasswords, passwordId);
     }
 
 
-    public static void AddOrUpdateDeletedCustomUserColor(UserPasswordsData passwords, Guid customUserColorId, DateTime deletedAt)
+    public static void AddOrUpdateDeletedCustomUserColor(UserPasswordsData passwords, Guid customUserColorId, DateTime deletedAt, SyncVersionStamp version)
     {
         deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
 
@@ -49,15 +49,15 @@ public static class TombstoneCleanupUtil
             passwords.DeletedCustomColors.Add(tombstone);
         }
 
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
+        SyncVersionStampComparer.Validate(version);
+        tombstone.DeletedAt = deletedAt;
+        tombstone.Version = version;
         tombstone.GenerateIntegrityHash();
         EnforceDeletedCustomUserColorTombstoneLimit(passwords.DeletedCustomColors, customUserColorId);
     }
 
 
-    public static void AddOrUpdateDeletedPasswordTag(UserPasswordsData passwords, Guid passwordTagId, DateTime deletedAt)
+    public static void AddOrUpdateDeletedPasswordTag(UserPasswordsData passwords, Guid passwordTagId, DateTime deletedAt, SyncVersionStamp version)
     {
         deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
 
@@ -68,15 +68,15 @@ public static class TombstoneCleanupUtil
             passwords.DeletedTags.Add(tombstone);
         }
 
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
+        SyncVersionStampComparer.Validate(version);
+        tombstone.DeletedAt = deletedAt;
+        tombstone.Version = version;
         tombstone.GenerateIntegrityHash();
         EnforceDeletedPasswordTagTombstoneLimit(passwords.DeletedTags, passwordTagId);
     }
 
 
-    public static void AddOrUpdateDeletedUserDevice(UserDevicesData devices, Guid deviceId, DateTimeOffset deletedAt)
+    public static void AddOrUpdateDeletedUserDevice(UserDevicesData devices, Guid deviceId, DateTimeOffset deletedAt, SyncVersionStamp version)
     {
         deletedAt = UtcDateTimeUtil.ToUtc(deletedAt);
 
@@ -87,9 +87,9 @@ public static class TombstoneCleanupUtil
             devices.DeletedDevices.Add(tombstone);
         }
 
-        if (deletedAt > tombstone.DeletedAt)
-            tombstone.DeletedAt = deletedAt;
-
+        SyncVersionStampComparer.Validate(version);
+        tombstone.DeletedAt = deletedAt;
+        tombstone.Version = version;
         tombstone.GenerateIntegrityHash();
         EnforceDeletedUserDeviceTombstoneLimit(devices.DeletedDevices, deviceId);
     }

@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
+using PasswordManagerLocal.Backend.Utils;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -12,12 +13,16 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
         userData.VerifyIntegrity();
 
 
-    public void VerifyGeneralUserData(GeneralUserData generalUserData) =>
+    public void VerifyGeneralUserData(GeneralUserData generalUserData)
+    {
+        SyncVersionStampTraversal.Validate(generalUserData);
         generalUserData.VerifyIntegrity();
+    }
 
 
     public void VerifyUserPasswordsData(UserPasswordsData userPasswordsData)
     {
+        SyncVersionStampTraversal.Validate(userPasswordsData);
         userPasswordsData.VerifyIntegrity();
         VerifyPasswordChildren(userPasswordsData);
     }
@@ -25,6 +30,7 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
 
     public void VerifyUserDevicesData(UserDevicesData userDevicesData)
     {
+        SyncVersionStampTraversal.Validate(userDevicesData);
         userDevicesData.VerifyIntegrity();
         VerifyDeviceChildren(userDevicesData);
     }
@@ -59,6 +65,11 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
 
     public void RebuildInitialIntegrity(UserDataBundle bundle)
     {
+        SyncVersionStampTraversal.Validate(bundle.GeneralUserData);
+        SyncVersionStampTraversal.Validate(bundle.UserPasswordsData);
+        SyncVersionStampTraversal.Validate(bundle.UserDevicesData);
+        Canonicalize(bundle.UserPasswordsData);
+        Canonicalize(bundle.UserDevicesData);
         bundle.GeneralUserData.GenerateIntegrityHash();
         RebuildUserPasswordsDataIntegrity(bundle.UserPasswordsData);
         RebuildUserDevicesDataIntegrity(bundle.UserDevicesData);
@@ -71,16 +82,23 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
     public void UpdateModifiedBlobIntegrity(UserDataBundle bundle, UserDataBlobKind modifiedBlobs)
     {
         if (modifiedBlobs.HasFlag(UserDataBlobKind.General))
+        {
+            SyncVersionStampTraversal.Validate(bundle.GeneralUserData);
             bundle.GeneralUserData.GenerateIntegrityHash();
+        }
 
         if (modifiedBlobs.HasFlag(UserDataBlobKind.Passwords))
         {
+            SyncVersionStampTraversal.Validate(bundle.UserPasswordsData);
+            Canonicalize(bundle.UserPasswordsData);
             VerifyPasswordChildren(bundle.UserPasswordsData);
             bundle.UserPasswordsData.GenerateIntegrityHash();
         }
 
         if (modifiedBlobs.HasFlag(UserDataBlobKind.Devices))
         {
+            SyncVersionStampTraversal.Validate(bundle.UserDevicesData);
+            Canonicalize(bundle.UserDevicesData);
             VerifyDeviceChildren(bundle.UserDevicesData);
             bundle.UserDevicesData.GenerateIntegrityHash();
         }
@@ -94,19 +112,49 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
     public void RebuildModifiedBlobIntegrity(UserDataBundle bundle, UserDataBlobKind modifiedBlobs)
     {
         if (modifiedBlobs.HasFlag(UserDataBlobKind.General))
+        {
+            SyncVersionStampTraversal.Validate(bundle.GeneralUserData);
             bundle.GeneralUserData.GenerateIntegrityHash();
+        }
 
         if (modifiedBlobs.HasFlag(UserDataBlobKind.Passwords))
+        {
+            SyncVersionStampTraversal.Validate(bundle.UserPasswordsData);
+            Canonicalize(bundle.UserPasswordsData);
             RebuildUserPasswordsDataIntegrity(bundle.UserPasswordsData);
+        }
 
         if (modifiedBlobs.HasFlag(UserDataBlobKind.Devices))
+        {
+            SyncVersionStampTraversal.Validate(bundle.UserDevicesData);
+            Canonicalize(bundle.UserDevicesData);
             RebuildUserDevicesDataIntegrity(bundle.UserDevicesData);
+        }
 
         CopyChildHashesToUserData(bundle, modifiedBlobs);
         bundle.UserData.GenerateIntegrityHash();
         VerifyBundleLinks(bundle);
     }
 
+
+
+    private static void Canonicalize(UserPasswordsData data)
+    {
+        foreach (var password in data.Passwords)
+            password.TagIds = password.TagIds.Order().ToList();
+        data.Passwords = data.Passwords.OrderBy(item => item.Id).ToList();
+        data.DeletedPasswords = data.DeletedPasswords.OrderBy(item => item.Id).ToList();
+        data.CustomColors = data.CustomColors.OrderBy(item => item.Id).ToList();
+        data.DeletedCustomColors = data.DeletedCustomColors.OrderBy(item => item.Id).ToList();
+        data.Tags = data.Tags.OrderBy(item => item.Id).ToList();
+        data.DeletedTags = data.DeletedTags.OrderBy(item => item.Id).ToList();
+    }
+
+    private static void Canonicalize(UserDevicesData data)
+    {
+        data.Devices = data.Devices.OrderBy(item => item.Id).ToList();
+        data.DeletedDevices = data.DeletedDevices.OrderBy(item => item.Id).ToList();
+    }
 
     private void RebuildUserPasswordsDataIntegrity(UserPasswordsData userPasswordsData)
     {

@@ -1,4 +1,4 @@
-﻿using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Requests;
@@ -13,15 +13,29 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class PasswordService : IPasswordService
 {
     private const int MaxConcurrentPasswordExports = 4;
+    private readonly ISyncVersionClockService _versionClock;
+
+    public PasswordService() : this(new EphemeralSyncVersionClockService()) { }
+
+    public PasswordService(ISyncVersionClockService versionClock)
+    {
+        _versionClock = versionClock;
+    }
 
     public IReadOnlyList<PasswordInfoResponse> ConvertToPasswordInfoResponses(UserPasswordsData passwords)
     {
         passwords.VerifyIntegrity();
 
+        var validTagIds = passwords.Tags.Select(tag => tag.Id).ToHashSet();
         return passwords.Passwords
             .OrderBy(password => password.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(password => password.Id)
-            .Select(PasswordInfoResponse.ConvertToPasswordInfoResponse)
+            .Select(password =>
+            {
+                var response = PasswordInfoResponse.ConvertToPasswordInfoResponse(password);
+                response.TagIds = response.TagIds.Where(validTagIds.Contains).Distinct().Order().ToList();
+                return response;
+            })
             .ToList();
     }
 
@@ -51,7 +65,8 @@ public sealed class PasswordService : IPasswordService
             Password = await EncryptPasswordAsync(request.Password, passwords),
             TagIds = NormalizeTagIds(request.TagIds),
             CreatedAt = now,
-            LastUpdatedAt = now
+            LastUpdatedAt = now,
+            Version = _versionClock.Next()
         };
         securePassword.GenerateIntegrityHash();
 
@@ -82,10 +97,9 @@ public sealed class PasswordService : IPasswordService
             passwordsToRemove.Add(password);
         }
 
-        var deletedAt = DateTime.UtcNow;
         foreach (var password in passwordsToRemove)
         {
-            TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, password.Id, deletedAt);
+            TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, password.Id, DateTime.UtcNow, _versionClock.Next());
             passwords.Passwords.Remove(password);
             password.Dispose();
         }
@@ -148,6 +162,7 @@ public sealed class PasswordService : IPasswordService
 
         passwords.DeletedPasswords.RemoveAll(deleted => deleted.Id == password.Id);
         password.LastUpdatedAt = DateTime.UtcNow;
+        password.Version = _versionClock.Next();
         password.GenerateIntegrityHash();
         passwords.GeneratePasswordsIntegrityHash();
     }
@@ -235,14 +250,16 @@ public sealed class PasswordService : IPasswordService
         UserPasswordsData targetPasswords)
     {
         var now = DateTime.UtcNow;
+        var versions = selectedPasswords.Select(_ => _versionClock.Next()).ToArray();
         var maxConcurrency = Math.Min(MaxConcurrentPasswordExports, Math.Max(1, Environment.ProcessorCount));
         using var limiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         var copyTasks = selectedPasswords
-            .Select(sourcePassword => CopyPasswordForExportWithLimitAsync(
+            .Select((sourcePassword, index) => CopyPasswordForExportWithLimitAsync(
                 sourcePassword,
                 sourcePasswords,
                 targetPasswords,
                 now,
+                versions[index],
                 limiter))
             .ToArray();
 
@@ -269,12 +286,13 @@ public sealed class PasswordService : IPasswordService
         UserPasswordsData sourcePasswords,
         UserPasswordsData targetPasswords,
         DateTime now,
+        SyncVersionStamp version,
         SemaphoreSlim limiter)
     {
         await limiter.WaitAsync();
         try
         {
-            return await CopyPasswordForExportAsync(sourcePassword, sourcePasswords, targetPasswords, now);
+            return await CopyPasswordForExportAsync(sourcePassword, sourcePasswords, targetPasswords, now, version);
         }
         finally
         {
@@ -287,7 +305,8 @@ public sealed class PasswordService : IPasswordService
         SecurePassword sourcePassword,
         UserPasswordsData sourcePasswords,
         UserPasswordsData targetPasswords,
-        DateTime now)
+        DateTime now,
+        SyncVersionStamp version)
     {
         byte[] rawPassword = [];
         try
@@ -303,7 +322,8 @@ public sealed class PasswordService : IPasswordService
                 Password = await EncryptPasswordAsync(rawPassword, targetPasswords),
                 TagIds = [],
                 CreatedAt = now,
-                LastUpdatedAt = now
+                LastUpdatedAt = now,
+                Version = version
             };
             copiedPassword.GenerateIntegrityHash();
             return copiedPassword;

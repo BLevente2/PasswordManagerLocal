@@ -14,6 +14,7 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
     public string Email { get; set; } = string.Empty;
     public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
     public void Dispose()
     {
@@ -26,6 +27,7 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
         Email = string.Empty;
         RegistrationDate = UtcDateTimeUtil.MinDateTime;
         LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
+        Version = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -40,6 +42,7 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
             hash.WriteString(Email);
             hash.Write(RegistrationDate);
             hash.Write(LastUpdatedAt);
+            Version.WriteTo(hash);
         });
 
 }

@@ -52,7 +52,7 @@ public sealed class TombstoneCleanupUtilTests
         var passwords = new UserPasswordsData();
         var oldestPasswordId = FillDeletedPasswordsToLimit(passwords, now);
         var newPasswordId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, newPasswordId, now);
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, newPasswordId, now, Stamp(now));
 
         MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList + 1, passwords.DeletedPasswords);
         MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == oldestPasswordId));
@@ -60,7 +60,7 @@ public sealed class TombstoneCleanupUtilTests
 
         var oldestTagId = FillDeletedPasswordTagsToLimit(passwords, now);
         var newTagId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, newTagId, now);
+        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, newTagId, now, Stamp(now));
 
         MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList + 1, passwords.DeletedTags);
         MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == oldestTagId));
@@ -70,18 +70,26 @@ public sealed class TombstoneCleanupUtilTests
     private static Guid FillDeletedPasswordsToLimit(UserPasswordsData passwords, DateTime now)
     {
         var oldestId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, oldestId, now.AddDays(-1));
+        TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, oldestId, now.AddDays(-1), Stamp(now.AddDays(-1)));
         for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
-            TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, Guid.NewGuid(), now.AddMinutes(-i));
+            TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, Guid.NewGuid(), now.AddMinutes(-i), Stamp(now.AddMinutes(-i), i));
         return oldestId;
     }
 
     private static Guid FillDeletedPasswordTagsToLimit(UserPasswordsData passwords, DateTime now)
     {
         var oldestId = Guid.NewGuid();
-        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, oldestId, now.AddDays(-1));
+        TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, oldestId, now.AddDays(-1), Stamp(now.AddDays(-1)));
         for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
-            TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, Guid.NewGuid(), now.AddMinutes(-i));
+            TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, Guid.NewGuid(), now.AddMinutes(-i), Stamp(now.AddMinutes(-i), i));
         return oldestId;
     }
+    private static SyncVersionStamp Stamp(DateTime value, long logical = 0) => new()
+    {
+        PhysicalTimeUnixMilliseconds = new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)).ToUnixTimeMilliseconds(),
+        LogicalCounter = logical,
+        OriginDeviceId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+        OriginInstanceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+    };
+
 }

@@ -18,17 +18,20 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
     private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUserPasswordsDataMergeService _passwordsDataMerge;
     private readonly IUserDevicesDataMergeService _devicesDataMerge;
+    private readonly ISyncVersionClockService _versionClock;
 
     public UserDataBundleSyncService(
         IUserRepository users,
         IUserDataBundleIntegrityService integrity,
         IUserPasswordsDataMergeService passwordsDataMerge,
-        IUserDevicesDataMergeService devicesDataMerge)
+        IUserDevicesDataMergeService devicesDataMerge,
+        ISyncVersionClockService versionClock)
     {
         _users = users;
         _integrity = integrity;
         _passwordsDataMerge = passwordsDataMerge;
         _devicesDataMerge = devicesDataMerge;
+        _versionClock = versionClock;
     }
 
     public async Task<UserSnapshotMergeBatchResult> TryVerifyAndMergeManyAsync(
@@ -80,15 +83,27 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                 }
 
                 incomingBundles.Add(incomingBundle);
+                _versionClock.Observe(SyncVersionStampTraversal.Enumerate(incomingBundle));
                 anyVerified = true;
                 var snapshotChangedBlobs = UserDataBlobKind.None;
 
-                if (MergeGeneralUserDataForSync(canonicalBundle, incomingBundle, existing, snapshot.User))
-                    snapshotChangedBlobs |= UserDataBlobKind.General;
-                if (_passwordsDataMerge.Merge(canonicalBundle.UserPasswordsData, incomingBundle.UserPasswordsData))
-                    snapshotChangedBlobs |= UserDataBlobKind.Passwords;
-                if (_devicesDataMerge.Merge(canonicalBundle.UserDevicesData, incomingBundle.UserDevicesData))
-                    snapshotChangedBlobs |= UserDataBlobKind.Devices;
+                try
+                {
+                    if (GeneralUserDataMergeUtil.Merge(
+                            canonicalBundle.GeneralUserData,
+                            incomingBundle.GeneralUserData,
+                            existing,
+                            snapshot.User))
+                        snapshotChangedBlobs |= UserDataBlobKind.General;
+                    if (_passwordsDataMerge.Merge(canonicalBundle.UserPasswordsData, incomingBundle.UserPasswordsData))
+                        snapshotChangedBlobs |= UserDataBlobKind.Passwords;
+                    if (_devicesDataMerge.Merge(canonicalBundle.UserDevicesData, incomingBundle.UserDevicesData))
+                        snapshotChangedBlobs |= UserDataBlobKind.Devices;
+                }
+                catch (DeterministicSyncConflictException ex) when (!ex.UserId.HasValue)
+                {
+                    throw ex.WithUserId(existing.UId);
+                }
 
                 changedBlobs |= snapshotChangedBlobs;
                 var snapshotTimestamp = snapshot.CreatedAtUtc.ToUniversalTime();
@@ -163,28 +178,6 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             InvalidDataException or
             InvalidDataIntegrityException or
             JsonException;
-
-
-    private bool MergeGeneralUserDataForSync(UserDataBundle local, UserDataBundle incoming, User existingUser, UserSyncPayload incomingUser)
-    {
-        var localUpdatedAt = local.GeneralUserData.LastUpdatedAt;
-        var incomingUpdatedAt = incoming.GeneralUserData.LastUpdatedAt;
-        if (incomingUpdatedAt <= localUpdatedAt)
-            return false;
-
-        local.GeneralUserData.Username = incoming.GeneralUserData.Username;
-        local.GeneralUserData.FirstName = incoming.GeneralUserData.FirstName;
-        local.GeneralUserData.LastName = incoming.GeneralUserData.LastName;
-        local.GeneralUserData.Email = incoming.GeneralUserData.Email;
-        local.GeneralUserData.RegistrationDate = incoming.GeneralUserData.RegistrationDate;
-        local.GeneralUserData.LastUpdatedAt = incoming.GeneralUserData.LastUpdatedAt;
-
-        CryptographicOperations.ZeroMemory(existingUser.UsernameHash);
-        CryptographicOperations.ZeroMemory(existingUser.UsernameSalt);
-        existingUser.UsernameHash = incomingUser.UsernameHash.ToArray();
-        existingUser.UsernameSalt = incomingUser.UsernameSalt.ToArray();
-        return true;
-    }
 
 
     private async Task<UserDataBundle> ReadAndVerifyUserDataBundleForSyncAsync(User user, EncryptionKey userKey, CancellationToken ct)
@@ -374,7 +367,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                 max = value;
         }
 
-        return max == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : max;
+        return max;
     }
 
 

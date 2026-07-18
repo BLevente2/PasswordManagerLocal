@@ -37,6 +37,7 @@ public class AppDbContext : DbContext
     public DbSet<UserOriginRemovalCutoff> UserOriginRemovalCutoffs => Set<UserOriginRemovalCutoff>();
     public DbSet<DeviceEnrollmentCommit> DeviceEnrollmentCommits => Set<DeviceEnrollmentCommit>();
     public DbSet<DeletedUserBarrier> DeletedUserBarriers => Set<DeletedUserBarrier>();
+    public DbSet<SyncVersionClockState> SyncVersionClockStates => Set<SyncVersionClockState>();
 
     public override int SaveChanges()
     {
@@ -412,6 +413,15 @@ public class AppDbContext : DbContext
         enrollmentCommit.Property(row => row.Version).IsRequired().IsConcurrencyToken();
         enrollmentCommit.HasIndex(row => new { row.UserId, row.TargetDeviceId, row.TargetOriginInstanceId }).IsUnique();
         enrollmentCommit.HasIndex(row => new { row.UserId, row.Status, row.LastAttemptAtUtc });
+
+        var itemClock = model.Entity<SyncVersionClockState>();
+        itemClock.ToTable("SyncVersionClockState", table =>
+            table.HasCheckConstraint("CK_SyncVersionClockState_Singleton", "Id = 1"));
+        itemClock.HasKey(row => row.Id);
+        itemClock.Property(row => row.LastPhysicalTimeUnixMilliseconds).IsRequired();
+        itemClock.Property(row => row.LastLogicalCounter).IsRequired();
+        itemClock.Property(row => row.LastUpdatedAtUtc).IsRequired();
+        itemClock.Property(row => row.Version).IsRequired().IsConcurrencyToken();
 
         var ldi = model.Entity<LocalDeviceIdentity>();
         ldi.ToTable("LocalDeviceIdentity", t =>

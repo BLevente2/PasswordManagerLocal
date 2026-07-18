@@ -31,6 +31,7 @@ public sealed class BackendTestHost : IDisposable
 
         sc.AddSingleton<ITokenService, TokenService>();
         sc.AddSingleton<IKeyVaultService, KeyVaultService>();
+        sc.AddSingleton<ISyncVersionClockService, EphemeralSyncVersionClockService>();
 
         sc.AddSingleton<IDataCachingService>(sp =>
         {

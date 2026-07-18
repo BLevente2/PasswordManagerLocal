@@ -13,6 +13,7 @@ public sealed class PasswordTag : IntegrityCheckableBase, IDisposable
     public string Name { get; set; } = string.Empty;
     public string Color { get; set; } = DefaultPasswordColor;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
     public void Dispose()
     {
@@ -23,6 +24,7 @@ public sealed class PasswordTag : IntegrityCheckableBase, IDisposable
         Name = string.Empty;
         Color = string.Empty;
         LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
+        Version = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -35,5 +37,6 @@ public sealed class PasswordTag : IntegrityCheckableBase, IDisposable
             hash.WriteString(Name);
             hash.WriteString(Color);
             hash.Write(LastUpdatedAt);
+            Version.WriteTo(hash);
         });
 }

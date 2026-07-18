@@ -74,8 +74,9 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         if (HasDuplicates(userDevicesData.Devices, device => device.Id))
             throw new InvalidOperationException("Refusing to persist duplicate device data.");
 
-        if (HasDuplicates(userDevicesData.Devices, device => device.Name.Trim(), StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Refusing to persist duplicate device names.");
+        // Concurrent presentation-name edits may legitimately converge to the same name.
+        // The stored logical items remain untouched; device responses resolve duplicates as a
+        // deterministic derived view ordered by item version and device ID.
     }
 
     private static void EnsureCustomColorsCanBePersisted(UserPasswordsData passwordsData)
@@ -89,12 +90,9 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         if (HasDuplicates(passwordsData.CustomColors, color => color.Id))
             throw new InvalidOperationException("Refusing to persist duplicate custom color data.");
 
-        if (HasDuplicates(passwordsData.CustomColors, color => color.ColorCode.Trim(), StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Refusing to persist duplicate custom color codes.");
-
-        var namedColors = passwordsData.CustomColors.Where(color => color.ColorName is not null);
-        if (HasDuplicates(namedColors, color => color.ColorName!.Trim(), StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Refusing to persist duplicate custom color names.");
+        // Concurrent creations on different devices may legitimately produce the same
+        // presentation name or color code under distinct item IDs. Local mutation services
+        // still reject such duplicates; merged authenticated items must remain persistable.
     }
 
     private static void EnsurePasswordTagsCanBePersisted(UserPasswordsData passwordsData)
@@ -108,15 +106,18 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         if (HasDuplicates(passwordsData.Tags, tag => tag.Id))
             throw new InvalidOperationException("Refusing to persist duplicate password tag data.");
 
-        if (HasDuplicates(passwordsData.Tags, tag => tag.Name.Trim(), StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Refusing to persist duplicate password tag names.");
+        // Concurrent same-name tags are distinct authenticated items. Responses are
+        // deterministically ordered by name and ID, while local mutations still enforce
+        // the normal uniqueness rule for newly authored changes.
     }
 
     private static void EnsurePasswordTagReferencesCanBePersisted(UserPasswordsData passwordsData)
     {
-        var existingTagIds = passwordsData.Tags.Select(tag => tag.Id).ToHashSet();
+        // References to tags that lost to a deletion are retained as deterministic derived data.
+        // Read models filter them against the live tag set; removing them during merge would
+        // otherwise require a device-local mutation version and break convergence.
         var hasInvalidReferences = passwordsData.Passwords.Any(password =>
-            password.TagIds.Any(tagId => tagId == Guid.Empty || !existingTagIds.Contains(tagId)) ||
+            password.TagIds.Any(tagId => tagId == Guid.Empty) ||
             password.TagIds.Distinct().Count() != password.TagIds.Count);
 
         if (hasInvalidReferences)

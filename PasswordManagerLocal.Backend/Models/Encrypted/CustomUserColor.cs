@@ -12,6 +12,7 @@ public sealed class CustomUserColor : IntegrityCheckableBase, IDisposable
     public string? ColorName { get; set; } = null;
     public string ColorCode { get; set; } = string.Empty;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
     public void Dispose()
     {
@@ -22,6 +23,7 @@ public sealed class CustomUserColor : IntegrityCheckableBase, IDisposable
         ColorName = null;
         ColorCode = string.Empty;
         LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
+        Version = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -34,5 +36,6 @@ public sealed class CustomUserColor : IntegrityCheckableBase, IDisposable
             hash.WriteString(ColorName ?? string.Empty);
             hash.WriteString(ColorCode);
             hash.Write(LastUpdatedAt);
+            Version.WriteTo(hash);
         });
 }

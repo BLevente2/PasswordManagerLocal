@@ -10,6 +10,7 @@ public sealed class DeletedCustomUserColorData : IntegrityCheckableBase, IDispos
 
     public Guid Id { get; set; }
     public DateTime DeletedAt { get; set; } = DateTime.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
     public void Dispose()
     {
@@ -18,6 +19,7 @@ public sealed class DeletedCustomUserColorData : IntegrityCheckableBase, IDispos
 
         Id = Guid.Empty;
         DeletedAt = UtcDateTimeUtil.MinDateTime;
+        Version = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -28,5 +30,6 @@ public sealed class DeletedCustomUserColorData : IntegrityCheckableBase, IDispos
         {
             hash.Write(Id);
             hash.Write(DeletedAt);
+            Version.WriteTo(hash);
         });
 }

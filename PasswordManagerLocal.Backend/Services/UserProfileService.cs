@@ -19,6 +19,7 @@ public class UserProfileService : IUserProfileService
     private readonly IUserSessionService _sessions;
     private readonly IUserDeletionService _deletion;
     private readonly IAuthService _authService;
+    private readonly ISyncVersionClockService _versionClock;
 
     public UserProfileService(
         IUserLookupService lookup,
@@ -26,7 +27,8 @@ public class UserProfileService : IUserProfileService
         IUserDataWriterService writer,
         IUserSessionService sessions,
         IUserDeletionService deletion,
-        IAuthService authService)
+        IAuthService authService,
+        ISyncVersionClockService versionClock)
     {
         _lookup = lookup;
         _reader = reader;
@@ -34,6 +36,7 @@ public class UserProfileService : IUserProfileService
         _sessions = sessions;
         _deletion = deletion;
         _authService = authService;
+        _versionClock = versionClock;
     }
 
 
@@ -80,6 +83,7 @@ public class UserProfileService : IUserProfileService
 
             bundle.GeneralUserData.Username = newUsername;
             bundle.GeneralUserData.LastUpdatedAt = DateTime.UtcNow;
+            bundle.GeneralUserData.Version = _versionClock.Next();
             CryptographicOperations.ZeroMemory(user.UsernameSalt);
             CryptographicOperations.ZeroMemory(user.UsernameHash);
 
@@ -113,6 +117,7 @@ public class UserProfileService : IUserProfileService
             bundle.GeneralUserData.LastName = request.NewLastName;
 
         bundle.GeneralUserData.LastUpdatedAt = DateTime.UtcNow;
+        bundle.GeneralUserData.Version = _versionClock.Next();
 
         await _writer.UpdateUserDataBundleAsync(bundle, request.Token, UserDataBlobKind.General, true, ct);
     }

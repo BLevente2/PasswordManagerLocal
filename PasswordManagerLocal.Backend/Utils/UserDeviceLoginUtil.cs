@@ -7,7 +7,8 @@ public static class UserDeviceLoginUtil
     public static void UpdateCurrentDeviceLastLoginDate(
         UserDevicesData userDevicesData,
         Guid localDeviceId,
-        DateTimeOffset loginTime)
+        DateTimeOffset loginTime,
+        SyncVersionStamp loginVersion)
     {
         var device = userDevicesData.Devices.FirstOrDefault(device => device.Id == localDeviceId);
         if (device is null)
@@ -17,7 +18,8 @@ public static class UserDeviceLoginUtil
                 Id = localDeviceId,
                 Name = DeviceNameUtil.BuildDefaultDeviceName(localDeviceId),
                 LinkedAt = loginTime,
-                LastUpdatedAt = loginTime
+                LastUpdatedAt = loginTime,
+                Version = loginVersion
             };
             userDevicesData.Devices.Add(device);
         }
@@ -25,6 +27,7 @@ public static class UserDeviceLoginUtil
         userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == localDeviceId);
         device.LastLoginDate = loginTime.UtcDateTime;
         device.LastUpdatedAt = loginTime;
+        device.Version = loginVersion;
         device.GenerateIntegrityHash();
     }
 }

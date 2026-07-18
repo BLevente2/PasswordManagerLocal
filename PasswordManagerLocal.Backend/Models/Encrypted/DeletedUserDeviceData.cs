@@ -9,6 +9,7 @@ public sealed class DeletedUserDeviceData : IntegrityCheckableBase, IDisposable
 
     public Guid Id { get; set; }
     public DateTimeOffset DeletedAt { get; set; } = DateTimeOffset.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
     public void Dispose()
     {
@@ -17,6 +18,7 @@ public sealed class DeletedUserDeviceData : IntegrityCheckableBase, IDisposable
 
         Id = Guid.Empty;
         DeletedAt = default;
+        Version = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -27,5 +29,6 @@ public sealed class DeletedUserDeviceData : IntegrityCheckableBase, IDisposable
         {
             hash.Write(Id);
             hash.Write(DeletedAt);
+            Version.WriteTo(hash);
         });
 }

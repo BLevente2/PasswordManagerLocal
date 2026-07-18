@@ -12,6 +12,7 @@ public sealed class UserDeviceData : IntegrityCheckableBase, IDisposable
     public DateTimeOffset LinkedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTime LastLoginDate { get; set; } = UtcDateTimeUtil.MinDateTime;
     public DateTimeOffset LastUpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public SyncVersionStamp Version { get; set; } = new();
 
     public void Dispose()
     {
@@ -23,6 +24,7 @@ public sealed class UserDeviceData : IntegrityCheckableBase, IDisposable
         LinkedAt = default;
         LastLoginDate = UtcDateTimeUtil.MinDateTime;
         LastUpdatedAt = default;
+        Version = new();
         System.Security.Cryptography.CryptographicOperations.ZeroMemory(IntegrityHash);
         _disposed = true;
         GC.SuppressFinalize(this);
@@ -36,6 +38,7 @@ public sealed class UserDeviceData : IntegrityCheckableBase, IDisposable
             hash.Write(LinkedAt);
             hash.Write(LastLoginDate);
             hash.Write(LastUpdatedAt);
+            Version.WriteTo(hash);
         });
 
 }

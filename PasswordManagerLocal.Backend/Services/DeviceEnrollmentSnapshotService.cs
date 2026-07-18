@@ -25,6 +25,7 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotService
 {
     private readonly IDeviceIdentityService _identity;
+    private readonly ISyncVersionClockService _versionClock;
 
     private static readonly string[] SensitiveLocalOnlySnapshotPropertyNames =
     [
@@ -40,9 +41,12 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         "PrivateKeyBlob"
     ];
 
-    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity)
+    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity) : this(identity, new EphemeralSyncVersionClockService()) { }
+
+    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity, ISyncVersionClockService versionClock)
     {
         _identity = identity;
+        _versionClock = versionClock;
     }
 
     public DeviceEnrollmentSnapshot DecryptAndDeserialize(
@@ -351,12 +355,14 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
 
         var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
         var name = BuildUniqueEncryptedDeviceName(bundle.UserDevicesData, baseName, deviceId);
+        var version = _versionClock.Next();
         var deviceData = new UserDeviceData
         {
             Id = deviceId,
             Name = name,
             LinkedAt = DateTimeOffset.UtcNow,
-            LastUpdatedAt = DateTimeOffset.UtcNow
+            LastUpdatedAt = DateTimeOffset.UtcNow,
+            Version = version
         };
         deviceData.GenerateIntegrityHash();
         bundle.UserDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == deviceData.Id);
