@@ -110,10 +110,11 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                         if (retained.OriginRevision <= 0 || retained.SnapshotHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
                             throw new InvalidDataException("A retained user snapshot has invalid revision metadata.");
 
-                        if (item.HighestStoredRevision != retained.OriginRevision ||
-                            !Hashing.Verify(item.HighestStoredSnapshotHash, retained.SnapshotHash))
+                        if (item.HighestStoredRevision < retained.OriginRevision ||
+                            (item.HighestStoredRevision == retained.OriginRevision &&
+                             !Hashing.Verify(item.HighestStoredSnapshotHash, retained.SnapshotHash)))
                         {
-                            throw new InvalidDataException("Retained snapshot and durable revision knowledge do not match.");
+                            throw new InvalidDataException("Retained snapshot is newer than, or conflicts with, durable revision knowledge.");
                         }
 
                         storedRevision = retained.OriginRevision;
@@ -219,21 +220,20 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                 localEntries.TryGetValue(key, out var localEntry);
                 if (localEntry is not null && localEntry.QuarantinedRevision > 0)
                     continue;
-                if (localEntry is not null && localEntry.KnownSnapshotRevision > remoteEntry.HighestStoredRevision)
-                    continue;
-
                 var sameKnownRevisionFork = localEntry is not null &&
                                             localEntry.KnownSnapshotRevision == remoteEntry.HighestStoredRevision &&
                                             localEntry.KnownSnapshotHash.Length == SyncConstants.SyncDeltaPayloadHashBytes &&
                                             !CryptographicOperations.FixedTimeEquals(
                                                 localEntry.KnownSnapshotHash.ToByteArray(),
                                                 remoteEntry.HighestStoredSnapshotHash.ToByteArray());
+                // A newer retained envelope from the same immutable origin/key namespace
+                // dominates an older retained envelope because published coverage is monotonic.
+                // Durable "known" revision metadata is deliberately not enough here: the exact
+                // signed envelope may no longer be retained locally and therefore cannot serve as
+                // authenticated causal-GC receipt evidence.
                 if (localEntry is not null &&
-                    localEntry.HighestMergedRevision >= remoteEntry.HighestStoredRevision &&
-                    !sameKnownRevisionFork)
-                {
+                    localEntry.HighestStoredRevision > remoteEntry.HighestStoredRevision)
                     continue;
-                }
 
                 var needsSnapshot = sameKnownRevisionFork ||
                                     localEntry is null ||
@@ -455,13 +455,15 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
             throw new InvalidDataException("The inventory known snapshot hash is invalid.");
         if (entry.KnownSnapshotRevision == 0 && entry.KnownSnapshotHash.Length != 0)
             throw new InvalidDataException("The inventory contains a known hash without a known revision.");
+        if (entry.HighestStoredRevision > entry.KnownSnapshotRevision)
+            throw new InvalidDataException("The inventory retained snapshot is newer than durable known revision metadata.");
         if (entry.HighestStoredRevision > 0 &&
-            (entry.KnownSnapshotRevision != entry.HighestStoredRevision ||
-             !CryptographicOperations.FixedTimeEquals(
-                 entry.KnownSnapshotHash.ToByteArray(),
-                 entry.HighestStoredSnapshotHash.ToByteArray())))
+            entry.KnownSnapshotRevision == entry.HighestStoredRevision &&
+            !CryptographicOperations.FixedTimeEquals(
+                entry.KnownSnapshotHash.ToByteArray(),
+                entry.HighestStoredSnapshotHash.ToByteArray()))
         {
-            throw new InvalidDataException("The inventory retained and known snapshot identities do not match.");
+            throw new InvalidDataException("The inventory retained and known snapshot hashes conflict at the same revision.");
         }
     }
 

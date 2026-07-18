@@ -139,11 +139,71 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
         }
 
-        if (knowledge is not null &&
-            knowledge.HighestMergedRevision >= envelope.OriginRevision &&
-            knowledge.HighestStoredRevision <= envelope.OriginRevision &&
-            (existing is null || existing.OriginRevision < envelope.OriginRevision))
+        // Compare an actually retained envelope before consulting logical merged knowledge.
+        // A lower receipt may coexist with newer durable revision knowledge when the newer
+        // immutable envelope is no longer retained. Exact replay remains idempotent and an
+        // exact-revision hash conflict must still quarantine the whole origin namespace.
+        if (existing is not null && existing.OriginRevision == envelope.OriginRevision)
         {
+            if (Hashing.Verify(existing.SnapshotHash, envelope.SnapshotHash))
+            {
+                existing.ReceivedAtUtc = DateTimeOffset.UtcNow;
+                existing.LastReceivedFromDeviceId = transportPeerDeviceId;
+                if (existing.Status == UserSyncSnapshotStatus.Pending &&
+                    knowledge is not null &&
+                    knowledge.HighestMergedRevision >= envelope.OriginRevision)
+                {
+                    existing.Status = UserSyncSnapshotStatus.MergedReceipt;
+                    existing.QuarantineReason = null;
+                    existing.ConflictingSnapshotHash = null;
+                    _snapshots.Update(existing);
+                    return Receipt(
+                        envelope,
+                        UserSnapshotReceiptState.StoredMergedReceipt,
+                        "The already-retained envelope was promoted to merged-coverage receipt evidence.");
+                }
+
+                _snapshots.Update(existing);
+                return Receipt(envelope, UserSnapshotReceiptState.AlreadyStored);
+            }
+
+            const string reason = "The same origin revision was received with a different snapshot hash.";
+            Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, reason);
+            return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
+        }
+
+        if (existing is { Status: UserSyncSnapshotStatus.MergedReceipt } &&
+            existing.OriginRevision < envelope.OriginRevision)
+        {
+            try
+            {
+                var retainedEnvelope = DeserializeRetainedEnvelope(existing);
+                await _membershipAuthorization.VerifySnapshotAuthorAsync(retainedEnvelope, ct);
+                if (!CoverageDominates(envelope, retainedEnvelope))
+                {
+                    const string reason = "A newer snapshot does not dominate the retained merged-coverage receipt.";
+                    Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, reason);
+                    return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
+                }
+            }
+            catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException)
+            {
+                Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, ex.Message);
+                return Receipt(envelope, UserSnapshotReceiptState.Quarantined, ex.Message);
+            }
+        }
+
+        if (knowledge is not null &&
+            knowledge.HighestMergedRevision >= envelope.OriginRevision)
+        {
+            if (existing is not null && existing.OriginRevision > envelope.OriginRevision)
+            {
+                return Receipt(
+                    envelope,
+                    UserSnapshotReceiptState.ObsoleteRevision,
+                    "A newer authenticated envelope from this origin is already retained.");
+            }
+
             byte[] mergedReceiptPayload;
             try
             {
@@ -180,8 +240,16 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             else
                 _snapshots.Update(mergedReceipt);
 
-            knowledge.HighestStoredRevision = envelope.OriginRevision;
-            knowledge.HighestStoredSnapshotHash = envelope.SnapshotHash.ToArray();
+            // Retaining an older available envelope as receipt evidence must not regress the
+            // highest exact revision/hash that was ever durably observed. Inventory advertises
+            // the retained row and this durable known identity separately.
+            if (envelope.OriginRevision > knowledge.HighestStoredRevision ||
+                (envelope.OriginRevision == knowledge.HighestStoredRevision &&
+                 knowledge.HighestStoredSnapshotHash.Length == 0))
+            {
+                knowledge.HighestStoredRevision = envelope.OriginRevision;
+                knowledge.HighestStoredSnapshotHash = envelope.SnapshotHash.ToArray();
+            }
             knowledge.LastUpdatedAtUtc = receiptReceivedAtUtc;
             _knowledge.Update(knowledge);
 
@@ -191,43 +259,10 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
                 "The authenticated reporting snapshot was retained as merged-coverage evidence.");
         }
 
-        if (knowledge is not null && knowledge.HighestMergedRevision >= envelope.OriginRevision)
-            return Receipt(envelope, UserSnapshotReceiptState.ObsoleteRevision, "The revision is already included in canonical state.");
-        if (knowledge is not null && knowledge.HighestStoredRevision > envelope.OriginRevision)
-            return Receipt(envelope, UserSnapshotReceiptState.ObsoleteRevision, "A newer revision from this origin is already known as durably stored.");
-
-        if (existing is null && knowledge is not null && knowledge.HighestStoredRevision == envelope.OriginRevision)
-        {
-            const string reason = "Stored-revision knowledge exists without the corresponding pending snapshot row.";
-            existing = await CreateQuarantinedEvidenceAsync(
-                envelope,
-                transportPeerDeviceId,
-                knowledge.HighestStoredSnapshotHash,
-                reason,
-                ct);
-            return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
-        }
-
         if (existing is not null)
         {
             if (existing.OriginRevision > envelope.OriginRevision)
                 return Receipt(envelope, UserSnapshotReceiptState.ObsoleteRevision, "A newer revision from this origin is already stored.");
-
-            if (existing.OriginRevision == envelope.OriginRevision)
-            {
-                if (Hashing.Verify(existing.SnapshotHash, envelope.SnapshotHash))
-                {
-                    existing.ReceivedAtUtc = DateTimeOffset.UtcNow;
-                    existing.LastReceivedFromDeviceId = transportPeerDeviceId;
-                    _snapshots.Update(existing);
-                    return Receipt(envelope, UserSnapshotReceiptState.AlreadyStored);
-                }
-
-                const string reason = "The same origin revision was received with a different snapshot hash.";
-                Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, reason);
-                return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
-            }
-
         }
 
         byte[] serialized;
@@ -274,8 +309,13 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             OriginInstanceId = envelope.OriginInstanceId,
             UserKeyEpoch = envelope.UserKeyEpoch
         };
-        knowledge.HighestStoredRevision = envelope.OriginRevision;
-        knowledge.HighestStoredSnapshotHash = envelope.SnapshotHash.ToArray();
+        if (envelope.OriginRevision > knowledge.HighestStoredRevision ||
+            (envelope.OriginRevision == knowledge.HighestStoredRevision &&
+             knowledge.HighestStoredSnapshotHash.Length == 0))
+        {
+            knowledge.HighestStoredRevision = envelope.OriginRevision;
+            knowledge.HighestStoredSnapshotHash = envelope.SnapshotHash.ToArray();
+        }
         knowledge.LastUpdatedAtUtc = now;
         if (isNewKnowledge)
             await _knowledge.AddAsync(knowledge, ct);
@@ -340,6 +380,72 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         if (serialized.Length == 0 || serialized.Length > Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes)
             throw new InvalidDataException("The snapshot envelope size is invalid.");
         return serialized;
+    }
+
+    private static UserSnapshotEnvelope DeserializeRetainedEnvelope(UserSyncSnapshot row)
+    {
+        if (row.EnvelopePayload.Length == 0 ||
+            row.EnvelopePayload.Length > Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes)
+        {
+            throw new InvalidDataException("The retained merged-coverage receipt has an invalid envelope size.");
+        }
+
+        var envelope = JsonSerializer.Deserialize(
+                           row.EnvelopePayload,
+                           BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
+                       ?? throw new InvalidDataException("The retained merged-coverage receipt is invalid.");
+        UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
+        if (row.UserId != envelope.UserId ||
+            row.OriginDeviceId != envelope.OriginDeviceId ||
+            row.OriginInstanceId != envelope.OriginInstanceId ||
+            row.OriginRevision != envelope.OriginRevision ||
+            row.UserKeyEpoch != envelope.UserKeyEpoch ||
+            row.MembershipEpoch != envelope.MembershipEpoch ||
+            row.CreatedAtUtc != envelope.CreatedAtUtc ||
+            !Hashing.Verify(row.SnapshotHash, envelope.SnapshotHash) ||
+            !Hashing.Verify(row.OriginSignPublicKey, envelope.OriginSignPublicKey) ||
+            !Hashing.Verify(row.OriginSignature, envelope.OriginSignature))
+        {
+            throw new InvalidDataException("The retained merged-coverage receipt row conflicts with its immutable envelope.");
+        }
+
+        return envelope;
+    }
+
+    private static bool CoverageDominates(
+        UserSnapshotEnvelope candidate,
+        UserSnapshotEnvelope retained)
+    {
+        if (candidate.UserId != retained.UserId ||
+            candidate.OriginDeviceId != retained.OriginDeviceId ||
+            candidate.OriginInstanceId != retained.OriginInstanceId ||
+            candidate.UserKeyEpoch != retained.UserKeyEpoch ||
+            candidate.OriginRevision <= retained.OriginRevision ||
+            candidate.MembershipEpoch < retained.MembershipEpoch)
+        {
+            return false;
+        }
+
+        return retained.Coverage.All(entry => Covers(candidate, entry));
+    }
+
+    private static bool Covers(
+        UserSnapshotEnvelope envelope,
+        UserSnapshotCoverageEntry reference)
+    {
+        if (envelope.OriginDeviceId == reference.OriginDeviceId &&
+            envelope.OriginInstanceId == reference.OriginInstanceId &&
+            envelope.UserKeyEpoch == reference.UserKeyEpoch &&
+            envelope.OriginRevision >= reference.OriginRevision)
+        {
+            return true;
+        }
+
+        return envelope.Coverage.Any(entry =>
+            entry.OriginDeviceId == reference.OriginDeviceId &&
+            entry.OriginInstanceId == reference.OriginInstanceId &&
+            entry.UserKeyEpoch == reference.UserKeyEpoch &&
+            entry.OriginRevision >= reference.OriginRevision);
     }
 
     private static UserSnapshotReceiptResult Receipt(

@@ -2,11 +2,14 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Persistence;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Utils;
 using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;
+using System.Text.Json;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
@@ -267,6 +270,513 @@ public sealed class UserSnapshotInboxServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
+    public async Task StoreAsync_ExactPendingEnvelopeLaterCoveredIndirectly_PromotesToMergedReceipt()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var envelope = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 5, originKey, marker: 0x55);
+
+        var pending = await service.StoreAsync(envelope, Guid.NewGuid());
+        var knowledge = await database.UserRevisionKnowledge.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch)
+            ?? throw new AssertFailedException("Revision knowledge was not stored.");
+        knowledge.HighestMergedRevision = envelope.OriginRevision;
+        database.UserRevisionKnowledge.Update(knowledge);
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var promoted = await service.StoreAsync(envelope, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredPending, pending.State);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, promoted.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.MergedReceipt, row.Status);
+        MSTestAssert.IsEmpty(await database.UserSyncSnapshots.ListPendingForKeyEpochAsync(user.UId, user.KeyEpoch));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task StoreAsync_LogicallyMissingContentBelowNonRetainedKnownRevision_StoresPendingWithoutRegressingKnowledge()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var newerKnownHash = Enumerable.Repeat((byte)0x12, 32).ToArray();
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 12,
+            HighestStoredSnapshotHash = newerKnownHash.ToArray(),
+            HighestMergedRevision = 8
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+        var envelope = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 10, originKey, marker: 0x10);
+
+        var receipt = await service.StoreAsync(envelope, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        var knowledge = await database.UserRevisionKnowledge.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredPending, receipt.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.Pending, row.Status);
+        MSTestAssert.AreEqual(10L, row.OriginRevision);
+        MSTestAssert.IsNotNull(knowledge);
+        MSTestAssert.AreEqual(12L, knowledge.HighestStoredRevision);
+        MSTestAssert.AreEqual(8L, knowledge.HighestMergedRevision);
+        CollectionAssert.AreEqual(newerKnownHash, knowledge.HighestStoredSnapshotHash);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task StoreAsync_AvailableReceiptOlderThanDurableKnownRevision_RetainsWithoutRegressingKnowledge()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var newerKnownHash = Enumerable.Repeat((byte)0x20, 32).ToArray();
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 20,
+            HighestStoredSnapshotHash = newerKnownHash.ToArray(),
+            HighestMergedRevision = 20
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+        var envelope = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 15, originKey, marker: 0x15);
+
+        var first = await service.StoreAsync(envelope, Guid.NewGuid());
+        var duplicate = await service.StoreAsync(envelope, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        var knowledge = await database.UserRevisionKnowledge.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, first.State);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.AlreadyStored, duplicate.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.MergedReceipt, row.Status);
+        MSTestAssert.AreEqual(15L, row.OriginRevision);
+        MSTestAssert.IsNotNull(knowledge);
+        MSTestAssert.AreEqual(20L, knowledge.HighestStoredRevision);
+        MSTestAssert.AreEqual(20L, knowledge.HighestMergedRevision);
+        CollectionAssert.AreEqual(newerKnownHash, knowledge.HighestStoredSnapshotHash);
+        MSTestAssert.HasCount(1, await database.Db.UserSyncSnapshots.ToListAsync());
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task StoreAsync_ForkOfOlderRetainedReceiptWithNewerDurableKnowledge_QuarantinesNamespace()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 20,
+            HighestStoredSnapshotHash = Enumerable.Repeat((byte)0x20, 32).ToArray(),
+            HighestMergedRevision = 20
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+        var original = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 15, originKey, marker: 0x15);
+        var fork = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 15, originKey, marker: 0x16);
+
+        var stored = await service.StoreAsync(original, Guid.NewGuid());
+        var conflicting = await service.StoreAsync(fork, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, stored.State);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.Quarantined, conflicting.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.Quarantined, row.Status);
+        CollectionAssert.AreEqual(original.SnapshotHash, row.SnapshotHash);
+        CollectionAssert.AreEqual(fork.SnapshotHash, row.ConflictingSnapshotHash);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task StoreAsync_NewerReceiptMustDominateRetainedCoverageBeforeReplacement()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var coveredDeviceId = Guid.NewGuid();
+        var coveredInstanceId = Guid.NewGuid();
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 0,
+            HighestStoredSnapshotHash = [],
+            HighestMergedRevision = 20
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+        var retained = CreateSignedEnvelope(
+            user,
+            originDeviceId,
+            originInstanceId,
+            15,
+            originKey,
+            marker: 0x15,
+            coverage:
+            [
+                new UserSnapshotCoverageEntry
+                {
+                    OriginDeviceId = coveredDeviceId,
+                    OriginInstanceId = coveredInstanceId,
+                    UserKeyEpoch = user.KeyEpoch,
+                    OriginRevision = 10
+                }
+            ]);
+        var nonDominating = CreateSignedEnvelope(
+            user,
+            originDeviceId,
+            originInstanceId,
+            20,
+            originKey,
+            marker: 0x20,
+            coverage: []);
+
+        var first = await service.StoreAsync(retained, Guid.NewGuid());
+        var second = await service.StoreAsync(nonDominating, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, first.State);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.Quarantined, second.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.Quarantined, row.Status);
+        MSTestAssert.AreEqual(15L, row.OriginRevision);
+        CollectionAssert.AreEqual(retained.SnapshotHash, row.SnapshotHash);
+        CollectionAssert.AreEqual(nonDominating.SnapshotHash, row.ConflictingSnapshotHash);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task StoreAsync_NewerDominatingReceipt_ReplacesOlderEvidence()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+        var coveredDeviceId = Guid.NewGuid();
+        var coveredInstanceId = Guid.NewGuid();
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = originDeviceId,
+            OriginInstanceId = originInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 0,
+            HighestStoredSnapshotHash = [],
+            HighestMergedRevision = 20
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+        var olderCoverage = new UserSnapshotCoverageEntry
+        {
+            OriginDeviceId = coveredDeviceId,
+            OriginInstanceId = coveredInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            OriginRevision = 10
+        };
+        var retained = CreateSignedEnvelope(
+            user,
+            originDeviceId,
+            originInstanceId,
+            15,
+            originKey,
+            marker: 0x15,
+            coverage: [olderCoverage]);
+        var dominating = CreateSignedEnvelope(
+            user,
+            originDeviceId,
+            originInstanceId,
+            20,
+            originKey,
+            marker: 0x20,
+            coverage:
+            [
+                new UserSnapshotCoverageEntry
+                {
+                    OriginDeviceId = coveredDeviceId,
+                    OriginInstanceId = coveredInstanceId,
+                    UserKeyEpoch = user.KeyEpoch,
+                    OriginRevision = 12
+                }
+            ]);
+
+        var first = await service.StoreAsync(retained, Guid.NewGuid());
+        var second = await service.StoreAsync(dominating, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var row = await database.UserSyncSnapshots.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, first.State);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, second.State);
+        MSTestAssert.IsNotNull(row);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.MergedReceipt, row.Status);
+        MSTestAssert.AreEqual(20L, row.OriginRevision);
+        CollectionAssert.AreEqual(dominating.SnapshotHash, row.SnapshotHash);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task ReceiptAcquisition_IndirectMergedKnowledgeRequestsRetainsAndUnblocksCausalEvaluation()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var originalGeneral = user.EncryptedGeneralUserDataPayload.ToArray();
+        var originalPasswords = user.EncryptedUserPasswordsDataPayload.ToArray();
+        var originalDevices = user.EncryptedUserDevicesDataPayload.ToArray();
+        var deletionOriginDeviceId = Guid.NewGuid();
+        var deletionOriginInstanceId = Guid.NewGuid();
+        var reportingDeviceId = Guid.NewGuid();
+        var reportingInstanceId = Guid.NewGuid();
+        var reference = new TombstoneCausalReference
+        {
+            OriginDeviceId = deletionOriginDeviceId,
+            OriginInstanceId = deletionOriginInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            MembershipEpoch = user.MembershipEpoch,
+            OriginRevision = 10
+        };
+        using var reportingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var reportingEnvelope = CreateSignedEnvelope(
+            user,
+            reportingDeviceId,
+            reportingInstanceId,
+            5,
+            reportingKey,
+            marker: 0x45,
+            coverage:
+            [
+                new UserSnapshotCoverageEntry
+                {
+                    OriginDeviceId = deletionOriginDeviceId,
+                    OriginInstanceId = deletionOriginInstanceId,
+                    UserKeyEpoch = user.KeyEpoch,
+                    OriginRevision = reference.OriginRevision
+                }
+            ]);
+
+        await database.UserRevisionKnowledge.AddAsync(new UserRevisionKnowledge
+        {
+            UserId = user.UId,
+            OriginDeviceId = reportingDeviceId,
+            OriginInstanceId = reportingInstanceId,
+            UserKeyEpoch = user.KeyEpoch,
+            HighestStoredRevision = 0,
+            HighestStoredSnapshotHash = [],
+            HighestMergedRevision = 5
+        });
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var localInventory = Inventory(
+            user,
+            Revision(reportingDeviceId, reportingInstanceId, stored: 0, merged: 5, known: 0, knownHash: []));
+        var remoteInventory = Inventory(
+            user,
+            Revision(
+                reportingDeviceId,
+                reportingInstanceId,
+                stored: 5,
+                merged: 5,
+                known: 5,
+                knownHash: reportingEnvelope.SnapshotHash,
+                retainedHash: reportingEnvelope.SnapshotHash));
+        var antiEntropy = new UserSnapshotAntiEntropyService(null!, null!, null!, null!, null!, null!, null!, null!, null!);
+
+        var requests = antiEntropy.FindMissingSnapshots(localInventory, remoteInventory.Users);
+
+        MSTestAssert.HasCount(1, requests);
+        MSTestAssert.AreEqual(5L, requests[0].OriginRevision);
+        CollectionAssert.AreEqual(reportingEnvelope.SnapshotHash, requests[0].ExpectedSnapshotHash.ToByteArray());
+
+        var authorizations = new[]
+        {
+            Authorization(user, deletionOriginDeviceId, deletionOriginInstanceId),
+            Authorization(user, reportingDeviceId, reportingInstanceId)
+        };
+        var knowledge = new Dictionary<(Guid DeviceId, Guid OriginInstanceId, long KeyEpoch), UserRevisionKnowledge>
+        {
+            [(deletionOriginDeviceId, deletionOriginInstanceId, user.KeyEpoch)] = new UserRevisionKnowledge
+            {
+                UserId = user.UId,
+                OriginDeviceId = deletionOriginDeviceId,
+                OriginInstanceId = deletionOriginInstanceId,
+                UserKeyEpoch = user.KeyEpoch,
+                HighestStoredRevision = reference.OriginRevision,
+                HighestStoredSnapshotHash = Enumerable.Repeat((byte)0x10, 32).ToArray(),
+                HighestMergedRevision = reference.OriginRevision
+            }
+        };
+        var descriptor = new UserTombstoneGarbageCollector.TombstoneDescriptor(
+            TombstoneItemType.Password,
+            Guid.NewGuid(),
+            new SyncVersionStamp
+            {
+                PhysicalTimeUnixMilliseconds = 1,
+                LogicalCounter = 1,
+                OriginDeviceId = deletionOriginDeviceId,
+                OriginInstanceId = deletionOriginInstanceId
+            },
+            reference,
+            () => UserDataBlobKind.Passwords);
+        var receipts = new Dictionary<(Guid DeviceId, Guid OriginInstanceId), List<UserSnapshotEnvelope>>
+        {
+            [(deletionOriginDeviceId, deletionOriginInstanceId)] =
+            [
+                new UserSnapshotEnvelope
+                {
+                    UserId = user.UId,
+                    OriginDeviceId = deletionOriginDeviceId,
+                    OriginInstanceId = deletionOriginInstanceId,
+                    OriginRevision = reference.OriginRevision,
+                    UserKeyEpoch = user.KeyEpoch,
+                    MembershipEpoch = user.MembershipEpoch
+                }
+            ]
+        };
+        var before = UserTombstoneGarbageCollector.Evaluate(
+            user.UId,
+            descriptor,
+            authorizations,
+            new Dictionary<Guid, UserOriginRemovalCutoff[]>(),
+            knowledge,
+            receipts);
+        MSTestAssert.AreEqual(TombstoneGarbageCollectionReason.MissingMergedReceipt, before.Reason);
+        MSTestAssert.AreEqual(reportingDeviceId, before.BlockingDeviceId);
+
+        var inbox = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        var receipt = await inbox.StoreAsync(reportingEnvelope, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var retained = await database.UserSyncSnapshots.GetAsync(
+            user.UId, reportingDeviceId, reportingInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, receipt.State);
+        MSTestAssert.IsNotNull(retained);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.MergedReceipt, retained.Status);
+        MSTestAssert.IsEmpty(await database.UserSyncSnapshots.ListPendingForKeyEpochAsync(user.UId, user.KeyEpoch));
+        MSTestAssert.IsEmpty(await database.Db.UserSyncStates.ToListAsync());
+
+        var unchangedUser = await database.Users.GetByIdAsNoTrackingAsync(user.UId);
+        MSTestAssert.IsNotNull(unchangedUser);
+        CollectionAssert.AreEqual(originalGeneral, unchangedUser.EncryptedGeneralUserDataPayload);
+        CollectionAssert.AreEqual(originalPasswords, unchangedUser.EncryptedUserPasswordsDataPayload);
+        CollectionAssert.AreEqual(originalDevices, unchangedUser.EncryptedUserDevicesDataPayload);
+
+        var persistedEnvelope = JsonSerializer.Deserialize(
+            retained.EnvelopePayload,
+            BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
+            ?? throw new AssertFailedException("The retained receipt envelope could not be deserialized.");
+        receipts[(reportingDeviceId, reportingInstanceId)] = [persistedEnvelope];
+        var after = UserTombstoneGarbageCollector.Evaluate(
+            user.UId,
+            descriptor,
+            authorizations,
+            new Dictionary<Guid, UserOriginRemovalCutoff[]>(),
+            knowledge,
+            receipts);
+
+        MSTestAssert.AreEqual(TombstoneGarbageCollectionReason.Stable, after.Reason);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
     public async Task StoreAsync_RelayedSnapshot_RetainsOriginalOriginAndOnlyUpdatesLastRelayDiagnostic()
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
@@ -367,7 +877,8 @@ public sealed class UserSnapshotInboxServiceTests
         Guid originInstanceId,
         long revision,
         Key signingKey,
-        byte marker)
+        byte marker,
+        IReadOnlyList<UserSnapshotCoverageEntry>? coverage = null)
     {
         var createdAt = DateTimeOffset.UtcNow.AddSeconds(revision);
         var payload = new UserSyncPayload
@@ -397,13 +908,72 @@ public sealed class UserSnapshotInboxServiceTests
             UserKeyEpoch = user.KeyEpoch,
             MembershipEpoch = user.MembershipEpoch,
             CreatedAtUtc = createdAt,
-            User = payload
+            User = payload,
+            Coverage = coverage?.Select(item => new UserSnapshotCoverageEntry
+            {
+                OriginDeviceId = item.OriginDeviceId,
+                OriginInstanceId = item.OriginInstanceId,
+                UserKeyEpoch = item.UserKeyEpoch,
+                OriginRevision = item.OriginRevision
+            }).ToList() ?? []
         };
         UserSnapshotEnvelopeUtil.FillOriginAuthentication(
             envelope,
             CreateSigningIdentity(originDeviceId, originInstanceId, signingKey));
         return envelope;
     }
+
+    private static UserMembershipAuthorization Authorization(
+        User user,
+        Guid deviceId,
+        Guid originInstanceId) =>
+        new()
+        {
+            AuthorizationId = Guid.NewGuid(),
+            UserId = user.UId,
+            DeviceId = deviceId,
+            OriginInstanceId = originInstanceId,
+            StartedMembershipEpoch = 1,
+            MinimumKeyEpoch = 1,
+            IsActive = true
+        };
+
+    private static UserSnapshotInventoryExchangeRequest Inventory(
+        User user,
+        params UserSnapshotRevisionInventory[] revisions)
+    {
+        var item = new UserSnapshotUserInventory
+        {
+            UserId = user.UId.ToString("N"),
+            UserKeyEpoch = user.KeyEpoch,
+            MembershipEpoch = user.MembershipEpoch
+        };
+        item.Revisions.AddRange(revisions);
+        var result = new UserSnapshotInventoryExchangeRequest();
+        result.Users.Add(item);
+        return result;
+    }
+
+    private static UserSnapshotRevisionInventory Revision(
+        Guid originDeviceId,
+        Guid originInstanceId,
+        long stored,
+        long merged,
+        long known,
+        byte[] knownHash,
+        byte[]? retainedHash = null) =>
+        new()
+        {
+            OriginDeviceId = originDeviceId.ToString("N"),
+            OriginInstanceId = originInstanceId.ToString("N"),
+            UserKeyEpoch = 1,
+            HighestStoredRevision = stored,
+            HighestStoredSnapshotHash = Google.Protobuf.ByteString.CopyFrom(retainedHash ?? []),
+            HighestMergedRevision = merged,
+            KnownSnapshotRevision = known,
+            KnownSnapshotHash = Google.Protobuf.ByteString.CopyFrom(knownHash),
+            RetainedMembershipEpoch = stored > 0 ? 1 : 0
+        };
 
     private static FakeDeviceIdentityService CreateSigningIdentity(Guid deviceId, Guid instanceId, Key key) =>
         new()
