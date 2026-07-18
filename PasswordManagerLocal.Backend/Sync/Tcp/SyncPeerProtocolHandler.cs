@@ -128,6 +128,12 @@ public sealed class SyncPeerProtocolHandler
 
             throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
         }
+        catch (SyncDeltaDeferredException)
+        {
+            throw new SyncProtocolException(
+                SyncProtocolStatusCode.Unavailable,
+                "The synchronization delta could not be applied yet because the required profile key is unavailable.");
+        }
         catch (SyncRouteDisabledException)
         {
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Synchronization is disabled for this user and device route.");

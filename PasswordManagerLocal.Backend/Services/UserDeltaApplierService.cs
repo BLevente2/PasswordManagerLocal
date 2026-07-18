@@ -60,17 +60,31 @@ public sealed class UserDeltaApplierService : IUserDeltaApplierService
         if (delta.User is null)
             throw new InvalidDataException("User sync payload is missing.");
 
-        if (existing is not null && await _bundleSync.TryMergeAsync(existing, delta.User, ts, ct))
+        var bundleMergeResult = existing is null
+            ? UserDataBundleMergeResult.NotMerged
+            : await _bundleSync.TryMergeAsync(existing, delta.User, ts, ct);
+
+        if (bundleMergeResult == UserDataBundleMergeResult.Merged)
         {
             await RemoveTombstoneAsync(delta, ct);
             return true;
         }
 
         if (existing is not null && !IncomingUserPayloadDominatesExistingBlobs(delta.User, existing))
+        {
+            if (bundleMergeResult == UserDataBundleMergeResult.EncryptionKeyUnavailable)
+                throw new SyncDeltaDeferredException(delta.ModelId);
+
             return false;
+        }
 
         if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
+        {
+            if (bundleMergeResult == UserDataBundleMergeResult.EncryptionKeyUnavailable)
+                throw new SyncDeltaDeferredException(delta.ModelId);
+
             return false;
+        }
 
         var user = existing ?? CreateUser(delta.User);
         CopyUserData(delta.User, user);

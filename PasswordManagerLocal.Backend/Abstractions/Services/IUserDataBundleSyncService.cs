@@ -5,5 +5,5 @@ namespace PasswordManagerLocal.Backend.Abstractions.Services;
 
 public interface IUserDataBundleSyncService
 {
-    Task<bool> TryMergeAsync(User existing, UserSyncPayload incoming, long ts, CancellationToken ct = default);
+    Task<UserDataBundleMergeResult> TryMergeAsync(User existing, UserSyncPayload incoming, long ts, CancellationToken ct = default);
 }

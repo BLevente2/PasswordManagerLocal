@@ -44,12 +44,12 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         _relationships = relationships;
     }
 
-    public async Task<bool> TryMergeAsync(User existing, UserSyncPayload incoming, long ts, CancellationToken ct)
+    public async Task<UserDataBundleMergeResult> TryMergeAsync(User existing, UserSyncPayload incoming, long ts, CancellationToken ct)
     {
         var incomingTs = FromTimestamp(ts);
 
         if (!existing.PasswordSalt.SequenceEqual(incoming.PasswordSalt))
-            return false;
+            return UserDataBundleMergeResult.NotMerged;
 
         var incomingHasPotentiallyNewerEncryptedData =
             incoming.GeneralUserDataLastModifiedAt > existing.GeneralUserDataLastModifiedAt ||
@@ -66,10 +66,10 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             !existing.EncryptedUserDevicesDataPayload.SequenceEqual(incoming.EncryptedUserDevicesDataPayload);
 
         if (!incomingHasPotentiallyNewerEncryptedData && !localHasPotentiallyNewerEncryptedData && !relationUpdateIsNewer && !encryptedBlobsDiffer)
-            return false;
+            return UserDataBundleMergeResult.NotMerged;
 
         if (!TryGetUserEncryptionKeyForSync(existing, out var userKey) || userKey is null)
-            return false;
+            return UserDataBundleMergeResult.EncryptionKeyUnavailable;
 
         try
         {
@@ -113,11 +113,13 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, incomingTs);
             existing.GenerateIntegrityHash();
             _users.Update(existing);
-            return changedBlobs != UserDataBlobKind.None || relationUpdateIsNewer;
+            return changedBlobs != UserDataBlobKind.None || relationUpdateIsNewer
+                ? UserDataBundleMergeResult.Merged
+                : UserDataBundleMergeResult.NotMerged;
         }
         catch (UnauthorizedAccessException)
         {
-            return false;
+            return UserDataBundleMergeResult.NotMerged;
         }
         finally
         {
