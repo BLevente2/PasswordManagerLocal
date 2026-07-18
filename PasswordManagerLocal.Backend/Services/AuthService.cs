@@ -29,6 +29,7 @@ public sealed class AuthService : IAuthService
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUnitOfWork _uow;
+    private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -43,7 +44,8 @@ public sealed class AuthService : IAuthService
         ILocalUserDeviceRepository localUserDevices,
         ISyncRuntimeService syncRuntime,
         IUserDataBundleIntegrityService integrity,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserSnapshotMergeCoordinator snapshotMerge)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -58,6 +60,7 @@ public sealed class AuthService : IAuthService
         _syncRuntime = syncRuntime;
         _integrity = integrity;
         _uow = uow;
+        _snapshotMerge = snapshotMerge;
     }
 
 
@@ -241,6 +244,8 @@ public sealed class AuthService : IAuthService
         var user = await _userLookup.GetAndVerifyUserByUsernameAsync(usernameBytes, ct);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
 
+        await _snapshotMerge.TryMergePendingAsync(user.UId, key, ct);
+        user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
         var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
         var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, DateTimeOffset.UtcNow);
         UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
@@ -381,10 +386,16 @@ public sealed class AuthService : IAuthService
         if (!IsPasswordValid(request.Token, request.Password, user.PasswordSalt))
             throw new InvalidInputException();
 
+        using (var currentKey = _userSessions.GetEncryptionKeyFromToken(request.Token))
+            await _snapshotMerge.TryMergePendingAsync(user.UId, currentKey, ct);
+
+        _cache.InvalidateToken(request.Token);
+        user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
         var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct, user);
 
         CryptographicOperations.ZeroMemory(user.PasswordSalt);
         user.PasswordSalt = Hashing.GenerateSalt();
+        user.KeyEpoch = checked(user.KeyEpoch + 1);
         using var newKey = EncryptionKey.FromPassword(request.NewPassword, user.PasswordSalt);
         _keys.RotateUserKey(request.Token, newKey);
 

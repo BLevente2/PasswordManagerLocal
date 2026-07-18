@@ -9,10 +9,10 @@ public sealed class FakeNetworkDeltaService : INetworkDeltaService
     public NetworkDelta? LastApplied { get; private set; }
     public SyncItem? LastBuiltItem { get; private set; }
     public Device? LastBuiltDevice { get; private set; }
-    public long ApplyResult { get; set; }
+    public NetworkDeltaApplyResult ApplyResult { get; set; } = new(0);
     public NetworkDelta BuildResult { get; set; } = new();
 
-    public Task<long> ApplyAsync(NetworkDelta delta, CancellationToken ct = default)
+    public Task<NetworkDeltaApplyResult> ApplyAsync(NetworkDelta delta, CancellationToken ct = default)
     {
         LastApplied = delta;
         return Task.FromResult(ApplyResult);

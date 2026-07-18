@@ -71,6 +71,7 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
 
         ValidateEnvelope(delta, payload);
         SyncCryptoUtil.ValidatePayloadIntegrity(payload, delta.Ts);
+        await ValidateUserSnapshotOriginAsync(payload, ct);
         await ValidateDeviceIdentityImmutabilityAsync(sourceDevice, payload, ct);
 
         return new ValidatedNetworkDelta(sourceDevice, payload);
@@ -97,6 +98,19 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
             throw new UnauthorizedAccessException("Sync source device id is invalid.");
 
         return sourceDevice;
+    }
+
+
+    private async Task ValidateUserSnapshotOriginAsync(SyncDeltaPayload payload, CancellationToken ct)
+    {
+        if (payload.ModelType != SyncModelType.User || payload.ChangeType == SyncChangeType.Deleted)
+            return;
+
+        var envelope = payload.UserSnapshot
+            ?? throw new InvalidDataException("User snapshot envelope is missing.");
+        var originDevice = await _devices.GetByIdAsync(envelope.OriginDeviceId, ct)
+            ?? throw new UnauthorizedAccessException("Unknown user snapshot origin device.");
+        UserSnapshotEnvelopeUtil.Verify(envelope, originDevice);
     }
 
 
@@ -154,10 +168,18 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
     {
         if (payload.ModelType == SyncModelType.User)
         {
-            if (await _userDevices.HasActiveLinkAsync(payload.ModelId, sourceDevice.Id, ct))
-                return;
+            if (!await _userDevices.HasActiveLinkAsync(payload.ModelId, sourceDevice.Id, ct))
+                throw new UnauthorizedAccessException("Transport peer cannot synchronize this user.");
 
-            throw new UnauthorizedAccessException("Source device cannot modify this user.");
+            if (payload.ChangeType != SyncChangeType.Deleted)
+            {
+                var originDeviceId = payload.UserSnapshot?.OriginDeviceId
+                    ?? throw new InvalidDataException("User snapshot envelope is missing.");
+                if (!await _userDevices.HasActiveLinkAsync(payload.ModelId, originDeviceId, ct))
+                    throw new UnauthorizedAccessException("Snapshot origin device is not currently authorized for this user.");
+            }
+
+            return;
         }
 
         if (payload.ModelType == SyncModelType.Group)
@@ -271,7 +293,15 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
             throw new InvalidDataException("Network delta entity envelope is invalid.");
 
         if (payload.User is not null && (payload.ModelType != SyncModelType.User || payload.User.UId != payload.ModelId))
-            throw new InvalidDataException("User sync payload envelope is invalid.");
+            throw new InvalidDataException("Legacy user sync payload envelope is invalid.");
+
+        if (payload.UserSnapshot is not null &&
+            (payload.ModelType != SyncModelType.User ||
+             payload.UserSnapshot.UserId != payload.ModelId ||
+             payload.UserSnapshot.User.UId != payload.ModelId))
+        {
+            throw new InvalidDataException("User snapshot payload envelope is invalid.");
+        }
 
         if (payload.Group is not null && (payload.ModelType != SyncModelType.Group || payload.Group.Id != payload.ModelId))
             throw new InvalidDataException("Group sync payload envelope is invalid.");

@@ -11,88 +11,59 @@ namespace PasswordManagerLocal.Test.Backend.Utils;
 public sealed class TombstoneCleanupUtilTests
 {
     [TestMethod]
-    public void CleanupExpiredUserDataTombstones_RemovesOnlyExpiredTombstones()
+    public void CleanupExpiredUserDataTombstones_PreservesLongOfflineDeletionKnowledge()
     {
         var now = DateTimeOffset.UtcNow;
-        var expiredDateTime = now.AddMonths(-TombstoneConstants.TombstoneRetentionMonths).AddSeconds(-1).UtcDateTime;
-        var keptDateTime = now.AddMonths(-TombstoneConstants.TombstoneRetentionMonths).AddSeconds(1).UtcDateTime;
-        var expiredDateTimeOffset = now.AddMonths(-TombstoneConstants.TombstoneRetentionMonths).AddSeconds(-1);
-        var keptDateTimeOffset = now.AddMonths(-TombstoneConstants.TombstoneRetentionMonths).AddSeconds(1);
-
-        var expiredPasswordId = Guid.NewGuid();
-        var keptPasswordId = Guid.NewGuid();
-        var expiredColorId = Guid.NewGuid();
-        var keptColorId = Guid.NewGuid();
-        var expiredTagId = Guid.NewGuid();
-        var keptTagId = Guid.NewGuid();
-        var expiredDeviceId = Guid.NewGuid();
-        var keptDeviceId = Guid.NewGuid();
+        var oldDateTime = now.AddYears(-5).UtcDateTime;
+        var oldDateTimeOffset = now.AddYears(-5);
+        var passwordId = Guid.NewGuid();
+        var colorId = Guid.NewGuid();
+        var tagId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
         var bundle = new UserDataBundle
         {
             UserData = new UserData { UId = Guid.NewGuid() },
             GeneralUserData = new GeneralUserData(),
             UserPasswordsData = new UserPasswordsData
             {
-                DeletedPasswords =
-                [
-                    new DeletedPasswordData { Id = expiredPasswordId, DeletedAt = expiredDateTime },
-                    new DeletedPasswordData { Id = keptPasswordId, DeletedAt = keptDateTime }
-                ],
-                DeletedCustomColors =
-                [
-                    new DeletedCustomUserColorData { Id = expiredColorId, DeletedAt = expiredDateTime },
-                    new DeletedCustomUserColorData { Id = keptColorId, DeletedAt = keptDateTime }
-                ],
-                DeletedTags =
-                [
-                    new DeletedPasswordTagData { Id = expiredTagId, DeletedAt = expiredDateTime },
-                    new DeletedPasswordTagData { Id = keptTagId, DeletedAt = keptDateTime }
-                ]
+                DeletedPasswords = [new DeletedPasswordData { Id = passwordId, DeletedAt = oldDateTime }],
+                DeletedCustomColors = [new DeletedCustomUserColorData { Id = colorId, DeletedAt = oldDateTime }],
+                DeletedTags = [new DeletedPasswordTagData { Id = tagId, DeletedAt = oldDateTime }]
             },
             UserDevicesData = new UserDevicesData
             {
-                DeletedDevices =
-                [
-                    new DeletedUserDeviceData { Id = expiredDeviceId, DeletedAt = expiredDateTimeOffset },
-                    new DeletedUserDeviceData { Id = keptDeviceId, DeletedAt = keptDateTimeOffset }
-                ]
+                DeletedDevices = [new DeletedUserDeviceData { Id = deviceId, DeletedAt = oldDateTimeOffset }]
             }
         };
 
         var modifiedBlobs = TombstoneCleanupUtil.CleanupExpiredUserDataTombstones(bundle, now);
 
-        MSTestAssert.AreEqual(UserDataBlobKind.Passwords | UserDataBlobKind.Devices, modifiedBlobs);
-        MSTestAssert.IsFalse(bundle.UserPasswordsData.DeletedPasswords.Any(deleted => deleted.Id == expiredPasswordId));
-        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedPasswords.Any(deleted => deleted.Id == keptPasswordId));
-        MSTestAssert.IsFalse(bundle.UserPasswordsData.DeletedCustomColors.Any(deleted => deleted.Id == expiredColorId));
-        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedCustomColors.Any(deleted => deleted.Id == keptColorId));
-        MSTestAssert.IsFalse(bundle.UserPasswordsData.DeletedTags.Any(deleted => deleted.Id == expiredTagId));
-        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedTags.Any(deleted => deleted.Id == keptTagId));
-        MSTestAssert.IsFalse(bundle.UserDevicesData.DeletedDevices.Any(deleted => deleted.Id == expiredDeviceId));
-        MSTestAssert.IsTrue(bundle.UserDevicesData.DeletedDevices.Any(deleted => deleted.Id == keptDeviceId));
+        MSTestAssert.AreEqual(UserDataBlobKind.None, modifiedBlobs);
+        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedPasswords.Any(deleted => deleted.Id == passwordId));
+        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedCustomColors.Any(deleted => deleted.Id == colorId));
+        MSTestAssert.IsTrue(bundle.UserPasswordsData.DeletedTags.Any(deleted => deleted.Id == tagId));
+        MSTestAssert.IsTrue(bundle.UserDevicesData.DeletedDevices.Any(deleted => deleted.Id == deviceId));
     }
 
-
     [TestMethod]
-    public void AddOrUpdateDeletedPasswordAndPasswordTag_WhenLimitReached_KeepsNewTombstoneAndRemovesOldest()
+    public void AddOrUpdateDeletedPasswordAndPasswordTag_WhenLegacyLimitReached_PreservesAllTombstones()
     {
         var now = DateTime.UtcNow;
         var passwords = new UserPasswordsData();
-
         var oldestPasswordId = FillDeletedPasswordsToLimit(passwords, now);
         var newPasswordId = Guid.NewGuid();
         TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, newPasswordId, now);
 
-        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList, passwords.DeletedPasswords);
-        MSTestAssert.IsFalse(passwords.DeletedPasswords.Any(deleted => deleted.Id == oldestPasswordId));
+        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList + 1, passwords.DeletedPasswords);
+        MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == oldestPasswordId));
         MSTestAssert.IsTrue(passwords.DeletedPasswords.Any(deleted => deleted.Id == newPasswordId));
 
         var oldestTagId = FillDeletedPasswordTagsToLimit(passwords, now);
         var newTagId = Guid.NewGuid();
         TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, newTagId, now);
 
-        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList, passwords.DeletedTags);
-        MSTestAssert.IsFalse(passwords.DeletedTags.Any(deleted => deleted.Id == oldestTagId));
+        MSTestAssert.HasCount(TombstoneConstants.MaxUserDataTombstonesPerList + 1, passwords.DeletedTags);
+        MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == oldestTagId));
         MSTestAssert.IsTrue(passwords.DeletedTags.Any(deleted => deleted.Id == newTagId));
     }
 
@@ -100,10 +71,8 @@ public sealed class TombstoneCleanupUtilTests
     {
         var oldestId = Guid.NewGuid();
         TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, oldestId, now.AddDays(-1));
-
         for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
             TombstoneCleanupUtil.AddOrUpdateDeletedPassword(passwords, Guid.NewGuid(), now.AddMinutes(-i));
-
         return oldestId;
     }
 
@@ -111,10 +80,8 @@ public sealed class TombstoneCleanupUtilTests
     {
         var oldestId = Guid.NewGuid();
         TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, oldestId, now.AddDays(-1));
-
         for (var i = 1; i < TombstoneConstants.MaxUserDataTombstonesPerList; i++)
             TombstoneCleanupUtil.AddOrUpdateDeletedPasswordTag(passwords, Guid.NewGuid(), now.AddMinutes(-i));
-
         return oldestId;
     }
 }

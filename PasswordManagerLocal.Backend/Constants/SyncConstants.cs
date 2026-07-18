@@ -5,6 +5,7 @@ public static class SyncConstants
     public const string PFXPassword = "";
 
     public const int SyncPort = 26688;
+    public const int SyncProtocolVersion = 2;
     public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
     public const int LocalDiscoveryPort = 26689;
     public const int LocalDiscoveryProtocolVersion = 1;
@@ -29,6 +30,7 @@ public static class SyncConstants
     public const int DeviceEnrollmentTransferTimeoutSeconds = 120;
 
     public const int MaxIncomingDeltaPayloadBytes = 4 * 1024 * 1024;
+    public const int MaxUserSnapshotEnvelopeBytes = MaxIncomingDeltaPayloadBytes;
     public const int MaxIncomingDeltaTotalBytesPerCall = 32 * 1024 * 1024;
     public const int MaxDeviceEnrollmentSnapshotBytes = 64 * 1024 * 1024;
     public const int DeviceEnrollmentSnapshotChunkBytes = 64 * 1024;

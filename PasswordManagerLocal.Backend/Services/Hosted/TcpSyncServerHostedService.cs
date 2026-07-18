@@ -276,6 +276,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
         if (reply.Ok)
         {
             context.RemoteDatabaseVersion = request.DatabaseVersion;
+            context.RemoteProtocolVersion = request.ProtocolVersion;
             context.SyncHelloAccepted = true;
         }
 

@@ -5,6 +5,7 @@ namespace PasswordManagerLocal.Backend.Models;
 public sealed class LocalDeviceIdentity : IntegrityCheckableBase
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OriginInstanceId { get; set; } = Guid.NewGuid();
     public byte[] AgreementPrivateKeyBlob { get; set; } = [];
     public byte[] SignPrivateKeyBlob { get; set; } = [];
     public byte[] PFXCertificate { get; set; } = [];
@@ -17,6 +18,7 @@ public sealed class LocalDeviceIdentity : IntegrityCheckableBase
         Hashing.SHA256Hash(hash =>
         {
             hash.Write(Id);
+            hash.Write(OriginInstanceId);
             hash.WriteBytes(AgreementPrivateKeyBlob);
             hash.WriteBytes(SignPrivateKeyBlob);
             hash.WriteBytes(PFXCertificate);

@@ -14,25 +14,26 @@ public sealed class SyncTombstoneRepositoryTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
-    public async Task UpsertAsync_WhenLimitReached_KeepsNewestTombstones()
+    public async Task UpsertAsync_WhenSafetyLimitReached_ThrowsWithoutDiscardingOlderTombstones()
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
         var startTs = DateTimeOffset.UtcNow.AddDays(-1).ToUnixTimeMilliseconds();
 
-        for (var i = 0; i <= TombstoneConstants.MaxSyncTombstones; i++)
-        {
+        for (var i = 0; i < TombstoneConstants.MaxSyncTombstones; i++)
             await database.Tombstones.UpsertAsync(Guid.NewGuid(), SyncModelType.Group, startTs + i);
-        }
 
         await database.Db.SaveChangesAsync();
+
+        await MSTestAssert.ThrowsExactlyAsync<InvalidOperationException>(async () =>
+            await database.Tombstones.UpsertAsync(Guid.NewGuid(), SyncModelType.Group, startTs + TombstoneConstants.MaxSyncTombstones));
 
         var tombstones = await database.Db.SyncTombstones
             .OrderBy(tombstone => tombstone.DeletedAtTs)
             .ToListAsync();
 
         MSTestAssert.HasCount(TombstoneConstants.MaxSyncTombstones, tombstones);
-        MSTestAssert.AreEqual(startTs + 1, tombstones.First().DeletedAtTs);
-        MSTestAssert.AreEqual(startTs + TombstoneConstants.MaxSyncTombstones, tombstones.Last().DeletedAtTs);
+        MSTestAssert.AreEqual(startTs, tombstones.First().DeletedAtTs);
+        MSTestAssert.AreEqual(startTs + TombstoneConstants.MaxSyncTombstones - 1, tombstones.Last().DeletedAtTs);
     }
 
     [TestMethod]

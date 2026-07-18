@@ -15,13 +15,13 @@ public sealed class IncomingDeltaApplierServiceTests
     [TestCategory("Unit")]
     public async Task Apply_DelegatesDelta_AndReturnsAppliedTimestamp()
     {
-        var networkDeltas = new FakeNetworkDeltaService { ApplyResult = 123456789 };
+        var networkDeltas = new FakeNetworkDeltaService { ApplyResult = new NetworkDeltaApplyResult(123456789) };
         var service = new IncomingDeltaApplierService(networkDeltas);
         var delta = new NetworkDelta { Ts = 42 };
 
         var result = await service.ApplyAsync(delta);
 
-        MSTestAssert.AreEqual(123456789L, result);
+        MSTestAssert.AreEqual(123456789L, result.AppliedTimestamp);
         MSTestAssert.AreSame(delta, networkDeltas.LastApplied);
     }
 }

@@ -19,6 +19,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncRouteRepository _syncRoutes;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserSnapshotPublisherService? _snapshotPublisher;
 
     public OutgoingDeltaBuilderService(
         IUserRepository users,
@@ -26,7 +27,8 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
         ISyncRouteRepository syncRoutes,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserSnapshotPublisherService? snapshotPublisher = null)
     {
         _users = users;
         _groups = groups;
@@ -34,6 +36,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         _userDevices = userDevices;
         _syncRoutes = syncRoutes;
         _identity = identity;
+        _snapshotPublisher = snapshotPublisher;
     }
 
 
@@ -82,6 +85,15 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
                 EncryptionVersion = SyncConstants.SyncDeltaEncryptionVersion,
                 PayloadHash = Hashing.SHA256Hash(plaintextPayload)
             };
+
+            if (payload.UserSnapshot is not null)
+            {
+                networkDelta.SnapshotUserId = payload.UserSnapshot.UserId;
+                networkDelta.SnapshotOriginDeviceId = payload.UserSnapshot.OriginDeviceId;
+                networkDelta.SnapshotOriginInstanceId = payload.UserSnapshot.OriginInstanceId;
+                networkDelta.SnapshotOriginRevision = payload.UserSnapshot.OriginRevision;
+                networkDelta.SnapshotHash = payload.UserSnapshot.SnapshotHash.ToArray();
+            }
 
             var associatedData = SyncCryptoUtil.BuildAssociatedData(networkDelta);
             networkDelta.Payload = _identity.EncryptForDevice(
@@ -133,7 +145,10 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             if (user is null)
                 throw new InvalidOperationException("User sync source was not found.");
 
-            payload.User = CreateUserPayload(user, timestamp);
+            var publisher = _snapshotPublisher
+                ?? throw new InvalidOperationException("User snapshot publishing is not configured.");
+            var snapshot = await publisher.GetOrCreateAsync(user, ct);
+            payload.UserSnapshot = DeserializeSnapshot(snapshot);
             return payload;
         }
 
@@ -164,31 +179,14 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private UserSyncPayload CreateUserPayload(User user, long timestamp)
+    private static UserSnapshotEnvelope DeserializeSnapshot(UserSyncSnapshot snapshot)
     {
-        foreach (var link in user.UserDevices)
-            link.VerifyIntegrity();
-
-        var payload = new UserSyncPayload
-        {
-            UId = user.UId,
-            UsernameHash = user.UsernameHash,
-            UsernameSalt = user.UsernameSalt,
-            PasswordSalt = user.PasswordSalt,
-            EncryptedPayload = user.EncryptedPayload,
-            EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
-            EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
-            EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
-            UserDataLastModifiedAt = user.UserDataLastModifiedAt,
-            GeneralUserDataLastModifiedAt = user.GeneralUserDataLastModifiedAt,
-            UserPasswordsDataLastModifiedAt = user.UserPasswordsDataLastModifiedAt,
-            UserDevicesDataLastModifiedAt = user.UserDevicesDataLastModifiedAt,
-            GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
-            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Append(_identity.LocalDeviceId).Distinct().ToList()
-        };
-
-        payload.IntegrityHash = SyncCryptoUtil.CalculateUserHash(payload, timestamp);
-        return payload;
+        var envelope = JsonSerializer.Deserialize(
+            snapshot.EnvelopePayload,
+            BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
+            ?? throw new InvalidDataException("Stored local user snapshot is invalid.");
+        UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
+        return envelope;
     }
 
 

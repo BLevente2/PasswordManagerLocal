@@ -82,17 +82,7 @@ public sealed class NetworkDeltaServiceTests
         var unitOfWork = new FakeUnitOfWork();
 
         var relationships = new SyncRelationshipReconciliationService(users, groups, devices, userDevices, identity);
-        var passwordsMerge = new UserPasswordsDataMergeService();
-        var devicesMerge = new UserDevicesDataMergeService();
-        var bundleSync = new UserDataBundleSyncService(
-            users,
-            auth,
-            new TestKeyProtector(),
-            new UserDataBundleIntegrityService(),
-            passwordsMerge,
-            devicesMerge,
-            relationships);
-        var userDeltaApplier = new UserDeltaApplierService(users, tombstones, syncQueueService, bundleSync, relationships);
+        var userDeltaApplier = new UserDeltaApplierService(users, tombstones, syncQueueService);
         var protocol = new NetworkDeltaProtocolService(devices, groups, userDevices, authorization, identity);
         var replay = new NetworkDeltaReplayService(users, groups, devices, userDevices, tombstones, identity);
         var payloadApplier = new NetworkDeltaPayloadApplierService(

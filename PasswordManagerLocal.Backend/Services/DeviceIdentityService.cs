@@ -25,6 +25,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private Key? _sig = null;
     private X509Certificate2? _cert = null;
     private Guid _localDeviceId = Guid.Empty;
+    private Guid _originInstanceId = Guid.Empty;
     private bool _isSyncOn;
     private DeviceType _deviceType;
     private DateTimeOffset _createdAt = DateTimeOffset.MinValue;
@@ -91,6 +92,18 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
                 throw new DeviceIdentityNotInitilaizedException();
 
             return _localDeviceId;
+        }
+    }
+
+
+    public Guid OriginInstanceId
+    {
+        get
+        {
+            if (_originInstanceId == Guid.Empty)
+                throw new DeviceIdentityNotInitilaizedException();
+
+            return _originInstanceId;
         }
     }
 
@@ -370,6 +383,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
                 IsSyncOn = false
             };
             _localDeviceId = newIdentity.Id;
+            _originInstanceId = newIdentity.OriginInstanceId;
             _deviceType = newIdentity.DeviceType;
             _isSyncOn = false;
             _createdAt = newIdentity.CreatedAt;
@@ -394,6 +408,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
             throw new InvalidDataException("The local device type is invalid.");
 
         _localDeviceId = identity.Id;
+        _originInstanceId = identity.OriginInstanceId;
         _deviceType = identity.DeviceType;
         _isSyncOn = identity.IsSyncOn;
         _createdAt = identity.CreatedAt;

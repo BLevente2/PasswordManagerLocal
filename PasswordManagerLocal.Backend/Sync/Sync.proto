@@ -3,8 +3,8 @@ syntax = "proto3";
 package sync;
 option csharp_namespace = "PasswordManagerLocal.Backend.Sync";
 
-message HelloRequest  { string user_id = 1; string device_id = 2; bytes dataset_hash = 3; bytes sign_pub = 4; int32 database_version = 5; }
-message HelloReply    { bool ok = 1; }
+message HelloRequest  { string user_id = 1; string device_id = 2; bytes dataset_hash = 3; bytes sign_pub = 4; int32 database_version = 5; int32 protocol_version = 6; }
+message HelloReply    { bool ok = 1; int32 protocol_version = 2; }
 
 message NeedSyncRequest { int64 since_ts = 1; }
 message NeedSyncReply   { bool needed = 1; int64 latest_ts = 2; }
@@ -24,7 +24,31 @@ message DeltaChunk {
   bytes payload_hash = 12;
 }
 
-message Ack        { int64 last_synced_ts = 1; }
+enum UserSnapshotReceiptStateProto {
+  USER_SNAPSHOT_RECEIPT_NONE = 0;
+  USER_SNAPSHOT_RECEIPT_STORED_PENDING = 1;
+  USER_SNAPSHOT_RECEIPT_REPLACED_OLDER_PENDING = 2;
+  USER_SNAPSHOT_RECEIPT_ALREADY_STORED = 3;
+  USER_SNAPSHOT_RECEIPT_MERGED_IMMEDIATELY = 4;
+  USER_SNAPSHOT_RECEIPT_OBSOLETE_REVISION = 5;
+  USER_SNAPSHOT_RECEIPT_NEEDS_KEY = 6;
+  USER_SNAPSHOT_RECEIPT_WRONG_KEY_EPOCH = 7;
+  USER_SNAPSHOT_RECEIPT_WRONG_MEMBERSHIP_EPOCH = 8;
+  USER_SNAPSHOT_RECEIPT_QUARANTINED = 9;
+  USER_SNAPSHOT_RECEIPT_REJECTED = 10;
+}
+
+message UserSnapshotReceipt {
+  string user_id = 1;
+  string origin_device_id = 2;
+  string origin_instance_id = 3;
+  int64 origin_revision = 4;
+  bytes snapshot_hash = 5;
+  UserSnapshotReceiptStateProto state = 6;
+  string detail = 7;
+}
+
+message Ack { int64 last_synced_ts = 1; repeated UserSnapshotReceipt user_snapshot_receipts = 2; }
 
 message GetDeviceEnrollmentInfoRequest {
   string session_id = 1;

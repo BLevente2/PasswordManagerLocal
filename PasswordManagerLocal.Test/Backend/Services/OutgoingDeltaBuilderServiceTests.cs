@@ -64,7 +64,8 @@ public sealed class OutgoingDeltaBuilderServiceTests
             new FakeDeviceRepository(),
             userDevices,
             new FakeSyncRouteRepository(userDevices, localUsers),
-            sender);
+            sender,
+            new FakeUserSnapshotPublisherService(sender));
         var changedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         var delta = await builder.BuildAsync(new SyncItem
@@ -92,10 +93,14 @@ public sealed class OutgoingDeltaBuilderServiceTests
         MSTestAssert.AreEqual(user.UId, payload.ModelId);
         MSTestAssert.AreEqual(SyncModelType.User, payload.ModelType);
         MSTestAssert.AreEqual(SyncChangeType.Updated, payload.ChangeType);
-        MSTestAssert.IsNotNull(payload.User);
-        CollectionAssert.AreEqual(user.EncryptedPayload, payload.User.EncryptedPayload);
-        MSTestAssert.IsTrue(payload.User.DeviceIds.Contains(sender.LocalDeviceId));
-        MSTestAssert.IsTrue(payload.User.DeviceIds.Contains(target.Id));
+        MSTestAssert.IsNull(payload.User);
+        MSTestAssert.IsNotNull(payload.UserSnapshot);
+        CollectionAssert.AreEqual(user.EncryptedPayload, payload.UserSnapshot.User.EncryptedPayload);
+        MSTestAssert.AreEqual(sender.LocalDeviceId, payload.UserSnapshot.OriginDeviceId);
+        MSTestAssert.AreEqual(sender.OriginInstanceId, payload.UserSnapshot.OriginInstanceId);
+        MSTestAssert.AreEqual(1L, payload.UserSnapshot.OriginRevision);
+        MSTestAssert.IsTrue(payload.UserSnapshot.User.DeviceIds.Contains(sender.LocalDeviceId));
+        MSTestAssert.IsTrue(payload.UserSnapshot.User.DeviceIds.Contains(target.Id));
     }
 
     [TestMethod]

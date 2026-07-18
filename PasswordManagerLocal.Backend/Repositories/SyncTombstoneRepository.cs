@@ -44,7 +44,7 @@ public sealed class SyncTombstoneRepository : ISyncTombstoneRepository
             return;
         }
 
-        await RemoveOldestTombstonesToMakeRoomAsync(ct);
+        await ThrowIfTombstoneCapacityExceededAsync(ct);
 
         await _set.AddAsync(new SyncTombstone
         {
@@ -59,29 +59,18 @@ public sealed class SyncTombstoneRepository : ISyncTombstoneRepository
         _set.Remove(tombstone);
 
 
-    private async Task RemoveOldestTombstonesToMakeRoomAsync(CancellationToken ct)
+    private async Task ThrowIfTombstoneCapacityExceededAsync(CancellationToken ct)
     {
         if (MaxSyncTombstones < 1)
-            return;
+            throw new InvalidOperationException("Synchronization tombstone storage is disabled; deletion knowledge cannot be safely recorded.");
 
-        var persisted = await _set
-            .OrderBy(tombstone => tombstone.DeletedAtTs)
-            .ThenBy(tombstone => tombstone.Id)
-            .ToListAsync(ct);
-        var tracked = _set.Local
-            .Where(tombstone => _context.Entry(tombstone).State != EntityState.Deleted)
-            .ToList();
-        var candidates = persisted
-            .Concat(tracked)
-            .DistinctBy(tombstone => tombstone.Id)
-            .OrderBy(tombstone => tombstone.DeletedAtTs)
-            .ThenBy(tombstone => tombstone.Id)
-            .ToList();
-
-        var removeCount = candidates.Count - MaxSyncTombstones + 1;
-        if (removeCount <= 0)
-            return;
-
-        _set.RemoveRange(candidates.Take(removeCount));
+        var persistedCount = await _set.CountAsync(ct);
+        var pendingAdds = _set.Local.Count(tombstone => _context.Entry(tombstone).State == EntityState.Added);
+        if (persistedCount + pendingAdds >= MaxSyncTombstones)
+        {
+            throw new InvalidOperationException(
+                "The synchronization tombstone safety limit was reached. Tombstones were preserved to prevent data resurrection; manual maintenance or causal garbage collection is required.");
+        }
     }
+
 }

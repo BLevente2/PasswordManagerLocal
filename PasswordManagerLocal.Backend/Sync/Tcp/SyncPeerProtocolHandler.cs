@@ -35,8 +35,9 @@ public sealed class SyncPeerProtocolHandler
         try
         {
             ValidateIncomingDatabaseVersionForSync(request.DatabaseVersion);
+            ValidateIncomingProtocolVersion(request.ProtocolVersion);
             remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, request.DeviceId, request.SignPub.ToByteArray(), ct);
-            return new HelloReply { Ok = true };
+            return new HelloReply { Ok = true, ProtocolVersion = SyncConstants.SyncProtocolVersion };
         }
         catch (Exception ex)
         {
@@ -57,10 +58,11 @@ public sealed class SyncPeerProtocolHandler
 
         try
         {
-            if (!context.RemoteDatabaseVersion.HasValue)
-                throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "Remote database version was not received before sync deltas.");
+            if (!context.RemoteDatabaseVersion.HasValue || !context.RemoteProtocolVersion.HasValue)
+                throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "Remote database or synchronization protocol version was not received before sync deltas.");
 
             ValidateIncomingDatabaseVersionForSync(context.RemoteDatabaseVersion.Value);
+            ValidateIncomingProtocolVersion(context.RemoteProtocolVersion.Value);
             remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
             var applier = scope.ServiceProvider.GetRequiredService<IIncomingDeltaApplierService>();
             var deviceSecurity = scope.ServiceProvider.GetRequiredService<IDeviceSecurityService>();
@@ -70,6 +72,7 @@ public sealed class SyncPeerProtocolHandler
             var deltaCount = 0;
             var totalPayloadBytes = 0L;
             var seenDeltaIdsInCall = new HashSet<string>(StringComparer.Ordinal);
+            var snapshotReceipts = new List<UserSnapshotReceipt>();
 
             await foreach (var chunk in chunks.WithCancellation(ct))
             {
@@ -85,7 +88,10 @@ public sealed class SyncPeerProtocolHandler
                 ValidateDeltaTransport(delta, remoteDevice, identity.LocalDeviceId);
 
                 var deltaReplayId = BuildDeltaReplayId(delta);
-                if (!seenDeltaIdsInCall.Add(deltaReplayId) || IsRecentIncomingDeltaReplay(deltaReplayId))
+                var isOrdinaryUserSnapshot =
+                    delta.Entity.StartsWith("User:Added:", StringComparison.Ordinal) ||
+                    delta.Entity.StartsWith("User:Updated:", StringComparison.Ordinal);
+                if ((!seenDeltaIdsInCall.Add(deltaReplayId) || IsRecentIncomingDeltaReplay(deltaReplayId)) && !isOrdinaryUserSnapshot)
                 {
                     if (delta.Ts > lastSyncedTs)
                         lastSyncedTs = delta.Ts;
@@ -93,18 +99,19 @@ public sealed class SyncPeerProtocolHandler
                     continue;
                 }
 
-                var appliedTs = await applier.ApplyAsync(delta, ct);
+                var applyResult = await applier.ApplyAsync(delta, ct);
                 RememberIncomingDelta(deltaReplayId);
-                if (appliedTs > lastSyncedTs)
-                    lastSyncedTs = appliedTs;
+                if (applyResult.AppliedTimestamp > lastSyncedTs)
+                    lastSyncedTs = applyResult.AppliedTimestamp;
+                if (applyResult.UserSnapshotReceipt is not null)
+                    snapshotReceipts.Add(ToProtoReceipt(applyResult.UserSnapshotReceipt));
             }
 
             await deviceSecurity.ResetInvalidIncomingSyncAsync(remoteDevice, ct);
 
-            return new Ack
-            {
-                LastSyncedTs = lastSyncedTs
-            };
+            var ack = new Ack { LastSyncedTs = lastSyncedTs };
+            ack.UserSnapshotReceipts.AddRange(snapshotReceipts);
+            return ack;
         }
         catch (SyncProtocolException ex)
         {
@@ -128,12 +135,6 @@ public sealed class SyncPeerProtocolHandler
 
             throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
         }
-        catch (SyncDeltaDeferredException)
-        {
-            throw new SyncProtocolException(
-                SyncProtocolStatusCode.Unavailable,
-                "The synchronization delta could not be applied yet because the required profile key is unavailable.");
-        }
         catch (SyncRouteDisabledException)
         {
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Synchronization is disabled for this user and device route.");
@@ -144,6 +145,29 @@ public sealed class SyncPeerProtocolHandler
                 await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
 
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Delta is not authorized.");
+        }
+    }
+
+
+    private static UserSnapshotReceipt ToProtoReceipt(UserSnapshotReceiptResult receipt) =>
+        new()
+        {
+            UserId = receipt.UserId.ToString("N"),
+            OriginDeviceId = receipt.OriginDeviceId.ToString("N"),
+            OriginInstanceId = receipt.OriginInstanceId.ToString("N"),
+            OriginRevision = receipt.OriginRevision,
+            SnapshotHash = ByteString.CopyFrom(receipt.SnapshotHash),
+            State = (UserSnapshotReceiptStateProto)(int)receipt.State,
+            Detail = receipt.Detail ?? string.Empty
+        };
+
+    private static void ValidateIncomingProtocolVersion(int protocolVersion)
+    {
+        if (protocolVersion != SyncConstants.SyncProtocolVersion)
+        {
+            throw new SyncProtocolException(
+                SyncProtocolStatusCode.FailedPrecondition,
+                $"Unsupported synchronization protocol version {protocolVersion}. Required version: {SyncConstants.SyncProtocolVersion}.");
         }
     }
 

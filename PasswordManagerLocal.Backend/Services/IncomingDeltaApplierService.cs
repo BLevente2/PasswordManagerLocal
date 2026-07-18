@@ -15,6 +15,6 @@ public sealed class IncomingDeltaApplierService : IIncomingDeltaApplierService
 
 
 
-    public Task<long> ApplyAsync(NetworkDelta delta, CancellationToken ct = default) =>
+    public Task<NetworkDeltaApplyResult> ApplyAsync(NetworkDelta delta, CancellationToken ct = default) =>
         _networkDeltas.ApplyAsync(delta, ct);
 }

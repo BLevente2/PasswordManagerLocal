@@ -1,8 +1,8 @@
-﻿using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync;
 
 namespace PasswordManagerLocal.Backend.Abstractions.Services;
 
 public interface IIncomingDeltaApplierService
 {
-    Task<long> ApplyAsync(NetworkDelta delta, CancellationToken ct = default);
+    Task<NetworkDeltaApplyResult> ApplyAsync(NetworkDelta delta, CancellationToken ct = default);
 }

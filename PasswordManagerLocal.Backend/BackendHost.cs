@@ -235,6 +235,9 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<ISyncItemRepository, SyncItemRepository>();
             services.AddScoped<ISyncTombstoneRepository, SyncTombstoneRepository>();
             services.AddScoped<IDeviceIdentityRepository, DeviceIdentityRepository>();
+            services.AddScoped<IUserSyncSnapshotRepository, UserSyncSnapshotRepository>();
+            services.AddScoped<IUserSyncStateRepository, UserSyncStateRepository>();
+            services.AddScoped<IUserRevisionKnowledgeRepository, UserRevisionKnowledgeRepository>();
 
             services.AddScoped<IUserPasswordsService, UserPasswordsService>();
             services.AddScoped<IUserCustomColorService, UserCustomColorService>();
@@ -288,6 +291,10 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserDevicesDataMergeService, UserDevicesDataMergeService>();
             services.AddScoped<ISyncRelationshipReconciliationService, SyncRelationshipReconciliationService>();
             services.AddScoped<IUserDataBundleSyncService, UserDataBundleSyncService>();
+            services.AddScoped<IUserSnapshotPublisherService, UserSnapshotPublisherService>();
+            services.AddScoped<IUserSnapshotInboxService, UserSnapshotInboxService>();
+            services.AddScoped<IUserSnapshotMergeCoordinator, UserSnapshotMergeCoordinator>();
+            services.AddScoped<IUserSyncKeyResolverService, UserSyncKeyResolverService>();
             services.AddScoped<IUserDeltaApplierService, UserDeltaApplierService>();
             services.AddScoped<INetworkDeltaProtocolService, NetworkDeltaProtocolService>();
             services.AddScoped<INetworkDeltaReplayService, NetworkDeltaReplayService>();

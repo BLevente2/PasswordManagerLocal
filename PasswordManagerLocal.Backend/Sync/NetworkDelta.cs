@@ -14,4 +14,12 @@ public sealed class NetworkDelta
     public byte[] Nonce { get; set; } = [];
     public byte[] Tag { get; set; } = [];
     public byte[] PayloadHash { get; set; } = [];
+
+    // Sender-local metadata used to match explicit snapshot acknowledgements.
+    // These fields are derived from the immutable inner envelope and are not serialized on the wire.
+    public Guid SnapshotUserId { get; set; }
+    public Guid SnapshotOriginDeviceId { get; set; }
+    public Guid SnapshotOriginInstanceId { get; set; }
+    public long SnapshotOriginRevision { get; set; }
+    public byte[] SnapshotHash { get; set; } = [];
 }

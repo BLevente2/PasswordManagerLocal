@@ -19,6 +19,7 @@ public class RememberMeService : IRememberMeService
     private readonly IUserDataWriterService _writer;
     private readonly IUserDataReaderService _reader;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
 
     public RememberMeService(
         ITokenService tokens,
@@ -28,7 +29,8 @@ public class RememberMeService : IRememberMeService
         IUserSessionService sessions,
         IUserDataWriterService writer,
         IUserDataReaderService reader,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserSnapshotMergeCoordinator snapshotMerge)
     {
         _tokens = tokens;
         _keys = keys;
@@ -38,6 +40,7 @@ public class RememberMeService : IRememberMeService
         _writer = writer;
         _reader = reader;
         _identity = identity;
+        _snapshotMerge = snapshotMerge;
     }
 
 
@@ -120,6 +123,8 @@ public class RememberMeService : IRememberMeService
         {
             rawKey = _protector.Unprotect(user.SavedKey);
             using var key = EncryptionKey.FromRaw(rawKey);
+            await _snapshotMerge.TryMergePendingAsync(user.UId, key, ct);
+            user = await _lookup.GetAndVerifyUserByUidAsync(user.UId, ct);
             var bundle = await _reader.GetAndVerifyUserDataBundleAsync(user, key, ct);
             UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
                 bundle.UserDevicesData,

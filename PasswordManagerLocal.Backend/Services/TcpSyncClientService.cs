@@ -44,12 +44,13 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             {
                 DeviceId = _identity.DeviceIdHex,
                 SignPub = ByteString.CopyFrom(_identity.SignPublicKey),
-                DatabaseVersion = DatabaseConstants.CurrentDbVersion
+                DatabaseVersion = DatabaseConstants.CurrentDbVersion,
+                ProtocolVersion = SyncConstants.SyncProtocolVersion
             }, ct);
 
             var helloFrame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.HelloReply, ct);
             var hello = helloFrame.Parse(HelloReply.Parser);
-            if (!hello.Ok)
+            if (!hello.Ok || hello.ProtocolVersion != SyncConstants.SyncProtocolVersion)
                 return false;
 
             await WriteFrameAsync(connection.Stream, SyncTcpMessageType.PushDeltaStart, ct);
@@ -62,7 +63,24 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             var ackFrame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.Ack, ct);
             var ack = ackFrame.Parse(Ack.Parser);
 
-            return ack.LastSyncedTs >= list.Max(x => x.Ts);
+            if (ack.LastSyncedTs < list.Max(x => x.Ts))
+                return false;
+
+            var expectedSnapshots = list.Where(delta => delta.SnapshotOriginRevision > 0).ToArray();
+            foreach (var expected in expectedSnapshots)
+            {
+                var receipt = ack.UserSnapshotReceipts.FirstOrDefault(candidate =>
+                    Guid.TryParse(candidate.UserId, out var userId) && userId == expected.SnapshotUserId &&
+                    Guid.TryParse(candidate.OriginDeviceId, out var originDeviceId) && originDeviceId == expected.SnapshotOriginDeviceId &&
+                    Guid.TryParse(candidate.OriginInstanceId, out var originInstanceId) && originInstanceId == expected.SnapshotOriginInstanceId &&
+                    candidate.OriginRevision == expected.SnapshotOriginRevision &&
+                    CryptographicOperations.FixedTimeEquals(candidate.SnapshotHash.ToByteArray(), expected.SnapshotHash));
+
+                if (receipt is null || !IsDurableSnapshotReceipt(receipt.State))
+                    return false;
+            }
+
+            return true;
         }
         catch (System.Net.Sockets.SocketException)
         {
@@ -97,6 +115,15 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             return false;
         }
     }
+
+
+    private static bool IsDurableSnapshotReceipt(UserSnapshotReceiptStateProto state) =>
+        state is
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptStoredPending or
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptReplacedOlderPending or
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptAlreadyStored or
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptMergedImmediately or
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptObsoleteRevision;
 
 
     public async Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(string host, int port, string serverFingerprintHex, GetDeviceEnrollmentInfoRequest request, CancellationToken ct = default)

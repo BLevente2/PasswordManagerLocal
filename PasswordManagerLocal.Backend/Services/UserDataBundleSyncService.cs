@@ -1,160 +1,168 @@
-using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Security.Cryptography;
-using static PasswordManagerLocal.Backend.Utils.DataCodec;
-using PasswordManagerLocal.Backend.Abstractions.Persistence;
-using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Models.Projections;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
 using System.Text.Json;
+using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
 {
     private readonly IUserRepository _users;
-    private readonly IAuthService _auth;
-    private readonly IKeyProtector _keyProtector;
     private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUserPasswordsDataMergeService _passwordsDataMerge;
     private readonly IUserDevicesDataMergeService _devicesDataMerge;
-    private readonly ISyncRelationshipReconciliationService _relationships;
 
     public UserDataBundleSyncService(
         IUserRepository users,
-        IAuthService auth,
-        IKeyProtector keyProtector,
         IUserDataBundleIntegrityService integrity,
         IUserPasswordsDataMergeService passwordsDataMerge,
-        IUserDevicesDataMergeService devicesDataMerge,
-        ISyncRelationshipReconciliationService relationships)
+        IUserDevicesDataMergeService devicesDataMerge)
     {
         _users = users;
-        _auth = auth;
-        _keyProtector = keyProtector;
         _integrity = integrity;
         _passwordsDataMerge = passwordsDataMerge;
         _devicesDataMerge = devicesDataMerge;
-        _relationships = relationships;
     }
 
-    public async Task<UserDataBundleMergeResult> TryMergeAsync(User existing, UserSyncPayload incoming, long ts, CancellationToken ct)
+    public async Task<UserSnapshotMergeBatchResult> TryVerifyAndMergeManyAsync(
+        User existing,
+        IReadOnlyList<UserSnapshotEnvelope> snapshots,
+        EncryptionKey key,
+        CancellationToken ct = default)
     {
-        var incomingTs = FromTimestamp(ts);
+        if (snapshots.Count == 0)
+            return new UserSnapshotMergeBatchResult(false, []);
 
-        if (!existing.PasswordSalt.SequenceEqual(incoming.PasswordSalt))
-            return UserDataBundleMergeResult.NotMerged;
+        var ordered = snapshots
+            .OrderBy(snapshot => snapshot.OriginDeviceId)
+            .ThenBy(snapshot => snapshot.OriginInstanceId)
+            .ThenBy(snapshot => snapshot.OriginRevision)
+            .ToArray();
 
-        var incomingHasPotentiallyNewerEncryptedData =
-            incoming.GeneralUserDataLastModifiedAt > existing.GeneralUserDataLastModifiedAt ||
-            incoming.UserPasswordsDataLastModifiedAt > existing.UserPasswordsDataLastModifiedAt ||
-            incoming.UserDevicesDataLastModifiedAt > existing.UserDevicesDataLastModifiedAt;
-        var localHasPotentiallyNewerEncryptedData =
-            existing.GeneralUserDataLastModifiedAt > incoming.GeneralUserDataLastModifiedAt ||
-            existing.UserPasswordsDataLastModifiedAt > incoming.UserPasswordsDataLastModifiedAt ||
-            existing.UserDevicesDataLastModifiedAt > incoming.UserDevicesDataLastModifiedAt;
-        var relationUpdateIsNewer = incomingTs > existing.LastModifiedAt;
-        var encryptedBlobsDiffer =
-            !existing.EncryptedGeneralUserDataPayload.SequenceEqual(incoming.EncryptedGeneralUserDataPayload) ||
-            !existing.EncryptedUserPasswordsDataPayload.SequenceEqual(incoming.EncryptedUserPasswordsDataPayload) ||
-            !existing.EncryptedUserDevicesDataPayload.SequenceEqual(incoming.EncryptedUserDevicesDataPayload);
-
-        if (!incomingHasPotentiallyNewerEncryptedData && !localHasPotentiallyNewerEncryptedData && !relationUpdateIsNewer && !encryptedBlobsDiffer)
-            return UserDataBundleMergeResult.NotMerged;
-
-        if (!TryGetUserEncryptionKeyForSync(existing, out var userKey) || userKey is null)
-            return UserDataBundleMergeResult.EncryptionKeyUnavailable;
+        var canonicalBundle = await ReadAndVerifyUserDataBundleForSyncAsync(existing, key, ct);
+        var incomingBundles = new List<UserDataBundle>(ordered.Length);
+        var results = new List<UserSnapshotMergeEntryResult>(ordered.Length);
+        var changedBlobs = UserDataBlobKind.None;
+        var anyVerified = false;
 
         try
         {
-            var incomingUser = CreateUser(incoming);
-            CopyUserData(incoming, incomingUser);
-            incomingUser.LastModifiedAt = incomingTs;
-            incomingUser.GenerateIntegrityHash();
+            foreach (var snapshot in ordered)
+            {
+                ct.ThrowIfCancellationRequested();
 
-            var existingBundle = await ReadAndVerifyUserDataBundleForSyncAsync(existing, userKey, ct);
-            var incomingBundle = await ReadAndVerifyUserDataBundleForSyncAsync(incomingUser, userKey, ct);
+                if (!existing.PasswordSalt.SequenceEqual(snapshot.User.PasswordSalt))
+                {
+                    results.Add(Failed(snapshot, "The snapshot password salt does not match the active key epoch."));
+                    continue;
+                }
 
-            var changedBlobs = UserDataBlobKind.None;
-            if (MergeGeneralUserDataForSync(existingBundle, incomingBundle, existing, incoming))
-                changedBlobs |= UserDataBlobKind.General;
+                UserDataBundle incomingBundle;
+                try
+                {
+                    var incomingUser = CreateUser(snapshot.User);
+                    CopyUserData(snapshot.User, incomingUser);
+                    incomingUser.LastModifiedAt = FromTimestamp(snapshot.CreatedAtUtc.ToUnixTimeMilliseconds());
+                    incomingUser.GenerateIntegrityHash();
+                    incomingBundle = await ReadAndVerifyUserDataBundleForSyncAsync(incomingUser, key, ct);
+                }
+                catch (Exception ex) when (IsSnapshotVerificationFailure(ex))
+                {
+                    results.Add(Failed(snapshot, ex.Message));
+                    continue;
+                }
 
-            if (_passwordsDataMerge.Merge(existingBundle.UserPasswordsData, incomingBundle.UserPasswordsData))
-                changedBlobs |= UserDataBlobKind.Passwords;
+                incomingBundles.Add(incomingBundle);
+                anyVerified = true;
+                var snapshotChangedBlobs = UserDataBlobKind.None;
 
-            if (_devicesDataMerge.Merge(existingBundle.UserDevicesData, incomingBundle.UserDevicesData))
-                changedBlobs |= UserDataBlobKind.Devices;
+                if (MergeGeneralUserDataForSync(canonicalBundle, incomingBundle, existing, snapshot.User))
+                    snapshotChangedBlobs |= UserDataBlobKind.General;
+                if (_passwordsDataMerge.Merge(canonicalBundle.UserPasswordsData, incomingBundle.UserPasswordsData))
+                    snapshotChangedBlobs |= UserDataBlobKind.Passwords;
+                if (_devicesDataMerge.Merge(canonicalBundle.UserDevicesData, incomingBundle.UserDevicesData))
+                    snapshotChangedBlobs |= UserDataBlobKind.Devices;
+
+                changedBlobs |= snapshotChangedBlobs;
+                var snapshotTimestamp = snapshot.CreatedAtUtc.ToUniversalTime();
+                if (snapshotChangedBlobs != UserDataBlobKind.None)
+                {
+                    existing.UserDataLastModifiedAt = MaxDateTimeOffset(
+                        existing.UserDataLastModifiedAt,
+                        snapshot.User.UserDataLastModifiedAt,
+                        snapshotTimestamp);
+                }
+                if (snapshotChangedBlobs.HasFlag(UserDataBlobKind.General))
+                {
+                    existing.GeneralUserDataLastModifiedAt = MaxDateTimeOffset(
+                        existing.GeneralUserDataLastModifiedAt,
+                        snapshot.User.GeneralUserDataLastModifiedAt,
+                        snapshotTimestamp);
+                }
+                if (snapshotChangedBlobs.HasFlag(UserDataBlobKind.Passwords))
+                {
+                    existing.UserPasswordsDataLastModifiedAt = MaxDateTimeOffset(
+                        existing.UserPasswordsDataLastModifiedAt,
+                        snapshot.User.UserPasswordsDataLastModifiedAt,
+                        snapshotTimestamp);
+                }
+                if (snapshotChangedBlobs.HasFlag(UserDataBlobKind.Devices))
+                {
+                    existing.UserDevicesDataLastModifiedAt = MaxDateTimeOffset(
+                        existing.UserDevicesDataLastModifiedAt,
+                        snapshot.User.UserDevicesDataLastModifiedAt,
+                        snapshotTimestamp);
+                }
+
+                existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, snapshotTimestamp);
+                results.Add(new UserSnapshotMergeEntryResult(
+                    snapshot.OriginDeviceId,
+                    snapshot.OriginInstanceId,
+                    snapshot.OriginRevision,
+                    true));
+            }
+
+            if (!anyVerified)
+                return new UserSnapshotMergeBatchResult(false, results);
 
             if (changedBlobs != UserDataBlobKind.None)
-            {
-                await PersistMergedUserBundleAsync(existing, existingBundle, userKey, changedBlobs, ct);
+                await PersistMergedUserBundleAsync(existing, canonicalBundle, key, changedBlobs, ct);
 
-                existing.UserDataLastModifiedAt = MaxDateTimeOffset(existing.UserDataLastModifiedAt, incoming.UserDataLastModifiedAt, incomingTs);
-                if (changedBlobs.HasFlag(UserDataBlobKind.General))
-                    existing.GeneralUserDataLastModifiedAt = MaxDateTimeOffset(existing.GeneralUserDataLastModifiedAt, incoming.GeneralUserDataLastModifiedAt, incomingTs);
-                if (changedBlobs.HasFlag(UserDataBlobKind.Passwords))
-                    existing.UserPasswordsDataLastModifiedAt = MaxDateTimeOffset(existing.UserPasswordsDataLastModifiedAt, incoming.UserPasswordsDataLastModifiedAt, incomingTs);
-                if (changedBlobs.HasFlag(UserDataBlobKind.Devices))
-                    existing.UserDevicesDataLastModifiedAt = MaxDateTimeOffset(existing.UserDevicesDataLastModifiedAt, incoming.UserDevicesDataLastModifiedAt, incomingTs);
-            }
-
-            if (relationUpdateIsNewer)
-            {
-                await _relationships.SyncUserGroupsAsync(existing, incoming.GroupIds, ct);
-                await _relationships.SyncUserDevicesAsync(existing, incoming.DeviceIds, incomingTs, ct);
-            }
-
-            existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, incomingTs);
             existing.GenerateIntegrityHash();
             _users.Update(existing);
-            return changedBlobs != UserDataBlobKind.None || relationUpdateIsNewer
-                ? UserDataBundleMergeResult.Merged
-                : UserDataBundleMergeResult.NotMerged;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return UserDataBundleMergeResult.NotMerged;
+            return new UserSnapshotMergeBatchResult(changedBlobs != UserDataBlobKind.None, results);
         }
         finally
         {
-            userKey.Dispose();
+            // Merge services may move item references from an incoming bundle into the canonical bundle.
+            // Dispose canonical first; child disposals are idempotent when incoming bundles are disposed next.
+            canonicalBundle.Dispose();
+            foreach (var incomingBundle in incomingBundles)
+                incomingBundle.Dispose();
         }
     }
 
+    private static UserSnapshotMergeEntryResult Failed(UserSnapshotEnvelope snapshot, string reason) =>
+        new(
+            snapshot.OriginDeviceId,
+            snapshot.OriginInstanceId,
+            snapshot.OriginRevision,
+            false,
+            reason.Length <= 512 ? reason : reason[..512]);
 
-    private bool TryGetUserEncryptionKeyForSync(User user, out EncryptionKey? key)
-    {
-        if (_auth.TryGetActiveUserEncryptionKey(user.UId, out key) && key is not null)
-            return true;
-
-        key = null;
-        if (user.SavedKey is null || user.SavedKey.Length == 0)
-            return false;
-
-        byte[]? rawKey = null;
-        try
-        {
-            rawKey = _keyProtector.Unprotect(user.SavedKey);
-            key = EncryptionKey.FromRaw(rawKey);
-            return true;
-        }
-        catch (Exception ex) when (ex is CryptographicException or ArgumentException)
-        {
-            key = null;
-            return false;
-        }
-        finally
-        {
-            if (rawKey is not null)
-                CryptographicOperations.ZeroMemory(rawKey);
-        }
-    }
+    private static bool IsSnapshotVerificationFailure(Exception ex) =>
+        ex is UnauthorizedAccessException or
+            CryptographicException or
+            InvalidDataException or
+            InvalidDataIntegrityException or
+            JsonException;
 
 
     private bool MergeGeneralUserDataForSync(UserDataBundle local, UserDataBundle incoming, User existingUser, UserSyncPayload incomingUser)

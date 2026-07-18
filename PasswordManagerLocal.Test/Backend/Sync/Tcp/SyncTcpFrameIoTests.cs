@@ -22,7 +22,8 @@ public sealed class SyncTcpFrameIoTests
             DeviceId = Guid.NewGuid().ToString("N"),
             DatasetHash = Google.Protobuf.ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
             SignPub = Google.Protobuf.ByteString.CopyFrom(Enumerable.Repeat((byte)4, 32).ToArray()),
-            DatabaseVersion = DatabaseConstants.CurrentDbVersion
+            DatabaseVersion = DatabaseConstants.CurrentDbVersion,
+            ProtocolVersion = SyncConstants.SyncProtocolVersion
         };
         await using var stream = new MemoryStream();
 
@@ -38,6 +39,7 @@ public sealed class SyncTcpFrameIoTests
         CollectionAssert.AreEqual(message.DatasetHash.ToByteArray(), restored.DatasetHash.ToByteArray());
         CollectionAssert.AreEqual(message.SignPub.ToByteArray(), restored.SignPub.ToByteArray());
         MSTestAssert.AreEqual(DatabaseConstants.CurrentDbVersion, restored.DatabaseVersion);
+        MSTestAssert.AreEqual(SyncConstants.SyncProtocolVersion, restored.ProtocolVersion);
     }
 
     [TestMethod]

@@ -14,6 +14,7 @@ public interface IDeviceIdentityService
     byte[] AgreementPublicKey { get; }
     byte[] SignPublicKey { get; }
     Guid LocalDeviceId { get; }
+    Guid OriginInstanceId { get; }
     string DeviceIdHex { get; }
     byte[] Sign(ReadOnlySpan<byte> data);
     byte[] EncryptForDevice(byte[] plaintext, byte[] recipientAgreementPublicKey, byte[] associatedData, out byte[] ephemeralPublicKey, out byte[] nonce, out byte[] tag);

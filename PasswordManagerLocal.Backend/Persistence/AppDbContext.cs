@@ -28,6 +28,9 @@ public class AppDbContext : DbContext
     public DbSet<SyncTombstone> SyncTombstones => Set<SyncTombstone>();
     public DbSet<LocalDeviceIdentity> LocalDeviceIdentities => Set<LocalDeviceIdentity>();
     public DbSet<LocalUserDevice> LocalUserDevices => Set<LocalUserDevice>();
+    public DbSet<UserSyncSnapshot> UserSyncSnapshots => Set<UserSyncSnapshot>();
+    public DbSet<UserSyncState> UserSyncStates => Set<UserSyncState>();
+    public DbSet<UserRevisionKnowledge> UserRevisionKnowledge => Set<UserRevisionKnowledge>();
 
     public override int SaveChanges()
     {
@@ -150,6 +153,8 @@ public class AppDbContext : DbContext
         user.Property(u => u.GeneralUserDataLastModifiedAt).IsRequired();
         user.Property(u => u.UserPasswordsDataLastModifiedAt).IsRequired();
         user.Property(u => u.UserDevicesDataLastModifiedAt).IsRequired();
+        user.Property(u => u.KeyEpoch).IsRequired().HasDefaultValue(1L);
+        user.Property(u => u.MembershipEpoch).IsRequired().HasDefaultValue(1L);
 
         model.Entity<User>()
             .HasMany(u => u.Groups)
@@ -198,12 +203,75 @@ public class AppDbContext : DbContext
         tombstone.HasIndex(t => new { t.ModelId, t.ModelType }).IsUnique();
         tombstone.Property(t => t.DeletedAtTs).IsRequired();
 
+
+
+        var userSyncSnapshot = model.Entity<UserSyncSnapshot>();
+        userSyncSnapshot.ToTable("UserSyncSnapshots");
+        userSyncSnapshot.HasKey(snapshot => snapshot.Id);
+        userSyncSnapshot.Property(snapshot => snapshot.OriginRevision).IsRequired().IsConcurrencyToken();
+        userSyncSnapshot.Property(snapshot => snapshot.UserKeyEpoch).IsRequired();
+        userSyncSnapshot.Property(snapshot => snapshot.MembershipEpoch).IsRequired();
+        userSyncSnapshot.Property(snapshot => snapshot.CreatedAtUtc).IsRequired();
+        userSyncSnapshot.Property(snapshot => snapshot.ReceivedAtUtc).IsRequired();
+        userSyncSnapshot.Property(snapshot => snapshot.SnapshotHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes).IsConcurrencyToken();
+        userSyncSnapshot.Property(snapshot => snapshot.OriginSignPublicKey).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519PublicKeyBytes);
+        userSyncSnapshot.Property(snapshot => snapshot.OriginSignature).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519SignatureBytes);
+        userSyncSnapshot.Property(snapshot => snapshot.EnvelopePayload).IsRequired().HasMaxLength(Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes);
+        userSyncSnapshot.Property(snapshot => snapshot.Status).HasConversion<byte>().IsRequired();
+        userSyncSnapshot.Property(snapshot => snapshot.QuarantineReason).HasMaxLength(512);
+        userSyncSnapshot.Property(snapshot => snapshot.ConflictingSnapshotHash).HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        userSyncSnapshot.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(snapshot => snapshot.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        userSyncSnapshot.HasIndex(snapshot => new
+        {
+            snapshot.UserId,
+            snapshot.OriginDeviceId,
+            snapshot.OriginInstanceId,
+            snapshot.UserKeyEpoch
+        }).IsUnique();
+        userSyncSnapshot.HasIndex(snapshot => new { snapshot.UserId, snapshot.Status, snapshot.ReceivedAtUtc });
+
+        var userSyncState = model.Entity<UserSyncState>();
+        userSyncState.ToTable("UserSyncStates");
+        userSyncState.HasKey(state => state.UserId);
+        userSyncState.Property(state => state.LocalOriginInstanceId).IsRequired();
+        userSyncState.Property(state => state.NextOriginRevision).IsRequired().HasDefaultValue(1L);
+        userSyncState.Property(state => state.LastPublishedContentHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        userSyncState.Property(state => state.LastUpdatedAtUtc).IsRequired();
+        userSyncState.HasOne<User>()
+            .WithOne()
+            .HasForeignKey<UserSyncState>(state => state.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        var revisionKnowledge = model.Entity<UserRevisionKnowledge>();
+        revisionKnowledge.ToTable("UserRevisionKnowledge");
+        revisionKnowledge.HasKey(knowledge => new
+        {
+            knowledge.UserId,
+            knowledge.OriginDeviceId,
+            knowledge.OriginInstanceId,
+            knowledge.UserKeyEpoch
+        });
+        revisionKnowledge.Property(knowledge => knowledge.HighestStoredRevision).IsRequired();
+        revisionKnowledge.Property(knowledge => knowledge.HighestStoredSnapshotHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        revisionKnowledge.Property(knowledge => knowledge.HighestMergedRevision).IsRequired();
+        revisionKnowledge.Property(knowledge => knowledge.LastUpdatedAtUtc).IsRequired();
+        revisionKnowledge.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(knowledge => knowledge.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        revisionKnowledge.HasIndex(knowledge => new { knowledge.UserId, knowledge.HighestStoredRevision });
+        revisionKnowledge.HasIndex(knowledge => new { knowledge.UserId, knowledge.HighestMergedRevision });
+
         var ldi = model.Entity<LocalDeviceIdentity>();
         ldi.ToTable("LocalDeviceIdentity", t =>
             t.HasCheckConstraint("CK_LocalDeviceIdentity_SingletonKey", "SingletonKey = 1"));
         ldi.HasKey(x => x.Id);
         ldi.Property<int>("SingletonKey").HasDefaultValue(1).IsRequired();
         ldi.HasIndex("SingletonKey").IsUnique();
+        ldi.Property(x => x.OriginInstanceId).IsRequired();
         ldi.Property(x => x.AgreementPrivateKeyBlob).IsRequired();
         ldi.Property(x => x.SignPrivateKeyBlob).IsRequired();
         ldi.Property(x => x.PFXCertificate).IsRequired();

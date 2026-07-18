@@ -27,6 +27,9 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
         SyncItems = new SyncItemRepository(db);
         SyncQueue = new SyncQueueRepository(db);
         Tombstones = new SyncTombstoneRepository(db);
+        UserSyncSnapshots = new UserSyncSnapshotRepository(db);
+        UserSyncStates = new UserSyncStateRepository(db);
+        UserRevisionKnowledge = new UserRevisionKnowledgeRepository(db);
     }
 
     public AppDbContext Db { get; }
@@ -40,6 +43,9 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
     public SyncItemRepository SyncItems { get; }
     public SyncQueueRepository SyncQueue { get; }
     public SyncTombstoneRepository Tombstones { get; }
+    public UserSyncSnapshotRepository UserSyncSnapshots { get; }
+    public UserSyncStateRepository UserSyncStates { get; }
+    public UserRevisionKnowledgeRepository UserRevisionKnowledge { get; }
 
     public static async Task<SqliteIntegrationTestDatabase> CreateAsync()
     {

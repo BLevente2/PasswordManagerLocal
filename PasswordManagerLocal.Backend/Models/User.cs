@@ -14,6 +14,8 @@ public sealed class User : IntegrityCheckableBase
     public byte[] EncryptedUserPasswordsDataPayload { get; set; } = [];
     public byte[] EncryptedUserDevicesDataPayload { get; set; } = [];
     public byte[]? SavedKey { get; set; } = null;
+    public long KeyEpoch { get; set; } = 1;
+    public long MembershipEpoch { get; set; } = 1;
     public DateTimeOffset LastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UserDataLastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset GeneralUserDataLastModifiedAt { get; set; } = DateTimeOffset.UtcNow;
@@ -40,6 +42,8 @@ public sealed class User : IntegrityCheckableBase
             hash.WriteBytes(EncryptedGeneralUserDataPayload);
             hash.WriteBytes(EncryptedUserPasswordsDataPayload);
             hash.WriteBytes(EncryptedUserDevicesDataPayload);
+            hash.Write(KeyEpoch);
+            hash.Write(MembershipEpoch);
             hash.Write(LastModifiedAt);
             hash.Write(UserDataLastModifiedAt);
             hash.Write(GeneralUserDataLastModifiedAt);
