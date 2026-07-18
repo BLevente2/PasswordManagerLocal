@@ -19,10 +19,6 @@ public static class SyncPayloadRules
         payload.UserDevice.IsDeleted &&
         payload.UserDevice.DeviceId != identity.LocalDeviceId;
 
-    public static bool IsDeletedUserPayload(SyncDeltaPayload payload) =>
-        payload.ModelType == SyncModelType.User &&
-        payload.ChangeType == SyncChangeType.Deleted;
-
     public static bool DeletesLocalUserProfile(SyncDeltaPayload payload, IDeviceIdentityService identity) =>
         payload.ModelType == SyncModelType.UserDevice &&
         payload.ChangeType == SyncChangeType.Deleted &&
@@ -44,7 +40,6 @@ public static class SyncPayloadRules
              StringComparison.OrdinalIgnoreCase));
 
     public static bool ShouldPropagate(SyncDeltaPayload payload, IDeviceIdentityService identity) =>
-        !IsDeletedUserPayload(payload) &&
         !DeletesLocalUserProfile(payload, identity) &&
         !IsLocalDevicePayload(payload, identity);
 

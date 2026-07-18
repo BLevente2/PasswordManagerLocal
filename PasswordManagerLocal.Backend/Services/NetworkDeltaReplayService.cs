@@ -37,7 +37,8 @@ public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
 
     public async Task<bool> IsAlreadyAppliedAsync(SyncDeltaPayload payload, long ts, CancellationToken ct)
     {
-        if (payload.ChangeType == SyncChangeType.Deleted && payload.ModelType != SyncModelType.UserDevice)
+        if (payload.ChangeType == SyncChangeType.Deleted &&
+            payload.ModelType is SyncModelType.Group or SyncModelType.Device)
         {
             var tombstone = await _tombstones.GetAsync(payload.ModelId, payload.ModelType, ct);
             return tombstone is not null && tombstone.DeletedAtTs >= ts;

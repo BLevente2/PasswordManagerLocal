@@ -6,7 +6,7 @@ using PasswordManagerLocal.Backend.Sync;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
-/// Owns synchronization-item coalescing, local model timestamps, tombstones, and deleted-user cleanup.
+/// Owns synchronization-item coalescing, local model timestamps, and non-user tombstones.
 /// </summary>
 public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
 {
@@ -41,6 +41,9 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
 
     public async Task<SyncItem> GetOrCreateAsync(SyncItem item, long changedAtTs, CancellationToken ct = default)
     {
+        if (item.ModelType == SyncModelType.User && item.ChangeType == SyncChangeType.Deleted)
+            throw new InvalidOperationException("Generic user-deletion queue items are disabled; use the signed AccountDeletion control operation.");
+
         var existing = await _syncItems.GetAsync(item.ModelId, item.ModelType, ct);
         if (existing is not null)
         {
@@ -64,7 +67,11 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
 
     public async Task TouchLocalStateAsync(SyncItem item, long changedAtTs, CancellationToken ct = default)
     {
-        if (item.ChangeType == SyncChangeType.Deleted && item.ModelType != SyncModelType.UserDevice)
+        if (item.ModelType == SyncModelType.User && item.ChangeType == SyncChangeType.Deleted)
+            throw new InvalidOperationException("Generic user-deletion lifecycle updates are disabled; use the signed AccountDeletion control operation.");
+
+        if (item.ChangeType == SyncChangeType.Deleted &&
+            item.ModelType is SyncModelType.Group or SyncModelType.Device)
         {
             await _tombstones.UpsertAsync(item.ModelId, item.ModelType, changedAtTs, ct);
             return;
@@ -124,66 +131,11 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
         }
     }
 
-    public async Task RemoveItemsForDeletedUserAsync(
-        Guid deletedUserId,
-        Guid protectedSyncItemId,
-        CancellationToken ct = default)
-    {
-        var syncItems = (await _syncItems.ListAllAsync(ct))
-            .Where(syncItem => syncItem.Id != protectedSyncItemId)
-            .DistinctBy(syncItem => syncItem.Id)
-            .ToList();
-
-        var syncItemIdsToDelete = new List<Guid>();
-        foreach (var syncItem in syncItems)
-        {
-            if (await IsSyncItemOnlyForDeletedUserAsync(syncItem, deletedUserId, ct))
-                syncItemIdsToDelete.Add(syncItem.Id);
-        }
-
-        foreach (var syncItemId in syncItemIdsToDelete)
-        {
-            var trackedSyncItem = await _syncItems.GetByIdAsync(syncItemId, ct);
-            if (trackedSyncItem is not null)
-                _syncItems.Delete(trackedSyncItem);
-        }
-    }
-
     private async Task RemoveTombstoneAsync(SyncItem item, CancellationToken ct)
     {
         var tombstone = await _tombstones.GetAsync(item.ModelId, item.ModelType, ct);
         if (tombstone is not null)
             _tombstones.Delete(tombstone);
-    }
-
-    private async Task<bool> IsSyncItemOnlyForDeletedUserAsync(
-        SyncItem item,
-        Guid deletedUserId,
-        CancellationToken ct)
-    {
-        if (item.ModelType == SyncModelType.User)
-            return item.ModelId == deletedUserId;
-
-        if (item.ModelType == SyncModelType.UserDevice)
-        {
-            var link = await _userDevices.GetByModelIdAsync(item.ModelId, ct);
-            return link?.UserId == deletedUserId;
-        }
-
-        if (item.ModelType == SyncModelType.Group)
-        {
-            var userIds = await _groups.ListUserIdsAsync(item.ModelId, ct);
-            return userIds.Contains(deletedUserId) && userIds.All(userId => userId == deletedUserId);
-        }
-
-        if (item.ModelType == SyncModelType.Device)
-        {
-            var links = await _userDevices.ListByDeviceAsync(item.ModelId, ct);
-            return links.Any(link => link.UserId == deletedUserId) &&
-                   links.Where(link => !link.IsDeleted).All(link => link.UserId == deletedUserId);
-        }
-
-        return false;
     }
 
     private static SyncChangeType MergeChangeType(SyncChangeType current, SyncChangeType incoming)

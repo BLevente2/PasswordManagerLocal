@@ -87,6 +87,9 @@ public static class SyncCryptoUtil
         if (payload.Device is not null) payloadCount++;
         if (payload.UserDevice is not null) payloadCount++;
 
+        if (payload.ModelType == SyncModelType.User && payload.ChangeType == SyncChangeType.Deleted)
+            throw new InvalidDataException("Generic user-deletion deltas are unsupported; signed AccountDeletion control operations are required.");
+
         if (payload.ChangeType == SyncChangeType.Deleted && payload.ModelType != SyncModelType.UserDevice)
         {
             if (payloadCount != 0)

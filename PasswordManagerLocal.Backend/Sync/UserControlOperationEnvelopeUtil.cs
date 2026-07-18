@@ -216,6 +216,100 @@ public static class UserControlOperationEnvelopeUtil
         return payload;
     }
 
+    public static byte[] SerializeAccountDeletionPayload(AccountDeletionPayload payload)
+    {
+        ValidateAccountDeletionPayload(payload);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, BackendJsonSerializerContext.Default.AccountDeletionPayload);
+        if (bytes.Length == 0 || bytes.Length > SyncConstants.MaxUserControlOperationPayloadBytes)
+            throw new InvalidDataException("The account-deletion payload size is invalid.");
+        return bytes;
+    }
+
+    public static AccountDeletionPayload DeserializeAccountDeletionPayload(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length == 0 || bytes.Length > SyncConstants.MaxUserControlOperationPayloadBytes)
+            throw new InvalidDataException("The account-deletion payload size is invalid.");
+        var payload = JsonSerializer.Deserialize(bytes, BackendJsonSerializerContext.Default.AccountDeletionPayload)
+            ?? throw new InvalidDataException("The account-deletion payload is invalid.");
+        ValidateAccountDeletionPayload(payload);
+        return payload;
+    }
+
+    public static AccountDeletionPayload CreateAccountDeletionPayload(
+        User user,
+        IReadOnlyList<UserMembershipAuthorization> authorizations)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(authorizations);
+        if (user.UId == Guid.Empty || user.KeyEpoch <= 0 || user.MembershipEpoch <= 0)
+            throw new InvalidOperationException("The canonical account identity or epochs are invalid.");
+
+        var payload = new AccountDeletionPayload
+        {
+            UserId = user.UId,
+            DeletionGeneration = Guid.NewGuid(),
+            KeyEpoch = user.KeyEpoch,
+            MembershipEpoch = user.MembershipEpoch,
+            KnownMembers = authorizations
+                .OrderBy(row => row.AuthorizationId)
+                .Select(row => new AccountDeletionKnownMember
+                {
+                    AuthorizationId = row.AuthorizationId,
+                    DeviceId = row.DeviceId,
+                    OriginInstanceId = row.OriginInstanceId,
+                    StartedMembershipEpoch = row.StartedMembershipEpoch,
+                    EndedMembershipEpoch = row.EndedMembershipEpoch,
+                    MinimumKeyEpoch = row.MinimumKeyEpoch,
+                    MaximumKeyEpoch = row.MaximumKeyEpoch,
+                    SignPublicKeyHash = row.SignPublicKeyHash.ToArray(),
+                    AdditionOperationId = row.AdditionOperationId,
+                    RemovalOperationId = row.RemovalOperationId
+                })
+                .ToList()
+        };
+        FinalizeAccountDeletionPayload(payload);
+        return payload;
+    }
+
+    public static void FinalizeAccountDeletionPayload(AccountDeletionPayload payload)
+    {
+        payload.MembershipHistoryHash = CalculateAccountDeletionMembershipHistoryHash(payload.KnownMembers);
+        payload.IntegrityHash = CalculateAccountDeletionPayloadIntegrityHash(payload);
+        ValidateAccountDeletionPayload(payload);
+    }
+
+    public static void ValidateAccountDeletionPayload(AccountDeletionPayload payload)
+    {
+        if (payload.UserId == Guid.Empty || payload.DeletionGeneration == Guid.Empty ||
+            payload.KeyEpoch <= 0 || payload.MembershipEpoch <= 0 ||
+            payload.KnownMembers.Count == 0 ||
+            payload.KnownMembers.Count > SyncConstants.MaxUserControlInventoryEntries ||
+            payload.MembershipHistoryHash.Length != SyncConstants.SyncDeltaPayloadHashBytes ||
+            payload.IntegrityHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
+        {
+            throw new InvalidDataException("The account-deletion identity, epochs, or membership evidence are invalid.");
+        }
+
+        if (payload.KnownMembers.Any(member =>
+                member.AuthorizationId == Guid.Empty || member.DeviceId == Guid.Empty || member.OriginInstanceId == Guid.Empty ||
+                member.StartedMembershipEpoch <= 0 ||
+                (member.EndedMembershipEpoch is long ended && ended <= member.StartedMembershipEpoch) ||
+                member.MinimumKeyEpoch <= 0 ||
+                (member.MaximumKeyEpoch is long maximum && maximum < member.MinimumKeyEpoch) ||
+                member.SignPublicKeyHash.Length != SyncConstants.SyncDeltaPayloadHashBytes) ||
+            payload.KnownMembers.Select(member => member.AuthorizationId).Distinct().Count() != payload.KnownMembers.Count ||
+            payload.KnownMembers.Select(member => (member.DeviceId, member.OriginInstanceId)).Distinct().Count() != payload.KnownMembers.Count)
+        {
+            throw new InvalidDataException("The account-deletion membership evidence is invalid or duplicated.");
+        }
+
+        if (!Hashing.Verify(payload.MembershipHistoryHash, CalculateAccountDeletionMembershipHistoryHash(payload.KnownMembers)) ||
+            !Hashing.Verify(payload.IntegrityHash, CalculateAccountDeletionPayloadIntegrityHash(payload)))
+        {
+            throw new InvalidDataException("The account-deletion payload integrity hash is invalid.");
+        }
+    }
+
     public static DeviceAdditionPayload CreateDeviceAdditionPayload(Guid userId, long keyEpoch, long previousMembershipEpoch, Guid deviceId, Guid originInstanceId, byte[] signPublicKey, byte[] agreementPublicKey, string tlsFingerprint, DeviceType deviceType)
     {
         var payload = new DeviceAdditionPayload
@@ -272,6 +366,46 @@ public static class UserControlOperationEnvelopeUtil
             throw new InvalidDataException("The device-removal origin cutoffs are invalid or duplicated.");
         if (!Hashing.Verify(payload.IntegrityHash, CalculateDeviceRemovalPayloadIntegrityHash(payload)))
             throw new InvalidDataException("The device-removal payload integrity hash is invalid.");
+    }
+
+    private static byte[] CalculateAccountDeletionMembershipHistoryHash(IEnumerable<AccountDeletionKnownMember> members)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write("PasswordManagerLocal.Backend.AccountDeletionMembershipHistory.v1");
+        var ordered = members.OrderBy(member => member.AuthorizationId).ToArray();
+        writer.Write(ordered.Length);
+        foreach (var member in ordered)
+        {
+            writer.Write(member.AuthorizationId.ToByteArray());
+            writer.Write(member.DeviceId.ToByteArray());
+            writer.Write(member.OriginInstanceId.ToByteArray());
+            writer.Write(member.StartedMembershipEpoch);
+            writer.Write(member.EndedMembershipEpoch.HasValue);
+            if (member.EndedMembershipEpoch.HasValue) writer.Write(member.EndedMembershipEpoch.Value);
+            writer.Write(member.MinimumKeyEpoch);
+            writer.Write(member.MaximumKeyEpoch.HasValue);
+            if (member.MaximumKeyEpoch.HasValue) writer.Write(member.MaximumKeyEpoch.Value);
+            SyncCryptoUtil.WriteBytes(writer, member.SignPublicKeyHash);
+            writer.Write(member.AdditionOperationId.HasValue);
+            if (member.AdditionOperationId.HasValue) writer.Write(member.AdditionOperationId.Value.ToByteArray());
+            writer.Write(member.RemovalOperationId.HasValue);
+            if (member.RemovalOperationId.HasValue) writer.Write(member.RemovalOperationId.Value.ToByteArray());
+        }
+        return Hashing.SHA256Hash(stream.ToArray());
+    }
+
+    private static byte[] CalculateAccountDeletionPayloadIntegrityHash(AccountDeletionPayload payload)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write("PasswordManagerLocal.Backend.AccountDeletionPayload.v1");
+        writer.Write(payload.UserId.ToByteArray());
+        writer.Write(payload.DeletionGeneration.ToByteArray());
+        writer.Write(payload.KeyEpoch);
+        writer.Write(payload.MembershipEpoch);
+        SyncCryptoUtil.WriteBytes(writer, payload.MembershipHistoryHash);
+        return Hashing.SHA256Hash(stream.ToArray());
     }
 
     private static byte[] CalculateDeviceAdditionPayloadIntegrityHash(DeviceAdditionPayload payload)
@@ -384,7 +518,14 @@ public static class UserControlOperationEnvelopeUtil
             case UserControlOperationType.MembershipChange:
                 throw new InvalidDataException("The obsolete generic membership operation is not supported.");
             case UserControlOperationType.AccountDeletion:
-                throw new InvalidDataException("Account deletion is not enabled until a permanent signed deletion barrier is implemented.");
+                if (envelope.PreviousKeyEpoch <= 0 ||
+                    envelope.ResultingKeyEpoch != envelope.PreviousKeyEpoch ||
+                    envelope.PreviousMembershipEpoch <= 0 ||
+                    envelope.ResultingMembershipEpoch != envelope.PreviousMembershipEpoch)
+                {
+                    throw new InvalidDataException("Account deletion must preserve the final key and membership epochs in its signed header.");
+                }
+                break;
             default:
                 throw new InvalidDataException("The control-operation type is unsupported.");
         }

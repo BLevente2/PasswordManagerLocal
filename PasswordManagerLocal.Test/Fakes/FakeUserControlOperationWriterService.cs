@@ -2,6 +2,7 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 using System.Security.Cryptography;
@@ -14,17 +15,26 @@ public sealed class FakeUserControlOperationWriterService : IUserControlOperatio
     private readonly IUserDeviceRepository _userDevices;
     private readonly IUserMembershipAuthorizationRepository _authorizations;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
+    private readonly IUserControlOperationRepository _operations;
+    private readonly IUserControlStateRepository _states;
+    private readonly IDeviceIdentityService _identity;
 
     public FakeUserControlOperationWriterService(
         IUserRepository users,
         IUserDeviceRepository userDevices,
         IUserMembershipAuthorizationRepository authorizations,
-        IUserMembershipAuthorizationService membershipAuthorization)
+        IUserMembershipAuthorizationService membershipAuthorization,
+        IUserControlOperationRepository operations,
+        IUserControlStateRepository states,
+        IDeviceIdentityService identity)
     {
         _users = users;
         _userDevices = userDevices;
         _authorizations = authorizations;
         _membershipAuthorization = membershipAuthorization;
+        _operations = operations;
+        _states = states;
+        _identity = identity;
     }
 
     public int Calls { get; private set; }
@@ -77,6 +87,53 @@ public sealed class FakeUserControlOperationWriterService : IUserControlOperatio
         user.MembershipEpoch = payload.ResultingMembershipEpoch;
         user.GenerateIntegrityHash();
         _users.Update(user);
+        return envelope;
+    }
+
+    public async Task<UserControlOperationEnvelope> CreateAppliedAccountDeletionUnderLifecycleAsync(User user, CancellationToken ct = default)
+    {
+        Calls++;
+        var authorizations = await _authorizations.ListForUserAsync(user.UId, ct);
+        var payload = UserControlOperationEnvelopeUtil.CreateAccountDeletionPayload(user, authorizations);
+        var state = await _states.GetAsync(user.UId, ct);
+        if (state is null)
+        {
+            state = new UserControlState
+            {
+                UserId = user.UId,
+                LocalOriginInstanceId = _identity.OriginInstanceId,
+                NextOriginSequence = 1,
+                AppliedKeyEpoch = user.KeyEpoch,
+                AppliedMembershipEpoch = user.MembershipEpoch,
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+            await _states.AddAsync(state, ct);
+        }
+
+        var envelope = new UserControlOperationEnvelope
+        {
+            OperationId = Guid.NewGuid(),
+            UserId = user.UId,
+            OperationType = UserControlOperationType.AccountDeletion,
+            OriginDeviceId = _identity.LocalDeviceId,
+            OriginInstanceId = _identity.OriginInstanceId,
+            OriginSequence = state.NextOriginSequence,
+            PreviousKeyEpoch = user.KeyEpoch,
+            ResultingKeyEpoch = user.KeyEpoch,
+            PreviousMembershipEpoch = user.MembershipEpoch,
+            ResultingMembershipEpoch = user.MembershipEpoch,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            OperationPayload = UserControlOperationEnvelopeUtil.SerializeAccountDeletionPayload(payload)
+        };
+        UserControlOperationEnvelopeUtil.FillOriginAuthentication(envelope, _identity);
+        state.NextOriginSequence++;
+        state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+        _states.Update(state);
+        await _operations.AddAsync(UserControlOperationWriterService.CreateRow(
+            envelope,
+            UserControlOperationEnvelopeUtil.Serialize(envelope),
+            UserControlOperationStatus.Applied,
+            null), ct);
         return envelope;
     }
 

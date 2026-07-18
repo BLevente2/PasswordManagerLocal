@@ -308,7 +308,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             UserSnapshotReceiptStateProto.UserSnapshotReceiptReplacedOlderPending or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptAlreadyStored or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptMergedImmediately or
-            UserSnapshotReceiptStateProto.UserSnapshotReceiptObsoleteRevision;
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptObsoleteRevision or
+            UserSnapshotReceiptStateProto.UserSnapshotReceiptRejectedAccountDeleted;
 
 
     private static bool IsDurableControlOperationReceipt(UserControlOperationReceiptStateProto state) =>

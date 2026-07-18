@@ -17,6 +17,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
     private readonly IUserLifecycleCoordinator _lifecycle;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
     public UserSnapshotPublisherService(
         IUserSyncSnapshotRepository snapshots,
@@ -24,7 +25,8 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         IUserRevisionKnowledgeRepository knowledge,
         IDeviceIdentityService identity,
         IUnitOfWork uow,
-        IUserLifecycleCoordinator lifecycle)
+        IUserLifecycleCoordinator lifecycle,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _snapshots = snapshots;
         _states = states;
@@ -32,6 +34,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         _identity = identity;
         _uow = uow;
         _lifecycle = lifecycle;
+        _deletionBarriers = deletionBarriers;
     }
 
     public Task<UserSyncSnapshot?> GetLatestAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
@@ -49,6 +52,8 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
     {
         if (user.UId == Guid.Empty)
             throw new InvalidOperationException("Cannot publish a snapshot for an invalid user.");
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(user.UId, ct))
+            throw new InvalidOperationException("Cannot publish a snapshot for a permanently deleted account identity.");
 
         var state = await _states.GetAsync(user.UId, ct);
         var isNewState = state is null;
@@ -185,6 +190,8 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         localKnowledge.LastUpdatedAtUtc = createdAtUtc;
         if (!isNewKnowledge)
             _knowledge.Update(localKnowledge);
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(user.UId, ct))
+            throw new InvalidOperationException("Account deletion won the lifecycle race before snapshot publication committed.");
         await _uow.SaveChangesAsync(ct);
         return row;
     }

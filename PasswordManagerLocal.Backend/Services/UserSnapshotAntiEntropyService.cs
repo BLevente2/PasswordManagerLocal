@@ -27,6 +27,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
     private readonly IOutgoingDeltaBuilderService _deltaBuilder;
     private readonly IDeviceIdentityService _identity;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
     public UserSnapshotAntiEntropyService(
         IUserRepository users,
@@ -37,7 +38,8 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         IDeviceRepository devices,
         IOutgoingDeltaBuilderService deltaBuilder,
         IDeviceIdentityService identity,
-        IUserMembershipAuthorizationService membershipAuthorization)
+        IUserMembershipAuthorizationService membershipAuthorization,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _users = users;
         _userDevices = userDevices;
@@ -48,6 +50,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         _deltaBuilder = deltaBuilder;
         _identity = identity;
         _membershipAuthorization = membershipAuthorization;
+        _deletionBarriers = deletionBarriers;
     }
 
     public async Task<UserSnapshotInventoryExchangeRequest> BuildInventoryAsync(
@@ -303,6 +306,9 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
             var originDeviceId = ParseGuid(request.OriginDeviceId, "origin device");
             var originInstanceId = ParseGuid(request.OriginInstanceId, "origin instance");
             ValidateRequest(request);
+
+            if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
+                throw new InvalidDataException("The requested account identity is permanently deleted; ordinary snapshots are no longer relayable.");
 
             var requestKey = (userId, originDeviceId, originInstanceId, request.UserKeyEpoch, request.OriginRevision);
             if (!seen.Add(requestKey))

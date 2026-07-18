@@ -36,6 +36,7 @@ public class AppDbContext : DbContext
     public DbSet<UserMembershipAuthorization> UserMembershipAuthorizations => Set<UserMembershipAuthorization>();
     public DbSet<UserOriginRemovalCutoff> UserOriginRemovalCutoffs => Set<UserOriginRemovalCutoff>();
     public DbSet<DeviceEnrollmentCommit> DeviceEnrollmentCommits => Set<DeviceEnrollmentCommit>();
+    public DbSet<DeletedUserBarrier> DeletedUserBarriers => Set<DeletedUserBarrier>();
 
     public override int SaveChanges()
     {
@@ -61,8 +62,32 @@ public class AppDbContext : DbContext
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
+
+    private void ValidateNoDeletedUserResurrection()
+    {
+        var mutableUserIds = ChangeTracker.Entries<User>()
+            .Where(entry => entry.State is EntityState.Added or EntityState.Modified)
+            .Select(entry => entry.Entity.UId)
+            .Where(userId => userId != Guid.Empty)
+            .Distinct()
+            .ToList();
+        if (mutableUserIds.Count == 0)
+            return;
+
+        var trackedBarrierIds = ChangeTracker.Entries<DeletedUserBarrier>()
+            .Where(entry => entry.State != EntityState.Deleted)
+            .Select(entry => entry.Entity.UserId)
+            .ToHashSet();
+        if (mutableUserIds.Any(trackedBarrierIds.Contains) ||
+            DeletedUserBarriers.AsNoTracking().Any(barrier => mutableUserIds.Contains(barrier.UserId)))
+        {
+            throw new InvalidOperationException("A permanent account-deletion barrier prevents recreating or updating this user identity.");
+        }
+    }
+
     private void GenerateDerivedValuesAndRelationshipIntegrityHashes()
     {
+        ValidateNoDeletedUserResurrection();
         NormalizeTrackedUtcDateTimes();
 
         foreach (var entry in ChangeTracker.Entries<Device>()
@@ -352,6 +377,27 @@ public class AppDbContext : DbContext
         removalCutoff.Property(row => row.ResultingMembershipEpoch).IsRequired();
         removalCutoff.HasIndex(row => new { row.UserId, row.DeviceId, row.OriginInstanceId, row.UserKeyEpoch }).IsUnique();
         removalCutoff.HasIndex(row => new { row.UserId, row.RemovalOperationId });
+
+        var deletedUserBarrier = model.Entity<DeletedUserBarrier>();
+        deletedUserBarrier.ToTable("DeletedUserBarriers");
+        deletedUserBarrier.HasKey(barrier => barrier.UserId);
+        deletedUserBarrier.Property(barrier => barrier.DeletionOperationId).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.DeletionGeneration).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.OriginDeviceId).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.OriginInstanceId).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.OriginSequence).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.KeyEpoch).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.MembershipEpoch).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.DeletedAtUtc).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.AppliedAtUtc).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.LastUpdatedAtUtc).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.OperationHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes).IsConcurrencyToken();
+        deletedUserBarrier.Property(barrier => barrier.OriginSignPublicKey).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519PublicKeyBytes);
+        deletedUserBarrier.Property(barrier => barrier.OriginSignature).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519SignatureBytes);
+        deletedUserBarrier.Property(barrier => barrier.HasConflict).IsRequired();
+        deletedUserBarrier.Property(barrier => barrier.ConflictingOperationHash).HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        deletedUserBarrier.HasIndex(barrier => barrier.DeletionOperationId).IsUnique();
+        deletedUserBarrier.HasIndex(barrier => new { barrier.OriginDeviceId, barrier.OriginInstanceId, barrier.OriginSequence });
 
         var enrollmentCommit = model.Entity<DeviceEnrollmentCommit>();
         enrollmentCommit.ToTable("DeviceEnrollmentCommits");

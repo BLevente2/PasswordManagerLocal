@@ -41,7 +41,7 @@ public sealed class SyncAuthorizationServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
-    public async Task CanSendDeletedUser_AllowsDeletionToNonLocalTargetEvenIfRouteWasRemoved()
+    public async Task CanSendGenericDeletedUser_IsRejectedEvenIfRouteWasRemoved()
     {
         var setup = CreateSetup();
         var item = new SyncItem
@@ -51,7 +51,7 @@ public sealed class SyncAuthorizationServiceTests
             ChangeType = SyncChangeType.Deleted
         };
 
-        MSTestAssert.IsTrue(await setup.Service.CanSendAsync(item, Guid.NewGuid()));
+        MSTestAssert.IsFalse(await setup.Service.CanSendAsync(item, Guid.NewGuid()));
         MSTestAssert.IsFalse(await setup.Service.CanSendAsync(item, setup.Identity.LocalDeviceId));
     }
 

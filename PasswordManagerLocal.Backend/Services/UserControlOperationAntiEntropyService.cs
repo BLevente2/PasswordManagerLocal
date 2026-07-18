@@ -16,19 +16,22 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
     private readonly ISyncRouteRepository _routes;
     private readonly IOutgoingDeltaBuilderService _deltaBuilder;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserMembershipAuthorizationRepository? _membershipHistory;
 
     public UserControlOperationAntiEntropyService(
         IUserControlOperationRepository operations,
         IDeviceRepository devices,
         ISyncRouteRepository routes,
         IOutgoingDeltaBuilderService deltaBuilder,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserMembershipAuthorizationRepository? membershipHistory = null)
     {
         _operations = operations;
         _devices = devices;
         _routes = routes;
         _deltaBuilder = deltaBuilder;
         _identity = identity;
+        _membershipHistory = membershipHistory;
     }
 
     public async Task<UserControlOperationInventoryExchangeRequest> BuildInventoryAsync(
@@ -38,7 +41,18 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
         await ValidatePeerAsync(peerDeviceId, ct);
         var rows = await _operations.ListAllRelayableAsync(ct);
         var rowsByUser = rows.GroupBy(operation => operation.UserId).ToDictionary(group => group.Key);
-        var eligibleUserIds = await _routes.ListAllEligibleUserIdsAsync(peerDeviceId, ct);
+        var activeUserIds = (await _routes.ListAllEligibleUserIdsAsync(peerDeviceId, ct)).ToHashSet();
+        IReadOnlyList<Guid> historicalUserIds = _membershipHistory is null
+            ? Array.Empty<Guid>()
+            : await _membershipHistory.ListUserIdsForDeviceAsync(peerDeviceId, ct);
+        // Historical authorization alone is enough to advertise an empty control-plane inventory.
+        // That lets a device which has no canonical User row yet discover and request a deletion
+        // operation from a relay without exposing unrelated account identities.
+        var eligibleUserIds = activeUserIds
+            .Concat(historicalUserIds)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToList();
         if (eligibleUserIds.Count > SyncConstants.MaxUserControlInventoryUsers)
             throw new InvalidOperationException("The control-operation inventory user limit was reached.");
 
@@ -49,7 +63,11 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             var userInventory = new UserControlOperationUserInventory { UserId = userId.ToString("N") };
             if (rowsByUser.TryGetValue(userId, out var group))
             {
-                foreach (var row in group.OrderBy(operation => operation.OriginDeviceId)
+                foreach (var row in group
+                             .Where(operation => activeUserIds.Contains(userId) ||
+                                                 (operation.OperationType == UserControlOperationType.AccountDeletion &&
+                                                  operation.Status == UserControlOperationStatus.Applied))
+                             .OrderBy(operation => operation.OriginDeviceId)
                              .ThenBy(operation => operation.OriginInstanceId)
                              .ThenBy(operation => operation.OriginSequence))
                 {
@@ -180,11 +198,16 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             var userId = ParseGuid(request.UserId, "user");
             if (!seenIds.Add(operationId))
                 throw new InvalidDataException("The same control operation was requested more than once.");
-            if (!await _routes.IsEligibleAsync(userId, peerDeviceId, ct))
-                throw new UnauthorizedAccessException("The peer is not authorized for the requested control operation.");
 
             var row = await _operations.GetByIdAsync(operationId, ct)
                 ?? throw new InvalidDataException("The requested control operation is not retained locally.");
+            var routeEligible = await _routes.IsEligibleAsync(userId, peerDeviceId, ct);
+            var historicalDeletionEligible = row.OperationType == UserControlOperationType.AccountDeletion &&
+                row.Status == UserControlOperationStatus.Applied &&
+                _membershipHistory is not null &&
+                await _membershipHistory.HasHistoricalAuthorizationAsync(userId, peerDeviceId, ct);
+            if (!routeEligible && !historicalDeletionEligible)
+                throw new UnauthorizedAccessException("The peer is not authorized for the requested control operation.");
             if (row.UserId != userId || row.Status is UserControlOperationStatus.Rejected or UserControlOperationStatus.Quarantined)
                 throw new InvalidDataException("The requested control operation is not relayable.");
             if (!RequestMatchesRow(request, row))
@@ -277,7 +300,10 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             ResultingMembershipEpoch = row.ResultingMembershipEpoch,
             OperationHash = ByteString.CopyFrom(row.OperationHash),
             Quarantined = row.Status == UserControlOperationStatus.Quarantined,
-            ConflictingOperationHash = ByteString.CopyFrom(row.ConflictingOperationHash ?? [])
+            ConflictingOperationHash = ByteString.CopyFrom(
+                row.Status == UserControlOperationStatus.Quarantined
+                    ? row.ConflictingOperationHash ?? []
+                    : [])
         };
 
     private static UserControlOperationRequest ToRequest(Guid userId, UserControlOperationInventoryEntry entry) =>

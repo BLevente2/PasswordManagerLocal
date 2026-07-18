@@ -72,33 +72,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         var sourceDevice = validated.SourceDevice;
         var payload = validated.Payload;
 
-        if (await _lifecycle.TryAcknowledgeAlreadyDeletedUserAsync(payload, sourceDevice, delta.Ts, ct))
-        {
-            await _uow.SaveChangesAsync(ct);
-            var deletedUserReceipt = payload.UserSnapshot is null
-                ? null
-                : new UserSnapshotReceiptResult(
-                    payload.UserSnapshot.UserId,
-                    payload.UserSnapshot.OriginDeviceId,
-                    payload.UserSnapshot.OriginInstanceId,
-                    payload.UserSnapshot.OriginRevision,
-                    payload.UserSnapshot.SnapshotHash.ToArray(),
-                    UserSnapshotReceiptState.ObsoleteRevision,
-                    "The account was authoritatively deleted locally; the ordinary snapshot cannot recreate it.");
-            var deletedControlReceipt = payload.UserControlOperation is null
-                ? null
-                : new UserControlOperationReceiptResult(
-                    payload.UserControlOperation.OperationId,
-                    payload.UserControlOperation.UserId,
-                    payload.UserControlOperation.OriginDeviceId,
-                    payload.UserControlOperation.OriginInstanceId,
-                    payload.UserControlOperation.OriginSequence,
-                    payload.UserControlOperation.OperationHash.ToArray(),
-                    UserControlOperationReceiptState.Obsolete,
-                    "The account was authoritatively deleted locally; an earlier control operation cannot recreate it.");
-            return new NetworkDeltaApplyResult(delta.Ts, deletedUserReceipt, deletedControlReceipt);
-        }
-
         await _protocol.ValidateSourceAuthorizationAsync(sourceDevice, payload, ct);
 
         if (payload.UserControlOperation is not null)
@@ -163,7 +136,8 @@ public sealed class NetworkDeltaService : INetworkDeltaService
             UserSnapshotReceiptState.StoredPending or
             UserSnapshotReceiptState.ReplacedOlderPending or
             UserSnapshotReceiptState.AlreadyStored or
-            UserSnapshotReceiptState.ObsoleteRevision;
+            UserSnapshotReceiptState.ObsoleteRevision or
+            UserSnapshotReceiptState.RejectedAccountDeleted;
         if (!durable)
             return new NetworkDeltaApplyResult(transportTimestamp, receipt);
 

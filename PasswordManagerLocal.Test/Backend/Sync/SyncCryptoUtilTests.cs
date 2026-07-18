@@ -145,11 +145,11 @@ public sealed class SyncCryptoUtilTests
             Group = new GroupSyncPayload()
         }));
 
-        SyncCryptoUtil.ValidatePayloadShape(new SyncDeltaPayload
+        ExpectThrows<InvalidDataException>(() => SyncCryptoUtil.ValidatePayloadShape(new SyncDeltaPayload
         {
             ModelType = SyncModelType.User,
             ChangeType = SyncChangeType.Deleted
-        });
+        }));
     }
 
     [TestMethod]

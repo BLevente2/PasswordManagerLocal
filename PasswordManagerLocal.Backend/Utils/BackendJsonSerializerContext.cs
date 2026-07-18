@@ -22,4 +22,5 @@ namespace PasswordManagerLocal.Backend.Utils;
 [JsonSerializable(typeof(KeyEpochReplacementPayload), TypeInfoPropertyName = "KeyEpochReplacementPayload")]
 [JsonSerializable(typeof(DeviceAdditionPayload), TypeInfoPropertyName = "DeviceAdditionPayload")]
 [JsonSerializable(typeof(DeviceRemovalPayload), TypeInfoPropertyName = "DeviceRemovalPayload")]
+[JsonSerializable(typeof(AccountDeletionPayload), TypeInfoPropertyName = "AccountDeletionPayload")]
 internal partial class BackendJsonSerializerContext : JsonSerializerContext;

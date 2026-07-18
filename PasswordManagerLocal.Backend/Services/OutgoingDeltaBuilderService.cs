@@ -225,6 +225,9 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
 
     private async Task<SyncDeltaPayload> BuildPayloadAsync(SyncItem item, Guid targetDeviceId, long timestamp, CancellationToken ct)
     {
+        if (item.ModelType == SyncModelType.User && item.ChangeType == SyncChangeType.Deleted)
+            throw new InvalidOperationException("Generic user-deletion deltas are disabled; relay the signed AccountDeletion control operation.");
+
         var payload = new SyncDeltaPayload
         {
             ModelId = item.ModelId,

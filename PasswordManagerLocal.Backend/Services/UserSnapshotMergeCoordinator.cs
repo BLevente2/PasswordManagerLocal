@@ -21,6 +21,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
     private readonly IPendingSyncActivationService _activation;
     private readonly IUnitOfWork _uow;
     private readonly IUserLifecycleCoordinator _lifecycle;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
     public UserSnapshotMergeCoordinator(
         IUserRepository users,
@@ -32,7 +33,8 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         ISyncQueueWriterService queueWriter,
         IPendingSyncActivationService activation,
         IUnitOfWork uow,
-        IUserLifecycleCoordinator lifecycle)
+        IUserLifecycleCoordinator lifecycle,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _users = users;
         _membershipAuthorization = membershipAuthorization;
@@ -44,6 +46,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _activation = activation;
         _uow = uow;
         _lifecycle = lifecycle;
+        _deletionBarriers = deletionBarriers;
     }
 
     public Task<bool> TryMergePendingAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
@@ -54,7 +57,15 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
 
     private async Task<bool> TryMergePendingCoreAsync(Guid userId, EncryptionKey key, CancellationToken ct)
     {
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
+            return false;
+
         await using var transaction = await _uow.BeginTransactionAsync(ct);
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
         var user = await _users.GetByIdWithRelationsAsync(userId, ct);
         if (user is null)
         {
@@ -149,6 +160,13 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         // local snapshot to omit the exact remote revisions it had just merged.
         await _uow.SaveChangesAsync(ct);
 
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
+        {
+            await transaction.RollbackAsync(ct);
+            _uow.ClearTrackedChanges();
+            return false;
+        }
+
         var localSnapshot = await _publisher.GetOrCreateAsync(user, ct);
 
         await _queueWriter.EnqueueAsync(
@@ -166,6 +184,12 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             ct);
 
         _snapshots.DeleteRange(mergedRows);
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
+        {
+            await transaction.RollbackAsync(ct);
+            _uow.ClearTrackedChanges();
+            return false;
+        }
         await _uow.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         try

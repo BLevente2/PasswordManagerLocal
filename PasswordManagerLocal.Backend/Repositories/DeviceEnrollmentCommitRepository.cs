@@ -16,8 +16,19 @@ public sealed class DeviceEnrollmentCommitRepository : IDeviceEnrollmentCommitRe
         _rows.FirstOrDefaultAsync(row => row.UserId == userId && row.TargetDeviceId == targetDeviceId && row.TargetOriginInstanceId == targetOriginInstanceId &&
             row.Status != DeviceEnrollmentCommitStatus.Revoked, ct);
 
-    public async Task<IReadOnlyList<DeviceEnrollmentCommit>> ListForUserAsync(Guid userId, CancellationToken ct = default) =>
-        await _rows.Where(row => row.UserId == userId).OrderByDescending(row => row.CreatedAtUtc).ToListAsync(ct);
+    public async Task<IReadOnlyList<DeviceEnrollmentCommit>> ListForUserAsync(Guid userId, CancellationToken ct = default)
+    {
+        // SQLite cannot translate ORDER BY for DateTimeOffset. Enrollment rows per user
+        // are bounded, so filter in SQL and sort deterministically in memory.
+        var rows = await _rows
+            .Where(row => row.UserId == userId)
+            .ToListAsync(ct);
+
+        return rows
+            .OrderByDescending(row => row.CreatedAtUtc)
+            .ThenBy(row => row.CommitId)
+            .ToList();
+    }
 
     public Task AddAsync(DeviceEnrollmentCommit commit, CancellationToken ct = default) => _rows.AddAsync(commit, ct).AsTask();
     public void Update(DeviceEnrollmentCommit commit) => _rows.Update(commit);

@@ -24,6 +24,8 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
     private readonly ISyncAuthorizationService _authorization;
     private readonly IDeviceIdentityService _identity;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
+    private readonly IUserMembershipAuthorizationRepository? _membershipHistory;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
     private static readonly string[] SensitiveLocalOnlyPropertyNames =
     [
@@ -45,7 +47,9 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
         IUserDeviceRepository userDevices,
         ISyncAuthorizationService authorization,
         IDeviceIdentityService identity,
-        IUserMembershipAuthorizationService membershipAuthorization)
+        IUserMembershipAuthorizationService membershipAuthorization,
+        IUserMembershipAuthorizationRepository? membershipHistory = null,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _devices = devices;
         _groups = groups;
@@ -53,6 +57,8 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
         _authorization = authorization;
         _identity = identity;
         _membershipAuthorization = membershipAuthorization;
+        _membershipHistory = membershipHistory;
+        _deletionBarriers = deletionBarriers;
     }
 
     public async Task<ValidatedNetworkDelta> ValidateAndReadAsync(NetworkDelta delta, CancellationToken ct = default)
@@ -175,6 +181,16 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
     {
         if (payload.ModelType == SyncModelType.User)
         {
+            var isDeletionOperation = payload.UserControlOperation?.OperationType == UserControlOperationType.AccountDeletion;
+            var isDeletedLocally = _deletionBarriers is not null && await _deletionBarriers.ExistsAsync(payload.ModelId, ct);
+            if (isDeletionOperation || isDeletedLocally)
+            {
+                if (_membershipHistory is null ||
+                    !await _membershipHistory.HasHistoricalAuthorizationAsync(payload.ModelId, sourceDevice.Id, ct))
+                    throw new UnauthorizedAccessException("The relay device was never authorized for this account identity.");
+                return;
+            }
+
             if (!await _userDevices.HasActiveLinkAsync(payload.ModelId, sourceDevice.Id, ct))
                 throw new UnauthorizedAccessException("Transport peer cannot synchronize this user.");
 

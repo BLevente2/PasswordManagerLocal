@@ -63,6 +63,9 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
     public Task<UserControlOperationEnvelope> CreateAppliedDeviceRemovalUnderLifecycleAsync(User canonicalUser, DeviceRemovalPayload payload, CancellationToken ct = default) =>
         CreateAppliedDeviceRemovalCoreAsync(canonicalUser, payload, ct);
 
+    public Task<UserControlOperationEnvelope> CreateAppliedAccountDeletionUnderLifecycleAsync(User canonicalUser, CancellationToken ct = default) =>
+        CreateAppliedAccountDeletionCoreAsync(canonicalUser, ct);
+
     private async Task<UserControlOperationEnvelope> CreateAppliedKeyEpochReplacementCoreAsync(User user, long previousKeyEpoch, CancellationToken ct)
     {
         if (user.KeyEpoch != checked(previousKeyEpoch + 1))
@@ -183,6 +186,39 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         _users.Update(user);
         state.AppliedMembershipEpoch = user.MembershipEpoch;
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+        await _uow.SaveChangesAsync(ct);
+        return envelope;
+    }
+
+    private async Task<UserControlOperationEnvelope> CreateAppliedAccountDeletionCoreAsync(User user, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        if (user.UId == Guid.Empty || user.KeyEpoch <= 0 || user.MembershipEpoch <= 0)
+            throw new InvalidOperationException("The canonical account identity or epochs are invalid.");
+        if ((await _operations.ListForUserAsync(user.UId, ct))
+            .Any(operation => operation.OperationType == UserControlOperationType.AccountDeletion &&
+                              operation.Status != UserControlOperationStatus.Rejected))
+        {
+            throw new InvalidOperationException("An authoritative account-deletion operation already exists for this user identity.");
+        }
+
+        await RequireLocalAuthorActiveAsync(user, user.KeyEpoch, user.MembershipEpoch, ct);
+        var authorizations = await _authorizationRows.ListForUserAsync(user.UId, ct);
+        if (authorizations.Count == 0)
+            throw new InvalidOperationException("Account deletion requires retained membership authorization history.");
+
+        var state = await GetOrCreateStateAsync(user, user.KeyEpoch, user.MembershipEpoch, ct);
+        var payload = UserControlOperationEnvelopeUtil.CreateAccountDeletionPayload(user, authorizations);
+        var envelope = CreateEnvelope(
+            user,
+            state,
+            UserControlOperationType.AccountDeletion,
+            user.KeyEpoch,
+            user.KeyEpoch,
+            user.MembershipEpoch,
+            user.MembershipEpoch,
+            UserControlOperationEnvelopeUtil.SerializeAccountDeletionPayload(payload));
+        await PersistAppliedEnvelopeAsync(envelope, state, ct);
         await _uow.SaveChangesAsync(ct);
         return envelope;
     }

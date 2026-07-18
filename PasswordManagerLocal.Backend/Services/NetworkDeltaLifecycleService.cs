@@ -31,6 +31,8 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IAuthService _auth;
     private readonly IUnitOfWork _uow;
+    private readonly IUserControlOperationRepository? _controlOperations;
+    private readonly IUserMembershipAuthorizationRepository? _membershipAuthorizations;
 
     public NetworkDeltaLifecycleService(
         IUserRepository users,
@@ -45,7 +47,9 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         ISyncAuthorizationService authorization,
         ISyncRuntimeService syncRuntime,
         IAuthService auth,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserControlOperationRepository? controlOperations = null,
+        IUserMembershipAuthorizationRepository? membershipAuthorizations = null)
     {
         _users = users;
         _devices = devices;
@@ -60,6 +64,8 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         _syncRuntime = syncRuntime;
         _auth = auth;
         _uow = uow;
+        _controlOperations = controlOperations;
+        _membershipAuthorizations = membershipAuthorizations;
     }
 
     public async Task BeforeSaveAsync(
@@ -69,17 +75,11 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         long ts,
         CancellationToken ct = default)
     {
-        var deletesUserProfile = SyncPayloadRules.IsDeletedUserPayload(payload);
-
         if (!SyncPayloadRules.DeletesSourceDevice(payload, sourceDevice) &&
-            !SyncPayloadRules.DeletesLocalUserProfile(payload, _identity) &&
-            !deletesUserProfile)
+            !SyncPayloadRules.DeletesLocalUserProfile(payload, _identity))
         {
             await TouchSourceDeviceAsync(sourceDevice, ct);
         }
-
-        if (applied && deletesUserProfile)
-            await CleanupSourceDeviceAfterUserDeletionAsync(payload.ModelId, sourceDevice, ct);
     }
 
     public async Task AfterSaveAsync(
@@ -89,11 +89,8 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         long ts,
         CancellationToken ct = default)
     {
-        if (SyncPayloadRules.DeletesLocalUserProfile(payload, _identity) ||
-            (payload.ModelType == SyncModelType.User && payload.ChangeType == SyncChangeType.Deleted))
-        {
+        if (SyncPayloadRules.DeletesLocalUserProfile(payload, _identity))
             await _syncRuntime.RefreshSyncEnabledAsync(ct);
-        }
 
         if (applied)
             await RefreshAffectedSessionCachesAsync(payload, ct);
@@ -119,51 +116,11 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         if (payload.ModelType != SyncModelType.User)
             return;
 
-        if (payload.ChangeType == SyncChangeType.Deleted)
-        {
-            _auth.LogoutUser(payload.ModelId, AuthSessionInvalidationReason.ProfileRemoved);
-            return;
-        }
-
         var user = await _users.GetByIdWithRelationsAsync(payload.ModelId, ct);
         if (user is null)
             return;
 
         await _auth.RefreshSyncedUserSessionsAsync(user, ct);
-    }
-
-
-    public async Task<bool> TryAcknowledgeAlreadyDeletedUserAsync(SyncDeltaPayload payload, Device sourceDevice, long ts, CancellationToken ct)
-    {
-        if (!SyncPayloadRules.IsDeletedUserPayload(payload))
-            return false;
-
-        var existing = await _users.GetByIdAsync(payload.ModelId, ct);
-        if (existing is not null)
-            return false;
-
-        var tombstone = await _tombstones.GetAsync(payload.ModelId, SyncModelType.User, ct);
-        if (tombstone is null)
-            return false;
-
-        if (ts > tombstone.DeletedAtTs)
-            await _tombstones.UpsertAsync(payload.ModelId, SyncModelType.User, ts, ct);
-
-        await CleanupSourceDeviceAfterUserDeletionAsync(payload.ModelId, sourceDevice, ct);
-        return true;
-    }
-
-
-    private async Task CleanupSourceDeviceAfterUserDeletionAsync(Guid deletedUserId, Device sourceDevice, CancellationToken ct)
-    {
-        if (await _userDevices.HasAnyActiveLinkForDeviceExceptUserAsync(sourceDevice.Id, deletedUserId, ct))
-        {
-            await TouchSourceDeviceAsync(sourceDevice, ct);
-            return;
-        }
-
-        _syncDeviceIdentities.TryRemove(sourceDevice);
-        _devices.Delete(sourceDevice);
     }
 
 
@@ -218,11 +175,25 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         if (!device.IsTrusted || device.IsBlocked)
             return;
 
-        if (!await _authorization.HasEligibleUserForDeviceAsync(device.Id, ct))
-            return;
+        var hasOrdinaryWork =
+            await _authorization.HasEligibleUserForDeviceAsync(device.Id, ct) &&
+            await _syncQueue.HasPendingForDeviceAsync(device.Id, ct);
 
-        if (await _syncQueue.HasPendingForDeviceAsync(device.Id, ct))
+        if (hasOrdinaryWork || await HasAccountDeletionRelayWorkAsync(device.Id, ct))
             _syncDeviceIdentities.TryAdd(device);
+    }
+
+    private async Task<bool> HasAccountDeletionRelayWorkAsync(Guid deviceId, CancellationToken ct)
+    {
+        if (_controlOperations is null || _membershipAuthorizations is null)
+            return false;
+
+        var deletedUserIds = await _controlOperations.ListAppliedAccountDeletionUserIdsAsync(ct);
+        if (deletedUserIds.Count == 0)
+            return false;
+
+        var historicalUserIds = await _membershipAuthorizations.ListUserIdsForDeviceAsync(deviceId, ct);
+        return historicalUserIds.Any(userId => deletedUserIds.Contains(userId));
     }
 
 

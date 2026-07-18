@@ -5,7 +5,7 @@ public static class SyncConstants
     public const string PFXPassword = "";
 
     public const int SyncPort = 26688;
-    public const int SyncProtocolVersion = 5;
+    public const int SyncProtocolVersion = 6;
     public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
     public const int LocalDiscoveryPort = 26689;
     public const int LocalDiscoveryProtocolVersion = 2;

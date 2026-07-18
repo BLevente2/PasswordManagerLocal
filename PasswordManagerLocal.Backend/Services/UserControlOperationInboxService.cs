@@ -24,6 +24,9 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
     private readonly ILocalUserDeviceRepository _localUsers;
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncRuntimeService _syncRuntime;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
+    private readonly IUserAccountDeletionCleanupService? _deletionCleanup;
+    private readonly IDeviceEnrollmentService? _enrollment;
 
     public UserControlOperationInboxService(
         IUserControlOperationRepository operations,
@@ -39,7 +42,10 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         IUserMembershipAuthorizationRepository authorizationRows,
         ILocalUserDeviceRepository localUsers,
         IDeviceIdentityService identity,
-        ISyncRuntimeService syncRuntime)
+        ISyncRuntimeService syncRuntime,
+        IDeletedUserBarrierRepository? deletionBarriers = null,
+        IUserAccountDeletionCleanupService? deletionCleanup = null,
+        IDeviceEnrollmentService? enrollment = null)
     {
         _operations = operations;
         _states = states;
@@ -55,6 +61,9 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         _localUsers = localUsers;
         _identity = identity;
         _syncRuntime = syncRuntime;
+        _deletionBarriers = deletionBarriers;
+        _deletionCleanup = deletionCleanup;
+        _enrollment = enrollment;
     }
 
     public async Task<UserControlOperationReceiptResult> StoreAndApplyAsync(
@@ -71,8 +80,20 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             async token =>
             {
                 var stored = await StoreCoreAsync(envelope, transportPeerDeviceId, token);
-                if (stored.State is UserControlOperationReceiptState.Quarantined or UserControlOperationReceiptState.Rejected)
+                if (stored.State is UserControlOperationReceiptState.Quarantined or UserControlOperationReceiptState.Rejected or UserControlOperationReceiptState.Obsolete)
                     return stored;
+
+                if (envelope.OperationType == UserControlOperationType.AccountDeletion)
+                {
+                    // A verified barrier was committed with the StoredPending row. Invalidate all
+                    // process-local access before cleanup so any retryable failure remains fail-closed.
+                    _auth.LogoutUser(envelope.UserId, AuthSessionInvalidationReason.ProfileRemoved);
+                    if (_enrollment is not null)
+                    {
+                        try { await _enrollment.CancelEnrollmentAsync(CancellationToken.None); }
+                        catch { }
+                    }
+                }
 
                 return await TryApplyStoredSafelyAsync(envelope.OperationId, token);
             },
@@ -96,9 +117,23 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         Guid transportPeerDeviceId,
         CancellationToken ct)
     {
+        var isAccountDeletion = envelope.OperationType == UserControlOperationType.AccountDeletion;
+        AccountDeletionPayload? deletionPayload = null;
+        if (!isAccountDeletion && _deletionBarriers is not null &&
+            await _deletionBarriers.ExistsAsync(envelope.UserId, ct))
+        {
+            return Receipt(envelope, UserControlOperationReceiptState.Obsolete,
+                "The account identity is permanently deleted; earlier lifecycle operations are obsolete.");
+        }
+
         try
         {
             await _membershipAuthorization.VerifyControlAuthorAsync(envelope, ct);
+            if (isAccountDeletion)
+            {
+                deletionPayload = UserControlOperationEnvelopeUtil.DeserializeAccountDeletionPayload(envelope.OperationPayload);
+                DeletedUserBarrierUtil.ValidateEnvelopePayloadMatch(envelope, deletionPayload);
+            }
         }
         catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException)
         {
@@ -106,7 +141,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         }
 
         var user = await _users.GetByIdAsync(envelope.UserId, ct);
-        if (user is null)
+        if (user is null && !isAccountDeletion)
             return Receipt(envelope, UserControlOperationReceiptState.Rejected, "The canonical account does not exist locally.");
 
         var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
@@ -118,6 +153,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             {
                 await MarkConflictAsync(
                     existing,
+                    envelope.OperationId,
                     envelope.OperationHash,
                     "The same control-operation id was received with a different immutable hash.",
                     ct);
@@ -128,6 +164,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             existing.ReceivedAtUtc = DateTimeOffset.UtcNow;
             existing.LastReceivedFromDeviceId = transportPeerDeviceId;
             _operations.Update(existing);
+            if (isAccountDeletion)
+                await InstallVerifiedDeletionBarrierAsync(envelope, deletionPayload!, ct);
             await _uow.SaveChangesAsync(ct);
             return Receipt(
                 envelope,
@@ -145,6 +183,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         {
             await MarkConflictAsync(
                 sameSequence,
+                envelope.OperationId,
                 envelope.OperationHash,
                 "The same original-author control sequence was received with incompatible content.",
                 ct);
@@ -152,8 +191,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             return Receipt(envelope, UserControlOperationReceiptState.Quarantined, sameSequence.StatusReason);
         }
 
-        var state = await _states.GetAsync(user.UId, ct);
-        if (state?.HasConflict == true)
+        var state = await _states.GetAsync(envelope.UserId, ct);
+        if (!isAccountDeletion && state?.HasConflict == true)
         {
             var reason = state.ConflictReason ?? "The account control plane is quarantined.";
             var quarantined = UserControlOperationWriterService.CreateRow(
@@ -186,7 +225,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();
                 await _operations.AddAsync(incomingConflict, ct);
 
-                state ??= await GetOrCreateStateAsync(user, ct);
+                state ??= await GetOrCreateStateAsync(user!, ct);
                 SetStateConflict(state, envelope.OperationId, envelope.OperationHash, reason);
                 await _uow.SaveChangesAsync(ct);
                 return Receipt(envelope, UserControlOperationReceiptState.Quarantined, reason);
@@ -204,7 +243,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 incomingConflict.StatusReason = reason;
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();
                 await _operations.AddAsync(incomingConflict, ct);
-                state ??= await GetOrCreateStateAsync(user, ct);
+                state ??= await GetOrCreateStateAsync(user!, ct);
                 SetStateConflict(state, envelope.OperationId, envelope.OperationHash, reason);
                 await _uow.SaveChangesAsync(ct);
                 return Receipt(envelope, UserControlOperationReceiptState.Quarantined, reason);
@@ -217,6 +256,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             UserControlOperationStatus.StoredPending,
             transportPeerDeviceId);
         await _operations.AddAsync(incomingRow, ct);
+        if (isAccountDeletion)
+            await InstallVerifiedDeletionBarrierAsync(envelope, deletionPayload!, ct);
         try
         {
             await _uow.SaveChangesAsync(ct);
@@ -224,7 +265,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         }
         catch (DbUpdateException ex)
         {
-            _operations.Detach(incomingRow);
+            _uow.ClearTrackedChanges();
             return await ResolveConcurrentStoreAsync(envelope, transportPeerDeviceId, ex, ct);
         }
     }
@@ -242,6 +283,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             {
                 await MarkConflictAsync(
                     existing,
+                    envelope.OperationId,
                     envelope.OperationHash,
                     "The same control-operation id raced with a different immutable hash.",
                     ct);
@@ -252,6 +294,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             existing.ReceivedAtUtc = DateTimeOffset.UtcNow;
             existing.LastReceivedFromDeviceId = transportPeerDeviceId;
             _operations.Update(existing);
+            if (envelope.OperationType == UserControlOperationType.AccountDeletion)
+            {
+                var payload = UserControlOperationEnvelopeUtil.DeserializeAccountDeletionPayload(envelope.OperationPayload);
+                DeletedUserBarrierUtil.ValidateEnvelopePayloadMatch(envelope, payload);
+                await InstallVerifiedDeletionBarrierAsync(envelope, payload, ct);
+            }
             await _uow.SaveChangesAsync(ct);
             return Receipt(
                 envelope,
@@ -269,6 +317,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         {
             await MarkConflictAsync(
                 sameSequence,
+                envelope.OperationId,
                 envelope.OperationHash,
                 "The same original-author control sequence raced with incompatible content.",
                 ct);
@@ -361,6 +410,41 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             originalException);
     }
 
+    private async Task InstallVerifiedDeletionBarrierAsync(
+        UserControlOperationEnvelope envelope,
+        AccountDeletionPayload payload,
+        CancellationToken ct)
+    {
+        if (_deletionBarriers is null)
+            throw new InvalidOperationException("Authoritative account-deletion barrier storage is not registered.");
+
+        var barrier = await _deletionBarriers.GetAsync(envelope.UserId, ct);
+        if (barrier is null)
+        {
+            await _deletionBarriers.AddAsync(DeletedUserBarrierUtil.Create(envelope, payload, DateTimeOffset.UtcNow), ct);
+            return;
+        }
+
+        if (DeletedUserBarrierUtil.Matches(barrier, envelope))
+            return;
+
+        var previousCanonicalOperationId = barrier.DeletionOperationId;
+        var previousCanonicalOperationHash = barrier.OperationHash.ToArray();
+        var candidateBecomesCanonical = DeletedUserBarrierUtil.CompareCanonical(barrier, envelope) > 0;
+        if (candidateBecomesCanonical)
+            DeletedUserBarrierUtil.ReplaceCanonical(barrier, envelope, payload, DateTimeOffset.UtcNow);
+
+        barrier.HasConflict = true;
+        barrier.ConflictingOperationId = candidateBecomesCanonical
+            ? previousCanonicalOperationId
+            : envelope.OperationId;
+        barrier.ConflictingOperationHash = candidateBecomesCanonical
+            ? previousCanonicalOperationHash
+            : envelope.OperationHash.ToArray();
+        barrier.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+        _deletionBarriers.Update(barrier);
+    }
+
     private async Task<UserControlOperationReceiptResult> TryApplyStoredSafelyAsync(
         Guid operationId,
         CancellationToken ct)
@@ -404,6 +488,19 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             return Receipt(envelope, UserControlOperationReceiptState.Rejected, row.StatusReason);
         }
 
+        if (envelope.OperationType == UserControlOperationType.AccountDeletion)
+            return await ApplyAccountDeletionAsync(row, envelope, transaction, ct);
+
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(row.UserId, ct))
+        {
+            row.Status = UserControlOperationStatus.Rejected;
+            row.StatusReason = "The account identity is permanently deleted; this lifecycle operation is obsolete.";
+            _operations.Update(row);
+            await _uow.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return Receipt(envelope, UserControlOperationReceiptState.Obsolete, row.StatusReason);
+        }
+
         var user = await _users.GetByIdAsync(row.UserId, ct);
         if (user is null)
         {
@@ -415,7 +512,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             return Receipt(envelope, UserControlOperationReceiptState.Rejected, row.StatusReason);
         }
 
-        var state = await GetOrCreateStateAsync(user, ct);
+        var state = await GetOrCreateStateAsync(user!, ct);
         if (state.HasConflict)
         {
             row.Status = UserControlOperationStatus.Quarantined;
@@ -543,6 +640,68 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         // Session and Remember Me effects happen only after canonical replacement commits.
         _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfilePasswordChanged);
         return Receipt(envelope, UserControlOperationReceiptState.Applied);
+    }
+
+    private async Task<UserControlOperationReceiptResult> ApplyAccountDeletionAsync(
+        UserControlOperation row,
+        UserControlOperationEnvelope envelope,
+        Abstractions.Persistence.IUnitOfWorkTransaction transaction,
+        CancellationToken ct)
+    {
+        if (_deletionBarriers is null || _deletionCleanup is null)
+            throw new InvalidOperationException("Authoritative account-deletion services are not registered.");
+
+        var payload = UserControlOperationEnvelopeUtil.DeserializeAccountDeletionPayload(envelope.OperationPayload);
+        DeletedUserBarrierUtil.ValidateEnvelopePayloadMatch(envelope, payload);
+
+        var barrier = await _deletionBarriers.GetAsync(envelope.UserId, ct);
+        string? resultDetail = null;
+        if (barrier is null)
+        {
+            barrier = DeletedUserBarrierUtil.Create(envelope, payload, DateTimeOffset.UtcNow);
+            await _deletionBarriers.AddAsync(barrier, ct);
+        }
+        else if (!DeletedUserBarrierUtil.Matches(barrier, envelope))
+        {
+            // Every independently valid deletion implies the same terminal state. Preserve the
+            // non-canonical operation as explicit fork evidence and choose a deterministic canonical
+            // barrier on every relay device.
+            var previousCanonicalOperationId = barrier.DeletionOperationId;
+            var previousCanonicalOperationHash = barrier.OperationHash.ToArray();
+            var candidateBecomesCanonical = DeletedUserBarrierUtil.CompareCanonical(barrier, envelope) > 0;
+            if (candidateBecomesCanonical)
+                DeletedUserBarrierUtil.ReplaceCanonical(barrier, envelope, payload, DateTimeOffset.UtcNow);
+
+            barrier.HasConflict = true;
+            barrier.ConflictingOperationId = candidateBecomesCanonical
+                ? previousCanonicalOperationId
+                : envelope.OperationId;
+            barrier.ConflictingOperationHash = candidateBecomesCanonical
+                ? previousCanonicalOperationHash
+                : envelope.OperationHash.ToArray();
+            barrier.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+            _deletionBarriers.Update(barrier);
+            resultDetail = "A distinct valid deletion operation was retained as conflict evidence; deletion remains authoritative.";
+        }
+
+        await _deletionCleanup.DeleteCanonicalAndPendingStateAsync(envelope.UserId, ct);
+        var state = await GetOrCreateStateAsync(envelope.UserId, envelope, ct);
+        MarkApplied(row, state, envelope, resultDetail);
+        await _uow.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        _auth.LogoutUser(envelope.UserId, AuthSessionInvalidationReason.ProfileRemoved);
+        try
+        {
+            if (_enrollment is not null)
+                await _enrollment.CancelEnrollmentAsync(CancellationToken.None);
+            await _syncRuntime.RefreshSyncEnabledAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // The durable operation remains relayable and retryable after a runtime wake-up failure.
+        }
+        return Receipt(envelope, UserControlOperationReceiptState.Applied, resultDetail);
     }
 
     private async Task<UserControlOperationReceiptResult> ApplyDeviceAdditionAsync(
@@ -740,6 +899,28 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
     }
 
+    private async Task<UserControlState> GetOrCreateStateAsync(
+        Guid userId,
+        UserControlOperationEnvelope envelope,
+        CancellationToken ct)
+    {
+        var state = await _states.GetAsync(userId, ct);
+        if (state is not null)
+            return state;
+
+        state = new UserControlState
+        {
+            UserId = userId,
+            LocalOriginInstanceId = Guid.Empty,
+            NextOriginSequence = 1,
+            AppliedKeyEpoch = envelope.ResultingKeyEpoch,
+            AppliedMembershipEpoch = envelope.ResultingMembershipEpoch,
+            LastUpdatedAtUtc = DateTimeOffset.UtcNow
+        };
+        await _states.AddAsync(state, ct);
+        return state;
+    }
+
     private async Task<UserControlState> GetOrCreateStateAsync(User user, CancellationToken ct)
     {
         var state = await _states.GetAsync(user.UId, ct);
@@ -761,10 +942,34 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
 
     private async Task MarkConflictAsync(
         UserControlOperation existing,
+        Guid conflictingOperationId,
         byte[] conflictingHash,
         string reason,
         CancellationToken ct)
     {
+        if (existing.OperationType == UserControlOperationType.AccountDeletion)
+        {
+            // Never disable application or relay of an already-verified deletion because a fork
+            // later reused its identity/sequence. A StoredPending deletion must remain retryable;
+            // an Applied deletion must remain relayable. Retain explicit evidence separately.
+            existing.StatusReason = Truncate(reason);
+            existing.ConflictingOperationHash = conflictingHash.ToArray();
+            _operations.Update(existing);
+            if (_deletionBarriers is not null)
+            {
+                var barrier = await _deletionBarriers.GetAsync(existing.UserId, ct);
+                if (barrier is not null)
+                {
+                    barrier.HasConflict = true;
+                    barrier.ConflictingOperationId = conflictingOperationId;
+                    barrier.ConflictingOperationHash = conflictingHash.ToArray();
+                    barrier.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+                    _deletionBarriers.Update(barrier);
+                }
+            }
+            return;
+        }
+
         Quarantine(existing, conflictingHash, reason);
         var user = await _users.GetByIdAsync(existing.UserId, ct);
         var state = await _states.GetAsync(existing.UserId, ct);
@@ -780,7 +985,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             };
             await _states.AddAsync(state, ct);
         }
-        SetStateConflict(state, existing.OperationId, conflictingHash, reason);
+        SetStateConflict(state, conflictingOperationId, conflictingHash, reason);
     }
 
     private void Quarantine(UserControlOperation operation, byte[] conflictingHash, string reason)

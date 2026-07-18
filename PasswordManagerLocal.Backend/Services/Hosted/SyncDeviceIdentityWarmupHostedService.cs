@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Models;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
@@ -38,7 +39,22 @@ public sealed class SyncDeviceIdentityWarmupHostedService : ISyncControlledHoste
         using var scope = _scopeFactory.CreateScope();
         var devices = scope.ServiceProvider.GetRequiredService<IDeviceRepository>();
         var pendingDevices = await devices.ListDevicesNeedingSyncAsync(ct);
-        _syncDeviceIdentities.TryAdd(pendingDevices);
+        var operations = scope.ServiceProvider.GetService<IUserControlOperationRepository>();
+        var membership = scope.ServiceProvider.GetService<IUserMembershipAuthorizationRepository>();
+
+        IReadOnlyList<Device> deletionRelayDevices = [];
+        if (operations is not null && membership is not null)
+        {
+            var deletedUserIds = await operations.ListAppliedAccountDeletionUserIdsAsync(ct);
+            var historicalDeviceIds = await membership.ListDeviceIdsForUsersAsync(deletedUserIds, ct);
+            deletionRelayDevices = await devices.ListByIdsAsync(historicalDeviceIds, ct);
+        }
+        var relayCandidates = pendingDevices
+            .Concat(deletionRelayDevices)
+            .GroupBy(device => device.Id)
+            .Select(group => group.First())
+            .ToList();
+        _syncDeviceIdentities.TryAdd(relayCandidates);
     }
 
 

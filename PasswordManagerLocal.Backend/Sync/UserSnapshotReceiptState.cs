@@ -12,5 +12,6 @@ public enum UserSnapshotReceiptState
     WrongKeyEpoch = 7,
     WrongMembershipEpoch = 8,
     Quarantined = 9,
-    Rejected = 10
+    Rejected = 10,
+    RejectedAccountDeleted = 11
 }

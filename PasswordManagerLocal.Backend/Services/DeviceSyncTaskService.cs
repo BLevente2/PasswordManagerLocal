@@ -522,7 +522,8 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             UserSnapshotReceiptState.ReplacedOlderPending or
             UserSnapshotReceiptState.AlreadyStored or
             UserSnapshotReceiptState.MergedImmediately or
-            UserSnapshotReceiptState.ObsoleteRevision;
+            UserSnapshotReceiptState.ObsoleteRevision or
+            UserSnapshotReceiptState.RejectedAccountDeleted;
 
 
     private async Task<bool> RefreshAndValidateTargetDeviceAsync(IServiceProvider services, Device targetDevice, DiscoveredDeviceEndpoint endpoint, CancellationToken ct)
@@ -568,12 +569,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
     private async Task CleanupDetachedDeviceIfSyncCompletedAsync(IServiceProvider services, SyncItem syncItem, Guid targetDeviceId, CancellationToken ct)
     {
-        if (syncItem.ModelType == SyncModelType.User && syncItem.ChangeType == SyncChangeType.Deleted)
-        {
-            await CleanupDeviceIfNoActiveLinksAsync(services, targetDeviceId, ct);
-            return;
-        }
-
         if (syncItem.ModelType != SyncModelType.UserDevice || syncItem.ChangeType != SyncChangeType.Deleted)
             return;
 
@@ -610,32 +605,23 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     }
 
 
-    private async Task CleanupDeviceIfNoActiveLinksAsync(IServiceProvider services, Guid deviceId, CancellationToken ct)
-    {
-        if (deviceId == Guid.Empty || deviceId == _identity.LocalDeviceId)
-            return;
-
-        var userDevices = services.GetRequiredService<IUserDeviceRepository>();
-        if (await userDevices.HasAnyActiveLinkForDeviceAsync(deviceId, ct))
-            return;
-
-        var devices = services.GetRequiredService<IDeviceRepository>();
-        var uow = services.GetRequiredService<IUnitOfWork>();
-        var device = await devices.GetByIdWithUserDevicesAsync(deviceId, ct);
-        if (device is null)
-            return;
-
-        _syncDeviceIdentities.TryRemove(device);
-        devices.Delete(device);
-        await uow.SaveChangesAsync(ct);
-    }
-
-
     private async Task<bool> HasPendingAsync(Guid deviceId, CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var queue = scope.ServiceProvider.GetRequiredService<ISyncQueueRepository>();
-        return await queue.HasPendingForDeviceAsync(deviceId, ct);
+        if (await queue.HasPendingForDeviceAsync(deviceId, ct))
+            return true;
+
+        var operations = scope.ServiceProvider.GetService<IUserControlOperationRepository>();
+        var membership = scope.ServiceProvider.GetService<IUserMembershipAuthorizationRepository>();
+        if (operations is null || membership is null)
+            return false;
+        var deletedUserIds = await operations.ListAppliedAccountDeletionUserIdsAsync(ct);
+        if (deletedUserIds.Count == 0)
+            return false;
+
+        var historicallyAuthorizedUsers = await membership.ListUserIdsForDeviceAsync(deviceId, ct);
+        return historicallyAuthorizedUsers.Any(userId => deletedUserIds.Contains(userId));
     }
 
 

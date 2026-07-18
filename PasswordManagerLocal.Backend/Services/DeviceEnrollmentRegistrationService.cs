@@ -43,6 +43,9 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
 
     public async Task RegisterRemoteDeviceAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint endpoint, CancellationToken ct)
     {
+        if (await services.GetRequiredService<IDeletedUserBarrierRepository>().ExistsAsync(userId, ct))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The account identity was permanently deleted.");
+
         // Endpoint cryptographic validity is deliberately not membership authority. This method only
         // rejects identity substitution; the signed DeviceAddition operation performs every mutation.
         if (endpoint.DeviceId == Guid.Empty || endpoint.OriginInstanceId == Guid.Empty ||
@@ -104,6 +107,9 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
 
     public async Task RejectIfPrimaryUserAlreadyLinkedToLocalDeviceAsync(IServiceProvider services, Guid userId, CancellationToken ct)
     {
+        if (await services.GetRequiredService<IDeletedUserBarrierRepository>().ExistsAsync(userId, ct))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The account identity was permanently deleted.");
+
         var localUserDevices = services.GetRequiredService<ILocalUserDeviceRepository>();
         var localLink = await localUserDevices.GetAsync(userId, ct);
         if (localLink is null)
@@ -165,6 +171,9 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
 
     public async Task QueueInitialSyncAsync(IServiceProvider services, Guid userId, Guid newDeviceId, CancellationToken ct)
     {
+        if (await services.GetRequiredService<IDeletedUserBarrierRepository>().ExistsAsync(userId, ct))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The account identity was permanently deleted.");
+
         var groups = services.GetRequiredService<IGroupRepository>();
         var syncQueue = services.GetRequiredService<ISyncChangeQueueService>();
         var groupIds = await groups.ListIdsByUserAsync(userId, ct);

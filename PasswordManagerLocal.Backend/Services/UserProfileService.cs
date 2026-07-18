@@ -59,8 +59,6 @@ public class UserProfileService : IUserProfileService
         if (!_authService.IsPasswordValid(token, password, user.PasswordSalt))
             throw new InvalidInputException();
 
-        _authService.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
-
         await _deletion.DeleteUserAsync(user, true, ct);
     }
 

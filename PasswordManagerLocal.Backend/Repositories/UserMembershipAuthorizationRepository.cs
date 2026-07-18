@@ -2,6 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Persistence;
+using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Sync;
 
 namespace PasswordManagerLocal.Backend.Repositories;
 
@@ -36,6 +38,68 @@ public sealed class UserMembershipAuthorizationRepository : IUserMembershipAutho
     public async Task<IReadOnlyList<UserMembershipAuthorization>> ListActiveForDeviceAsync(Guid userId, Guid deviceId, CancellationToken ct = default) =>
         await _rows.Where(row => row.UserId == userId && row.DeviceId == deviceId && row.IsActive)
             .OrderBy(row => row.OriginInstanceId).ToListAsync(ct);
+
+    public async Task<IReadOnlyList<Guid>> ListUserIdsForDeviceAsync(Guid deviceId, CancellationToken ct = default)
+    {
+        var device = await _context.Devices.AsNoTracking().FirstOrDefaultAsync(row => row.Id == deviceId, ct);
+        if (device is null)
+            return [];
+
+        var rows = await _rows.AsNoTracking()
+            .Where(row => row.DeviceId == deviceId)
+            .Select(row => new { row.UserId, row.SignPublicKeyHash, row.TlsCertFingerprint })
+            .ToListAsync(ct);
+        return rows
+            .Where(row => MatchesCurrentDeviceIdentity(row.SignPublicKeyHash, row.TlsCertFingerprint, device))
+            .Select(row => row.UserId)
+            .Distinct()
+            .OrderBy(userId => userId)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<Guid>> ListDeviceIdsForUsersAsync(
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken ct = default)
+    {
+        if (userIds.Count == 0)
+            return [];
+
+        var authorizations = await _rows.AsNoTracking()
+            .Where(row => userIds.Contains(row.UserId))
+            .Select(row => new { row.DeviceId, row.SignPublicKeyHash, row.TlsCertFingerprint })
+            .ToListAsync(ct);
+        var candidateIds = authorizations.Select(row => row.DeviceId).Distinct().ToList();
+        var devices = await _context.Devices.AsNoTracking()
+            .Where(device => candidateIds.Contains(device.Id))
+            .ToListAsync(ct);
+        return devices
+            .Where(device => authorizations.Any(row =>
+                row.DeviceId == device.Id &&
+                MatchesCurrentDeviceIdentity(row.SignPublicKeyHash, row.TlsCertFingerprint, device)))
+            .Select(device => device.Id)
+            .Distinct()
+            .OrderBy(deviceId => deviceId)
+            .ToList();
+    }
+
+    public async Task<bool> HasHistoricalAuthorizationAsync(Guid userId, Guid deviceId, CancellationToken ct = default)
+    {
+        var device = await _context.Devices.AsNoTracking().FirstOrDefaultAsync(row => row.Id == deviceId, ct);
+        if (device is null)
+            return false;
+        var rows = await _rows.AsNoTracking()
+            .Where(row => row.UserId == userId && row.DeviceId == deviceId)
+            .Select(row => new { row.SignPublicKeyHash, row.TlsCertFingerprint })
+            .ToListAsync(ct);
+        return rows.Any(row => MatchesCurrentDeviceIdentity(row.SignPublicKeyHash, row.TlsCertFingerprint, device));
+    }
+
+    private static bool MatchesCurrentDeviceIdentity(byte[] signPublicKeyHash, string tlsCertFingerprint, Device device) =>
+        Hashing.Verify(signPublicKeyHash, device.SignPublicKeyHash) &&
+        string.Equals(
+            SyncIdentityUtil.NormalizeFingerprint(tlsCertFingerprint),
+            SyncIdentityUtil.NormalizeFingerprint(device.TlsCertFingerprint),
+            StringComparison.OrdinalIgnoreCase);
 
     public Task AddAsync(UserMembershipAuthorization authorization, CancellationToken ct = default) =>
         _rows.AddAsync(authorization, ct).AsTask();

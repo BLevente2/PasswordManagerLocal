@@ -750,8 +750,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             using var scope = _scopeFactory.CreateScope();
             DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
             // The importer performs stale-barrier and exact-idempotence checks. A partially imported
-            // bootstrap must be retryable with the same immutable addition operation.
-            await _snapshotImporter.ImportAsync(scope.ServiceProvider, snapshot, ct);
+            // bootstrap must be retryable with the same immutable addition operation. Serialize the
+            // bootstrap with deletion, merge, publication, and lifecycle operations for this user id.
+            var lifecycle = scope.ServiceProvider.GetRequiredService<IUserLifecycleCoordinator>();
+            await lifecycle.ExecuteAsync(
+                snapshot.PrimaryUserId,
+                token => _snapshotImporter.ImportAsync(scope.ServiceProvider, snapshot, token),
+                ct);
             await _syncRuntime.RefreshSyncEnabledAsync(ct);
             await _registrationService.CacheIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
             DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");

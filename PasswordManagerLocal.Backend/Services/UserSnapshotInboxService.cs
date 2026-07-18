@@ -18,6 +18,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
     private readonly IUnitOfWork _uow;
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
     public UserSnapshotInboxService(
         IUserRepository users,
@@ -26,7 +27,8 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         IDeviceIdentityService identity,
         IUnitOfWork uow,
         IUserLifecycleCoordinator lifecycle,
-        IUserMembershipAuthorizationService membershipAuthorization)
+        IUserMembershipAuthorizationService membershipAuthorization,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _users = users;
         _snapshots = snapshots;
@@ -35,6 +37,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         _uow = uow;
         _lifecycle = lifecycle;
         _membershipAuthorization = membershipAuthorization;
+        _deletionBarriers = deletionBarriers;
     }
 
     public async Task<UserSnapshotReceiptResult> StoreAsync(
@@ -60,6 +63,13 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         Guid transportPeerDeviceId,
         CancellationToken ct)
     {
+        // Expected replays after deletion are acknowledged explicitly before authorization,
+        // revision comparison, or pending-row replacement can recreate state.
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(envelope.UserId, ct))
+        {
+            return Receipt(envelope, UserSnapshotReceiptState.RejectedAccountDeleted,
+                "The account identity is permanently deleted.");
+        }
 
         var user = await _users.GetByIdAsync(envelope.UserId, ct);
         if (user is null)

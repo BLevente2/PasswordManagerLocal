@@ -39,7 +39,10 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     {
         using var scope = _scopeFactory.CreateScope();
         var localUsers = scope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
-        var shouldEnable = await localUsers.AnySyncOnAsync(ct);
+        var controlOperations = scope.ServiceProvider.GetService<IUserControlOperationRepository>();
+        var shouldEnable = await localUsers.AnySyncOnAsync(ct) ||
+                           (controlOperations is not null &&
+                            await controlOperations.HasAppliedAccountDeletionAsync(ct));
 
         await _lock.WaitAsync(ct);
         try

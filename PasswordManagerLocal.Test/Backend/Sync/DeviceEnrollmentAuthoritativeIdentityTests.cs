@@ -70,7 +70,9 @@ public sealed class DeviceEnrollmentAuthoritativeIdentityTests
         var importer = new DeviceEnrollmentSnapshotImporterService(
             identity,
             new DeviceEnrollmentLocalLinkService(identity));
-        using var services = new ServiceCollection().BuildServiceProvider();
+        using var services = new ServiceCollection()
+            .AddSingleton<PasswordManagerLocal.Backend.Abstractions.Repositories.IDeletedUserBarrierRepository, FakeDeletedUserBarrierRepository>()
+            .BuildServiceProvider();
         var userId = Guid.NewGuid();
         var snapshot = CreateTargetedSnapshot(identity, userId);
         snapshot.Users.Add(new DeviceEnrollmentUserSnapshot
@@ -93,7 +95,9 @@ public sealed class DeviceEnrollmentAuthoritativeIdentityTests
         var importer = new DeviceEnrollmentSnapshotImporterService(
             identity,
             new DeviceEnrollmentLocalLinkService(identity));
-        using var services = new ServiceCollection().BuildServiceProvider();
+        using var services = new ServiceCollection()
+            .AddSingleton<PasswordManagerLocal.Backend.Abstractions.Repositories.IDeletedUserBarrierRepository, FakeDeletedUserBarrierRepository>()
+            .BuildServiceProvider();
         var snapshot = CreateTargetedSnapshot(identity, Guid.NewGuid());
         snapshot.TargetOriginInstanceId = Guid.NewGuid();
 

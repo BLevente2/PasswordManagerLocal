@@ -31,14 +31,21 @@ public sealed class UserControlOperationRepository : IUserControlOperationReposi
             operation.OriginInstanceId == originInstanceId &&
             operation.OriginSequence == originSequence, ct);
 
-    public async Task<IReadOnlyList<UserControlOperation>> ListForUserAsync(Guid userId, CancellationToken ct = default) =>
-        await _operations
+    public async Task<IReadOnlyList<UserControlOperation>> ListForUserAsync(Guid userId, CancellationToken ct = default)
+    {
+        // SQLite cannot translate ORDER BY for DateTimeOffset. Keep filtering in the
+        // database, then apply the deterministic control-operation order in memory.
+        var operations = await _operations
             .Where(operation => operation.UserId == userId)
+            .ToListAsync(ct);
+
+        return operations
             .OrderBy(operation => operation.CreatedAtUtc)
             .ThenBy(operation => operation.OriginDeviceId)
             .ThenBy(operation => operation.OriginInstanceId)
             .ThenBy(operation => operation.OriginSequence)
-            .ToListAsync(ct);
+            .ToList();
+    }
 
     public async Task<IReadOnlyList<UserControlOperation>> ListAllRelayableAsync(CancellationToken ct = default) =>
         await _operations
@@ -48,6 +55,34 @@ public sealed class UserControlOperationRepository : IUserControlOperationReposi
             .ThenBy(operation => operation.OriginInstanceId)
             .ThenBy(operation => operation.OriginSequence)
             .ToListAsync(ct);
+
+    public Task<bool> HasAppliedAccountDeletionAsync(CancellationToken ct = default) =>
+        _operations.AsNoTracking().AnyAsync(
+            operation => operation.OperationType == UserControlOperationType.AccountDeletion &&
+                         operation.Status == UserControlOperationStatus.Applied,
+            ct);
+
+    public async Task<IReadOnlyList<Guid>> ListAppliedAccountDeletionUserIdsAsync(CancellationToken ct = default) =>
+        await _operations.AsNoTracking()
+            .Where(operation => operation.OperationType == UserControlOperationType.AccountDeletion &&
+                                operation.Status == UserControlOperationStatus.Applied)
+            .Select(operation => operation.UserId)
+            .Distinct()
+            .OrderBy(userId => userId)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<UserControlOperation>> ListPendingAsync(CancellationToken ct = default)
+    {
+        // See ListForUserAsync: DateTimeOffset ordering must happen client-side for SQLite.
+        var operations = await _operations.AsNoTracking()
+            .Where(operation => operation.Status == UserControlOperationStatus.StoredPending)
+            .ToListAsync(ct);
+
+        return operations
+            .OrderBy(operation => operation.ReceivedAtUtc)
+            .ThenBy(operation => operation.OperationId)
+            .ToList();
+    }
 
     public async Task<IReadOnlyList<UserControlOperation>> ListKeyTransitionsFromAsync(
         Guid userId,

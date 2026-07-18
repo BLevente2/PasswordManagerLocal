@@ -243,6 +243,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserMembershipAuthorizationRepository, UserMembershipAuthorizationRepository>();
             services.AddScoped<IUserOriginRemovalCutoffRepository, UserOriginRemovalCutoffRepository>();
             services.AddScoped<IDeviceEnrollmentCommitRepository, DeviceEnrollmentCommitRepository>();
+            services.AddScoped<IDeletedUserBarrierRepository, DeletedUserBarrierRepository>();
 
             services.AddScoped<IUserPasswordsService, UserPasswordsService>();
             services.AddScoped<IUserCustomColorService, UserCustomColorService>();
@@ -259,6 +260,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserDataReaderService, UserDataReaderService>();
             services.AddScoped<IUserDataPersistenceValidator, UserDataPersistenceValidator>();
             services.AddScoped<IUserDataWriterService, UserDataWriterService>();
+            services.AddScoped<IUserAccountDeletionCleanupService, UserAccountDeletionCleanupService>();
             services.AddScoped<IUserDeletionService, UserDeletionService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IRememberMeService, RememberMeService>();
@@ -329,6 +331,8 @@ namespace PasswordManagerLocal.Backend
             services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<ExpiredEntriesPurgeHostedService>());
             services.AddSingleton<LocalDeviceCleanupHostedService>();
             services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<LocalDeviceCleanupHostedService>());
+            services.AddSingleton<PendingUserControlOperationRecoveryHostedService>();
+            services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<PendingUserControlOperationRecoveryHostedService>());
 
             services.AddSingleton<SyncPeerProtocolHandler>();
             services.AddSingleton<SyncDeviceIdentityWarmupHostedService>();

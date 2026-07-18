@@ -19,6 +19,20 @@ public sealed class FakeUserControlOperationRepository : IUserControlOperationRe
     public Task<IReadOnlyList<UserControlOperation>> ListAllRelayableAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<UserControlOperation>>(_rows.Where(row => row.Status != UserControlOperationStatus.Rejected).ToList());
 
+    public Task<bool> HasAppliedAccountDeletionAsync(CancellationToken ct = default) =>
+        Task.FromResult(_rows.Any(row => row.OperationType == UserControlOperationType.AccountDeletion && row.Status == UserControlOperationStatus.Applied));
+
+    public Task<IReadOnlyList<Guid>> ListAppliedAccountDeletionUserIdsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Guid>>(_rows
+            .Where(row => row.OperationType == UserControlOperationType.AccountDeletion && row.Status == UserControlOperationStatus.Applied)
+            .Select(row => row.UserId)
+            .Distinct()
+            .OrderBy(userId => userId)
+            .ToList());
+
+    public Task<IReadOnlyList<UserControlOperation>> ListPendingAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<UserControlOperation>>(_rows.Where(row => row.Status == UserControlOperationStatus.StoredPending).ToList());
+
     public Task<IReadOnlyList<UserControlOperation>> ListKeyTransitionsFromAsync(Guid userId, long previousKeyEpoch, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<UserControlOperation>>(_rows.Where(row => row.UserId == userId && row.OperationType == UserControlOperationType.KeyEpochReplacement && row.PreviousKeyEpoch == previousKeyEpoch && (row.Status is UserControlOperationStatus.StoredPending or UserControlOperationStatus.Applied)).ToList());
 

@@ -77,6 +77,7 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserMembershipAuthorizationRepository>(sp => sp.GetRequiredService<FakeUserMembershipAuthorizationRepository>());
         sc.AddSingleton<IUserOriginRemovalCutoffRepository, FakeUserOriginRemovalCutoffRepository>();
         sc.AddSingleton<IDeviceEnrollmentCommitRepository, FakeDeviceEnrollmentCommitRepository>();
+        sc.AddSingleton<IDeletedUserBarrierRepository, FakeDeletedUserBarrierRepository>();
         sc.AddSingleton<IUserMembershipAuthorizationService, UserMembershipAuthorizationService>();
         sc.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
         sc.AddSingleton<IUserControlOperationWriterService, FakeUserControlOperationWriterService>();
@@ -89,6 +90,7 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserDataReaderService, UserDataReaderService>();
         sc.AddSingleton<IUserDataPersistenceValidator, UserDataPersistenceValidator>();
         sc.AddSingleton<IUserDataWriterService, UserDataWriterService>();
+        sc.AddSingleton<IUserAccountDeletionCleanupService, FakeUserAccountDeletionCleanupService>();
         sc.AddSingleton<IUserDeletionService, UserDeletionService>();
         sc.AddSingleton<IUserService, UserService>();
         sc.AddSingleton<IUserProfileService, UserProfileService>();

@@ -273,18 +273,28 @@ public sealed class SyncQueueServiceIntegrationTests
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
         var seeded = await SeedUserRoutesAsync(database, enabledRemoteCount: 1, disabledRemoteCount: 0);
+        var group = new Group
+        {
+            Id = Guid.NewGuid(),
+            EncryptedPayload = [7, 8, 9],
+            LastModifiedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        };
+        group.Users.Add(seeded.User);
+        group.GenerateIntegrityHash();
+        database.Db.Groups.Add(group);
+        await database.Db.SaveChangesAsync();
         var service = CreateService(database, seeded.Identity, new FakeSyncAuthorizationService());
 
         await service.EnqueueAsync(new SyncItem
         {
-            ModelId = seeded.User.UId,
-            ModelType = SyncModelType.User,
+            ModelId = group.Id,
+            ModelType = SyncModelType.Group,
             ChangeType = SyncChangeType.Created
         });
         await service.EnqueueAsync(new SyncItem
         {
-            ModelId = seeded.User.UId,
-            ModelType = SyncModelType.User,
+            ModelId = group.Id,
+            ModelType = SyncModelType.Group,
             ChangeType = SyncChangeType.Updated
         });
 
@@ -293,8 +303,8 @@ public sealed class SyncQueueServiceIntegrationTests
 
         await service.EnqueueAsync(new SyncItem
         {
-            ModelId = seeded.User.UId,
-            ModelType = SyncModelType.User,
+            ModelId = group.Id,
+            ModelType = SyncModelType.Group,
             ChangeType = SyncChangeType.Deleted
         });
 
@@ -305,32 +315,31 @@ public sealed class SyncQueueServiceIntegrationTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
-    public async Task EnqueueDeletedUser_RemovesOtherPendingSyncItemsForDeletedUser()
+    public async Task EnqueueGenericDeletedUser_IsRejectedAndLeavesExistingPendingWorkUntouched()
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
         var seeded = await SeedUserRoutesAsync(database, enabledRemoteCount: 1, disabledRemoteCount: 0);
         var service = CreateService(database, seeded.Identity, new FakeSyncAuthorizationService());
-        var remote = seeded.EnabledRemotes.Single();
-
-        await service.EnqueueAsync(new SyncItem
-        {
-            ModelId = SyncIdentityUtil.BuildUserDeviceModelId(seeded.User.UId, remote.Id),
-            ModelType = SyncModelType.UserDevice,
-            ChangeType = SyncChangeType.Updated
-        });
 
         await service.EnqueueAsync(new SyncItem
         {
             ModelId = seeded.User.UId,
             ModelType = SyncModelType.User,
-            ChangeType = SyncChangeType.Deleted
+            ChangeType = SyncChangeType.Updated
         });
+
+        await MSTestAssert.ThrowsExactlyAsync<InvalidOperationException>(() => service.EnqueueAsync(new SyncItem
+        {
+            ModelId = seeded.User.UId,
+            ModelType = SyncModelType.User,
+            ChangeType = SyncChangeType.Deleted
+        }));
 
         var syncItems = await database.Db.SyncItems.ToListAsync();
         MSTestAssert.HasCount(1, syncItems);
         MSTestAssert.AreEqual(seeded.User.UId, syncItems[0].ModelId);
         MSTestAssert.AreEqual(SyncModelType.User, syncItems[0].ModelType);
-        MSTestAssert.AreEqual(SyncChangeType.Deleted, syncItems[0].ChangeType);
+        MSTestAssert.AreEqual(SyncChangeType.Updated, syncItems[0].ChangeType);
         MSTestAssert.AreEqual(1, await database.Db.SyncQueueItems.CountAsync());
     }
 

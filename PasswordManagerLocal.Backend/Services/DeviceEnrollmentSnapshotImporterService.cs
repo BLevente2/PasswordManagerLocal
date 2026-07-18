@@ -30,6 +30,10 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
     public async Task ImportAsync(IServiceProvider services, DeviceEnrollmentSnapshot snapshot, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
+        var deletionBarriers = services.GetRequiredService<IDeletedUserBarrierRepository>();
+        if (snapshot.PrimaryUserId != Guid.Empty && await deletionBarriers.ExistsAsync(snapshot.PrimaryUserId, ct))
+            throw new InvalidDataException("Enrollment cannot import a permanently deleted account identity.");
+
         var validated = ValidateCompleteGraph(snapshot);
 
         var devices = services.GetRequiredService<IDeviceRepository>();
@@ -68,6 +72,9 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
         try
         {
+            if (await deletionBarriers.ExistsAsync(snapshot.PrimaryUserId, ct))
+                throw new InvalidDataException("Account deletion won the enrollment race before bootstrap persistence.");
+
             await _localLinks.RemoveLocalDeviceRowsAsync(devices, ct);
 
             foreach (var deviceSnapshot in validated.CurrentRemoteDevices)
@@ -364,6 +371,8 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             var authorization = FindAuthorization(snapshot.MembershipAuthorizations, envelope.OriginDeviceId, envelope.OriginInstanceId, envelope.PreviousMembershipEpoch, envelope.PreviousKeyEpoch);
             UserControlOperationEnvelopeUtil.VerifyWithSigningKey(envelope, authorization.SignPublicKey);
             ValidateControlPayload(envelope);
+            if (envelope.OperationType == UserControlOperationType.AccountDeletion)
+                throw new InvalidDataException("A deleted account identity cannot be imported through enrollment bootstrap.");
             if (!authorization.IsActive)
             {
                 var cutoff = snapshot.RemovalCutoffs.FirstOrDefault(row => row.AuthorizationId == authorization.AuthorizationId && row.UserKeyEpoch == envelope.PreviousKeyEpoch)

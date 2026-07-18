@@ -14,15 +14,24 @@ public sealed class UserLookupService : IUserLookupService
 {
     private readonly IUserRepository _users;
     private readonly IUserSessionService _sessions;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
-    public UserLookupService(IUserRepository users, IUserSessionService sessions)
+    public UserLookupService(
+        IUserRepository users,
+        IUserSessionService sessions,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _users = users;
         _sessions = sessions;
+        _deletionBarriers = deletionBarriers;
     }
 
-    public Task<User?> GetUserByUidAsync(Guid uid, CancellationToken ct = default) =>
-        _users.GetByIdAsync(uid, ct);
+    public async Task<User?> GetUserByUidAsync(Guid uid, CancellationToken ct = default)
+    {
+        if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(uid, ct))
+            return null;
+        return await _users.GetByIdAsync(uid, ct);
+    }
 
     public async Task<User> GetAndVerifyUserByUidAsync(Guid uid, CancellationToken ct = default)
     {
@@ -49,6 +58,8 @@ public sealed class UserLookupService : IUserLookupService
                 if (!Hashing.Verify(candidate.UsernameHash, calculatedHash))
                     continue;
 
+                if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(candidate.UId, ct))
+                    continue;
                 return await _users.GetByIdAsync(candidate.UId, ct);
             }
             finally
@@ -77,6 +88,8 @@ public sealed class UserLookupService : IUserLookupService
 
         foreach (var user in users)
         {
+            if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(user.UId, ct))
+                continue;
             user.VerifyIntegrity();
             verifiedUsers.Add(user);
         }

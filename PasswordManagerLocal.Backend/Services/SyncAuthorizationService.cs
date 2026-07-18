@@ -13,6 +13,8 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
     private readonly ILocalUserDeviceRepository _localUsers;
     private readonly ISyncRouteRepository _syncRoutes;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserMembershipAuthorizationRepository? _membershipHistory;
+    private readonly IDeletedUserBarrierRepository? _deletionBarriers;
 
     public SyncAuthorizationService(
         IGroupRepository groups,
@@ -20,7 +22,9 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
         IUserDeviceRepository userDevices,
         ILocalUserDeviceRepository localUsers,
         ISyncRouteRepository syncRoutes,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserMembershipAuthorizationRepository? membershipHistory = null,
+        IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _groups = groups;
         _devices = devices;
@@ -28,6 +32,8 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
         _localUsers = localUsers;
         _syncRoutes = syncRoutes;
         _identity = identity;
+        _membershipHistory = membershipHistory;
+        _deletionBarriers = deletionBarriers;
     }
 
     public async Task<bool> CanSendAsync(SyncItem item, Guid targetDeviceId, CancellationToken ct = default)
@@ -36,7 +42,7 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
             return false;
 
         if (item.ModelType == SyncModelType.User)
-            return item.ChangeType == SyncChangeType.Deleted || await _syncRoutes.IsEligibleAsync(item.ModelId, targetDeviceId, ct);
+            return item.ChangeType != SyncChangeType.Deleted && await _syncRoutes.IsEligibleAsync(item.ModelId, targetDeviceId, ct);
 
         if (item.ModelType == SyncModelType.UserDevice)
         {
@@ -71,7 +77,17 @@ public sealed class SyncAuthorizationService : ISyncAuthorizationService
             return false;
 
         if (payload.ModelType == SyncModelType.User)
+        {
+            if (payload.ChangeType == SyncChangeType.Deleted)
+                return false;
+
+            var isDeletionOperation = payload.UserControlOperation?.OperationType == UserControlOperationType.AccountDeletion;
+            var isDeletedLocally = _deletionBarriers is not null && await _deletionBarriers.ExistsAsync(payload.ModelId, ct);
+            if ((isDeletionOperation || isDeletedLocally) && _membershipHistory is not null)
+                return await _membershipHistory.HasHistoricalAuthorizationAsync(payload.ModelId, sourceDeviceId, ct);
+
             return await _syncRoutes.IsEligibleAsync(payload.ModelId, sourceDeviceId, ct);
+        }
 
         if (payload.ModelType == SyncModelType.UserDevice)
         {

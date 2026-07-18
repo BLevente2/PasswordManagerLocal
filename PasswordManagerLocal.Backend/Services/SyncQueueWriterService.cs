@@ -65,13 +65,6 @@ public sealed class SyncQueueWriterService : ISyncQueueWriterService
 
         await EnqueueMissingTargetsAsync(syncItem, targetDevices, ct);
 
-        if (touchLocalSyncState &&
-            syncItem.ModelType == SyncModelType.User &&
-            syncItem.ChangeType == SyncChangeType.Deleted)
-        {
-            await _syncItems.RemoveItemsForDeletedUserAsync(syncItem.ModelId, syncItem.Id, ct);
-        }
-
         await _uow.SaveChangesAsync(ct);
 
         if (activateTargets)

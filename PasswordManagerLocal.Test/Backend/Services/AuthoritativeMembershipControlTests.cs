@@ -20,7 +20,7 @@ public sealed class AuthoritativeMembershipControlTests
     [TestCategory("Backend")]
     [TestCategory("Unit")]
     [TestCategory("Security")]
-    public void MembershipOperations_RequireSingleStep_AndUnsupportedTypesAreRejected()
+    public void MembershipOperations_RequireSingleStep_AndAccountDeletionPreservesFinalEpochs()
     {
         var envelope = new UserControlOperationEnvelope
         {
@@ -38,6 +38,10 @@ public sealed class AuthoritativeMembershipControlTests
 
         envelope.OperationType = UserControlOperationType.AccountDeletion;
         MSTestAssert.ThrowsExactly<InvalidDataException>(() => UserControlOperationEnvelopeUtil.CalculateOperationHash(envelope));
+
+        envelope.ResultingMembershipEpoch = envelope.PreviousMembershipEpoch;
+        var deletionHash = UserControlOperationEnvelopeUtil.CalculateOperationHash(envelope);
+        MSTestAssert.HasCount(32, deletionHash);
     }
 
     [TestMethod]
