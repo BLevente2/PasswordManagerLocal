@@ -31,6 +31,11 @@ public class AppDbContext : DbContext
     public DbSet<UserSyncSnapshot> UserSyncSnapshots => Set<UserSyncSnapshot>();
     public DbSet<UserSyncState> UserSyncStates => Set<UserSyncState>();
     public DbSet<UserRevisionKnowledge> UserRevisionKnowledge => Set<UserRevisionKnowledge>();
+    public DbSet<UserControlOperation> UserControlOperations => Set<UserControlOperation>();
+    public DbSet<UserControlState> UserControlStates => Set<UserControlState>();
+    public DbSet<UserMembershipAuthorization> UserMembershipAuthorizations => Set<UserMembershipAuthorization>();
+    public DbSet<UserOriginRemovalCutoff> UserOriginRemovalCutoffs => Set<UserOriginRemovalCutoff>();
+    public DbSet<DeviceEnrollmentCommit> DeviceEnrollmentCommits => Set<DeviceEnrollmentCommit>();
 
     public override int SaveChanges()
     {
@@ -153,8 +158,8 @@ public class AppDbContext : DbContext
         user.Property(u => u.GeneralUserDataLastModifiedAt).IsRequired();
         user.Property(u => u.UserPasswordsDataLastModifiedAt).IsRequired();
         user.Property(u => u.UserDevicesDataLastModifiedAt).IsRequired();
-        user.Property(u => u.KeyEpoch).IsRequired().HasDefaultValue(1L);
-        user.Property(u => u.MembershipEpoch).IsRequired().HasDefaultValue(1L);
+        user.Property(u => u.KeyEpoch).IsRequired();
+        user.Property(u => u.MembershipEpoch).IsRequired();
 
         model.Entity<User>()
             .HasMany(u => u.Groups)
@@ -264,6 +269,103 @@ public class AppDbContext : DbContext
             .OnDelete(DeleteBehavior.Cascade);
         revisionKnowledge.HasIndex(knowledge => new { knowledge.UserId, knowledge.HighestStoredRevision });
         revisionKnowledge.HasIndex(knowledge => new { knowledge.UserId, knowledge.HighestMergedRevision });
+
+        var controlOperation = model.Entity<UserControlOperation>();
+        controlOperation.ToTable("UserControlOperations");
+        controlOperation.HasKey(operation => operation.OperationId);
+        controlOperation.Property(operation => operation.OperationType).HasConversion<byte>().IsRequired();
+        controlOperation.Property(operation => operation.OriginSequence).IsRequired();
+        controlOperation.Property(operation => operation.PreviousKeyEpoch).IsRequired();
+        controlOperation.Property(operation => operation.ResultingKeyEpoch).IsRequired();
+        controlOperation.Property(operation => operation.PreviousMembershipEpoch).IsRequired();
+        controlOperation.Property(operation => operation.ResultingMembershipEpoch).IsRequired();
+        controlOperation.Property(operation => operation.CreatedAtUtc).IsRequired();
+        controlOperation.Property(operation => operation.ReceivedAtUtc).IsRequired();
+        controlOperation.Property(operation => operation.PayloadHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        controlOperation.Property(operation => operation.OperationHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes).IsConcurrencyToken();
+        controlOperation.Property(operation => operation.OriginSignPublicKey).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519PublicKeyBytes);
+        controlOperation.Property(operation => operation.OriginSignature).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519SignatureBytes);
+        controlOperation.Property(operation => operation.EnvelopePayload).IsRequired().HasMaxLength(Constants.SyncConstants.MaxUserControlOperationEnvelopeBytes);
+        controlOperation.Property(operation => operation.Status).HasConversion<byte>().IsRequired();
+        controlOperation.Property(operation => operation.StatusReason).HasMaxLength(512);
+        controlOperation.Property(operation => operation.ConflictingOperationHash).HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        controlOperation.HasIndex(operation => new
+        {
+            operation.UserId,
+            operation.OriginDeviceId,
+            operation.OriginInstanceId,
+            operation.OriginSequence
+        }).IsUnique();
+        controlOperation.HasIndex(operation => new { operation.UserId, operation.PreviousKeyEpoch })
+            .IsUnique()
+            .HasDatabaseName("UX_UserControlOperations_ActiveKeyBase")
+            .HasFilter("OperationType = 1 AND Status IN (1, 2)");
+        controlOperation.HasIndex(operation => new { operation.UserId, operation.PreviousMembershipEpoch })
+            .IsUnique()
+            .HasDatabaseName("UX_UserControlOperations_ActiveMembershipBase")
+            .HasFilter("OperationType IN (3, 4) AND Status IN (1, 2)");
+        controlOperation.HasIndex(operation => new { operation.UserId, operation.Status, operation.CreatedAtUtc });
+
+        var controlState = model.Entity<UserControlState>();
+        controlState.ToTable("UserControlStates");
+        controlState.HasKey(state => state.UserId);
+        controlState.Property(state => state.LocalOriginInstanceId).IsRequired();
+        controlState.Property(state => state.NextOriginSequence).IsRequired().HasDefaultValue(1L);
+        controlState.Property(state => state.AppliedKeyEpoch).IsRequired();
+        controlState.Property(state => state.AppliedMembershipEpoch).IsRequired();
+        controlState.Property(state => state.HasConflict).IsRequired();
+        controlState.Property(state => state.ConflictReason).HasMaxLength(512);
+        controlState.Property(state => state.ConflictingOperationHash).HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        controlState.Property(state => state.LastUpdatedAtUtc).IsRequired();
+
+        var membershipAuthorization = model.Entity<UserMembershipAuthorization>();
+        membershipAuthorization.ToTable("UserMembershipAuthorizations");
+        membershipAuthorization.HasKey(row => row.AuthorizationId);
+        membershipAuthorization.Property(row => row.SignPublicKey).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519PublicKeyBytes);
+        membershipAuthorization.Property(row => row.SignPublicKeyHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        membershipAuthorization.Property(row => row.AgreementPublicKeyHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        membershipAuthorization.Property(row => row.TlsCertFingerprint).IsRequired().HasMaxLength(128);
+        membershipAuthorization.Property(row => row.DeviceType).HasConversion<byte>().IsRequired();
+        membershipAuthorization.Property(row => row.StartedMembershipEpoch).IsRequired();
+        membershipAuthorization.Property(row => row.MinimumKeyEpoch).IsRequired();
+        membershipAuthorization.Property(row => row.IsActive).IsRequired();
+        membershipAuthorization.Property(row => row.IsGenesis).IsRequired();
+        membershipAuthorization.Property(row => row.Version).IsRequired().IsConcurrencyToken();
+        membershipAuthorization.Property(row => row.AdditionOperationHash).HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        membershipAuthorization.Property(row => row.RemovalOperationHash).HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        membershipAuthorization.HasIndex(row => new { row.UserId, row.DeviceId, row.OriginInstanceId })
+            .IsUnique()
+            .HasDatabaseName("UX_UserMembershipAuthorizations_ExactInstallation");
+        membershipAuthorization.HasIndex(row => new { row.UserId, row.DeviceId })
+            .IsUnique()
+            .HasDatabaseName("UX_UserMembershipAuthorizations_ActiveDevice")
+            .HasFilter("IsActive = 1");
+        membershipAuthorization.HasIndex(row => new { row.UserId, row.StartedMembershipEpoch, row.EndedMembershipEpoch });
+
+        var removalCutoff = model.Entity<UserOriginRemovalCutoff>();
+        removalCutoff.ToTable("UserOriginRemovalCutoffs");
+        removalCutoff.HasKey(row => row.CutoffId);
+        removalCutoff.Property(row => row.RemovalOperationHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        removalCutoff.Property(row => row.UserKeyEpoch).IsRequired();
+        removalCutoff.Property(row => row.HighestAcceptedSnapshotRevision).IsRequired();
+        removalCutoff.Property(row => row.HighestAcceptedControlSequence).IsRequired();
+        removalCutoff.Property(row => row.ResultingMembershipEpoch).IsRequired();
+        removalCutoff.HasIndex(row => new { row.UserId, row.DeviceId, row.OriginInstanceId, row.UserKeyEpoch }).IsUnique();
+        removalCutoff.HasIndex(row => new { row.UserId, row.RemovalOperationId });
+
+        var enrollmentCommit = model.Entity<DeviceEnrollmentCommit>();
+        enrollmentCommit.ToTable("DeviceEnrollmentCommits");
+        enrollmentCommit.HasKey(row => row.CommitId);
+        enrollmentCommit.Property(row => row.TargetSignPublicKeyHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        enrollmentCommit.Property(row => row.TargetAgreementPublicKeyHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        enrollmentCommit.Property(row => row.TargetTlsCertFingerprint).IsRequired().HasMaxLength(128);
+        enrollmentCommit.Property(row => row.TargetDeviceType).HasConversion<byte>().IsRequired();
+        enrollmentCommit.Property(row => row.AdditionOperationHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        enrollmentCommit.Property(row => row.Status).HasConversion<byte>().IsRequired();
+        enrollmentCommit.Property(row => row.LastError).HasMaxLength(512);
+        enrollmentCommit.Property(row => row.Version).IsRequired().IsConcurrencyToken();
+        enrollmentCommit.HasIndex(row => new { row.UserId, row.TargetDeviceId, row.TargetOriginInstanceId }).IsUnique();
+        enrollmentCommit.HasIndex(row => new { row.UserId, row.Status, row.LastAttemptAtUtc });
 
         var ldi = model.Entity<LocalDeviceIdentity>();
         ldi.ToTable("LocalDeviceIdentity", t =>

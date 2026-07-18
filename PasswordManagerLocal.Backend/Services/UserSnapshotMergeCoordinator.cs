@@ -5,18 +5,14 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
-using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
 {
-    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> UserLocks = new();
-
     private readonly IUserRepository _users;
-    private readonly IDeviceRepository _devices;
-    private readonly IUserDeviceRepository _userDevices;
+    private readonly IUserMembershipAuthorizationService _membershipAuthorization;
     private readonly IUserSyncSnapshotRepository _snapshots;
     private readonly IUserRevisionKnowledgeRepository _knowledge;
     private readonly IUserDataBundleSyncService _bundleSync;
@@ -24,22 +20,22 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
     private readonly ISyncQueueWriterService _queueWriter;
     private readonly IPendingSyncActivationService _activation;
     private readonly IUnitOfWork _uow;
+    private readonly IUserLifecycleCoordinator _lifecycle;
 
     public UserSnapshotMergeCoordinator(
         IUserRepository users,
-        IDeviceRepository devices,
-        IUserDeviceRepository userDevices,
+        IUserMembershipAuthorizationService membershipAuthorization,
         IUserSyncSnapshotRepository snapshots,
         IUserRevisionKnowledgeRepository knowledge,
         IUserDataBundleSyncService bundleSync,
         IUserSnapshotPublisherService publisher,
         ISyncQueueWriterService queueWriter,
         IPendingSyncActivationService activation,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserLifecycleCoordinator lifecycle)
     {
         _users = users;
-        _devices = devices;
-        _userDevices = userDevices;
+        _membershipAuthorization = membershipAuthorization;
         _snapshots = snapshots;
         _knowledge = knowledge;
         _bundleSync = bundleSync;
@@ -47,135 +43,137 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _queueWriter = queueWriter;
         _activation = activation;
         _uow = uow;
+        _lifecycle = lifecycle;
     }
 
-    public async Task<bool> TryMergePendingAsync(Guid userId, EncryptionKey key, CancellationToken ct = default)
+    public Task<bool> TryMergePendingAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
+        _lifecycle.ExecuteAsync(userId, token => TryMergePendingCoreAsync(userId, key, token), ct);
+
+    public Task<bool> TryMergePendingUnderLifecycleAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
+        TryMergePendingCoreAsync(userId, key, ct);
+
+    private async Task<bool> TryMergePendingCoreAsync(Guid userId, EncryptionKey key, CancellationToken ct)
     {
-        var gate = UserLocks.GetOrAdd(userId, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
-        try
+        await using var transaction = await _uow.BeginTransactionAsync(ct);
+        var user = await _users.GetByIdWithRelationsAsync(userId, ct);
+        if (user is null)
         {
-            await using var transaction = await _uow.BeginTransactionAsync(ct);
-            var user = await _users.GetByIdWithRelationsAsync(userId, ct);
-            if (user is null)
-            {
-                await transaction.RollbackAsync(ct);
-                return false;
-            }
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
 
-            var captured = await _snapshots.ListPendingAsync(userId, user.KeyEpoch, user.MembershipEpoch, ct);
-            if (captured.Count == 0)
-            {
-                await transaction.RollbackAsync(ct);
-                return false;
-            }
+        var captured = await _snapshots.ListPendingForKeyEpochAsync(userId, user.KeyEpoch, ct);
+        if (captured.Count == 0)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
 
-            var candidates = new List<(UserSyncSnapshot Row, UserSnapshotEnvelope Envelope)>();
-            foreach (var row in captured
-                         .OrderBy(snapshot => snapshot.OriginDeviceId)
-                         .ThenBy(snapshot => snapshot.OriginInstanceId)
-                         .ThenBy(snapshot => snapshot.OriginRevision))
-            {
-                try
-                {
-                    var envelope = Deserialize(row);
-                    var originDevice = await _devices.GetByIdAsync(envelope.OriginDeviceId, ct)
-                        ?? throw new UnauthorizedAccessException("The snapshot origin device is no longer trusted.");
-                    UserSnapshotEnvelopeUtil.Verify(envelope, originDevice);
-                    if (!await _userDevices.HasActiveLinkAsync(envelope.UserId, envelope.OriginDeviceId, ct))
-                        throw new UnauthorizedAccessException("The snapshot origin device is no longer authorized for this user.");
-
-                    if (envelope.UserKeyEpoch != user.KeyEpoch || envelope.MembershipEpoch != user.MembershipEpoch)
-                        throw new InvalidDataException("The snapshot epoch is no longer compatible with canonical state.");
-
-                    candidates.Add((row, envelope));
-                }
-                catch (Exception ex) when (IsCandidateFailure(ex))
-                {
-                    Quarantine(row, ex.Message);
-                }
-            }
-
-            if (candidates.Count == 0)
-            {
-                await _uow.SaveChangesAsync(ct);
-                await transaction.CommitAsync(ct);
-                return false;
-            }
-
-            UserSnapshotMergeBatchResult mergeResult;
+        var candidates = new List<(UserSyncSnapshot Row, UserSnapshotEnvelope Envelope)>();
+        foreach (var row in captured
+                     .OrderBy(snapshot => snapshot.OriginDeviceId)
+                     .ThenBy(snapshot => snapshot.OriginInstanceId)
+                     .ThenBy(snapshot => snapshot.OriginRevision))
+        {
             try
             {
-                mergeResult = await _bundleSync.TryVerifyAndMergeManyAsync(
-                    user,
-                    candidates.Select(candidate => candidate.Envelope).ToArray(),
-                    key,
-                    ct);
+                var envelope = Deserialize(row);
+                await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);
+                if (envelope.UserKeyEpoch != user.KeyEpoch || envelope.MembershipEpoch > user.MembershipEpoch)
+                    throw new InvalidDataException("The snapshot epoch is not safely applicable to canonical state.");
+
+                candidates.Add((row, envelope));
             }
             catch (Exception ex) when (IsCandidateFailure(ex))
             {
-                // The active key or canonical state could not be opened. Keep every valid candidate pending;
-                // pre-validation quarantines are still durable and no canonical state is changed.
-                await _uow.SaveChangesAsync(ct);
-                await transaction.CommitAsync(ct);
-                return false;
+                Quarantine(row, ex.Message);
             }
+        }
 
-            var results = mergeResult.Entries.ToDictionary(
-                result => (result.OriginDeviceId, result.OriginInstanceId, result.OriginRevision));
-            var mergedRows = new List<UserSyncSnapshot>();
-            foreach (var candidate in candidates)
-            {
-                var keyTuple = (
-                    candidate.Envelope.OriginDeviceId,
-                    candidate.Envelope.OriginInstanceId,
-                    candidate.Envelope.OriginRevision);
-                if (!results.TryGetValue(keyTuple, out var result) || !result.Verified)
-                {
-                    Quarantine(
-                        candidate.Row,
-                        result?.FailureReason ?? "The encrypted snapshot could not be decrypted and verified with the active user key.");
-                    continue;
-                }
-
-                await RecordMergedKnowledgeAsync(candidate.Envelope, ct);
-                mergedRows.Add(candidate.Row);
-            }
-
-            if (mergedRows.Count == 0)
-            {
-                await _uow.SaveChangesAsync(ct);
-                await transaction.CommitAsync(ct);
-                return false;
-            }
-
-            var localSnapshot = await _publisher.GetOrCreateAsync(user, ct);
-
-            await _queueWriter.EnqueueAsync(
-                new SyncItem
-                {
-                    ModelId = user.UId,
-                    ModelType = SyncModelType.User,
-                    ChangeType = SyncChangeType.Updated,
-                    ChangedAtTs = localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds()
-                },
-                localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds(),
-                [],
-                touchLocalSyncState: true,
-                activateTargets: false,
-                ct);
-
-            _snapshots.DeleteRange(mergedRows);
+        if (candidates.Count == 0)
+        {
             await _uow.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-            await _activation.ActivatePendingAsync(ct);
-            return true;
+            return false;
         }
-        finally
+
+        UserSnapshotMergeBatchResult mergeResult;
+        try
         {
-            gate.Release();
+            mergeResult = await _bundleSync.TryVerifyAndMergeManyAsync(
+                user,
+                candidates.Select(candidate => candidate.Envelope).ToArray(),
+                key,
+                ct);
         }
+        catch (Exception ex) when (IsCandidateFailure(ex))
+        {
+            // The active key or canonical state could not be opened. Keep every valid candidate pending;
+            // pre-validation quarantines are still durable and no canonical state is changed.
+            await _uow.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return false;
+        }
+
+        var results = mergeResult.Entries.ToDictionary(
+            result => (result.OriginDeviceId, result.OriginInstanceId, result.OriginRevision));
+        var mergedRows = new List<UserSyncSnapshot>();
+        foreach (var candidate in candidates)
+        {
+            var keyTuple = (
+                candidate.Envelope.OriginDeviceId,
+                candidate.Envelope.OriginInstanceId,
+                candidate.Envelope.OriginRevision);
+            if (!results.TryGetValue(keyTuple, out var result) || !result.Verified)
+            {
+                Quarantine(
+                    candidate.Row,
+                    result?.FailureReason ?? "The encrypted snapshot could not be decrypted and verified with the active user key.");
+                continue;
+            }
+
+            await RecordMergedKnowledgeAsync(candidate.Envelope, ct);
+            mergedRows.Add(candidate.Row);
+        }
+
+        if (mergedRows.Count == 0)
+        {
+            await _uow.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return false;
+        }
+
+        var localSnapshot = await _publisher.GetOrCreateAsync(user, ct);
+
+        await _queueWriter.EnqueueAsync(
+            new SyncItem
+            {
+                ModelId = user.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Updated,
+                ChangedAtTs = localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds()
+            },
+            localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds(),
+            [],
+            touchLocalSyncState: true,
+            activateTargets: false,
+            ct);
+
+        _snapshots.DeleteRange(mergedRows);
+        await _uow.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        try
+        {
+            // The queue row is durable. Activation is only a wake-up optimization and must not
+            // turn a committed merge into a reported merge failure.
+            await _activation.ActivatePendingAsync(CancellationToken.None);
+        }
+        catch
+        {
+        }
+        return true;
     }
+
 
     private async Task RecordMergedKnowledgeAsync(UserSnapshotEnvelope envelope, CancellationToken ct)
     {

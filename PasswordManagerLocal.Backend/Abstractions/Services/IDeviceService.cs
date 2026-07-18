@@ -12,5 +12,5 @@ public interface IDeviceService
     Task SetUserDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct = default);
     Task SetUserDeviceSyncOnAsync(Guid token, Guid deviceId, bool isSyncOn, CancellationToken ct = default);
     Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default);
-    Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default);
+    Task<DeviceRemovalResultResponse> DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default);
 }

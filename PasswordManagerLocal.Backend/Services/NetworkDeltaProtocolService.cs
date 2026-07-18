@@ -23,6 +23,7 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncAuthorizationService _authorization;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserMembershipAuthorizationService _membershipAuthorization;
 
     private static readonly string[] SensitiveLocalOnlyPropertyNames =
     [
@@ -43,13 +44,15 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
         IGroupRepository groups,
         IUserDeviceRepository userDevices,
         ISyncAuthorizationService authorization,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserMembershipAuthorizationService membershipAuthorization)
     {
         _devices = devices;
         _groups = groups;
         _userDevices = userDevices;
         _authorization = authorization;
         _identity = identity;
+        _membershipAuthorization = membershipAuthorization;
     }
 
     public async Task<ValidatedNetworkDelta> ValidateAndReadAsync(NetworkDelta delta, CancellationToken ct = default)
@@ -106,11 +109,15 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
         if (payload.ModelType != SyncModelType.User || payload.ChangeType == SyncChangeType.Deleted)
             return;
 
+        if (payload.UserControlOperation is not null)
+        {
+            await _membershipAuthorization.VerifyControlAuthorAsync(payload.UserControlOperation, ct);
+            return;
+        }
+
         var envelope = payload.UserSnapshot
             ?? throw new InvalidDataException("User snapshot envelope is missing.");
-        var originDevice = await _devices.GetByIdAsync(envelope.OriginDeviceId, ct)
-            ?? throw new UnauthorizedAccessException("Unknown user snapshot origin device.");
-        UserSnapshotEnvelopeUtil.Verify(envelope, originDevice);
+        await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);
     }
 
 
@@ -173,10 +180,11 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
 
             if (payload.ChangeType != SyncChangeType.Deleted)
             {
-                var originDeviceId = payload.UserSnapshot?.OriginDeviceId
-                    ?? throw new InvalidDataException("User snapshot envelope is missing.");
+                var originDeviceId = payload.UserControlOperation?.OriginDeviceId
+                    ?? payload.UserSnapshot?.OriginDeviceId
+                    ?? throw new InvalidDataException("The immutable user payload origin is missing.");
                 if (!await _userDevices.HasActiveLinkAsync(payload.ModelId, originDeviceId, ct))
-                    throw new UnauthorizedAccessException("Snapshot origin device is not currently authorized for this user.");
+                    throw new UnauthorizedAccessException("The immutable user payload origin device is not currently authorized for this user.");
             }
 
             return;
@@ -292,15 +300,20 @@ public sealed class NetworkDeltaProtocolService : INetworkDeltaProtocolService
         if (!string.Equals(delta.Entity, expectedEntity, StringComparison.Ordinal))
             throw new InvalidDataException("Network delta entity envelope is invalid.");
 
-        if (payload.User is not null && (payload.ModelType != SyncModelType.User || payload.User.UId != payload.ModelId))
-            throw new InvalidDataException("Legacy user sync payload envelope is invalid.");
-
         if (payload.UserSnapshot is not null &&
             (payload.ModelType != SyncModelType.User ||
              payload.UserSnapshot.UserId != payload.ModelId ||
              payload.UserSnapshot.User.UId != payload.ModelId))
         {
             throw new InvalidDataException("User snapshot payload envelope is invalid.");
+        }
+
+        if (payload.UserControlOperation is not null &&
+            (payload.ModelType != SyncModelType.User ||
+             payload.ChangeType == SyncChangeType.Deleted ||
+             payload.UserControlOperation.UserId != payload.ModelId))
+        {
+            throw new InvalidDataException("User control-operation payload envelope is invalid.");
         }
 
         if (payload.Group is not null && (payload.ModelType != SyncModelType.Group || payload.Group.Id != payload.ModelId))

@@ -12,6 +12,8 @@ public sealed class DeviceEnrollmentUserSnapshot
     public byte[] EncryptedGeneralUserDataPayload { get; set; } = [];
     public byte[] EncryptedUserPasswordsDataPayload { get; set; } = [];
     public byte[] EncryptedUserDevicesDataPayload { get; set; } = [];
+    public long KeyEpoch { get; set; }
+    public long MembershipEpoch { get; set; }
     public DateTimeOffset LastModifiedAt { get; set; }
     public DateTimeOffset UserDataLastModifiedAt { get; set; }
     public DateTimeOffset GeneralUserDataLastModifiedAt { get; set; }

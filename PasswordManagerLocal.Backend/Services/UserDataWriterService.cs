@@ -81,6 +81,9 @@ public sealed class UserDataWriterService : IUserDataWriterService
         await _uow.SaveChangesAsync(ct);
     }
 
+    public Task UpdateSavedKeyOnlyAsync(User user, CancellationToken ct = default) =>
+        _users.UpdateSavedKeyAsync(user.UId, user.SavedKey, ct);
+
     public Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, CancellationToken ct = default) =>
         UpdateUserDataAsync(userData, user, key, false, ct);
 

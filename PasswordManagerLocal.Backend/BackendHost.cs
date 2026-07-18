@@ -238,6 +238,11 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserSyncSnapshotRepository, UserSyncSnapshotRepository>();
             services.AddScoped<IUserSyncStateRepository, UserSyncStateRepository>();
             services.AddScoped<IUserRevisionKnowledgeRepository, UserRevisionKnowledgeRepository>();
+            services.AddScoped<IUserControlOperationRepository, UserControlOperationRepository>();
+            services.AddScoped<IUserControlStateRepository, UserControlStateRepository>();
+            services.AddScoped<IUserMembershipAuthorizationRepository, UserMembershipAuthorizationRepository>();
+            services.AddScoped<IUserOriginRemovalCutoffRepository, UserOriginRemovalCutoffRepository>();
+            services.AddScoped<IDeviceEnrollmentCommitRepository, DeviceEnrollmentCommitRepository>();
 
             services.AddScoped<IUserPasswordsService, UserPasswordsService>();
             services.AddScoped<IUserCustomColorService, UserCustomColorService>();
@@ -262,6 +267,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
 
             services.AddSingleton<IKeyVaultService, KeyVaultService>();
+            services.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
             services.AddMemoryCache();
             services.AddSingleton<SafeMemoryCache>();
             services.AddSingleton<IDataCachingService, DataCachingService>();
@@ -295,6 +301,10 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserSnapshotInboxService, UserSnapshotInboxService>();
             services.AddScoped<IUserSnapshotMergeCoordinator, UserSnapshotMergeCoordinator>();
             services.AddScoped<IUserSnapshotAntiEntropyService, UserSnapshotAntiEntropyService>();
+            services.AddScoped<IUserMembershipAuthorizationService, UserMembershipAuthorizationService>();
+            services.AddScoped<IUserControlOperationWriterService, UserControlOperationWriterService>();
+            services.AddScoped<IUserControlOperationInboxService, UserControlOperationInboxService>();
+            services.AddScoped<IUserControlOperationAntiEntropyService, UserControlOperationAntiEntropyService>();
             services.AddScoped<IUserSyncKeyResolverService, UserSyncKeyResolverService>();
             services.AddScoped<IUserDeltaApplierService, UserDeltaApplierService>();
             services.AddScoped<INetworkDeltaProtocolService, NetworkDeltaProtocolService>();

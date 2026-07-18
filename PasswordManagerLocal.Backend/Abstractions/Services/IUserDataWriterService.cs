@@ -9,6 +9,7 @@ public interface IUserDataWriterService
     Task AddNewUserAsync(User user, CancellationToken ct = default);
     Task UpdateUserAsync(User user, CancellationToken ct = default);
     Task UpdateUserAsync(User user, bool enqueueSync, CancellationToken ct = default);
+    Task UpdateSavedKeyOnlyAsync(User user, CancellationToken ct = default);
 
     Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, CancellationToken ct = default);
     Task UpdateUserDataAsync(UserData userData, User user, EncryptionKey key, bool enqueueSync, CancellationToken ct = default);

@@ -1,4 +1,5 @@
 using System.Net;
+using PasswordManagerLocal.Backend.Models;
 
 namespace PasswordManagerLocal.Backend.Sync.Discovery.Protocol;
 
@@ -8,6 +9,8 @@ internal sealed class EnrollmentDiscoveryResponsePacket
     public byte[] QueryNonce { get; init; } = [];
     public string SessionId { get; init; } = string.Empty;
     public Guid DeviceId { get; init; }
+    public Guid OriginInstanceId { get; init; }
+    public DeviceType DeviceType { get; init; }
     public byte[] TlsFingerprint { get; init; } = [];
     public byte[] SignPublicKey { get; init; } = [];
     public byte[] AgreementPublicKey { get; init; } = [];

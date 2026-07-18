@@ -70,7 +70,9 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
 
                 if (reply.Ok &&
                     Guid.TryParse(reply.DeviceId, out var deviceId) &&
+                    Guid.TryParse(reply.OriginInstanceId, out var originInstanceId) &&
                     deviceId == _identity.LocalDeviceId &&
+                    originInstanceId == _identity.OriginInstanceId &&
                     FingerprintUtil.Normalize(reply.TlsCertFingerprint) == FingerprintUtil.Normalize(_identity.FingerprintHex))
                 {
                     DeviceEnrollmentTrace.Info($"Local enrollment listener self-test succeeded for {host}:{endpointInfo.Port}.");
@@ -102,6 +104,8 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
         new()
         {
             DeviceId = _identity.LocalDeviceId,
+            OriginInstanceId = _identity.OriginInstanceId,
+            DeviceType = _identity.DeviceType,
             TlsCertFingerprint = _identity.FingerprintHex,
             SignPublicKey = _identity.SignPublicKey,
             AgreementPublicKey = _identity.AgreementPublicKey,
@@ -120,6 +124,8 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
             Host = endpoint.Host,
             Port = endpoint.Port,
             DeviceId = endpoint.DeviceId,
+            OriginInstanceId = endpoint.OriginInstanceId,
+            DeviceType = endpoint.DeviceType,
             TlsCertFingerprint = endpoint.TlsCertFingerprint,
             SignPublicKey = endpoint.SignPublicKey,
             AgreementPublicKey = endpoint.AgreementPublicKey
@@ -170,7 +176,7 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
 
         DeviceEnrollmentTrace.Info($"Fetched enrollment identity from {endpoint.Host}:{endpoint.Port}. DeviceId={info.DeviceId}, DeviceType={info.DeviceType}.");
 
-        if (info.DeviceId == Guid.Empty ||
+        if (info.DeviceId == Guid.Empty || info.OriginInstanceId == Guid.Empty ||
             string.IsNullOrWhiteSpace(info.TlsCertFingerprint) ||
             info.SignPublicKey.Length != SyncConstants.SyncDeltaEd25519PublicKeyBytes ||
             info.AgreementPublicKey.Length != SyncConstants.SyncDeltaX25519PublicKeyBytes ||
@@ -181,6 +187,10 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
 
         if (endpoint.DeviceId != Guid.Empty && endpoint.DeviceId != info.DeviceId)
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code device id does not match the responding device.");
+        if (endpoint.OriginInstanceId != Guid.Empty && endpoint.OriginInstanceId != info.OriginInstanceId)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code installation origin does not match the responding device.");
+        if (endpoint.DeviceType != default && endpoint.DeviceType != info.DeviceType)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code device type does not match the responding device.");
 
         if (endpoint.SignPublicKey.Length > 0 && !endpoint.SignPublicKey.SequenceEqual(info.SignPublicKey))
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The enrollment code signing key does not match the responding device.");
@@ -198,6 +208,7 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
             Host = endpoint.Host,
             Port = endpoint.Port,
             DeviceId = info.DeviceId,
+            OriginInstanceId = info.OriginInstanceId,
             TlsCertFingerprint = info.TlsCertFingerprint,
             SignPublicKey = info.SignPublicKey,
             AgreementPublicKey = info.AgreementPublicKey,
@@ -246,6 +257,16 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
                 };
             }
 
+            if ((!Guid.TryParseExact(reply.OriginInstanceId, "N", out var originInstanceId) && !Guid.TryParse(reply.OriginInstanceId, out originInstanceId)) || originInstanceId == Guid.Empty)
+            {
+                return new DeviceEnrollmentInfoResponse
+                {
+                    Ok = false,
+                    ErrorCode = DeviceEnrollmentErrorCode.NewDeviceRejected,
+                    Error = "The new device returned an invalid installation origin id."
+                };
+            }
+
             if (reply.DeviceType > byte.MaxValue || !DeviceTypeDetector.IsValid((DeviceType)(byte)reply.DeviceType))
             {
                 return new DeviceEnrollmentInfoResponse
@@ -260,6 +281,7 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
             {
                 Ok = true,
                 DeviceId = deviceId,
+                OriginInstanceId = originInstanceId,
                 DeviceType = (DeviceType)(byte)reply.DeviceType,
                 TlsCertFingerprint = reply.TlsCertFingerprint,
                 SignPublicKey = reply.SignPub.ToByteArray(),

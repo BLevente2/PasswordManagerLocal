@@ -136,6 +136,15 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     {
         try
         {
+            // Authoritative epoch/membership barriers must arrive before ordinary snapshots that
+            // depend on them. This avoids deleting a queue item after a receiver correctly rejects
+            // a newer-epoch ordinary snapshot.
+            if (!ct.IsCancellationRequested && _identity.IsSyncOn &&
+                !await TryRunControlOperationAntiEntropyAsync(endpoint, targetDevice, ct))
+            {
+                return;
+            }
+
             while (!ct.IsCancellationRequested && _identity.IsSyncOn &&
                    await TrySendNextAsync(endpoint, targetDevice, ct))
             {
@@ -302,6 +311,101 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
         return true;
     }
+
+
+    private async Task<bool> TryRunControlOperationAntiEntropyAsync(
+        DiscoveredDeviceEndpoint endpoint,
+        Device targetDevice,
+        CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var antiEntropy = scope.ServiceProvider.GetService<IUserControlOperationAntiEntropyService>();
+        if (antiEntropy is null)
+            return true;
+
+        if (!await RefreshAndValidateTargetDeviceAsync(scope.ServiceProvider, targetDevice, endpoint, ct))
+            return false;
+
+        var localInventory = await antiEntropy.BuildInventoryAsync(targetDevice.Id, ct);
+        var exchange = await _syncTransport.ExchangeUserControlOperationInventoryAsync(
+            endpoint.Host,
+            endpoint.Port,
+            targetDevice.TlsCertFingerprint,
+            localInventory,
+            ct);
+
+        if (exchange.RequestedOperations.Count > 0)
+        {
+            var requestedDeltas = await antiEntropy.BuildRequestedOperationDeltasAsync(
+                targetDevice.Id,
+                exchange.RequestedOperations,
+                ct);
+            if (requestedDeltas.Count != exchange.RequestedOperations.Count)
+                throw new InvalidDataException("Not every requested control operation could be relayed exactly.");
+
+            if (!await _syncTransport.SendDeltasAsync(
+                    endpoint.Host,
+                    endpoint.Port,
+                    targetDevice.TlsCertFingerprint,
+                    requestedDeltas,
+                    ct))
+            {
+                _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+                return false;
+            }
+        }
+
+        var missing = antiEntropy.FindMissingOperations(localInventory, exchange.Users);
+        if (missing.Count == 0)
+            return true;
+
+        var requestBatch = new UserControlOperationRequestBatch();
+        requestBatch.Requests.AddRange(missing);
+        var receivedDeltas = await _syncTransport.RequestUserControlOperationsAsync(
+            endpoint.Host,
+            endpoint.Port,
+            targetDevice.TlsCertFingerprint,
+            requestBatch,
+            ct);
+        if (receivedDeltas.Count == 0)
+            return false;
+
+        var expected = missing.ToDictionary(
+            request => ParseControlRequestKey(request),
+            request => request.ExpectedOperationHash.ToByteArray());
+        var fulfilled = new HashSet<Guid>();
+        var applier = scope.ServiceProvider.GetRequiredService<IIncomingDeltaApplierService>();
+        foreach (var delta in receivedDeltas.OrderBy(delta => delta.Ts))
+        {
+            var result = await applier.ApplyAsync(delta, ct);
+            var receipt = result.UserControlOperationReceipt
+                ?? throw new InvalidDataException("A relayed control operation did not produce an explicit receipt.");
+            if (!expected.TryGetValue(receipt.OperationId, out var expectedHash) ||
+                !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(expectedHash, receipt.OperationHash))
+            {
+                throw new InvalidDataException("A relayed control operation did not match an exact outstanding request.");
+            }
+            if (!IsDurableControlOperationReceipt(receipt.State))
+                throw new InvalidDataException($"A relayed control operation was not durably accepted: {receipt.State}.");
+            if (!fulfilled.Add(receipt.OperationId))
+                throw new InvalidDataException("The relay returned the same requested control operation more than once.");
+        }
+
+        return fulfilled.Count == expected.Count;
+    }
+
+    private static Guid ParseControlRequestKey(UserControlOperationRequest request)
+    {
+        if (!Guid.TryParse(request.OperationId, out var operationId) || operationId == Guid.Empty)
+            throw new InvalidDataException("The control-operation request identity is invalid.");
+        return operationId;
+    }
+
+    private static bool IsDurableControlOperationReceipt(UserControlOperationReceiptState state) =>
+        state is UserControlOperationReceiptState.StoredPending or
+            UserControlOperationReceiptState.AlreadyStored or
+            UserControlOperationReceiptState.Applied or
+            UserControlOperationReceiptState.Obsolete;
 
 
     private async Task<bool> TryRunAntiEntropyAsync(

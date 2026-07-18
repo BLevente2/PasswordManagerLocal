@@ -331,77 +331,207 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         DeviceEnrollmentTrace.Info($"Enrollment connection and identity check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
         endpoint = await _endpointService.ResolveEndpointIdentityAsync(endpoint, parsed, ct);
-        DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, TlsFingerprintPrefix={FingerprintUtil.Normalize(endpoint.TlsCertFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(endpoint.TlsCertFingerprint).Length)]}.");
+        DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, Origin={endpoint.OriginInstanceId}, TlsFingerprintPrefix={FingerprintUtil.Normalize(endpoint.TlsCertFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(endpoint.TlsCertFingerprint).Length)]}.");
 
-        using var scope = _scopeFactory.CreateScope();
-        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-        var devices = scope.ServiceProvider.GetRequiredService<IDeviceRepository>();
-        var users = scope.ServiceProvider.GetRequiredService<IUserLookupService>();
-        var userDataReader = scope.ServiceProvider.GetRequiredService<IUserDataReaderService>();
-        var userDataWriter = scope.ServiceProvider.GetRequiredService<IUserDataWriterService>();
-        var cache = scope.ServiceProvider.GetRequiredService<IDataCachingService>();
-        var syncIdentities = scope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
-        var pendingSyncActivation = scope.ServiceProvider.GetRequiredService<IPendingSyncActivationService>();
-        var user = await users.GetAndVerifyUserAsync(token, ct);
+        Guid userId;
+        PasswordManagerLocal.Backend.Security.EncryptionKey mergeKey;
+        using (var authorizationScope = _scopeFactory.CreateScope())
+        {
+            var users = authorizationScope.ServiceProvider.GetRequiredService<IUserLookupService>();
+            var keyVault = authorizationScope.ServiceProvider.GetRequiredService<IKeyVaultService>();
+            userId = (await users.GetAndVerifyUserAsync(token, ct)).UId;
+            if (!keyVault.TryGetEncryptionKey(token, out mergeKey!))
+                throw new InvalidTokenException();
+        }
 
-        await using var transaction = await unitOfWork.BeginTransactionAsync(ct);
-
+        Guid commitId = Guid.Empty;
+        Guid additionOperationId = Guid.Empty;
         try
         {
-            await _registrationService.RegisterRemoteDeviceAsync(scope.ServiceProvider, user.UId, endpoint, ct);
-            await _snapshotService.EnsureEncryptedDeviceDataAsync(userDataReader, userDataWriter, user, token, endpoint.DeviceId, ct);
-            var snapshot = await _snapshotService.BuildAsync(scope.ServiceProvider, user.UId, ct);
+            using (mergeKey)
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var lifecycle = scope.ServiceProvider.GetRequiredService<IUserLifecycleCoordinator>();
+                await lifecycle.ExecuteAsync(userId, async lifecycleToken =>
+                {
+                    var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                    var users = scope.ServiceProvider.GetRequiredService<IUserLookupService>();
+                    var snapshotMerge = scope.ServiceProvider.GetRequiredService<IUserSnapshotMergeCoordinator>();
+                    var snapshots = scope.ServiceProvider.GetRequiredService<IUserSyncSnapshotRepository>();
+                    var controlStates = scope.ServiceProvider.GetRequiredService<IUserControlStateRepository>();
+                    var controlOperations = scope.ServiceProvider.GetRequiredService<IUserControlOperationRepository>();
+                    var commits = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentCommitRepository>();
+                    var writer = scope.ServiceProvider.GetRequiredService<IUserControlOperationWriterService>();
+                    var userDataReader = scope.ServiceProvider.GetRequiredService<IUserDataReaderService>();
+                    var userDataWriter = scope.ServiceProvider.GetRequiredService<IUserDataWriterService>();
+                    var publisher = scope.ServiceProvider.GetRequiredService<IUserSnapshotPublisherService>();
+
+                    await _registrationService.RegisterRemoteDeviceAsync(scope.ServiceProvider, userId, endpoint, lifecycleToken);
+                    var canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
+                    var controlState = await controlStates.GetAsync(userId, lifecycleToken);
+                    if (controlState?.HasConflict == true)
+                        throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, controlState.ConflictReason ?? "The account control plane is quarantined.");
+                    if ((await snapshots.ListForUserAsync(userId, lifecycleToken)).Any(row => row.Status == UserSyncSnapshotStatus.Quarantined))
+                        throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "Enrollment is blocked by unresolved snapshot fork evidence.");
+
+                    await snapshotMerge.TryMergePendingUnderLifecycleAsync(userId, mergeKey, lifecycleToken);
+                    canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
+
+                    await using var transaction = await unitOfWork.BeginTransactionAsync(lifecycleToken);
+                    try
+                    {
+                        var commit = await commits.GetRecoverableAsync(userId, endpoint.DeviceId, endpoint.OriginInstanceId, lifecycleToken);
+                        if (commit is not null)
+                        {
+                            ValidateRecoverableEnrollmentCommit(commit, endpoint);
+                            var existingOperation = await controlOperations.GetByIdAsync(commit.AdditionOperationId, lifecycleToken);
+                            if (existingOperation is null || existingOperation.OperationType != UserControlOperationType.DeviceAddition || existingOperation.Status != UserControlOperationStatus.Applied ||
+                                !Hashing.Verify(existingOperation.OperationHash, commit.AdditionOperationHash))
+                                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The recoverable enrollment addition operation is missing or inconsistent.");
+                            commit.Status = DeviceEnrollmentCommitStatus.PendingTransfer;
+                            commit.LastAttemptAtUtc = DateTimeOffset.UtcNow;
+                            commit.LastError = null;
+                            commit.Version = checked(commit.Version + 1);
+                            commits.Update(commit);
+                        }
+                        else
+                        {
+                            var envelope = await writer.CreateAppliedDeviceAdditionUnderLifecycleAsync(canonicalUser, endpoint, lifecycleToken);
+                            canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
+
+                            // Encrypted device metadata is derived only after the signed addition has been applied.
+                            await _snapshotService.EnsureEncryptedDeviceDataAsync(userDataReader, userDataWriter, canonicalUser, token, endpoint.DeviceId, lifecycleToken);
+                            canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
+                            await publisher.GetOrCreateAsync(canonicalUser, lifecycleToken);
+                            await _registrationService.QueueInitialSyncAsync(scope.ServiceProvider, userId, endpoint.DeviceId, lifecycleToken);
+
+                            commit = new DeviceEnrollmentCommit
+                            {
+                                UserId = userId,
+                                TargetDeviceId = endpoint.DeviceId,
+                                TargetOriginInstanceId = endpoint.OriginInstanceId,
+                                TargetSignPublicKeyHash = Hashing.SHA256Hash(endpoint.SignPublicKey),
+                                TargetAgreementPublicKeyHash = Hashing.SHA256Hash(endpoint.AgreementPublicKey),
+                                TargetTlsCertFingerprint = SyncIdentityUtil.NormalizeFingerprint(endpoint.TlsCertFingerprint),
+                                TargetDeviceType = endpoint.DeviceType,
+                                AdditionOperationId = envelope.OperationId,
+                                AdditionOperationHash = envelope.OperationHash.ToArray(),
+                                Status = DeviceEnrollmentCommitStatus.PendingTransfer,
+                                CreatedAtUtc = DateTimeOffset.UtcNow,
+                                LastAttemptAtUtc = DateTimeOffset.UtcNow
+                            };
+                            await commits.AddAsync(commit, lifecycleToken);
+                        }
+
+                        await unitOfWork.SaveChangesAsync(lifecycleToken);
+                        await transaction.CommitAsync(lifecycleToken);
+                        commitId = commit.CommitId;
+                        additionOperationId = commit.AdditionOperationId;
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync(CancellationToken.None);
+                        unitOfWork.ClearTrackedChanges();
+                        throw;
+                    }
+                }, ct);
+            }
+
+            using (var activationScope = _scopeFactory.CreateScope())
+            {
+                try
+                {
+                    await activationScope.ServiceProvider.GetRequiredService<IPendingSyncActivationService>()
+                        .ActivatePendingAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // Durable work remains discoverable after the authoritative addition commit.
+                }
+            }
+
+            DeviceEnrollmentSnapshot snapshot;
+            using (var bootstrapScope = _scopeFactory.CreateScope())
+                snapshot = await _snapshotService.BuildAsync(bootstrapScope.ServiceProvider, userId, endpoint, additionOperationId, ct);
 
             var proof = DeviceEnrollmentCode.BuildCompletionProof(
                 parsed.SessionId,
                 parsed.Secret,
                 _identity.LocalDeviceId.ToString("N"),
+                _identity.OriginInstanceId,
                 _identity.SignPublicKey,
-                _identity.FingerprintHex);
+                _identity.FingerprintHex,
+                endpoint.DeviceId,
+                endpoint.OriginInstanceId);
 
+            // The authoritative addition is committed before this network transfer. Failure is recoverable
+            // and must never roll the membership epoch backward or create a second same-base transition.
             var result = await _snapshotTransferService.SendAsync(endpoint, parsed.SessionId, parsed.Secret, proof, snapshot, ct);
+            await UpdateEnrollmentCommitAfterTransferAsync(commitId, result.Ok, result.Error, ct);
             if (!result.Ok)
-                throw new DeviceEnrollmentException(result.ErrorCode, result.Error ?? "The new device rejected the enrollment request.");
+                throw new DeviceEnrollmentException(result.ErrorCode, result.Error ?? "The new device rejected the enrollment request. The signed addition remains committed and may be retried with the same target installation.");
 
-            await _registrationService.QueueInitialSyncAsync(scope.ServiceProvider, user.UId, endpoint.DeviceId, ct);
-            await transaction.CommitAsync(ct);
-            cache.InvalidateToken(token);
-
-            var remoteDevice = await devices.GetByIdAsNoTrackingAsync(endpoint.DeviceId, ct);
-            if (remoteDevice is not null)
+            using (var completionScope = _scopeFactory.CreateScope())
             {
-                syncIdentities.TryAdd(remoteDevice);
-                var discoveredEndpoint = new DiscoveredDeviceEndpoint
+                completionScope.ServiceProvider.GetRequiredService<IDataCachingService>().InvalidateToken(token);
+                var devices = completionScope.ServiceProvider.GetRequiredService<IDeviceRepository>();
+                var syncIdentities = completionScope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
+                var pendingSyncActivation = completionScope.ServiceProvider.GetRequiredService<IPendingSyncActivationService>();
+                var remoteDevice = await devices.GetByIdAsNoTrackingAsync(endpoint.DeviceId, ct);
+                if (remoteDevice is not null)
                 {
-                    Host = endpoint.Host,
-                    Port = endpoint.Port,
-                    TlsCertFingerprint = endpoint.TlsCertFingerprint
-                };
-                _endpointCache.AddOrUpdate(discoveredEndpoint);
+                    syncIdentities.TryAdd(remoteDevice);
+                    _endpointCache.AddOrUpdate(new DiscoveredDeviceEndpoint
+                    {
+                        Host = endpoint.Host,
+                        Port = endpoint.Port,
+                        TlsCertFingerprint = endpoint.TlsCertFingerprint
+                    });
+                }
+                try { await pendingSyncActivation.ActivatePendingAsync(CancellationToken.None); } catch { }
             }
-
-            await pendingSyncActivation.ActivatePendingAsync(ct);
         }
         catch (DeviceEnrollmentException)
         {
-            syncIdentities.TryRemove(new Device
-            {
-                Id = endpoint.DeviceId,
-                TlsCertFingerprint = endpoint.TlsCertFingerprint
-            });
-            _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+            // Do not remove a committed authoritative identity on transfer failure. The durable commit
+            // is intentionally retained for an exact-identity retry or a later signed removal.
             throw;
         }
         catch (Exception ex)
         {
-            syncIdentities.TryRemove(new Device
-            {
-                Id = endpoint.DeviceId,
-                TlsCertFingerprint = endpoint.TlsCertFingerprint
-            });
-            _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+            if (commitId != Guid.Empty)
+                await UpdateEnrollmentCommitAfterTransferAsync(commitId, false, ex.Message, CancellationToken.None);
             throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.Unknown, ex.Message, ex);
         }
+    }
+
+    private static void ValidateRecoverableEnrollmentCommit(DeviceEnrollmentCommit commit, EnrollmentEndpoint endpoint)
+    {
+        if (commit.TargetDeviceId != endpoint.DeviceId || commit.TargetOriginInstanceId != endpoint.OriginInstanceId ||
+            !Hashing.Verify(commit.TargetSignPublicKeyHash, Hashing.SHA256Hash(endpoint.SignPublicKey)) ||
+            !Hashing.Verify(commit.TargetAgreementPublicKeyHash, Hashing.SHA256Hash(endpoint.AgreementPublicKey)) ||
+            !string.Equals(SyncIdentityUtil.NormalizeFingerprint(commit.TargetTlsCertFingerprint), SyncIdentityUtil.NormalizeFingerprint(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
+            commit.TargetDeviceType != endpoint.DeviceType)
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "The pending enrollment belongs to a different target installation identity.");
+    }
+
+    private async Task UpdateEnrollmentCommitAfterTransferAsync(Guid commitId, bool succeeded, string? error, CancellationToken ct)
+    {
+        if (commitId == Guid.Empty)
+            return;
+        using var scope = _scopeFactory.CreateScope();
+        var commits = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentCommitRepository>();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var commit = await commits.GetByIdAsync(commitId, ct);
+        if (commit is null)
+            return;
+        commit.Status = succeeded ? DeviceEnrollmentCommitStatus.Transferred : DeviceEnrollmentCommitStatus.TransferFailed;
+        commit.LastAttemptAtUtc = DateTimeOffset.UtcNow;
+        commit.LastError = succeeded ? null : (string.IsNullOrWhiteSpace(error) ? "Enrollment transfer failed." : error);
+        commit.CompletedAtUtc = succeeded ? DateTimeOffset.UtcNow : null;
+        commit.Version = checked(commit.Version + 1);
+        commits.Update(commit);
+        await unitOfWork.SaveChangesAsync(ct);
     }
 
 
@@ -462,6 +592,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     {
                         Ok = true,
                         DeviceId = _identity.LocalDeviceId,
+                        OriginInstanceId = _identity.OriginInstanceId,
                         DeviceType = _identity.DeviceType,
                         TlsCertFingerprint = _identity.FingerprintHex,
                         SignPublicKey = _identity.SignPublicKey,
@@ -515,10 +646,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         byte[] codeProof,
         byte[] snapshotBytes,
         string sourceDeviceId,
+        Guid sourceOriginInstanceId,
         byte[] sourceSignPublicKey,
         string sourceTlsCertFingerprint,
         string actualClientTlsCertFingerprint,
         string? sourceHost,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId,
         int snapshotEncryptionVersion,
         byte[] snapshotEncryptionNonce,
         byte[] snapshotEncryptionTag,
@@ -560,6 +694,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         var activeSession = session!;
 
+        if (targetDeviceId != _identity.LocalDeviceId || targetOriginInstanceId != _identity.OriginInstanceId)
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.NewDeviceRejected, "The enrollment transfer targets a different local installation.");
+
+        if (sourceOriginInstanceId == Guid.Empty)
+            return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, "The source installation origin is missing.");
+
         if (!string.Equals(FingerprintUtil.Normalize(sourceTlsCertFingerprint), FingerprintUtil.Normalize(actualClientTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
         {
             DeviceEnrollmentTrace.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={FingerprintUtil.Normalize(sourceTlsCertFingerprint)}, Actual={FingerprintUtil.Normalize(actualClientTlsCertFingerprint)}.");
@@ -570,8 +710,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             sessionId,
             activeSession.Secret,
             sourceDeviceId,
+            sourceOriginInstanceId,
             sourceSignPublicKey,
-            sourceTlsCertFingerprint);
+            sourceTlsCertFingerprint,
+            targetDeviceId,
+            targetOriginInstanceId);
 
         if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
             return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.CodeProofInvalid, "The enrollment code proof is invalid.");
@@ -584,8 +727,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 activeSession.Secret,
                 snapshotBytes,
                 sourceDeviceId,
+                sourceOriginInstanceId,
                 sourceSignPublicKey,
                 sourceTlsCertFingerprint,
+                targetDeviceId,
+                targetOriginInstanceId,
                 snapshotEncryptionVersion,
                 snapshotEncryptionNonce,
                 snapshotEncryptionTag);
@@ -603,7 +749,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             using var scope = _scopeFactory.CreateScope();
             DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
-            await _registrationService.RejectIfPrimaryUserAlreadyLinkedToLocalDeviceAsync(scope.ServiceProvider, snapshot.PrimaryUserId, ct);
+            // The importer performs stale-barrier and exact-idempotence checks. A partially imported
+            // bootstrap must be retryable with the same immutable addition operation.
             await _snapshotImporter.ImportAsync(scope.ServiceProvider, snapshot, ct);
             await _syncRuntime.RefreshSyncEnabledAsync(ct);
             await _registrationService.CacheIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);

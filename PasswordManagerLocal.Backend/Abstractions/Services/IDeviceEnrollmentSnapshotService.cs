@@ -1,26 +1,33 @@
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync.Enrollment;
 
 namespace PasswordManagerLocal.Backend.Abstractions.Services;
 
 public interface IDeviceEnrollmentSnapshotService
 {
-    Task<DeviceEnrollmentSnapshot> BuildAsync(IServiceProvider services, Guid userId, CancellationToken ct = default);
+    Task<DeviceEnrollmentSnapshot> BuildAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint target, Guid authorizingAdditionOperationId, CancellationToken ct = default);
     Task EnsureEncryptedDeviceDataAsync(IUserDataReaderService reader, IUserDataWriterService writer, User user, Guid token, Guid deviceId, CancellationToken ct = default);
     (byte[] Ciphertext, byte[] Nonce, byte[] Tag) Encrypt(
         string sessionId,
         byte[] secret,
         byte[] plaintext,
         string sourceDeviceId,
+        Guid sourceOriginInstanceId,
         byte[] sourceSignPublicKey,
-        string sourceTlsFingerprint);
+        string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId);
     DeviceEnrollmentSnapshot DecryptAndDeserialize(
         string sessionId,
         byte[] secret,
         byte[] ciphertext,
         string sourceDeviceId,
+        Guid sourceOriginInstanceId,
         byte[] sourceSignPublicKey,
         string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId,
         int encryptionVersion,
         byte[] nonce,
         byte[] tag);

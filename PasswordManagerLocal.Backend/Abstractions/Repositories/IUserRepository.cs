@@ -10,4 +10,5 @@ public interface IUserRepository : IGenericRepository<User>
     Task<IReadOnlyList<User>> ListByIdsAsync(IReadOnlyCollection<Guid> ids, CancellationToken ct = default);
     Task<User?> GetByIdWithRelationsAsync(Guid id, CancellationToken ct = default);
     Task<User?> GetByIdAsNoTrackingWithRelationsAsync(Guid id, CancellationToken ct = default);
+    Task UpdateSavedKeyAsync(Guid id, byte[]? savedKey, CancellationToken ct = default);
 }

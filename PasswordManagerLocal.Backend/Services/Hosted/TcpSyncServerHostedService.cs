@@ -256,6 +256,20 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                         await HandleUserSnapshotRequestsAsync(stream, frame, context, ct);
                         return;
 
+                    case SyncTcpMessageType.UserControlOperationInventoryRequest:
+                        if (!context.SyncHelloAccepted)
+                            throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "A successful sync hello is required before exchanging control-operation inventory.");
+
+                        await HandleUserControlOperationInventoryAsync(stream, frame, context, ct);
+                        return;
+
+                    case SyncTcpMessageType.UserControlOperationRequestBatch:
+                        if (!context.SyncHelloAccepted)
+                            throw new SyncProtocolException(SyncProtocolStatusCode.FailedPrecondition, "A successful sync hello is required before requesting control operations.");
+
+                        await HandleUserControlOperationRequestsAsync(stream, frame, context, ct);
+                        return;
+
                     case SyncTcpMessageType.GetDeviceEnrollmentInfoRequest:
                         await HandleGetDeviceEnrollmentInfoAsync(stream, frame, ct);
                         return;
@@ -348,6 +362,31 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
         await WriteFrameAsync(stream, SyncTcpMessageType.UserSnapshotRelayEnd, ct);
     }
 
+
+    private async Task HandleUserControlOperationInventoryAsync(
+        Stream stream,
+        SyncTcpFrame frame,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        var request = frame.Parse(UserControlOperationInventoryExchangeRequest.Parser);
+        var reply = await _handler.ExchangeUserControlOperationInventoryAsync(request, context, ct);
+        await WriteFrameAsync(stream, SyncTcpMessageType.UserControlOperationInventoryReply, reply, ct);
+    }
+
+    private async Task HandleUserControlOperationRequestsAsync(
+        Stream stream,
+        SyncTcpFrame frame,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        var request = frame.Parse(UserControlOperationRequestBatch.Parser);
+        var deltas = await _handler.RequestUserControlOperationsAsync(request, context, ct);
+        await WriteFrameAsync(stream, SyncTcpMessageType.UserControlOperationRelayStart, ct);
+        foreach (var delta in deltas)
+            await WriteFrameAsync(stream, SyncTcpMessageType.DeltaChunk, DeltaMapping.ToProto(delta), ct);
+        await WriteFrameAsync(stream, SyncTcpMessageType.UserControlOperationRelayEnd, ct);
+    }
 
     private async Task HandleGetDeviceEnrollmentInfoAsync(Stream stream, SyncTcpFrame frame, CancellationToken ct)
     {

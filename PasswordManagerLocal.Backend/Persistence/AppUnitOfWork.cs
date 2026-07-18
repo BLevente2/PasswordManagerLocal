@@ -17,4 +17,6 @@ public sealed class AppUnitOfWork : IUnitOfWork
     public Task<int> SaveChangesAsync(CancellationToken ct = default) =>
         _db.SaveChangesAsync(ct);
 
-    }
+    public void ClearTrackedChanges() =>
+        _db.ChangeTracker.Clear();
+}

@@ -594,6 +594,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
                 query.Nonce,
                 query.SessionId,
                 _identity.LocalDeviceId,
+                _identity.OriginInstanceId,
+                _identity.DeviceType,
                 fingerprint,
                 _identity.SignPublicKey,
                 _identity.AgreementPublicKey,
@@ -617,7 +619,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             !LocalDiscoveryAuthenticator.IsFresh(response.UnixTimeSeconds, DateTimeOffset.UtcNow) ||
             !_pendingEnrollmentDiscoveries.TryGetValue(response.SessionId, out var pending) ||
             !pending.ContainsNonce(response.QueryNonce, DateTimeOffset.UtcNow) ||
-            response.DeviceId == Guid.Empty ||
+            response.DeviceId == Guid.Empty || response.OriginInstanceId == Guid.Empty || !DeviceTypeDetector.IsValid(response.DeviceType) ||
             response.DeviceId == _identity.LocalDeviceId ||
             !response.ResponderAddress.Equals(datagram.RemoteEndpoint.Address) ||
             _identity.SignPublicKey.SequenceEqual(response.SignPublicKey) ||
@@ -646,6 +648,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             Host = host,
             Port = SyncPort,
             DeviceId = response.DeviceId,
+            OriginInstanceId = response.OriginInstanceId,
+            DeviceType = response.DeviceType,
             TlsCertFingerprint = Convert.ToHexString(response.TlsFingerprint),
             SignPublicKey = response.SignPublicKey.ToArray(),
             AgreementPublicKey = response.AgreementPublicKey.ToArray()

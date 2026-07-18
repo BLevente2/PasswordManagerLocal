@@ -51,6 +51,20 @@ public sealed class SyncRouteRepository : ISyncRouteRepository
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<Guid>> ListAllEligibleUserIdsAsync(
+        Guid remoteDeviceId,
+        CancellationToken ct = default)
+    {
+        if (remoteDeviceId == Guid.Empty)
+            return [];
+
+        return await EligibleRoutes(remoteDeviceId)
+            .Select(link => link.UserId)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToListAsync(ct);
+    }
+
     public Task<bool> HasEligibleUserForDeviceAsync(Guid deviceId, CancellationToken ct = default)
     {
         if (deviceId == Guid.Empty)

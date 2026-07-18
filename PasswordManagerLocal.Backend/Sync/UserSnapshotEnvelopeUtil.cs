@@ -32,24 +32,15 @@ public static class UserSnapshotEnvelopeUtil
             throw new InvalidDataException("User snapshot hash is invalid.");
     }
 
-    public static void Verify(UserSnapshotEnvelope envelope, Device originDevice)
+    public static void VerifyWithSigningKey(UserSnapshotEnvelope envelope, ReadOnlySpan<byte> historicalSigningPublicKey)
     {
         ValidateStructureAndHash(envelope);
-
-        if (originDevice.Id != envelope.OriginDeviceId)
-            throw new InvalidDataException("User snapshot origin device id does not match the trusted device.");
-
-        if (!originDevice.IsTrusted || originDevice.IsBlocked)
-            throw new UnauthorizedAccessException("User snapshot origin device is not authorized.");
-
-        if (!originDevice.SignPublicKey.SequenceEqual(envelope.OriginSignPublicKey))
-            throw new InvalidDataException("User snapshot origin signing key does not match trusted membership.");
-
+        if (!historicalSigningPublicKey.SequenceEqual(envelope.OriginSignPublicKey))
+            throw new InvalidDataException("User snapshot origin signing key does not match immutable membership history.");
         var publicKey = PublicKey.Import(
             SignatureAlgorithm.Ed25519,
-            originDevice.SignPublicKey,
+            historicalSigningPublicKey,
             KeyBlobFormat.RawPublicKey);
-
         if (!SignatureAlgorithm.Ed25519.Verify(publicKey, BuildSignatureBytes(envelope), envelope.OriginSignature))
             throw new InvalidDataException("User snapshot origin signature is invalid.");
     }

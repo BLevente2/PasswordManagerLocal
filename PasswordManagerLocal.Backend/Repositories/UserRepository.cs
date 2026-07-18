@@ -50,6 +50,13 @@ public sealed class UserRepository : GenericRepositoryBase<User>, IUserRepositor
             .Include(u => u.LocalUserDevices)
             .FirstOrDefaultAsync(u => u.UId == id, ct);
 
+
+    public Task UpdateSavedKeyAsync(Guid id, byte[]? savedKey, CancellationToken ct = default) =>
+        Set.Where(user => user.UId == id)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(user => user.SavedKey, savedKey),
+                ct);
+
     public async Task<IReadOnlyList<User>> GetAllRememberMeEnabledUsersAsync(CancellationToken ct = default) =>
         await Set.AsNoTracking()
             .Where(u => u.SavedKey != null)

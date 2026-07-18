@@ -23,19 +23,22 @@ public sealed class SyncRelationshipReconciliationService : ISyncRelationshipRec
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserMembershipAuthorizationRepository _membershipAuthorizations;
 
     public SyncRelationshipReconciliationService(
         IUserRepository users,
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserMembershipAuthorizationRepository membershipAuthorizations)
     {
         _users = users;
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
         _identity = identity;
+        _membershipAuthorizations = membershipAuthorizations;
     }
 
     public async Task SyncUserGroupsAsync(User user, IEnumerable<Guid> groupIds, CancellationToken ct)
@@ -54,8 +57,14 @@ public sealed class SyncRelationshipReconciliationService : ISyncRelationshipRec
 
     public async Task SyncUserDevicesAsync(User user, IEnumerable<Guid> deviceIds, DateTimeOffset modifiedAt, CancellationToken ct)
     {
-        var ids = CreateIdSet(deviceIds);
-        ids.Remove(_identity.LocalDeviceId);
+        var requestedIds = CreateIdSet(deviceIds);
+        requestedIds.Remove(_identity.LocalDeviceId);
+        var ids = new HashSet<Guid>();
+        foreach (var deviceId in requestedIds)
+        {
+            if ((await _membershipAuthorizations.ListActiveForDeviceAsync(user.UId, deviceId, ct)).Count != 0)
+                ids.Add(deviceId);
+        }
 
         var devices = (await _devices.ListByIdsAsync(ids, ct)).ToDictionary(device => device.Id);
         var knownLinks = user.UserDevices.ToDictionary(link => link.DeviceId);
@@ -112,7 +121,13 @@ public sealed class SyncRelationshipReconciliationService : ISyncRelationshipRec
 
     public async Task SyncDeviceUsersAsync(Device device, IEnumerable<Guid> userIds, DateTimeOffset modifiedAt, CancellationToken ct)
     {
-        var ids = CreateIdSet(userIds);
+        var requestedIds = CreateIdSet(userIds);
+        var ids = new HashSet<Guid>();
+        foreach (var userId in requestedIds)
+        {
+            if ((await _membershipAuthorizations.ListActiveForDeviceAsync(userId, device.Id, ct)).Count != 0)
+                ids.Add(userId);
+        }
 
         var existingLinks = (await _userDevices.ListByUserIdsAndDeviceAsync(ids, device.Id, ct))
             .ToDictionary(link => link.UserId);

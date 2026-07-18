@@ -1,4 +1,6 @@
 using PasswordManagerLocal.Backend.Constants;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Utils;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -63,6 +65,8 @@ internal static class LocalDiscoveryPacketCodec
         byte[] queryNonce,
         string sessionId,
         Guid deviceId,
+        Guid originInstanceId,
+        DeviceType deviceType,
         byte[] tlsFingerprint,
         byte[] signPublicKey,
         byte[] agreementPublicKey,
@@ -71,6 +75,9 @@ internal static class LocalDiscoveryPacketCodec
         ValidateNonce(queryNonce);
         ValidateFingerprint(tlsFingerprint);
         ValidateResponderAddress(responderAddress);
+
+        if (deviceId == Guid.Empty || originInstanceId == Guid.Empty || !DeviceTypeDetector.IsValid(deviceType))
+            throw new ArgumentException("The enrollment installation identity is invalid.");
 
         if (signPublicKey.Length != SyncConstants.SyncDeltaEd25519PublicKeyBytes)
             throw new ArgumentException("The signing public key has an invalid length.", nameof(signPublicKey));
@@ -84,6 +91,8 @@ internal static class LocalDiscoveryPacketCodec
             writer.Write(queryNonce);
             WriteSessionId(writer, sessionId);
             writer.Write(deviceId.ToByteArray());
+            writer.Write(originInstanceId.ToByteArray());
+            writer.Write((byte)deviceType);
             writer.Write(tlsFingerprint);
             writer.Write(signPublicKey);
             writer.Write(agreementPublicKey);
@@ -266,6 +275,10 @@ internal static class LocalDiscoveryPacketCodec
                 var queryNonce = ReadExact(reader, SyncConstants.LocalDiscoveryNonceBytes);
                 var sessionId = ReadSessionId(reader);
                 var deviceId = new Guid(ReadExact(reader, 16));
+                var originInstanceId = new Guid(ReadExact(reader, 16));
+                var deviceType = (DeviceType)reader.ReadByte();
+                if (deviceId == Guid.Empty || originInstanceId == Guid.Empty || !DeviceTypeDetector.IsValid(deviceType))
+                    return false;
                 var tlsFingerprint = ReadExact(reader, 32);
                 var signPublicKey = ReadExact(reader, SyncConstants.SyncDeltaEd25519PublicKeyBytes);
                 var agreementPublicKey = ReadExact(reader, SyncConstants.SyncDeltaX25519PublicKeyBytes);
@@ -284,6 +297,8 @@ internal static class LocalDiscoveryPacketCodec
                     QueryNonce = queryNonce,
                     SessionId = sessionId,
                     DeviceId = deviceId,
+                    OriginInstanceId = originInstanceId,
+                    DeviceType = deviceType,
                     TlsFingerprint = tlsFingerprint,
                     SignPublicKey = signPublicKey,
                     AgreementPublicKey = agreementPublicKey,

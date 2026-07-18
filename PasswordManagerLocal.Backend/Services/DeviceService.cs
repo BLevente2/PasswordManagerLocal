@@ -32,6 +32,18 @@ public sealed class DeviceService : IDeviceService
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IDiscoveredDeviceEndpointCache _endpointCache;
     private readonly IUnitOfWork _uow;
+    private readonly IUserLifecycleCoordinator _lifecycle;
+    private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
+    private readonly IUserMembershipAuthorizationRepository _membershipAuthorizations;
+    private readonly IUserRevisionKnowledgeRepository _revisionKnowledge;
+    private readonly IUserControlOperationRepository _controlOperations;
+    private readonly IUserControlStateRepository _controlStates;
+    private readonly IUserControlOperationWriterService _controlWriter;
+    private readonly IUserSnapshotPublisherService _snapshotPublisher;
+    private readonly ISyncQueueWriterService _queueWriter;
+    private readonly IPendingSyncActivationService _activation;
+    private readonly IKeyVaultService _keyVault;
+    private readonly IUserSyncSnapshotRepository _snapshots;
 
     public DeviceService(
         IUserLookupService userLookup,
@@ -50,7 +62,19 @@ public sealed class DeviceService : IDeviceService
         ISyncDeviceIdentityService syncDeviceIdentities,
         ISyncRuntimeService syncRuntime,
         IDiscoveredDeviceEndpointCache endpointCache,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserLifecycleCoordinator lifecycle,
+        IUserSnapshotMergeCoordinator snapshotMerge,
+        IUserMembershipAuthorizationRepository membershipAuthorizations,
+        IUserRevisionKnowledgeRepository revisionKnowledge,
+        IUserControlOperationRepository controlOperations,
+        IUserControlStateRepository controlStates,
+        IUserControlOperationWriterService controlWriter,
+        IUserSnapshotPublisherService snapshotPublisher,
+        ISyncQueueWriterService queueWriter,
+        IPendingSyncActivationService activation,
+        IKeyVaultService keyVault,
+        IUserSyncSnapshotRepository snapshots)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -69,6 +93,18 @@ public sealed class DeviceService : IDeviceService
         _syncRuntime = syncRuntime;
         _endpointCache = endpointCache;
         _uow = uow;
+        _lifecycle = lifecycle;
+        _snapshotMerge = snapshotMerge;
+        _membershipAuthorizations = membershipAuthorizations;
+        _revisionKnowledge = revisionKnowledge;
+        _controlOperations = controlOperations;
+        _controlStates = controlStates;
+        _controlWriter = controlWriter;
+        _snapshotPublisher = snapshotPublisher;
+        _queueWriter = queueWriter;
+        _activation = activation;
+        _keyVault = keyVault;
+        _snapshots = snapshots;
     }
 
     public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
@@ -210,54 +246,136 @@ public sealed class DeviceService : IDeviceService
         await _syncChanges.EnqueueAsync(new SyncItem { ModelId = device.Id, ModelType = SyncModelType.Device, ChangeType = SyncChangeType.Updated }, ct);
     }
 
-    public async Task DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default)
+    public Task<DeviceRemovalResultResponse> DisconnectUserDeviceAsync(Guid token, Guid deviceId, byte[] masterPassword, CancellationToken ct = default)
     {
         if (!IsValidPassword(masterPassword) || deviceId == _identity.LocalDeviceId)
             throw new InvalidInputException();
-        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
-        if (!_auth.IsPasswordValid(token, masterPassword, user.PasswordSalt))
-            throw new InvalidInputException();
+        if (!_keyVault.TryGetEncryptionKey(token, out var key))
+            throw new InvalidTokenException();
+        return RemoveUnderLifecycleAsync(token, deviceId, masterPassword, key, ct);
+    }
 
-        var userDevice = await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, ct);
-        var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
-        var userDevicesData = bundle.UserDevicesData;
-        var now = DateTimeOffset.UtcNow;
-        userDevice.IsDeleted = true;
-        userDevice.IsSyncOn = false;
-        userDevice.DeletedAt = now;
-        userDevice.LastModifiedAt = now;
-        userDevice.GenerateIntegrityHash();
-        _userDevices.Update(userDevice);
-
-        var encryptedDevice = userDevicesData.Devices.FirstOrDefault(d => d.Id == deviceId);
-        var userDeviceDataChanged = false;
-        if (encryptedDevice is not null)
+    private async Task<DeviceRemovalResultResponse> RemoveUnderLifecycleAsync(Guid token, Guid deviceId, byte[] masterPassword, PasswordManagerLocal.Backend.Security.EncryptionKey key, CancellationToken ct)
+    {
+        using (key)
         {
-            TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(userDevicesData, encryptedDevice.Id, now);
-            encryptedDevice.Dispose();
-            userDevicesData.Devices.Remove(encryptedDevice);
-            userDeviceDataChanged = true;
-        }
-
-        if (userDeviceDataChanged)
-            await PersistUserDeviceDataAsync(bundle, token, ct, false);
-        else
-            await _uow.SaveChangesAsync(ct);
-
-        await RemovePendingSyncsForUserToDeviceAsync(user.UId, deviceId, ct);
-
-        if (userDeviceDataChanged)
-        {
-            await _syncChanges.EnqueueAsync(new SyncItem
+            var userId = (await _userLookup.GetAndVerifyUserAsync(token, ct)).UId;
+            return await _lifecycle.ExecuteAsync(userId, async lifecycleToken =>
             {
-                ModelId = user.UId,
-                ModelType = SyncModelType.User,
-                ChangeType = SyncChangeType.Updated
+                var user = await _userLookup.GetAndVerifyUserAsync(token, lifecycleToken);
+                if (!_auth.IsPasswordValid(token, masterPassword, user.PasswordSalt))
+                    throw new InvalidInputException();
+                await GetActiveRemoteUserDeviceAsync(user.UId, deviceId, lifecycleToken);
+
+                var controlState = await _controlStates.GetAsync(user.UId, lifecycleToken);
+                if (controlState?.HasConflict == true)
+                    throw new InvalidOperationException(controlState.ConflictReason ?? "The account control plane is quarantined.");
+                if (await _snapshotsHasQuarantine(user, lifecycleToken))
+                    throw new InvalidOperationException("Device removal is blocked by unresolved snapshot fork evidence.");
+
+                await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, lifecycleToken);
+                user = await _userLookup.GetAndVerifyUserAsync(token, lifecycleToken);
+                var activeAuthorizations = await _membershipAuthorizations.ListActiveForDeviceAsync(user.UId, deviceId, lifecycleToken);
+                if (activeAuthorizations.Count == 0)
+                    throw new InvalidInputException();
+
+                var cutoffRows = new List<DeviceRemovalOriginCutoffPayload>();
+                var allKnownMerged = true;
+                foreach (var authorization in activeAuthorizations)
+                {
+                    var knowledge = await _revisionKnowledge.ListForOriginAsync(user.UId, deviceId, authorization.OriginInstanceId, lifecycleToken);
+                    var knowledgeByEpoch = knowledge.ToDictionary(item => item.UserKeyEpoch);
+                    var highestControlSequence = await _controlOperations.GetHighestOriginSequenceAsync(user.UId, deviceId, authorization.OriginInstanceId, lifecycleToken);
+                    var maximumKeyEpoch = authorization.MaximumKeyEpoch ?? user.KeyEpoch;
+                    if (maximumKeyEpoch < authorization.MinimumKeyEpoch || maximumKeyEpoch > user.KeyEpoch)
+                        throw new InvalidOperationException("The installation authorization key-epoch range is invalid.");
+
+                    for (var keyEpoch = authorization.MinimumKeyEpoch; keyEpoch <= maximumKeyEpoch; keyEpoch = checked(keyEpoch + 1))
+                    {
+                        knowledgeByEpoch.TryGetValue(keyEpoch, out var item);
+                        if (item is not null)
+                            allKnownMerged &= item.HighestMergedRevision >= item.HighestStoredRevision;
+                        cutoffRows.Add(new DeviceRemovalOriginCutoffPayload
+                        {
+                            AuthorizationId = authorization.AuthorizationId,
+                            OriginInstanceId = authorization.OriginInstanceId,
+                            UserKeyEpoch = keyEpoch,
+                            HighestAcceptedSnapshotRevision = item?.HighestStoredRevision ?? 0,
+                            HighestAcceptedControlSequence = highestControlSequence,
+                            SignPublicKeyHash = authorization.SignPublicKeyHash.ToArray(),
+                            AdditionOperationId = authorization.AdditionOperationId,
+                            AdditionOperationHash = authorization.AdditionOperationHash?.ToArray()
+                        });
+                        if (keyEpoch == long.MaxValue)
+                            break;
+                    }
+                }
+
+                var payload = new DeviceRemovalPayload
+                {
+                    UserId = user.UId,
+                    RemovedDeviceId = deviceId,
+                    PreviousMembershipEpoch = user.MembershipEpoch,
+                    ResultingMembershipEpoch = checked(user.MembershipEpoch + 1),
+                    KeyEpoch = user.KeyEpoch,
+                    Origins = cutoffRows
+                };
+                UserControlOperationEnvelopeUtil.FinalizeDeviceRemovalPayload(payload);
+
+                await using var transaction = await _uow.BeginTransactionAsync(lifecycleToken);
+                try
+                {
+                    var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(token, lifecycleToken, user);
+                    var now = DateTimeOffset.UtcNow;
+                    var encryptedDevice = bundle.UserDevicesData.Devices.FirstOrDefault(item => item.Id == deviceId);
+                    if (encryptedDevice is not null)
+                    {
+                        TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(bundle.UserDevicesData, encryptedDevice.Id, now);
+                        encryptedDevice.Dispose();
+                        bundle.UserDevicesData.Devices.Remove(encryptedDevice);
+                        await _userDataWriter.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, lifecycleToken);
+                        user = await _userLookup.GetAndVerifyUserAsync(token, lifecycleToken);
+                    }
+
+                    var envelope = await _controlWriter.CreateAppliedDeviceRemovalUnderLifecycleAsync(user, payload, lifecycleToken);
+                    user = await _userLookup.GetAndVerifyUserAsync(token, lifecycleToken);
+                    var localSnapshot = await _snapshotPublisher.GetOrCreateAsync(user, lifecycleToken);
+                    await _queueWriter.EnqueueAsync(new SyncItem
+                    {
+                        ModelId = user.UId,
+                        ModelType = SyncModelType.User,
+                        ChangeType = SyncChangeType.Updated,
+                        ChangedAtTs = localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds()
+                    }, localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds(), [deviceId], true, false, lifecycleToken);
+                    await RemovePendingSyncsForUserToDeviceAsync(user.UId, deviceId, lifecycleToken);
+                    await _uow.SaveChangesAsync(lifecycleToken);
+                    await transaction.CommitAsync(lifecycleToken);
+                    try { await _activation.ActivatePendingAsync(CancellationToken.None); } catch { }
+                    return new DeviceRemovalResultResponse
+                    {
+                        Removed = true,
+                        AllKnownOriginRevisionsMerged = allKnownMerged,
+                        MayContainUnobservedChanges = true,
+                        Message = allKnownMerged
+                            ? "Removal completed. All revisions known to this installation were merged, but the removed device may still contain changes that were never observed here."
+                            : "Removal completed with a signed cutoff, but some known origin revisions were not proven merged and the removed device may contain unseen changes.",
+                        OperationId = envelope.OperationId,
+                        ResultingMembershipEpoch = envelope.ResultingMembershipEpoch
+                    };
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    _uow.ClearTrackedChanges();
+                    throw;
+                }
             }, ct);
         }
-
-        await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Deleted, ct);
     }
+
+    private async Task<bool> _snapshotsHasQuarantine(User user, CancellationToken ct) =>
+        (await _snapshots.ListForUserAsync(user.UId, ct))
+            .Any(snapshot => snapshot.UserKeyEpoch == user.KeyEpoch && snapshot.Status == UserSyncSnapshotStatus.Quarantined);
 
     private async Task SetEncryptedDeviceNameAsync(Guid token, Guid deviceId, string name, CancellationToken ct)
     {

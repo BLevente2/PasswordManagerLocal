@@ -4,6 +4,16 @@ namespace PasswordManagerLocal.Backend.Sync;
 
 public static class SyncIdentityUtil
 {
+    public static string NormalizeFingerprint(string fingerprint)
+    {
+        if (string.IsNullOrWhiteSpace(fingerprint))
+            throw new InvalidDataException("The TLS certificate fingerprint is missing.");
+        var normalized = fingerprint.Replace(":", string.Empty, StringComparison.Ordinal).Trim().ToUpperInvariant();
+        if (normalized.Length != 64 || normalized.Any(c => !Uri.IsHexDigit(c)))
+            throw new InvalidDataException("The TLS certificate fingerprint is invalid.");
+        return normalized;
+    }
+
     public static Guid BuildUserDeviceModelId(Guid userId, Guid deviceId)
     {
         var bytes = new byte[32];

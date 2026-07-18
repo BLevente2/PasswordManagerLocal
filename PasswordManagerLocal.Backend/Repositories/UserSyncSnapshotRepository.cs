@@ -41,6 +41,27 @@ public sealed class UserSyncSnapshotRepository : IUserSyncSnapshotRepository
             .ThenBy(snapshot => snapshot.OriginRevision)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<UserSyncSnapshot>> ListPendingForKeyEpochAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
+        await _snapshots.Where(snapshot => snapshot.UserId == userId && snapshot.UserKeyEpoch == userKeyEpoch && snapshot.Status == UserSyncSnapshotStatus.Pending)
+            .OrderBy(snapshot => snapshot.MembershipEpoch).ThenBy(snapshot => snapshot.OriginDeviceId).ThenBy(snapshot => snapshot.OriginInstanceId).ThenBy(snapshot => snapshot.OriginRevision)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<UserSyncSnapshot>> ListForUserAsync(Guid userId, CancellationToken ct = default) =>
+        await _snapshots
+            .Where(snapshot => snapshot.UserId == userId)
+            .OrderBy(snapshot => snapshot.UserKeyEpoch)
+            .ThenBy(snapshot => snapshot.OriginDeviceId)
+            .ThenBy(snapshot => snapshot.OriginInstanceId)
+            .ThenBy(snapshot => snapshot.OriginRevision)
+            .ToListAsync(ct);
+
+    public Task<bool> HasQuarantinedAsync(Guid userId, long userKeyEpoch, long membershipEpoch, CancellationToken ct = default) =>
+        _snapshots.AnyAsync(snapshot =>
+            snapshot.UserId == userId &&
+            snapshot.UserKeyEpoch == userKeyEpoch &&
+            snapshot.MembershipEpoch == membershipEpoch &&
+            snapshot.Status == UserSyncSnapshotStatus.Quarantined, ct);
+
     public Task<UserSyncSnapshot?> GetLatestLocalAsync(Guid userId, Guid originDeviceId, Guid originInstanceId, long userKeyEpoch, CancellationToken ct = default) =>
         _snapshots.FirstOrDefaultAsync(snapshot =>
             snapshot.UserId == userId &&

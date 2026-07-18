@@ -30,6 +30,16 @@ public sealed class AuthService : IAuthService
     private readonly IUserDataBundleIntegrityService _integrity;
     private readonly IUnitOfWork _uow;
     private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
+    private readonly IUserRepository _users;
+    private readonly IUserSyncSnapshotRepository _snapshots;
+    private readonly IUserLifecycleCoordinator _lifecycle;
+    private readonly IUserControlOperationWriterService _controlWriter;
+    private readonly IUserSnapshotPublisherService _snapshotPublisher;
+    private readonly ISyncQueueWriterService _queueWriter;
+    private readonly IPendingSyncActivationService _activation;
+    private readonly IUserMembershipAuthorizationService _membershipAuthorization;
+    private readonly IUserControlStateRepository _controlStates;
+    private readonly IUserSyncStateRepository _syncStates;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -45,7 +55,17 @@ public sealed class AuthService : IAuthService
         ISyncRuntimeService syncRuntime,
         IUserDataBundleIntegrityService integrity,
         IUnitOfWork uow,
-        IUserSnapshotMergeCoordinator snapshotMerge)
+        IUserSnapshotMergeCoordinator snapshotMerge,
+        IUserRepository users,
+        IUserSyncSnapshotRepository snapshots,
+        IUserLifecycleCoordinator lifecycle,
+        IUserControlOperationWriterService controlWriter,
+        IUserSnapshotPublisherService snapshotPublisher,
+        ISyncQueueWriterService queueWriter,
+        IPendingSyncActivationService activation,
+        IUserMembershipAuthorizationService membershipAuthorization,
+        IUserControlStateRepository controlStates,
+        IUserSyncStateRepository syncStates)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -61,6 +81,16 @@ public sealed class AuthService : IAuthService
         _integrity = integrity;
         _uow = uow;
         _snapshotMerge = snapshotMerge;
+        _users = users;
+        _snapshots = snapshots;
+        _lifecycle = lifecycle;
+        _controlWriter = controlWriter;
+        _snapshotPublisher = snapshotPublisher;
+        _queueWriter = queueWriter;
+        _activation = activation;
+        _membershipAuthorization = membershipAuthorization;
+        _controlStates = controlStates;
+        _syncStates = syncStates;
     }
 
 
@@ -208,10 +238,42 @@ public sealed class AuthService : IAuthService
         EncryptionKey key,
         CancellationToken ct)
     {
-        _rememberMe.SetRememberMe(user, rememberMe, key);
-        await _userDataWriter.AddNewUserAsync(user, ct);
-        await AddLocalUserDeviceLinkAsync(user.UId, ct);
-        await _uow.SaveChangesAsync(ct);
+        await using var transaction = await _uow.BeginTransactionAsync(ct);
+        try
+        {
+            user.KeyEpoch = 1;
+            user.MembershipEpoch = 1;
+            user.GenerateIntegrityHash();
+            _rememberMe.SetRememberMe(user, rememberMe, key);
+            await _userDataWriter.AddNewUserAsync(user, ct);
+            await AddLocalUserDeviceLinkAsync(user.UId, ct);
+            await _membershipAuthorization.CreateGenesisAsync(user, ct);
+            await _controlStates.AddAsync(new UserControlState
+            {
+                UserId = user.UId,
+                LocalOriginInstanceId = _identity.OriginInstanceId,
+                NextOriginSequence = 1,
+                AppliedKeyEpoch = user.KeyEpoch,
+                AppliedMembershipEpoch = user.MembershipEpoch,
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow
+            }, ct);
+            await _syncStates.AddAsync(new UserSyncState
+            {
+                UserId = user.UId,
+                LocalOriginInstanceId = _identity.OriginInstanceId,
+                NextOriginRevision = 1,
+                LastPublishedContentHash = [],
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow
+            }, ct);
+            await _uow.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            _uow.ClearTrackedChanges();
+            throw;
+        }
         await _syncRuntime.RefreshSyncEnabledAsync(ct);
     }
 
@@ -381,35 +443,139 @@ public sealed class AuthService : IAuthService
         if (!request.Validate(out var errors))
             throw new InvalidInputException(errors);
 
-        var user = await _userLookup.GetAndVerifyUserAsync(request.Token, ct);
+        var initialUser = await _userLookup.GetAndVerifyUserAsync(request.Token, ct);
+        await _lifecycle.ExecuteAsync(
+            initialUser.UId,
+            token => ChangeMasterPasswordCoreAsync(request, initialUser.UId, token),
+            ct);
+    }
 
-        if (!IsPasswordValid(request.Token, request.Password, user.PasswordSalt))
+    private async Task ChangeMasterPasswordCoreAsync(
+        MasterPasswordChangeRequest request,
+        Guid userId,
+        CancellationToken ct)
+    {
+        var currentUser = await _userLookup.GetAndVerifyUserAsync(request.Token, ct);
+        if (currentUser.UId != userId || !IsPasswordValid(request.Token, request.Password, currentUser.PasswordSalt))
             throw new InvalidInputException();
 
         using (var currentKey = _userSessions.GetEncryptionKeyFromToken(request.Token))
-            await _snapshotMerge.TryMergePendingAsync(user.UId, currentKey, ct);
+            await _snapshotMerge.TryMergePendingAsync(userId, currentKey, ct);
+
+        var user = await _userLookup.GetAndVerifyUserByUidAsync(userId, ct);
+        if (await _snapshots.HasQuarantinedAsync(user.UId, user.KeyEpoch, user.MembershipEpoch, ct))
+        {
+            throw new InvalidOperationException(
+                "The master password cannot be changed while a current-epoch snapshot origin is quarantined or unresolved.");
+        }
 
         _cache.InvalidateToken(request.Token);
-        user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
         var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(request.Token, ct, user);
+        var canonicalBackup = CanonicalUserState.Capture(user);
+        var previousKeyEpoch = user.KeyEpoch;
+        var rememberMeWasEnabled = user.SavedKey is not null;
+        if (user.SavedKey is not null)
+            CryptographicOperations.ZeroMemory(user.SavedKey);
+        user.SavedKey = null;
 
         CryptographicOperations.ZeroMemory(user.PasswordSalt);
         user.PasswordSalt = Hashing.GenerateSalt();
-        user.KeyEpoch = checked(user.KeyEpoch + 1);
+        user.KeyEpoch = checked(previousKeyEpoch + 1);
         using var newKey = EncryptionKey.FromPassword(request.NewPassword, user.PasswordSalt);
-        _keys.RotateUserKey(request.Token, newKey);
 
-        if (user.SavedKey is not null)
-            _rememberMe.SetRememberMe(user, true, newKey);
-
-        await _userDataWriter.ReencryptUserDataBundleWithNewKeysAsync(bundle, user, newKey, true, ct);
-        _keys.SetUserBlobKeys(request.Token, bundle.UserData);
-        _cache.SetUserDataBundle(request.Token, bundle);
-
-        foreach (var otherToken in _tokens.ListTokensByUid(user.UId))
+        await using var transaction = await _uow.BeginTransactionAsync(ct);
+        try
         {
-            if (otherToken != request.Token)
-                InvalidateToken(otherToken, AuthSessionInvalidationReason.ProfilePasswordChanged);
+            await _userDataWriter.ReencryptUserDataBundleWithNewKeysAsync(
+                bundle,
+                user,
+                newKey,
+                enqueueSync: false,
+                ct);
+
+            await _controlWriter.CreateAppliedKeyEpochReplacementAsync(user, previousKeyEpoch, ct);
+            var publishingUser = await _users.GetByIdWithRelationsAsync(user.UId, ct)
+                ?? throw new InvalidOperationException("The canonical user disappeared during password rotation.");
+            await _snapshotPublisher.GetOrCreateAsync(publishingUser, ct);
+            await _queueWriter.EnqueueAsync(
+                new SyncItem
+                {
+                    ModelId = user.UId,
+                    ModelType = SyncModelType.User,
+                    ChangeType = SyncChangeType.Updated
+                },
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                [],
+                touchLocalSyncState: true,
+                activateTargets: false,
+                ct);
+
+            await _uow.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            canonicalBackup.Restore(user);
+            _uow.ClearTrackedChanges();
+            canonicalBackup.ZeroCopies();
+            throw;
+        }
+
+        Exception? postCommitFailure = null;
+        try
+        {
+            // In-memory key/session state cannot move ahead of the committed canonical transition.
+            if (!_keys.RotateUserKey(request.Token, newKey))
+                throw new InvalidOperationException("The initiating session is no longer active.");
+            _keys.SetUserBlobKeys(request.Token, bundle.UserData);
+            _cache.SetUserDataBundle(request.Token, bundle);
+
+            if (rememberMeWasEnabled)
+            {
+                _rememberMe.SetRememberMe(user, true, newKey);
+                await _userDataWriter.UpdateSavedKeyOnlyAsync(user, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Canonical state is already committed. Fail closed instead of leaving the initiating
+            // token associated with an old or partially refreshed in-memory key state. A failed
+            // local SavedKey write must also not remain pending in the scoped EF change tracker.
+            if (user.SavedKey is not null)
+                CryptographicOperations.ZeroMemory(user.SavedKey);
+            user.SavedKey = null;
+            _uow.ClearTrackedChanges();
+            InvalidateToken(request.Token, AuthSessionInvalidationReason.ProfilePasswordChanged);
+            postCommitFailure = ex;
+        }
+        finally
+        {
+            foreach (var otherToken in _tokens.ListTokensByUid(user.UId))
+            {
+                if (otherToken != request.Token)
+                    InvalidateToken(otherToken, AuthSessionInvalidationReason.ProfilePasswordChanged);
+            }
+
+            try
+            {
+                // Durable queue/control rows were committed above. Activation is only a wake-up
+                // optimization; a failure here must not turn a committed password change into a
+                // rollback or remove retryable work.
+                await _activation.ActivatePendingAsync(CancellationToken.None);
+            }
+            catch
+            {
+            }
+
+            canonicalBackup.ZeroCopies();
+        }
+
+        if (postCommitFailure is not null)
+        {
+            throw new InvalidOperationException(
+                "The master password was changed durably, but the local authenticated session could not be refreshed.",
+                postCommitFailure);
         }
     }
 
@@ -457,5 +623,97 @@ public sealed class AuthService : IAuthService
     {
         if (task.Status == TaskStatus.RanToCompletion)
             CryptographicOperations.ZeroMemory(task.Result);
+    }
+
+    private sealed class CanonicalUserState
+    {
+        private readonly byte[] _usernameHash;
+        private readonly byte[] _usernameSalt;
+        private readonly byte[] _passwordSalt;
+        private readonly byte[] _encryptedPayload;
+        private readonly byte[] _encryptedGeneralPayload;
+        private readonly byte[] _encryptedPasswordsPayload;
+        private readonly byte[] _encryptedDevicesPayload;
+        private readonly byte[]? _savedKey;
+        private readonly byte[] _integrityHash;
+        private readonly long _keyEpoch;
+        private readonly long _membershipEpoch;
+        private readonly DateTimeOffset _lastModifiedAt;
+        private readonly DateTimeOffset _userDataLastModifiedAt;
+        private readonly DateTimeOffset _generalLastModifiedAt;
+        private readonly DateTimeOffset _passwordsLastModifiedAt;
+        private readonly DateTimeOffset _devicesLastModifiedAt;
+
+        private CanonicalUserState(User user)
+        {
+            _usernameHash = user.UsernameHash.ToArray();
+            _usernameSalt = user.UsernameSalt.ToArray();
+            _passwordSalt = user.PasswordSalt.ToArray();
+            _encryptedPayload = user.EncryptedPayload.ToArray();
+            _encryptedGeneralPayload = user.EncryptedGeneralUserDataPayload.ToArray();
+            _encryptedPasswordsPayload = user.EncryptedUserPasswordsDataPayload.ToArray();
+            _encryptedDevicesPayload = user.EncryptedUserDevicesDataPayload.ToArray();
+            _savedKey = user.SavedKey?.ToArray();
+            _integrityHash = user.IntegrityHash.ToArray();
+            _keyEpoch = user.KeyEpoch;
+            _membershipEpoch = user.MembershipEpoch;
+            _lastModifiedAt = user.LastModifiedAt;
+            _userDataLastModifiedAt = user.UserDataLastModifiedAt;
+            _generalLastModifiedAt = user.GeneralUserDataLastModifiedAt;
+            _passwordsLastModifiedAt = user.UserPasswordsDataLastModifiedAt;
+            _devicesLastModifiedAt = user.UserDevicesDataLastModifiedAt;
+        }
+
+        public static CanonicalUserState Capture(User user) => new(user);
+
+        public void Restore(User user)
+        {
+            ZeroIfDifferent(user.UsernameHash, _usernameHash);
+            ZeroIfDifferent(user.UsernameSalt, _usernameSalt);
+            ZeroIfDifferent(user.PasswordSalt, _passwordSalt);
+            ZeroIfDifferent(user.EncryptedPayload, _encryptedPayload);
+            ZeroIfDifferent(user.EncryptedGeneralUserDataPayload, _encryptedGeneralPayload);
+            ZeroIfDifferent(user.EncryptedUserPasswordsDataPayload, _encryptedPasswordsPayload);
+            ZeroIfDifferent(user.EncryptedUserDevicesDataPayload, _encryptedDevicesPayload);
+            if (user.SavedKey is not null && !ReferenceEquals(user.SavedKey, _savedKey))
+                CryptographicOperations.ZeroMemory(user.SavedKey);
+
+            user.UsernameHash = _usernameHash.ToArray();
+            user.UsernameSalt = _usernameSalt.ToArray();
+            user.PasswordSalt = _passwordSalt.ToArray();
+            user.EncryptedPayload = _encryptedPayload.ToArray();
+            user.EncryptedGeneralUserDataPayload = _encryptedGeneralPayload.ToArray();
+            user.EncryptedUserPasswordsDataPayload = _encryptedPasswordsPayload.ToArray();
+            user.EncryptedUserDevicesDataPayload = _encryptedDevicesPayload.ToArray();
+            user.SavedKey = _savedKey?.ToArray();
+            user.IntegrityHash = _integrityHash.ToArray();
+            user.KeyEpoch = _keyEpoch;
+            user.MembershipEpoch = _membershipEpoch;
+            user.LastModifiedAt = _lastModifiedAt;
+            user.UserDataLastModifiedAt = _userDataLastModifiedAt;
+            user.GeneralUserDataLastModifiedAt = _generalLastModifiedAt;
+            user.UserPasswordsDataLastModifiedAt = _passwordsLastModifiedAt;
+            user.UserDevicesDataLastModifiedAt = _devicesLastModifiedAt;
+        }
+
+        public void ZeroCopies()
+        {
+            CryptographicOperations.ZeroMemory(_usernameHash);
+            CryptographicOperations.ZeroMemory(_usernameSalt);
+            CryptographicOperations.ZeroMemory(_passwordSalt);
+            CryptographicOperations.ZeroMemory(_encryptedPayload);
+            CryptographicOperations.ZeroMemory(_encryptedGeneralPayload);
+            CryptographicOperations.ZeroMemory(_encryptedPasswordsPayload);
+            CryptographicOperations.ZeroMemory(_encryptedDevicesPayload);
+            CryptographicOperations.ZeroMemory(_integrityHash);
+            if (_savedKey is not null)
+                CryptographicOperations.ZeroMemory(_savedKey);
+        }
+
+        private static void ZeroIfDifferent(byte[] current, byte[] backup)
+        {
+            if (!ReferenceEquals(current, backup))
+                CryptographicOperations.ZeroMemory(current);
+        }
     }
 }

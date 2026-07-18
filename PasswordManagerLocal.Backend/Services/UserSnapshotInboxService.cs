@@ -6,32 +6,35 @@ using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
-using System.Collections.Concurrent;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
 {
-    private static readonly ConcurrentDictionary<(Guid UserId, Guid OriginDeviceId, Guid OriginInstanceId, long UserKeyEpoch), SemaphoreSlim> OriginLocks = new();
-
     private readonly IUserRepository _users;
     private readonly IUserSyncSnapshotRepository _snapshots;
     private readonly IUserRevisionKnowledgeRepository _knowledge;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
+    private readonly IUserLifecycleCoordinator _lifecycle;
+    private readonly IUserMembershipAuthorizationService _membershipAuthorization;
 
     public UserSnapshotInboxService(
         IUserRepository users,
         IUserSyncSnapshotRepository snapshots,
         IUserRevisionKnowledgeRepository knowledge,
         IDeviceIdentityService identity,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserLifecycleCoordinator lifecycle,
+        IUserMembershipAuthorizationService membershipAuthorization)
     {
         _users = users;
         _snapshots = snapshots;
         _knowledge = knowledge;
         _identity = identity;
         _uow = uow;
+        _lifecycle = lifecycle;
+        _membershipAuthorization = membershipAuthorization;
     }
 
     public async Task<UserSnapshotReceiptResult> StoreAsync(
@@ -41,19 +44,15 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
     {
         UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
 
-        var originKey = (envelope.UserId, envelope.OriginDeviceId, envelope.OriginInstanceId, envelope.UserKeyEpoch);
-        var gate = OriginLocks.GetOrAdd(originKey, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
-        try
-        {
-            var receipt = await StoreCoreAsync(envelope, transportPeerDeviceId, ct);
-            await _uow.SaveChangesAsync(ct);
-            return receipt;
-        }
-        finally
-        {
-            gate.Release();
-        }
+        return await _lifecycle.ExecuteAsync(
+            envelope.UserId,
+            async token =>
+            {
+                var receipt = await StoreCoreAsync(envelope, transportPeerDeviceId, token);
+                await _uow.SaveChangesAsync(token);
+                return receipt;
+            },
+            ct);
     }
 
     private async Task<UserSnapshotReceiptResult> StoreCoreAsync(
@@ -66,12 +65,21 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         if (user is null)
             return Receipt(envelope, UserSnapshotReceiptState.Rejected, "The user does not exist locally.");
 
+        try
+        {
+            await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException)
+        {
+            return Receipt(envelope, UserSnapshotReceiptState.Rejected, ex.Message);
+        }
+
         if (envelope.UserKeyEpoch < user.KeyEpoch)
             return Receipt(envelope, UserSnapshotReceiptState.ObsoleteRevision, "The snapshot uses an obsolete key epoch.");
         if (envelope.UserKeyEpoch > user.KeyEpoch)
             return Receipt(envelope, UserSnapshotReceiptState.WrongKeyEpoch, "The snapshot uses a newer key epoch requiring an explicit replacement operation.");
-        if (envelope.MembershipEpoch != user.MembershipEpoch)
-            return Receipt(envelope, UserSnapshotReceiptState.WrongMembershipEpoch, "The snapshot membership epoch does not match the canonical account membership.");
+        if (envelope.MembershipEpoch > user.MembershipEpoch)
+            return Receipt(envelope, UserSnapshotReceiptState.WrongMembershipEpoch, "The snapshot uses a newer membership epoch whose predecessor operation is missing.");
 
         if (envelope.OriginDeviceId == _identity.LocalDeviceId &&
             envelope.OriginInstanceId == _identity.OriginInstanceId)

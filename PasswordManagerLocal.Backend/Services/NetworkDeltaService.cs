@@ -18,12 +18,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly INetworkDeltaReplayService _replay;
     private readonly INetworkDeltaPayloadApplierService _payloadApplier;
     private readonly INetworkDeltaLifecycleService _lifecycle;
-    private readonly IUserSnapshotInboxService? _snapshotInbox;
-    private readonly IUserSnapshotMergeCoordinator? _mergeCoordinator;
-    private readonly IUserSyncKeyResolverService? _keyResolver;
-    private readonly IUserRepository? _users;
-    private readonly IUserRevisionKnowledgeRepository? _revisionKnowledge;
-    private readonly IAuthService? _auth;
+    private readonly IUserSnapshotInboxService _snapshotInbox;
+    private readonly IUserSnapshotMergeCoordinator _mergeCoordinator;
+    private readonly IUserSyncKeyResolverService _keyResolver;
+    private readonly IUserRepository _users;
+    private readonly IUserRevisionKnowledgeRepository _revisionKnowledge;
+    private readonly IAuthService _auth;
+    private readonly IUserControlOperationInboxService _controlOperationInbox;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
 
@@ -35,12 +36,13 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         INetworkDeltaLifecycleService lifecycle,
         IDeviceIdentityService identity,
         IUnitOfWork uow,
-        IUserSnapshotInboxService? snapshotInbox = null,
-        IUserSnapshotMergeCoordinator? mergeCoordinator = null,
-        IUserSyncKeyResolverService? keyResolver = null,
-        IUserRepository? users = null,
-        IUserRevisionKnowledgeRepository? revisionKnowledge = null,
-        IAuthService? auth = null)
+        IUserSnapshotInboxService snapshotInbox,
+        IUserSnapshotMergeCoordinator mergeCoordinator,
+        IUserSyncKeyResolverService keyResolver,
+        IUserRepository users,
+        IUserRevisionKnowledgeRepository revisionKnowledge,
+        IAuthService auth,
+        IUserControlOperationInboxService controlOperationInbox)
     {
         _outgoingDeltaBuilder = outgoingDeltaBuilder;
         _protocol = protocol;
@@ -55,6 +57,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _users = users;
         _revisionKnowledge = revisionKnowledge;
         _auth = auth;
+        _controlOperationInbox = controlOperationInbox;
     }
 
     public Task<NetworkDelta> BuildAsync(SyncItem item, Device device, CancellationToken ct = default) =>
@@ -82,10 +85,32 @@ public sealed class NetworkDeltaService : INetworkDeltaService
                     payload.UserSnapshot.SnapshotHash.ToArray(),
                     UserSnapshotReceiptState.ObsoleteRevision,
                     "The account was authoritatively deleted locally; the ordinary snapshot cannot recreate it.");
-            return new NetworkDeltaApplyResult(delta.Ts, deletedUserReceipt);
+            var deletedControlReceipt = payload.UserControlOperation is null
+                ? null
+                : new UserControlOperationReceiptResult(
+                    payload.UserControlOperation.OperationId,
+                    payload.UserControlOperation.UserId,
+                    payload.UserControlOperation.OriginDeviceId,
+                    payload.UserControlOperation.OriginInstanceId,
+                    payload.UserControlOperation.OriginSequence,
+                    payload.UserControlOperation.OperationHash.ToArray(),
+                    UserControlOperationReceiptState.Obsolete,
+                    "The account was authoritatively deleted locally; an earlier control operation cannot recreate it.");
+            return new NetworkDeltaApplyResult(delta.Ts, deletedUserReceipt, deletedControlReceipt);
         }
 
         await _protocol.ValidateSourceAuthorizationAsync(sourceDevice, payload, ct);
+
+        if (payload.UserControlOperation is not null)
+        {
+            var receipt = await _controlOperationInbox.StoreAndApplyAsync(
+                payload.UserControlOperation,
+                sourceDevice.Id,
+                ct);
+            await _lifecycle.TouchSourceDeviceAsync(sourceDevice, ct);
+            await _uow.SaveChangesAsync(ct);
+            return new NetworkDeltaApplyResult(delta.Ts, null, receipt);
+        }
 
         if (payload.ModelType == SyncModelType.User &&
             payload.ChangeType != SyncChangeType.Deleted)
@@ -125,10 +150,10 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         var envelope = payload.UserSnapshot
             ?? throw new InvalidDataException("User snapshot envelope is missing.");
 
-        var inbox = _snapshotInbox ?? throw new InvalidOperationException("User snapshot inbox is not configured.");
-        var mergeCoordinator = _mergeCoordinator ?? throw new InvalidOperationException("User snapshot merge coordinator is not configured.");
-        var keyResolver = _keyResolver ?? throw new InvalidOperationException("User sync key resolver is not configured.");
-        var users = _users ?? throw new InvalidOperationException("User repository is not configured for snapshot synchronization.");
+        var inbox = _snapshotInbox;
+        var mergeCoordinator = _mergeCoordinator;
+        var keyResolver = _keyResolver;
+        var users = _users;
 
         var receipt = await inbox.StoreAsync(envelope, sourceDevice.Id, ct);
         await _lifecycle.TouchSourceDeviceAsync(sourceDevice, ct);
@@ -155,7 +180,6 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         // A batch merge can succeed because of a different origin while this exact candidate
         // was quarantined. Report MergedImmediately only when durable knowledge proves that the
         // acknowledged origin revision is actually covered by canonical state.
-        if (_revisionKnowledge is not null)
         {
             var knowledge = await _revisionKnowledge.GetAsync(
                 envelope.UserId,
@@ -168,7 +192,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         }
 
         var refreshedUser = await users.GetByIdWithRelationsAsync(envelope.UserId, ct);
-        if (refreshedUser is not null && _auth is not null)
+        if (refreshedUser is not null)
             await _auth.RefreshSyncedUserSessionsAsync(refreshedUser, ct);
 
         var mergedReceipt = receipt with

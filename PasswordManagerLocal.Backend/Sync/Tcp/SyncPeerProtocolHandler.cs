@@ -73,6 +73,7 @@ public sealed class SyncPeerProtocolHandler
             var totalPayloadBytes = 0L;
             var seenDeltaIdsInCall = new HashSet<string>(StringComparer.Ordinal);
             var snapshotReceipts = new List<UserSnapshotReceipt>();
+            var controlOperationReceipts = new List<UserControlOperationReceipt>();
 
             await foreach (var chunk in chunks.WithCancellation(ct))
             {
@@ -105,12 +106,15 @@ public sealed class SyncPeerProtocolHandler
                     lastSyncedTs = applyResult.AppliedTimestamp;
                 if (applyResult.UserSnapshotReceipt is not null)
                     snapshotReceipts.Add(ToProtoReceipt(applyResult.UserSnapshotReceipt));
+                if (applyResult.UserControlOperationReceipt is not null)
+                    controlOperationReceipts.Add(ToProtoReceipt(applyResult.UserControlOperationReceipt));
             }
 
             await deviceSecurity.ResetInvalidIncomingSyncAsync(remoteDevice, ct);
 
             var ack = new Ack { LastSyncedTs = lastSyncedTs };
             ack.UserSnapshotReceipts.AddRange(snapshotReceipts);
+            ack.UserControlOperationReceipts.AddRange(controlOperationReceipts);
             return ack;
         }
         catch (SyncProtocolException ex)
@@ -218,6 +222,73 @@ public sealed class SyncPeerProtocolHandler
     }
 
 
+    public async Task<UserControlOperationInventoryExchangeReply> ExchangeUserControlOperationInventoryAsync(
+        UserControlOperationInventoryExchangeRequest request,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        using var scope = _root.CreateScope();
+        Device? remoteDevice = null;
+        try
+        {
+            ValidateAuthenticatedSyncContext(context);
+            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
+            var antiEntropy = scope.ServiceProvider.GetRequiredService<IUserControlOperationAntiEntropyService>();
+            return await antiEntropy.BuildInventoryReplyAsync(remoteDevice.Id, request, ct);
+        }
+        catch (InvalidDataException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, ex.Message);
+        }
+    }
+
+    public async Task<IReadOnlyList<NetworkDelta>> RequestUserControlOperationsAsync(
+        UserControlOperationRequestBatch request,
+        PeerConnectionContext context,
+        CancellationToken ct)
+    {
+        using var scope = _root.CreateScope();
+        Device? remoteDevice = null;
+        try
+        {
+            ValidateAuthenticatedSyncContext(context);
+            if (request.Requests.Count > SyncConstants.MaxUserControlRequestsPerCall)
+                throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, "Too many control operations were requested.");
+
+            remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, null, null, ct);
+            var antiEntropy = scope.ServiceProvider.GetRequiredService<IUserControlOperationAntiEntropyService>();
+            return await antiEntropy.BuildRequestedOperationDeltasAsync(remoteDevice.Id, request.Requests, ct);
+        }
+        catch (InvalidDataException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.InvalidArgument, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            if (remoteDevice is not null && !remoteDevice.IsBlocked)
+                await RecordInvalidAttemptAsync(scope.ServiceProvider, remoteDevice, ex.Message, ct);
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new SyncProtocolException(SyncProtocolStatusCode.ResourceExhausted, ex.Message);
+        }
+    }
+
     private static void ValidateAuthenticatedSyncContext(PeerConnectionContext context)
     {
         if (!context.SyncHelloAccepted || !context.RemoteDatabaseVersion.HasValue || !context.RemoteProtocolVersion.HasValue)
@@ -242,6 +313,19 @@ public sealed class SyncPeerProtocolHandler
             OriginRevision = receipt.OriginRevision,
             SnapshotHash = ByteString.CopyFrom(receipt.SnapshotHash),
             State = (UserSnapshotReceiptStateProto)(int)receipt.State,
+            Detail = receipt.Detail ?? string.Empty
+        };
+
+    private static UserControlOperationReceipt ToProtoReceipt(UserControlOperationReceiptResult receipt) =>
+        new()
+        {
+            OperationId = receipt.OperationId.ToString("N"),
+            UserId = receipt.UserId.ToString("N"),
+            OriginDeviceId = receipt.OriginDeviceId.ToString("N"),
+            OriginInstanceId = receipt.OriginInstanceId.ToString("N"),
+            OriginSequence = receipt.OriginSequence,
+            OperationHash = ByteString.CopyFrom(receipt.OperationHash),
+            State = (UserControlOperationReceiptStateProto)(int)receipt.State,
             Detail = receipt.Detail ?? string.Empty
         };
 
@@ -300,7 +384,8 @@ public sealed class SyncPeerProtocolHandler
                 TlsCertFingerprint = result.TlsCertFingerprint,
                 SignPub = ByteString.CopyFrom(result.SignPublicKey),
                 AgreementPub = ByteString.CopyFrom(result.AgreementPublicKey),
-                DeviceType = (uint)result.DeviceType
+                DeviceType = (uint)result.DeviceType,
+                OriginInstanceId = result.OriginInstanceId == Guid.Empty ? string.Empty : result.OriginInstanceId.ToString("N")
             };
         }
         catch (Exception ex)
@@ -352,6 +437,9 @@ public sealed class SyncPeerProtocolHandler
             string? sessionId = null;
             byte[]? codeProof = null;
             string? sourceDeviceId = null;
+            Guid sourceOriginInstanceId = Guid.Empty;
+            Guid targetDeviceId = Guid.Empty;
+            Guid targetOriginInstanceId = Guid.Empty;
             byte[]? sourceSignPublicKey = null;
             string? sourceTlsCertFingerprint = null;
             var snapshotEncryptionVersion = 0;
@@ -359,6 +447,13 @@ public sealed class SyncPeerProtocolHandler
             byte[]? snapshotEncryptionTag = null;
             var chunkSourceDatabaseVersion = 0;
             var totalBytes = 0L;
+
+            CompleteDeviceEnrollmentReply InvalidEnrollmentMetadata(string message) => new()
+            {
+                Ok = false,
+                Error = message,
+                ErrorCode = DeviceEnrollmentErrorCode.ProfileDataInvalid.ToString()
+            };
 
             await using var snapshotStream = new MemoryStream();
 
@@ -372,6 +467,33 @@ public sealed class SyncPeerProtocolHandler
 
                 if (!string.IsNullOrWhiteSpace(chunk.SourceDeviceId))
                     sourceDeviceId = chunk.SourceDeviceId;
+
+                if (!string.IsNullOrWhiteSpace(chunk.SourceOriginInstanceId))
+                {
+                    if (!Guid.TryParseExact(chunk.SourceOriginInstanceId, "N", out var parsedSourceOrigin))
+                        return InvalidEnrollmentMetadata("The source installation origin is invalid.");
+                    if (sourceOriginInstanceId != Guid.Empty && sourceOriginInstanceId != parsedSourceOrigin)
+                        return InvalidEnrollmentMetadata("The source installation origin changed during transfer.");
+                    sourceOriginInstanceId = parsedSourceOrigin;
+                }
+
+                if (!string.IsNullOrWhiteSpace(chunk.TargetDeviceId))
+                {
+                    if (!Guid.TryParseExact(chunk.TargetDeviceId, "N", out var parsedTargetDevice))
+                        return InvalidEnrollmentMetadata("The target device ID is invalid.");
+                    if (targetDeviceId != Guid.Empty && targetDeviceId != parsedTargetDevice)
+                        return InvalidEnrollmentMetadata("The target device ID changed during transfer.");
+                    targetDeviceId = parsedTargetDevice;
+                }
+
+                if (!string.IsNullOrWhiteSpace(chunk.TargetOriginInstanceId))
+                {
+                    if (!Guid.TryParseExact(chunk.TargetOriginInstanceId, "N", out var parsedTargetOrigin))
+                        return InvalidEnrollmentMetadata("The target installation origin is invalid.");
+                    if (targetOriginInstanceId != Guid.Empty && targetOriginInstanceId != parsedTargetOrigin)
+                        return InvalidEnrollmentMetadata("The target installation origin changed during transfer.");
+                    targetOriginInstanceId = parsedTargetOrigin;
+                }
 
                 if (chunk.SourceSignPub.Length > 0)
                     sourceSignPublicKey = chunk.SourceSignPub.ToByteArray();
@@ -427,6 +549,9 @@ public sealed class SyncPeerProtocolHandler
             if (string.IsNullOrWhiteSpace(sessionId) ||
                 codeProof is null ||
                 string.IsNullOrWhiteSpace(sourceDeviceId) ||
+                sourceOriginInstanceId == Guid.Empty ||
+                targetDeviceId == Guid.Empty ||
+                targetOriginInstanceId == Guid.Empty ||
                 sourceSignPublicKey is null ||
                 string.IsNullOrWhiteSpace(sourceTlsCertFingerprint) ||
                 chunkSourceDatabaseVersion <= 0)
@@ -461,10 +586,13 @@ public sealed class SyncPeerProtocolHandler
                 codeProof,
                 snapshotStream.ToArray(),
                 sourceDeviceId,
+                sourceOriginInstanceId,
                 sourceSignPublicKey,
                 sourceTlsCertFingerprint,
                 context.ClientCertificateFingerprint,
                 context.RemoteIpAddress,
+                targetDeviceId,
+                targetOriginInstanceId,
                 snapshotEncryptionVersion,
                 snapshotEncryptionNonce ?? [],
                 snapshotEncryptionTag ?? [],

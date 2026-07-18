@@ -80,6 +80,21 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                     return false;
             }
 
+            var expectedOperations = list.Where(delta => delta.ControlOperationOriginSequence > 0).ToArray();
+            foreach (var expected in expectedOperations)
+            {
+                var receipt = ack.UserControlOperationReceipts.FirstOrDefault(candidate =>
+                    Guid.TryParse(candidate.OperationId, out var operationId) && operationId == expected.ControlOperationId &&
+                    Guid.TryParse(candidate.UserId, out var userId) && userId == expected.ControlOperationUserId &&
+                    Guid.TryParse(candidate.OriginDeviceId, out var originDeviceId) && originDeviceId == expected.ControlOperationOriginDeviceId &&
+                    Guid.TryParse(candidate.OriginInstanceId, out var originInstanceId) && originInstanceId == expected.ControlOperationOriginInstanceId &&
+                    candidate.OriginSequence == expected.ControlOperationOriginSequence &&
+                    CryptographicOperations.FixedTimeEquals(candidate.OperationHash.ToByteArray(), expected.ControlOperationHash));
+
+                if (receipt is null || !IsDurableControlOperationReceipt(receipt.State))
+                    return false;
+            }
+
             return true;
         }
         catch (System.Net.Sockets.SocketException)
@@ -195,6 +210,81 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
+    public async Task<UserControlOperationInventoryExchangeReply> ExchangeUserControlOperationInventoryAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        UserControlOperationInventoryExchangeRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Users.Count > SyncConstants.MaxUserControlInventoryUsers ||
+            request.Users.Sum(user => user.Operations.Count) > SyncConstants.MaxUserControlInventoryEntries)
+        {
+            throw new InvalidDataException("The control-operation inventory exceeds the protocol limits.");
+        }
+
+        await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
+        await SendHelloAsync(connection.Stream, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserControlOperationInventoryRequest, request, ct);
+        var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserControlOperationInventoryReply, ct);
+        var reply = frame.Parse(UserControlOperationInventoryExchangeReply.Parser);
+        if (reply.Users.Count > SyncConstants.MaxUserControlInventoryUsers ||
+            reply.Users.Sum(user => user.Operations.Count) > SyncConstants.MaxUserControlInventoryEntries ||
+            reply.RequestedOperations.Count > SyncConstants.MaxUserControlRequestsPerCall)
+        {
+            throw new InvalidDataException("The remote control-operation inventory exceeds the protocol limits.");
+        }
+
+        return reply;
+    }
+
+    public async Task<IReadOnlyList<NetworkDelta>> RequestUserControlOperationsAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        UserControlOperationRequestBatch request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Requests.Count > SyncConstants.MaxUserControlRequestsPerCall)
+            throw new InvalidDataException("Too many control operations were requested.");
+
+        await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
+        await SendHelloAsync(connection.Stream, ct);
+        await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserControlOperationRequestBatch, request, ct);
+        await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserControlOperationRelayStart, ct);
+
+        var deltas = new List<NetworkDelta>();
+        long totalBytes = 0;
+        while (true)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(SyncConstants.SyncTcpIdleTimeoutSeconds));
+            var frame = await SyncTcpFrameIo.ReadAsync(connection.Stream, timeout.Token)
+                ?? throw new EndOfStreamException();
+            if (frame.Type == SyncTcpMessageType.UserControlOperationRelayEnd)
+                break;
+            if (frame.Type == SyncTcpMessageType.Error)
+            {
+                var error = frame.Parse(SyncError.Parser);
+                throw new InvalidDataException(string.IsNullOrWhiteSpace(error.Message) ? error.Code : error.Message);
+            }
+            if (frame.Type != SyncTcpMessageType.DeltaChunk)
+                throw new InvalidDataException("Unexpected frame in the control-operation relay stream.");
+            if (deltas.Count >= SyncConstants.MaxUserControlRequestsPerCall)
+                throw new InvalidDataException("The remote control-operation relay stream contains too many deltas.");
+
+            var delta = DeltaMapping.FromProto(frame.Parse(DeltaChunk.Parser));
+            totalBytes += delta.Payload.Length;
+            if (totalBytes > SyncConstants.MaxIncomingDeltaTotalBytesPerCall)
+                throw new InvalidDataException("The remote control-operation relay stream is too large.");
+            deltas.Add(delta);
+        }
+
+        return deltas;
+    }
+
     private async Task SendHelloAsync(Stream stream, CancellationToken ct)
     {
         await WriteFrameAsync(stream, SyncTcpMessageType.HelloRequest, new HelloRequest
@@ -219,6 +309,14 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             UserSnapshotReceiptStateProto.UserSnapshotReceiptAlreadyStored or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptMergedImmediately or
             UserSnapshotReceiptStateProto.UserSnapshotReceiptObsoleteRevision;
+
+
+    private static bool IsDurableControlOperationReceipt(UserControlOperationReceiptStateProto state) =>
+        state is
+            UserControlOperationReceiptStateProto.UserControlOperationReceiptStoredPending or
+            UserControlOperationReceiptStateProto.UserControlOperationReceiptAlreadyStored or
+            UserControlOperationReceiptStateProto.UserControlOperationReceiptApplied or
+            UserControlOperationReceiptStateProto.UserControlOperationReceiptObsolete;
 
 
     public async Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(string host, int port, string serverFingerprintHex, GetDeviceEnrollmentInfoRequest request, CancellationToken ct = default)

@@ -6,52 +6,43 @@ using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
-using System.Collections.Concurrent;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
 {
-    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> UserPublishLocks = new();
-
     private readonly IUserSyncSnapshotRepository _snapshots;
     private readonly IUserSyncStateRepository _states;
     private readonly IUserRevisionKnowledgeRepository _knowledge;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
+    private readonly IUserLifecycleCoordinator _lifecycle;
 
     public UserSnapshotPublisherService(
         IUserSyncSnapshotRepository snapshots,
         IUserSyncStateRepository states,
         IUserRevisionKnowledgeRepository knowledge,
         IDeviceIdentityService identity,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserLifecycleCoordinator lifecycle)
     {
         _snapshots = snapshots;
         _states = states;
         _knowledge = knowledge;
         _identity = identity;
         _uow = uow;
+        _lifecycle = lifecycle;
     }
 
     public Task<UserSyncSnapshot?> GetLatestAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
         _snapshots.GetLatestLocalAsync(userId, _identity.LocalDeviceId, _identity.OriginInstanceId, userKeyEpoch, ct);
 
-    public async Task<UserSyncSnapshot> GetOrCreateAsync(User user, CancellationToken ct = default)
+    public Task<UserSyncSnapshot> GetOrCreateAsync(User user, CancellationToken ct = default)
     {
         if (user.UId == Guid.Empty)
             throw new InvalidOperationException("Cannot publish a snapshot for an invalid user.");
 
-        var gate = UserPublishLocks.GetOrAdd(user.UId, static _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
-        try
-        {
-            return await GetOrCreateCoreAsync(user, ct);
-        }
-        finally
-        {
-            gate.Release();
-        }
+        return _lifecycle.ExecuteAsync(user.UId, token => GetOrCreateCoreAsync(user, token), ct);
     }
 
     private async Task<UserSyncSnapshot> GetOrCreateCoreAsync(User user, CancellationToken ct)

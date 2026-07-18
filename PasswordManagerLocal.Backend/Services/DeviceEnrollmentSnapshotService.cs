@@ -50,8 +50,11 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         byte[] secret,
         byte[] ciphertext,
         string sourceDeviceId,
+        Guid sourceOriginInstanceId,
         byte[] sourceSignPublicKey,
         string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId,
         int encryptionVersion,
         byte[] nonce,
         byte[] tag)
@@ -61,8 +64,11 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
             secret,
             ciphertext,
             sourceDeviceId,
+            sourceOriginInstanceId,
             sourceSignPublicKey,
             sourceTlsFingerprint,
+            targetDeviceId,
+            targetOriginInstanceId,
             encryptionVersion,
             nonce,
             tag);
@@ -88,160 +94,251 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         }
     }
 
-    public async Task<DeviceEnrollmentSnapshot> BuildAsync(IServiceProvider services, Guid userId, CancellationToken ct = default)
+    public Task<DeviceEnrollmentSnapshot> BuildAsync(
+        IServiceProvider services,
+        Guid userId,
+        EnrollmentEndpoint target,
+        Guid authorizingAdditionOperationId,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        var lifecycle = services.GetRequiredService<IUserLifecycleCoordinator>();
+        return lifecycle.ExecuteAsync(
+            userId,
+            token => BuildCoreAsync(services, userId, target, authorizingAdditionOperationId, token),
+            ct);
+    }
+
+    private async Task<DeviceEnrollmentSnapshot> BuildCoreAsync(
+        IServiceProvider services,
+        Guid userId,
+        EnrollmentEndpoint target,
+        Guid authorizingAdditionOperationId,
+        CancellationToken ct)
     {
         var users = services.GetRequiredService<IUserRepository>();
         var userDevicesRepository = services.GetRequiredService<IUserDeviceRepository>();
         var groupsRepository = services.GetRequiredService<IGroupRepository>();
         var devicesRepository = services.GetRequiredService<IDeviceRepository>();
+        var authorizationsRepository = services.GetRequiredService<IUserMembershipAuthorizationRepository>();
+        var cutoffsRepository = services.GetRequiredService<IUserOriginRemovalCutoffRepository>();
+        var operationsRepository = services.GetRequiredService<IUserControlOperationRepository>();
+        var statesRepository = services.GetRequiredService<IUserControlStateRepository>();
+        var knowledgeRepository = services.GetRequiredService<IUserRevisionKnowledgeRepository>();
+        var snapshotsRepository = services.GetRequiredService<IUserSyncSnapshotRepository>();
 
-        var user = await users.GetByIdAsNoTrackingWithRelationsAsync(userId, ct);
-        if (user is null)
-            throw new UserNotFoundException();
+        var user = await users.GetByIdAsNoTrackingWithRelationsAsync(userId, ct) ?? throw new UserNotFoundException();
+        if (user.KeyEpoch <= 0 || user.MembershipEpoch <= 0)
+            throw new InvalidDataException("The canonical enrollment epochs are invalid.");
+        user.GenerateIntegrityHash();
 
-        var allUserDevices = await userDevicesRepository.ListByUserAsync(userId, ct);
-        foreach (var userDevice in allUserDevices)
-            userDevice.VerifyIntegrity();
+        var authorizations = await authorizationsRepository.ListForUserAsync(userId, ct);
+        var targetAuthorization = authorizations.SingleOrDefault(row => row.IsActive && row.DeviceId == target.DeviceId && row.OriginInstanceId == target.OriginInstanceId)
+            ?? throw new InvalidDataException("The target installation is not authoritatively authorized.");
+        if (targetAuthorization.AdditionOperationId != authorizingAdditionOperationId || targetAuthorization.AdditionOperationHash is null)
+            throw new InvalidDataException("The target authorization does not reference the committed addition operation.");
 
-        var userDevices = allUserDevices.Where(ud => !ud.IsDeleted).ToList();
-        var userDeviceIds = userDevices.Select(ud => ud.DeviceId).Distinct().ToList();
+        var operations = await operationsRepository.ListForUserAsync(userId, ct);
+        var addition = operations.SingleOrDefault(operation => operation.OperationId == authorizingAdditionOperationId)
+            ?? throw new InvalidDataException("The committed device-addition operation is missing.");
+        if (addition.Status != UserControlOperationStatus.Applied || addition.OperationType != UserControlOperationType.DeviceAddition ||
+            !Hashing.Verify(addition.OperationHash, targetAuthorization.AdditionOperationHash))
+            throw new InvalidDataException("The target device-addition operation is not applied or does not match authorization history.");
+
         var groups = await groupsRepository.ListByUserWithUserIdsAsNoTrackingAsync(userId, ct);
-        var devices = await devicesRepository.ListByIdsWithUserDevicesAsNoTrackingAsync(userDeviceIds, _identity.LocalDeviceId, ct);
-
-        foreach (var device in devices)
-        {
-            foreach (var link in device.UserDevices)
-                link.VerifyIntegrity();
-            device.GenerateIntegrityHash();
-        }
         foreach (var group in groups)
         {
-            var integritySource = new Group
-            {
-                Id = group.Id,
-                EncryptedPayload = group.EncryptedPayload,
-                LastModifiedAt = group.LastModifiedAt
-            };
+            var integritySource = new Group { Id = group.Id, EncryptedPayload = group.EncryptedPayload, LastModifiedAt = group.LastModifiedAt };
             integritySource.GenerateIntegrityHash();
             group.IntegrityHash = integritySource.IntegrityHash;
         }
-        user.GenerateIntegrityHash();
 
-        var deviceSnapshots = devices.Select(d => new DeviceEnrollmentDeviceSnapshot
+        var currentDeviceIds = authorizations.Where(row => row.IsActive).Select(row => row.DeviceId).Distinct().ToArray();
+        var currentDevices = await devicesRepository.ListByIdsAsync(currentDeviceIds.Where(id => id != _identity.LocalDeviceId).ToArray(), ct);
+        var deviceSnapshots = currentDevices.Select(ToDeviceSnapshot).ToList();
+        if (currentDeviceIds.Contains(_identity.LocalDeviceId))
         {
-            Id = d.Id,
-            PublicKey = d.PublicKey,
-            SignPublicKey = d.SignPublicKey,
-            TlsCertFingerprint = d.TlsCertFingerprint,
-            DeviceType = d.DeviceType,
-            LastKnownHash = d.LastKnownHash,
-            LastSync = UtcDateTimeUtil.ToUtc(d.LastSync),
-            LastSeen = UtcDateTimeUtil.ToUtc(d.LastSeen),
-            IsTrusted = d.IsTrusted,
-            IsBlocked = d.IsBlocked,
-            BlockedReason = d.BlockedReason,
-            BlockedAt = UtcDateTimeUtil.ToUtc(d.BlockedAt),
-            InvalidSyncAttemptCount = d.InvalidSyncAttemptCount,
-            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(d.LastInvalidSyncAttemptAt),
-            LastModifiedAt = UtcDateTimeUtil.ToUtc(d.LastModifiedAt),
-            IntegrityHash = d.IntegrityHash,
-            UserIds = d.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.UserId).Distinct().ToList()
-        }).ToList();
+            var local = new Device
+            {
+                Id = _identity.LocalDeviceId,
+                PublicKey = _identity.AgreementPublicKey,
+                SignPublicKey = _identity.SignPublicKey,
+                TlsCertFingerprint = _identity.FingerprintHex,
+                DeviceType = _identity.DeviceType,
+                LastSync = DateTime.MinValue,
+                LastSeen = DateTime.MinValue,
+                IsTrusted = true,
+                IsBlocked = false,
+                LastModifiedAt = _identity.CreatedAt
+            };
+            local.GenerateIntegrityHash();
+            deviceSnapshots.Add(ToDeviceSnapshot(local));
+        }
 
-        var now = DateTimeOffset.UtcNow;
-        var localDevice = new Device
+        var currentLinks = await userDevicesRepository.ListByUserAsync(userId, ct);
+        var activeByDevice = authorizations.Where(row => row.IsActive).GroupBy(row => row.DeviceId).ToDictionary(group => group.Key);
+        var relationshipSnapshots = new List<DeviceEnrollmentUserDeviceSnapshot>();
+        foreach (var deviceId in activeByDevice.Keys.OrderBy(id => id))
         {
-            Id = _identity.LocalDeviceId,
-            PublicKey = _identity.AgreementPublicKey,
-            SignPublicKey = _identity.SignPublicKey,
-            TlsCertFingerprint = _identity.FingerprintHex,
-            DeviceType = _identity.DeviceType,
-            LastSync = now.UtcDateTime,
-            LastSeen = now.UtcDateTime,
-            IsTrusted = true,
-            IsBlocked = false,
-            LastModifiedAt = now
-        };
-        localDevice.GenerateIntegrityHash();
-        var localUserDeviceSnapshotSource = new UserDevice
-        {
-            UserId = userId,
-            DeviceId = _identity.LocalDeviceId,
-            IsSyncOn = true,
-            IsDeleted = false,
-            LastModifiedAt = now
-        };
-        localUserDeviceSnapshotSource.GenerateIntegrityHash();
+            var existing = currentLinks.FirstOrDefault(link => link.DeviceId == deviceId);
+            var source = new UserDevice
+            {
+                UserId = userId,
+                DeviceId = deviceId,
+                IsSyncOn = existing?.IsSyncOn ?? true,
+                IsDeleted = false,
+                DeletedAt = null,
+                LastModifiedAt = existing?.LastModifiedAt ?? activeByDevice[deviceId].Min(row => row.CreatedAtUtc)
+            };
+            source.GenerateIntegrityHash();
+            relationshipSnapshots.Add(new DeviceEnrollmentUserDeviceSnapshot
+            {
+                UserId = source.UserId,
+                DeviceId = source.DeviceId,
+                IsSyncOn = source.IsSyncOn,
+                IsDeleted = false,
+                DeletedAt = null,
+                LastModifiedAt = UtcDateTimeUtil.ToUtc(source.LastModifiedAt),
+                IntegrityHash = source.IntegrityHash.ToArray()
+            });
+        }
 
-        deviceSnapshots.Add(new DeviceEnrollmentDeviceSnapshot
-        {
-            Id = localDevice.Id,
-            PublicKey = localDevice.PublicKey,
-            SignPublicKey = localDevice.SignPublicKey,
-            TlsCertFingerprint = localDevice.TlsCertFingerprint,
-            DeviceType = localDevice.DeviceType,
-            LastKnownHash = localDevice.LastKnownHash,
-            LastSync = UtcDateTimeUtil.ToUtc(localDevice.LastSync),
-            LastSeen = UtcDateTimeUtil.ToUtc(localDevice.LastSeen),
-            IsTrusted = true,
-            IsBlocked = false,
-            LastModifiedAt = UtcDateTimeUtil.ToUtc(localDevice.LastModifiedAt),
-            IntegrityHash = localDevice.IntegrityHash,
-            UserIds = [userId]
-        });
+        var state = await statesRepository.GetAsync(userId, ct)
+            ?? throw new InvalidDataException("The authoritative control state is missing.");
+        if (state.AppliedKeyEpoch != user.KeyEpoch || state.AppliedMembershipEpoch != user.MembershipEpoch)
+            throw new InvalidDataException("The control state does not match canonical epochs.");
+
+        var knowledge = await knowledgeRepository.ListForUserAsync(userId, ct);
+        var cutoffs = await cutoffsRepository.ListForUserAsync(userId, ct);
+        var retainedSnapshots = await snapshotsRepository.ListForUserAsync(userId, ct);
 
         return new DeviceEnrollmentSnapshot
         {
             PrimaryUserId = user.UId,
+            TargetDeviceId = target.DeviceId,
+            TargetOriginInstanceId = target.OriginInstanceId,
+            TargetSignPublicKeyHash = Hashing.SHA256Hash(target.SignPublicKey),
+            TargetAgreementPublicKeyHash = Hashing.SHA256Hash(target.AgreementPublicKey),
+            TargetTlsCertFingerprint = SyncIdentityUtil.NormalizeFingerprint(target.TlsCertFingerprint),
+            TargetDeviceType = target.DeviceType,
+            AuthorizingAdditionOperationId = addition.OperationId,
+            AuthorizingAdditionOperationHash = addition.OperationHash.ToArray(),
             Users =
             [
                 new DeviceEnrollmentUserSnapshot
                 {
                     UId = user.UId,
-                    UsernameHash = user.UsernameHash,
-                    UsernameSalt = user.UsernameSalt,
-                    PasswordSalt = user.PasswordSalt,
-                    EncryptedPayload = user.EncryptedPayload,
-                    EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
-                    EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
-                    EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
+                    UsernameHash = user.UsernameHash.ToArray(),
+                    UsernameSalt = user.UsernameSalt.ToArray(),
+                    PasswordSalt = user.PasswordSalt.ToArray(),
+                    EncryptedPayload = user.EncryptedPayload.ToArray(),
+                    EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload.ToArray(),
+                    EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload.ToArray(),
+                    EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload.ToArray(),
+                    KeyEpoch = user.KeyEpoch,
+                    MembershipEpoch = user.MembershipEpoch,
                     LastModifiedAt = UtcDateTimeUtil.ToUtc(user.LastModifiedAt),
                     UserDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.UserDataLastModifiedAt),
                     GeneralUserDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.GeneralUserDataLastModifiedAt),
                     UserPasswordsDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.UserPasswordsDataLastModifiedAt),
                     UserDevicesDataLastModifiedAt = UtcDateTimeUtil.ToUtc(user.UserDevicesDataLastModifiedAt),
-                    IntegrityHash = user.IntegrityHash,
-                    GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList()
+                    IntegrityHash = user.IntegrityHash.ToArray(),
+                    GroupIds = user.Groups.Select(group => group.Id).Distinct().ToList()
                 }
             ],
-            Groups = groups.Select(g => new DeviceEnrollmentGroupSnapshot
+            Groups = groups.Select(group => new DeviceEnrollmentGroupSnapshot
             {
-                Id = g.Id,
-                EncryptedPayload = g.EncryptedPayload,
-                LastModifiedAt = UtcDateTimeUtil.ToUtc(g.LastModifiedAt),
-                IntegrityHash = g.IntegrityHash,
-                UserIds = g.UserIds
+                Id = group.Id,
+                EncryptedPayload = group.EncryptedPayload.ToArray(),
+                LastModifiedAt = UtcDateTimeUtil.ToUtc(group.LastModifiedAt),
+                IntegrityHash = group.IntegrityHash.ToArray(),
+                UserIds = group.UserIds.ToList()
             }).ToList(),
             Devices = deviceSnapshots,
-            UserDevices = userDevices.Select(ud => new DeviceEnrollmentUserDeviceSnapshot
+            UserDevices = relationshipSnapshots,
+            MembershipAuthorizations = authorizations.Select(row => new DeviceEnrollmentMembershipAuthorizationSnapshot
             {
-                UserId = ud.UserId,
-                DeviceId = ud.DeviceId,
-                IsSyncOn = ud.IsSyncOn,
-                IsDeleted = ud.IsDeleted,
-                DeletedAt = UtcDateTimeUtil.ToUtc(ud.DeletedAt),
-                LastModifiedAt = UtcDateTimeUtil.ToUtc(ud.LastModifiedAt),
-                IntegrityHash = ud.IntegrityHash.ToArray()
-            }).Append(new DeviceEnrollmentUserDeviceSnapshot
+                AuthorizationId = row.AuthorizationId,
+                UserId = row.UserId,
+                DeviceId = row.DeviceId,
+                OriginInstanceId = row.OriginInstanceId,
+                SignPublicKey = row.SignPublicKey.ToArray(),
+                SignPublicKeyHash = row.SignPublicKeyHash.ToArray(),
+                AgreementPublicKeyHash = row.AgreementPublicKeyHash.ToArray(),
+                TlsCertFingerprint = row.TlsCertFingerprint,
+                DeviceType = row.DeviceType,
+                StartedMembershipEpoch = row.StartedMembershipEpoch,
+                EndedMembershipEpoch = row.EndedMembershipEpoch,
+                MinimumKeyEpoch = row.MinimumKeyEpoch,
+                MaximumKeyEpoch = row.MaximumKeyEpoch,
+                IsActive = row.IsActive,
+                IsGenesis = row.IsGenesis,
+                AdditionOperationId = row.AdditionOperationId,
+                AdditionOperationHash = row.AdditionOperationHash?.ToArray(),
+                RemovalOperationId = row.RemovalOperationId,
+                RemovalOperationHash = row.RemovalOperationHash?.ToArray(),
+                CreatedAtUtc = row.CreatedAtUtc,
+                EndedAtUtc = row.EndedAtUtc
+            }).ToList(),
+            RemovalCutoffs = cutoffs.Select(row => new DeviceEnrollmentRemovalCutoffSnapshot
             {
-                UserId = localUserDeviceSnapshotSource.UserId,
-                DeviceId = localUserDeviceSnapshotSource.DeviceId,
-                IsSyncOn = localUserDeviceSnapshotSource.IsSyncOn,
-                IsDeleted = localUserDeviceSnapshotSource.IsDeleted,
-                DeletedAt = UtcDateTimeUtil.ToUtc(localUserDeviceSnapshotSource.DeletedAt),
-                LastModifiedAt = UtcDateTimeUtil.ToUtc(localUserDeviceSnapshotSource.LastModifiedAt),
-                IntegrityHash = localUserDeviceSnapshotSource.IntegrityHash.ToArray()
+                CutoffId = row.CutoffId, UserId = row.UserId, DeviceId = row.DeviceId, OriginInstanceId = row.OriginInstanceId,
+                UserKeyEpoch = row.UserKeyEpoch, HighestAcceptedSnapshotRevision = row.HighestAcceptedSnapshotRevision,
+                HighestAcceptedControlSequence = row.HighestAcceptedControlSequence, ResultingMembershipEpoch = row.ResultingMembershipEpoch,
+                AuthorizationId = row.AuthorizationId, RemovalOperationId = row.RemovalOperationId,
+                RemovalOperationHash = row.RemovalOperationHash.ToArray(), CreatedAtUtc = row.CreatedAtUtc
+            }).ToList(),
+            ControlOperations = operations.Select(row => new DeviceEnrollmentControlOperationSnapshot
+            {
+                EnvelopePayload = row.EnvelopePayload.ToArray(), Status = row.Status, StatusReason = row.StatusReason,
+                ConflictingOperationHash = row.ConflictingOperationHash?.ToArray(), ReceivedAtUtc = row.ReceivedAtUtc, AppliedAtUtc = row.AppliedAtUtc
+            }).ToList(),
+            ControlStates =
+            [
+                new DeviceEnrollmentControlStateSnapshot
+                {
+                    UserId = state.UserId, AppliedKeyEpoch = state.AppliedKeyEpoch, AppliedMembershipEpoch = state.AppliedMembershipEpoch,
+                    HasConflict = state.HasConflict, ConflictReason = state.ConflictReason, ConflictingOperationId = state.ConflictingOperationId,
+                    ConflictingOperationHash = state.ConflictingOperationHash?.ToArray()
+                }
+            ],
+            RevisionKnowledge = knowledge.Select(row => new DeviceEnrollmentRevisionKnowledgeSnapshot
+            {
+                UserId = row.UserId, OriginDeviceId = row.OriginDeviceId, OriginInstanceId = row.OriginInstanceId,
+                UserKeyEpoch = row.UserKeyEpoch, HighestStoredRevision = row.HighestStoredRevision,
+                HighestStoredSnapshotHash = row.HighestStoredSnapshotHash.ToArray(), HighestMergedRevision = row.HighestMergedRevision,
+                LastUpdatedAtUtc = row.LastUpdatedAtUtc
+            }).ToList(),
+            PendingSnapshots = retainedSnapshots.Select(row => new DeviceEnrollmentPendingSnapshot
+            {
+                EnvelopePayload = row.EnvelopePayload.ToArray(), Status = row.Status, QuarantineReason = row.QuarantineReason,
+                ConflictingSnapshotHash = row.ConflictingSnapshotHash?.ToArray(), ReceivedAtUtc = row.ReceivedAtUtc
             }).ToList()
+        };
+    }
+
+    private static DeviceEnrollmentDeviceSnapshot ToDeviceSnapshot(Device device)
+    {
+        device.GenerateIntegrityHash();
+        return new DeviceEnrollmentDeviceSnapshot
+        {
+            Id = device.Id,
+            PublicKey = device.PublicKey.ToArray(),
+            SignPublicKey = device.SignPublicKey.ToArray(),
+            TlsCertFingerprint = device.TlsCertFingerprint,
+            DeviceType = device.DeviceType,
+            LastKnownHash = device.LastKnownHash.ToArray(),
+            LastSync = UtcDateTimeUtil.ToUtc(device.LastSync),
+            LastSeen = UtcDateTimeUtil.ToUtc(device.LastSeen),
+            IsTrusted = device.IsTrusted,
+            IsBlocked = device.IsBlocked,
+            BlockedReason = device.BlockedReason,
+            BlockedAt = UtcDateTimeUtil.ToUtc(device.BlockedAt),
+            InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
+            LastInvalidSyncAttemptAt = UtcDateTimeUtil.ToUtc(device.LastInvalidSyncAttemptAt),
+            LastModifiedAt = UtcDateTimeUtil.ToUtc(device.LastModifiedAt),
+            IntegrityHash = device.IntegrityHash.ToArray(),
+            UserIds = []
         };
     }
 
@@ -298,14 +395,17 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         byte[] secret,
         byte[] plaintext,
         string sourceDeviceId,
+        Guid sourceOriginInstanceId,
         byte[] sourceSignPublicKey,
-        string sourceTlsFingerprint)
+        string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId)
     {
         var key = DeviceEnrollmentCode.BuildSnapshotEncryptionKey(sessionId, secret);
         var nonce = RandomNumberGenerator.GetBytes(SyncConstants.EnrollmentSnapshotEncryptionNonceBytes);
         var tag = new byte[SyncConstants.EnrollmentSnapshotEncryptionTagBytes];
         var ciphertext = new byte[plaintext.Length];
-        var aad = DeviceEnrollmentCode.BuildSnapshotEncryptionAad(sessionId, sourceDeviceId, sourceSignPublicKey, sourceTlsFingerprint);
+        var aad = DeviceEnrollmentCode.BuildSnapshotEncryptionAad(sessionId, sourceDeviceId, sourceOriginInstanceId, sourceSignPublicKey, sourceTlsFingerprint, targetDeviceId, targetOriginInstanceId);
 
         using var aes = new AesGcm(key, SyncConstants.EnrollmentSnapshotEncryptionTagBytes);
         aes.Encrypt(nonce, plaintext, ciphertext, tag, aad);
@@ -320,8 +420,11 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         byte[] secret,
         byte[] ciphertext,
         string sourceDeviceId,
+        Guid sourceOriginInstanceId,
         byte[] sourceSignPublicKey,
         string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId,
         int encryptionVersion,
         byte[] nonce,
         byte[] tag)
@@ -337,7 +440,7 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
 
         var key = DeviceEnrollmentCode.BuildSnapshotEncryptionKey(sessionId, secret);
         var plaintext = new byte[ciphertext.Length];
-        var aad = DeviceEnrollmentCode.BuildSnapshotEncryptionAad(sessionId, sourceDeviceId, sourceSignPublicKey, sourceTlsFingerprint);
+        var aad = DeviceEnrollmentCode.BuildSnapshotEncryptionAad(sessionId, sourceDeviceId, sourceOriginInstanceId, sourceSignPublicKey, sourceTlsFingerprint, targetDeviceId, targetOriginInstanceId);
 
         try
         {

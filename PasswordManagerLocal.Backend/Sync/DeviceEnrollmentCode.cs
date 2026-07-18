@@ -1,4 +1,6 @@
 using PasswordManagerLocal.Backend.Constants;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Utils;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,8 +13,8 @@ public static class DeviceEnrollmentCode
     private const string DirectPrefix = "PML2";
     private const string CompactDirectPrefix = "PML3";
     private const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    private const byte DirectPayloadVersion = 2;
-    private const byte CompactDirectPayloadVersion = 3;
+    private const byte DirectPayloadVersion = 4;
+    private const byte CompactDirectPayloadVersion = 5;
     private const int SessionByteCount = 5;
     private const int SecretByteCount = 16;
     private const int FingerprintByteCount = 32;
@@ -71,16 +73,31 @@ public static class DeviceEnrollmentCode
         Hmac(secret, $"info:{sessionId}");
 
 
-    public static byte[] BuildCompletionProof(string sessionId, byte[] secret, string sourceDeviceId, byte[] sourceSignPublicKey, string sourceTlsFingerprint) =>
-        Hmac(secret, $"complete:{sessionId}:{sourceDeviceId}:{Convert.ToHexString(sourceSignPublicKey)}:{NormalizeFingerprint(sourceTlsFingerprint)}");
+    public static byte[] BuildCompletionProof(
+        string sessionId,
+        byte[] secret,
+        string sourceDeviceId,
+        Guid sourceOriginInstanceId,
+        byte[] sourceSignPublicKey,
+        string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId) =>
+        Hmac(secret, $"complete:v2:{sessionId}:{sourceDeviceId}:{sourceOriginInstanceId:N}:{Convert.ToHexString(sourceSignPublicKey)}:{NormalizeFingerprint(sourceTlsFingerprint)}:{targetDeviceId:N}:{targetOriginInstanceId:N}");
 
 
     public static byte[] BuildSnapshotEncryptionKey(string sessionId, byte[] secret) =>
         Hmac(secret, $"snapshot-key:{sessionId}");
 
 
-    public static byte[] BuildSnapshotEncryptionAad(string sessionId, string sourceDeviceId, byte[] sourceSignPublicKey, string sourceTlsFingerprint) =>
-        Encoding.UTF8.GetBytes($"pml-enrollment-snapshot:v1:{sessionId}:{sourceDeviceId}:{Convert.ToHexString(sourceSignPublicKey)}:{NormalizeFingerprint(sourceTlsFingerprint)}");
+    public static byte[] BuildSnapshotEncryptionAad(
+        string sessionId,
+        string sourceDeviceId,
+        Guid sourceOriginInstanceId,
+        byte[] sourceSignPublicKey,
+        string sourceTlsFingerprint,
+        Guid targetDeviceId,
+        Guid targetOriginInstanceId) =>
+        Encoding.UTF8.GetBytes($"pml-enrollment-snapshot:v2:{sessionId}:{sourceDeviceId}:{sourceOriginInstanceId:N}:{Convert.ToHexString(sourceSignPublicKey)}:{NormalizeFingerprint(sourceTlsFingerprint)}:{targetDeviceId:N}:{targetOriginInstanceId:N}");
 
 
     public static bool FixedTimeEquals(byte[] left, byte[] right)
@@ -198,7 +215,7 @@ public static class DeviceEnrollmentCode
                 .Take(MaxDirectHosts)
                 .ToList();
 
-            if (hosts.Count == 0 || endpointInfo.DeviceId == Guid.Empty || endpointInfo.Port is <= 0 or > 65535)
+            if (hosts.Count == 0 || endpointInfo.DeviceId == Guid.Empty || endpointInfo.OriginInstanceId == Guid.Empty || endpointInfo.Port is <= 0 or > 65535 || !DeviceTypeDetector.IsValid(endpointInfo.DeviceType))
                 return false;
 
             var fingerprint = FingerprintHexToBytes(endpointInfo.TlsCertFingerprint);
@@ -212,6 +229,8 @@ public static class DeviceEnrollmentCode
             writer.Write(sessionBytes);
             writer.Write(secret);
             writer.Write(endpointInfo.DeviceId.ToByteArray());
+            writer.Write(endpointInfo.OriginInstanceId.ToByteArray());
+            writer.Write((byte)endpointInfo.DeviceType);
             writer.Write((ushort)endpointInfo.Port);
             writer.Write(fingerprint);
             writer.Write(endpointInfo.SignPublicKey);
@@ -330,6 +349,8 @@ public static class DeviceEnrollmentCode
             var sessionBytes = reader.ReadBytes(SessionByteCount);
             var secret = reader.ReadBytes(SecretByteCount);
             var deviceIdBytes = reader.ReadBytes(16);
+            var originInstanceIdBytes = reader.ReadBytes(16);
+            var deviceTypeValue = reader.ReadByte();
             var port = reader.ReadUInt16();
             var fingerprintBytes = reader.ReadBytes(FingerprintByteCount);
             var signPublicKey = reader.ReadBytes(32);
@@ -339,6 +360,8 @@ public static class DeviceEnrollmentCode
             if (sessionBytes.Length != SessionByteCount ||
                 secret.Length != SecretByteCount ||
                 deviceIdBytes.Length != 16 ||
+                originInstanceIdBytes.Length != 16 ||
+                !DeviceTypeDetector.IsValid((DeviceType)deviceTypeValue) ||
                 fingerprintBytes.Length != FingerprintByteCount ||
                 signPublicKey.Length != 32 ||
                 agreementPublicKey.Length != 32 ||
@@ -348,6 +371,9 @@ public static class DeviceEnrollmentCode
 
             var endpoints = new List<DeviceEnrollmentParsedDirectEndpoint>();
             var deviceId = new Guid(deviceIdBytes);
+            var originInstanceId = new Guid(originInstanceIdBytes);
+            if (originInstanceId == Guid.Empty)
+                throw new InvalidDataException("Device enrollment code is invalid.");
             var fingerprint = Convert.ToHexString(fingerprintBytes);
 
             for (var i = 0; i < hostCount; i++)
@@ -369,6 +395,8 @@ public static class DeviceEnrollmentCode
                     Host = host,
                     Port = port,
                     DeviceId = deviceId,
+                    OriginInstanceId = originInstanceId,
+                    DeviceType = (DeviceType)deviceTypeValue,
                     TlsCertFingerprint = fingerprint,
                     SignPublicKey = signPublicKey.ToArray(),
                     AgreementPublicKey = agreementPublicKey.ToArray()

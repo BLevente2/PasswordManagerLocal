@@ -13,9 +13,8 @@ namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
 /// Builds compact stored/merged inventories and serves exact immutable user snapshots.
-/// Relay is deliberately restricted to the current key and membership epoch until authoritative
-/// membership-history operations are available; this safely rejects rather than guesses about
-/// historical authorization.
+/// Relay preserves immutable original-author envelopes. Transport eligibility remains current,
+/// while original-author eligibility is verified against durable membership history and cutoffs.
 /// </summary>
 public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropyService
 {
@@ -27,6 +26,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
     private readonly IDeviceRepository _devices;
     private readonly IOutgoingDeltaBuilderService _deltaBuilder;
     private readonly IDeviceIdentityService _identity;
+    private readonly IUserMembershipAuthorizationService _membershipAuthorization;
 
     public UserSnapshotAntiEntropyService(
         IUserRepository users,
@@ -36,7 +36,8 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         IUserSyncSnapshotRepository snapshots,
         IDeviceRepository devices,
         IOutgoingDeltaBuilderService deltaBuilder,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IUserMembershipAuthorizationService membershipAuthorization)
     {
         _users = users;
         _userDevices = userDevices;
@@ -46,6 +47,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         _devices = devices;
         _deltaBuilder = deltaBuilder;
         _identity = identity;
+        _membershipAuthorization = membershipAuthorization;
     }
 
     public async Task<UserSnapshotInventoryExchangeRequest> BuildInventoryAsync(
@@ -314,16 +316,8 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
 
             var user = await _users.GetByIdAsNoTrackingAsync(userId, ct)
                 ?? throw new UnauthorizedAccessException("The requested user does not exist locally.");
-            if (user.KeyEpoch != request.UserKeyEpoch || user.MembershipEpoch != request.MembershipEpoch)
-                throw new InvalidDataException("The requested snapshot epoch is not current.");
-
-            // Until signed membership history and removal cutoffs are implemented, relay only
-            // currently authorized origins from the exact current membership epoch.
-            if (originDeviceId != _identity.LocalDeviceId &&
-                !await _userDevices.HasActiveLinkAsync(userId, originDeviceId, ct))
-            {
-                throw new UnauthorizedAccessException("The requested snapshot origin is not currently authorized.");
-            }
+            if (user.KeyEpoch != request.UserKeyEpoch || request.MembershipEpoch > user.MembershipEpoch)
+                throw new InvalidDataException("The requested snapshot epoch is not safely available from canonical state.");
 
             var snapshot = await _snapshots.GetExactAsync(
                 userId,
@@ -340,12 +334,8 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
             if (!Hashing.Verify(snapshot.SnapshotHash, request.ExpectedSnapshotHash.ToByteArray()))
                 throw new InvalidDataException("The requested user snapshot hash does not match the stored envelope.");
 
-            var originDevice = originDeviceId == _identity.LocalDeviceId
-                ? BuildLocalOriginDevice()
-                : await _devices.GetByIdAsync(originDeviceId, ct);
-            var envelope = DeserializeAndVerify(snapshot, originDevice);
-            if (envelope.MembershipEpoch != user.MembershipEpoch)
-                throw new InvalidDataException("The requested envelope belongs to a stale membership epoch.");
+            var envelope = Deserialize(snapshot);
+            await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);
 
             var delta = await _deltaBuilder.BuildUserSnapshotRelayAsync(snapshot, peer, ct);
             totalBytes += delta.Payload.Length;
@@ -486,18 +476,13 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         };
 
 
-    private static UserSnapshotEnvelope DeserializeAndVerify(UserSyncSnapshot snapshot, Device? originDevice)
+    private static UserSnapshotEnvelope Deserialize(UserSyncSnapshot snapshot)
     {
-        if (originDevice is null || !originDevice.IsTrusted || originDevice.IsBlocked)
-            throw new UnauthorizedAccessException("The stored snapshot origin is not trusted.");
         if (snapshot.EnvelopePayload.Length == 0 || snapshot.EnvelopePayload.Length > SyncConstants.MaxUserSnapshotEnvelopeBytes)
             throw new InvalidDataException("The stored user snapshot envelope size is invalid.");
-
-        var envelope = JsonSerializer.Deserialize(
-            snapshot.EnvelopePayload,
-            BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
+        var envelope = JsonSerializer.Deserialize(snapshot.EnvelopePayload, BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
             ?? throw new InvalidDataException("The stored user snapshot envelope is invalid.");
-        UserSnapshotEnvelopeUtil.Verify(envelope, originDevice);
+        UserSnapshotEnvelopeUtil.ValidateStructureAndHash(envelope);
         if (!Hashing.Verify(envelope.SnapshotHash, snapshot.SnapshotHash))
             throw new InvalidDataException("The stored user snapshot row hash does not match its immutable envelope.");
         return envelope;

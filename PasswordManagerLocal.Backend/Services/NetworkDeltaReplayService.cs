@@ -18,27 +18,21 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
 {
-    private readonly IUserRepository _users;
     private readonly IGroupRepository _groups;
     private readonly IDeviceRepository _devices;
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncTombstoneRepository _tombstones;
-    private readonly IDeviceIdentityService _identity;
 
     public NetworkDeltaReplayService(
-        IUserRepository users,
         IGroupRepository groups,
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
-        ISyncTombstoneRepository tombstones,
-        IDeviceIdentityService identity)
+        ISyncTombstoneRepository tombstones)
     {
-        _users = users;
         _groups = groups;
         _devices = devices;
         _userDevices = userDevices;
         _tombstones = tombstones;
-        _identity = identity;
     }
 
     public async Task<bool> IsAlreadyAppliedAsync(SyncDeltaPayload payload, long ts, CancellationToken ct)
@@ -50,18 +44,7 @@ public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
         }
 
         if (payload.ModelType == SyncModelType.User)
-        {
-            if (payload.User is null || payload.User.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
-                return false;
-
-            var existing = await _users.GetByIdWithRelationsAsync(payload.ModelId, ct);
-            if (existing is null)
-                return false;
-
-            var existingPayload = CreateUserSyncPayloadForHash(existing);
-            var existingHash = SyncCryptoUtil.CalculateUserHash(existingPayload, existing.LastModifiedAt.ToUnixTimeMilliseconds());
-            return existingHash.SequenceEqual(payload.User.IntegrityHash);
-        }
+            return false; // Non-deletion user updates are handled exclusively by immutable snapshots/control operations.
 
         if (payload.ModelType == SyncModelType.Group)
         {
@@ -113,26 +96,6 @@ public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
         var tombstone = await _tombstones.GetAsync(payload.ModelId, payload.ModelType, ct);
         return tombstone is not null && tombstone.DeletedAtTs >= ts;
     }
-
-
-    private UserSyncPayload CreateUserSyncPayloadForHash(User user) =>
-        new()
-        {
-            UId = user.UId,
-            UsernameHash = user.UsernameHash,
-            UsernameSalt = user.UsernameSalt,
-            PasswordSalt = user.PasswordSalt,
-            EncryptedPayload = user.EncryptedPayload,
-            EncryptedGeneralUserDataPayload = user.EncryptedGeneralUserDataPayload,
-            EncryptedUserPasswordsDataPayload = user.EncryptedUserPasswordsDataPayload,
-            EncryptedUserDevicesDataPayload = user.EncryptedUserDevicesDataPayload,
-            UserDataLastModifiedAt = user.UserDataLastModifiedAt,
-            GeneralUserDataLastModifiedAt = user.GeneralUserDataLastModifiedAt,
-            UserPasswordsDataLastModifiedAt = user.UserPasswordsDataLastModifiedAt,
-            UserDevicesDataLastModifiedAt = user.UserDevicesDataLastModifiedAt,
-            GroupIds = user.Groups.Select(g => g.Id).Distinct().ToList(),
-            DeviceIds = user.UserDevices.Where(ud => !ud.IsDeleted).Select(ud => ud.DeviceId).Append(_identity.LocalDeviceId).Distinct().ToList()
-        };
 
 
     private GroupSyncPayload CreateGroupSyncPayloadForHash(GroupWithUserIdsData group) =>

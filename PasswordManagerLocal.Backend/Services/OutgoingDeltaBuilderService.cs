@@ -19,7 +19,8 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncRouteRepository _syncRoutes;
     private readonly IDeviceIdentityService _identity;
-    private readonly IUserSnapshotPublisherService? _snapshotPublisher;
+    private readonly IUserSnapshotPublisherService _snapshotPublisher;
+    private readonly IUserMembershipAuthorizationService _membershipAuthorization;
 
     public OutgoingDeltaBuilderService(
         IUserRepository users,
@@ -28,7 +29,8 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         IUserDeviceRepository userDevices,
         ISyncRouteRepository syncRoutes,
         IDeviceIdentityService identity,
-        IUserSnapshotPublisherService? snapshotPublisher = null)
+        IUserSnapshotPublisherService snapshotPublisher,
+        IUserMembershipAuthorizationService membershipAuthorization)
     {
         _users = users;
         _groups = groups;
@@ -37,6 +39,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         _syncRoutes = syncRoutes;
         _identity = identity;
         _snapshotPublisher = snapshotPublisher;
+        _membershipAuthorization = membershipAuthorization;
     }
 
 
@@ -77,12 +80,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             throw new InvalidDataException("Stored user snapshot metadata does not match its immutable envelope.");
         }
 
-        var originDevice = envelope.OriginDeviceId == _identity.LocalDeviceId
-            ? BuildLocalOriginDevice()
-            : await _devices.GetByIdAsync(envelope.OriginDeviceId, ct);
-        if (originDevice is null)
-            throw new UnauthorizedAccessException("Stored user snapshot origin device is unknown.");
-        UserSnapshotEnvelopeUtil.Verify(envelope, originDevice);
+        await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);
 
         var payload = new SyncDeltaPayload
         {
@@ -95,6 +93,41 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
         return BuildEncryptedDelta(payload, device, timestamp);
     }
 
+
+    public async Task<NetworkDelta> BuildUserControlOperationRelayAsync(
+        UserControlOperation operation,
+        Device device,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(operation);
+        ValidateTargetDevice(device);
+
+        if (operation.Status is UserControlOperationStatus.Rejected or UserControlOperationStatus.Quarantined)
+            throw new InvalidOperationException("Rejected or quarantined control operations are not relayable.");
+
+        var envelope = UserControlOperationEnvelopeUtil.Deserialize(operation.EnvelopePayload);
+        if (envelope.OperationId != operation.OperationId ||
+            envelope.UserId != operation.UserId ||
+            envelope.OriginDeviceId != operation.OriginDeviceId ||
+            envelope.OriginInstanceId != operation.OriginInstanceId ||
+            envelope.OriginSequence != operation.OriginSequence ||
+            !Hashing.Verify(envelope.OperationHash, operation.OperationHash))
+        {
+            throw new InvalidDataException("Stored control-operation metadata does not match its immutable envelope.");
+        }
+
+        await _membershipAuthorization.VerifyControlAuthorAsync(envelope, ct);
+
+        var payload = new SyncDeltaPayload
+        {
+            ModelId = envelope.UserId,
+            ModelType = SyncModelType.User,
+            ChangeType = SyncChangeType.Updated,
+            UserControlOperation = envelope
+        };
+        return BuildEncryptedDelta(payload, device, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    }
 
     private Device BuildLocalOriginDevice() =>
         new()
@@ -139,6 +172,16 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
                 networkDelta.SnapshotOriginInstanceId = payload.UserSnapshot.OriginInstanceId;
                 networkDelta.SnapshotOriginRevision = payload.UserSnapshot.OriginRevision;
                 networkDelta.SnapshotHash = payload.UserSnapshot.SnapshotHash.ToArray();
+            }
+
+            if (payload.UserControlOperation is not null)
+            {
+                networkDelta.ControlOperationId = payload.UserControlOperation.OperationId;
+                networkDelta.ControlOperationUserId = payload.UserControlOperation.UserId;
+                networkDelta.ControlOperationOriginDeviceId = payload.UserControlOperation.OriginDeviceId;
+                networkDelta.ControlOperationOriginInstanceId = payload.UserControlOperation.OriginInstanceId;
+                networkDelta.ControlOperationOriginSequence = payload.UserControlOperation.OriginSequence;
+                networkDelta.ControlOperationHash = payload.UserControlOperation.OperationHash.ToArray();
             }
 
             var associatedData = SyncCryptoUtil.BuildAssociatedData(networkDelta);
@@ -208,9 +251,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
             if (user is null)
                 throw new InvalidOperationException("User sync source was not found.");
 
-            var publisher = _snapshotPublisher
-                ?? throw new InvalidOperationException("User snapshot publishing is not configured.");
-            var snapshot = await publisher.GetOrCreateAsync(user, ct);
+            var snapshot = await _snapshotPublisher.GetOrCreateAsync(user, ct);
             payload.UserSnapshot = DeserializeSnapshot(snapshot);
             return payload;
         }

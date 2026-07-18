@@ -31,6 +31,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
     private readonly ISyncAuthorizationService _authorization;
     private readonly IAuthService _auth;
     private readonly ISyncRelationshipReconciliationService _relationships;
+    private readonly IUserMembershipAuthorizationRepository _membershipAuthorizations;
 
     public NetworkDeltaPayloadApplierService(
         IUserDeltaApplierService userDeltas,
@@ -45,7 +46,8 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         IDeviceIdentityService identity,
         ISyncAuthorizationService authorization,
         IAuthService auth,
-        ISyncRelationshipReconciliationService relationships)
+        ISyncRelationshipReconciliationService relationships,
+        IUserMembershipAuthorizationRepository membershipAuthorizations)
     {
         _userDeltas = userDeltas;
         _users = users;
@@ -60,6 +62,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         _authorization = authorization;
         _auth = auth;
         _relationships = relationships;
+        _membershipAuthorizations = membershipAuthorizations;
     }
 
     public Task<bool> ApplyAsync(SyncDeltaPayload payload, Guid sourceDeviceId, long ts, CancellationToken ct = default) =>
@@ -117,6 +120,10 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
 
         if (delta.ChangeType == SyncChangeType.Deleted)
         {
+            // Mutable device deltas are never membership authority. Keep a current trusted identity
+            // while any present relational membership remains active; signed removal operations end it.
+            if (existing is not null && existing.UserDevices.Any(link => !link.IsDeleted))
+                return false;
             if (existing is not null)
             {
                 _syncDeviceIdentities.TryRemove(existing);
@@ -158,6 +165,8 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
             return await ApplyLocalUserProfileDisconnectAsync(delta, ts, ct);
 
         var payload = delta.UserDevice;
+        var activeAuthorizations = await _membershipAuthorizations.ListActiveForDeviceAsync(payload.UserId, payload.DeviceId, ct);
+        var hasAuthoritativeMembership = activeAuthorizations.Count != 0;
         var existing = await _userDevices.GetAsync(payload.UserId, payload.DeviceId, ct);
         existing?.VerifyIntegrity();
         if (existing is not null && IsIncomingOlderOrSame(existing.LastModifiedAt, ts))
@@ -166,6 +175,8 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         var modifiedAt = FromTimestamp(ts);
         if (delta.ChangeType == SyncChangeType.Deleted || payload.IsDeleted)
         {
+            if (hasAuthoritativeMembership)
+                return false;
             if (existing is not null)
             {
                 existing.IsDeleted = true;
@@ -181,6 +192,9 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
                 await RemovePendingSyncsForUserToDeviceAsync(payload.UserId, payload.DeviceId, ct);
             return true;
         }
+
+        if (!hasAuthoritativeMembership)
+            return false;
 
         var remoteDevice = await _devices.GetByIdAsync(payload.DeviceId, ct);
         if (remoteDevice is null)

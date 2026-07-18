@@ -43,79 +43,20 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
 
     public async Task RegisterRemoteDeviceAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint endpoint, CancellationToken ct)
     {
+        // Endpoint cryptographic validity is deliberately not membership authority. This method only
+        // rejects identity substitution; the signed DeviceAddition operation performs every mutation.
+        if (endpoint.DeviceId == Guid.Empty || endpoint.OriginInstanceId == Guid.Empty ||
+            endpoint.SignPublicKey.Length == 0 || endpoint.AgreementPublicKey.Length == 0 ||
+            string.IsNullOrWhiteSpace(endpoint.TlsCertFingerprint) || !DeviceTypeDetector.IsValid(endpoint.DeviceType))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The target installation identity is incomplete.");
+
         var devices = services.GetRequiredService<IDeviceRepository>();
+        _ = await FindExistingDeviceForEndpointAsync(devices, endpoint, ct);
+
         var userDevices = services.GetRequiredService<IUserDeviceRepository>();
-        var localUserDevices = services.GetRequiredService<ILocalUserDeviceRepository>();
-        var unitOfWork = services.GetRequiredService<IUnitOfWork>();
-        var now = DateTimeOffset.UtcNow;
-
-        var device = await FindExistingDeviceForEndpointAsync(devices, endpoint, ct);
-        var link = await userDevices.GetAsync(userId, endpoint.DeviceId, ct);
-
-        if (link is not null)
-        {
-            link.VerifyIntegrity();
-            if (!link.IsDeleted)
-                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "This profile is already linked to the selected device.");
-        }
-
-        if (device is null)
-        {
-            device = new Device
-            {
-                Id = endpoint.DeviceId,
-                PublicKey = endpoint.AgreementPublicKey,
-                SignPublicKey = endpoint.SignPublicKey,
-                TlsCertFingerprint = FingerprintUtil.Normalize(endpoint.TlsCertFingerprint),
-                DeviceType = endpoint.DeviceType,
-                LastSync = now.UtcDateTime,
-                LastSeen = now.UtcDateTime,
-                IsTrusted = true,
-                IsBlocked = false,
-                LastModifiedAt = now
-            };
-            device.GenerateIntegrityHash();
-            await devices.AddAsync(device, ct);
-        }
-        else
-        {
-            device.IsTrusted = true;
-            device.IsBlocked = false;
-            device.BlockedReason = null;
-            device.BlockedAt = null;
-            device.LastSeen = now.UtcDateTime;
-            device.LastModifiedAt = now;
-            device.TlsCertFingerprint = FingerprintUtil.Normalize(device.TlsCertFingerprint);
-            device.GenerateIntegrityHash();
-            devices.Update(device);
-        }
-
-        if (link is null)
-        {
-            link = new UserDevice
-            {
-                UserId = userId,
-                DeviceId = endpoint.DeviceId,
-                Device = device,
-                IsSyncOn = true,
-                IsDeleted = false,
-                LastModifiedAt = now
-            };
-            await userDevices.AddAsync(link, ct);
-        }
-        else
-        {
-            link.Device = device;
-            link.IsDeleted = false;
-            link.DeletedAt = null;
-            link.IsSyncOn = true;
-            link.LastModifiedAt = now;
-            userDevices.Update(link);
-        }
-
-        link.GenerateIntegrityHash();
-        await _localLinks.EnsureLocalUserDeviceAsync(devices, localUserDevices, userId, ct);
-        await unitOfWork.SaveChangesAsync(ct);
+        var existingLink = await userDevices.GetAsync(userId, endpoint.DeviceId, ct);
+        if (existingLink is not null)
+            existingLink.VerifyIntegrity();
     }
 
 
@@ -150,11 +91,12 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
         foreach (var existingLink in device.UserDevices)
             existingLink.VerifyIntegrity();
 
-        if (!device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
+        var identityDiffers = !device.SignPublicKey.SequenceEqual(endpoint.SignPublicKey) ||
             !device.PublicKey.SequenceEqual(endpoint.AgreementPublicKey) ||
             !string.Equals(FingerprintUtil.Normalize(device.TlsCertFingerprint), FingerprintUtil.Normalize(endpoint.TlsCertFingerprint), StringComparison.OrdinalIgnoreCase) ||
-            device.DeviceType != endpoint.DeviceType)
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different device already uses this device identity.");
+            device.DeviceType != endpoint.DeviceType;
+        if (identityDiffers && device.UserDevices.Any(link => !link.IsDeleted))
+            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.DeviceIdentityConflict, "A different active membership still uses this device identity.");
 
         return device;
     }

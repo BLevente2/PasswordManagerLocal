@@ -82,12 +82,12 @@ public sealed class Endpoints : IEndpoints
     public Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default) =>
         RunAsync<IDeviceService>(service => service.UnblockUserDeviceAsync(token, deviceId, ct));
 
-    public Task DisconnectUserDeviceAsync(
+    public Task<DeviceRemovalResultResponse> DisconnectUserDeviceAsync(
         Guid token,
         Guid deviceId,
         byte[] masterPassword,
         CancellationToken ct = default) =>
-        RunAsync<IDeviceService>(service =>
+        RunAsync<IDeviceService, DeviceRemovalResultResponse>(service =>
             service.DisconnectUserDeviceAsync(token, deviceId, masterPassword, ct));
 
     public Task<DeviceEnrollmentCodeResponse> StartDeviceEnrollmentAsync(CancellationToken ct = default) =>

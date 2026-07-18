@@ -19,5 +19,10 @@ public enum SyncTcpMessageType : byte
     UserSnapshotRequestBatch = 42,
     UserSnapshotRelayStart = 43,
     UserSnapshotRelayEnd = 44,
+    UserControlOperationInventoryRequest = 45,
+    UserControlOperationInventoryReply = 46,
+    UserControlOperationRequestBatch = 47,
+    UserControlOperationRelayStart = 48,
+    UserControlOperationRelayEnd = 49,
     Error = 100
 }

@@ -81,8 +81,8 @@ public static class SyncCryptoUtil
     public static void ValidatePayloadShape(SyncDeltaPayload payload)
     {
         var payloadCount = 0;
-        if (payload.User is not null) payloadCount++;
         if (payload.UserSnapshot is not null) payloadCount++;
+        if (payload.UserControlOperation is not null) payloadCount++;
         if (payload.Group is not null) payloadCount++;
         if (payload.Device is not null) payloadCount++;
         if (payload.UserDevice is not null) payloadCount++;
@@ -98,11 +98,12 @@ public static class SyncCryptoUtil
         if (payloadCount != 1)
             throw new InvalidDataException("Network delta must contain exactly one matching payload.");
 
-        if (payload.ModelType == SyncModelType.User &&
-            payload.ChangeType != SyncChangeType.Deleted &&
-            (payload.UserSnapshot is null || payload.User is not null))
+        if (payload.ModelType == SyncModelType.User && payload.ChangeType != SyncChangeType.Deleted)
         {
-            throw new InvalidDataException("Ordinary user synchronization requires exactly one immutable user snapshot envelope.");
+            var hasSnapshot = payload.UserSnapshot is not null;
+            var hasControlOperation = payload.UserControlOperation is not null;
+            if (hasSnapshot == hasControlOperation)
+                throw new InvalidDataException("User synchronization requires exactly one immutable snapshot or authoritative control operation.");
         }
 
         if (payload.ModelType == SyncModelType.Group && payload.Group is null)
@@ -125,6 +126,12 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.User)
         {
+            if (payload.UserControlOperation is not null)
+            {
+                UserControlOperationEnvelopeUtil.ValidateStructureAndHash(payload.UserControlOperation);
+                return;
+            }
+
             if (payload.UserSnapshot is null)
                 throw new InvalidDataException("User snapshot envelope is missing.");
 

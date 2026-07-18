@@ -28,6 +28,15 @@ public sealed class UserRevisionKnowledgeRepository : IUserRevisionKnowledgeRepo
             .ThenBy(item => item.OriginInstanceId)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<UserRevisionKnowledge>> ListForUserAsync(Guid userId, CancellationToken ct = default) =>
+        await _knowledge.Where(item => item.UserId == userId)
+            .OrderBy(item => item.OriginDeviceId).ThenBy(item => item.OriginInstanceId).ThenBy(item => item.UserKeyEpoch)
+            .ToListAsync(ct);
+
+    public async Task<IReadOnlyList<UserRevisionKnowledge>> ListForOriginAsync(Guid userId, Guid originDeviceId, Guid originInstanceId, CancellationToken ct = default) =>
+        await _knowledge.Where(item => item.UserId == userId && item.OriginDeviceId == originDeviceId && item.OriginInstanceId == originInstanceId)
+            .OrderBy(item => item.UserKeyEpoch).ToListAsync(ct);
+
     public Task AddAsync(UserRevisionKnowledge knowledge, CancellationToken ct = default) =>
         _knowledge.AddAsync(knowledge, ct).AsTask();
 

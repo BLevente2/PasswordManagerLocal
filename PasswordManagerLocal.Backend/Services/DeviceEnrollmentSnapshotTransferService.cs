@@ -69,8 +69,11 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
                 secret,
                 snapshotBytes,
                 _identity.LocalDeviceId.ToString("N"),
+                _identity.OriginInstanceId,
                 _identity.SignPublicKey,
-                _identity.FingerprintHex);
+                _identity.FingerprintHex,
+                endpoint.DeviceId,
+                endpoint.OriginInstanceId);
         }
         finally
         {
@@ -116,14 +119,14 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
             endpoint.Host,
             endpoint.Port,
             endpoint.TlsCertFingerprint,
-            BuildEnrollmentSnapshotChunks(sessionId, proof, snapshotBytes, snapshotNonce, snapshotTag),
+            BuildEnrollmentSnapshotChunks(endpoint, sessionId, proof, snapshotBytes, snapshotNonce, snapshotTag),
             ct);
 
         return ParseEnrollmentReply(reply);
     }
 
 
-    private async IAsyncEnumerable<CompleteDeviceEnrollmentChunk> BuildEnrollmentSnapshotChunks(string sessionId, byte[] proof, byte[] snapshotBytes, byte[] snapshotNonce, byte[] snapshotTag)
+    private async IAsyncEnumerable<CompleteDeviceEnrollmentChunk> BuildEnrollmentSnapshotChunks(EnrollmentEndpoint endpoint, string sessionId, byte[] proof, byte[] snapshotBytes, byte[] snapshotNonce, byte[] snapshotTag)
     {
         var sourceDeviceId = _identity.LocalDeviceId.ToString("N");
 
@@ -137,6 +140,9 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
                 SourceDeviceId = offset == 0 ? sourceDeviceId : string.Empty,
                 SourceSignPub = offset == 0 ? ByteString.CopyFrom(_identity.SignPublicKey) : ByteString.Empty,
                 SourceTlsCertFingerprint = offset == 0 ? _identity.FingerprintHex : string.Empty,
+                SourceOriginInstanceId = offset == 0 ? _identity.OriginInstanceId.ToString("N") : string.Empty,
+                TargetDeviceId = offset == 0 ? endpoint.DeviceId.ToString("N") : string.Empty,
+                TargetOriginInstanceId = offset == 0 ? endpoint.OriginInstanceId.ToString("N") : string.Empty,
                 SnapshotEncryptionVersion = offset == 0 ? SyncConstants.EnrollmentSnapshotEncryptionVersion : 0,
                 SnapshotEncryptionNonce = offset == 0 ? ByteString.CopyFrom(snapshotNonce) : ByteString.Empty,
                 SnapshotEncryptionTag = offset == 0 ? ByteString.CopyFrom(snapshotTag) : ByteString.Empty,
@@ -156,6 +162,9 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
                 SourceDeviceId = sourceDeviceId,
                 SourceSignPub = ByteString.CopyFrom(_identity.SignPublicKey),
                 SourceTlsCertFingerprint = _identity.FingerprintHex,
+                SourceOriginInstanceId = _identity.OriginInstanceId.ToString("N"),
+                TargetDeviceId = endpoint.DeviceId.ToString("N"),
+                TargetOriginInstanceId = endpoint.OriginInstanceId.ToString("N"),
                 SnapshotEncryptionVersion = SyncConstants.EnrollmentSnapshotEncryptionVersion,
                 SnapshotEncryptionNonce = ByteString.CopyFrom(snapshotNonce),
                 SnapshotEncryptionTag = ByteString.CopyFrom(snapshotTag),

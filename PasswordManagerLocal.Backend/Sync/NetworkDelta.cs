@@ -22,4 +22,12 @@ public sealed class NetworkDelta
     public Guid SnapshotOriginInstanceId { get; set; }
     public long SnapshotOriginRevision { get; set; }
     public byte[] SnapshotHash { get; set; } = [];
+
+    // Sender-local metadata used to match exact durable control-operation receipts.
+    public Guid ControlOperationId { get; set; }
+    public Guid ControlOperationUserId { get; set; }
+    public Guid ControlOperationOriginDeviceId { get; set; }
+    public Guid ControlOperationOriginInstanceId { get; set; }
+    public long ControlOperationOriginSequence { get; set; }
+    public byte[] ControlOperationHash { get; set; } = [];
 }

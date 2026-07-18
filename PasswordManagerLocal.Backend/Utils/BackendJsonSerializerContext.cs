@@ -18,4 +18,8 @@ namespace PasswordManagerLocal.Backend.Utils;
 [JsonSerializable(typeof(DeviceEnrollmentSnapshot), TypeInfoPropertyName = "DeviceEnrollmentSnapshot")]
 [JsonSerializable(typeof(SyncDeltaPayload), TypeInfoPropertyName = "SyncDeltaPayload")]
 [JsonSerializable(typeof(UserSnapshotEnvelope), TypeInfoPropertyName = "UserSnapshotEnvelope")]
+[JsonSerializable(typeof(UserControlOperationEnvelope), TypeInfoPropertyName = "UserControlOperationEnvelope")]
+[JsonSerializable(typeof(KeyEpochReplacementPayload), TypeInfoPropertyName = "KeyEpochReplacementPayload")]
+[JsonSerializable(typeof(DeviceAdditionPayload), TypeInfoPropertyName = "DeviceAdditionPayload")]
+[JsonSerializable(typeof(DeviceRemovalPayload), TypeInfoPropertyName = "DeviceRemovalPayload")]
 internal partial class BackendJsonSerializerContext : JsonSerializerContext;

@@ -5,10 +5,10 @@ public static class SyncConstants
     public const string PFXPassword = "";
 
     public const int SyncPort = 26688;
-    public const int SyncProtocolVersion = 3;
+    public const int SyncProtocolVersion = 5;
     public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
     public const int LocalDiscoveryPort = 26689;
-    public const int LocalDiscoveryProtocolVersion = 1;
+    public const int LocalDiscoveryProtocolVersion = 2;
     public const int LocalDiscoveryPeerThrottleSeconds = 20;
     // Query often enough for the UI to notice disconnected peers promptly without
     // treating a single lost UDP discovery round as an offline transition.
@@ -31,6 +31,8 @@ public static class SyncConstants
 
     public const int MaxIncomingDeltaPayloadBytes = 4 * 1024 * 1024;
     public const int MaxUserSnapshotEnvelopeBytes = MaxIncomingDeltaPayloadBytes;
+    public const int MaxUserControlOperationPayloadBytes = MaxIncomingDeltaPayloadBytes;
+    public const int MaxUserControlOperationEnvelopeBytes = MaxIncomingDeltaPayloadBytes;
     public const int MaxIncomingDeltaTotalBytesPerCall = 32 * 1024 * 1024;
     public const int MaxDeviceEnrollmentSnapshotBytes = 64 * 1024 * 1024;
     public const int DeviceEnrollmentSnapshotChunkBytes = 64 * 1024;
@@ -46,6 +48,9 @@ public static class SyncConstants
     public const int MaxUserSnapshotInventoryUsers = 256;
     public const int MaxUserSnapshotInventoryEntries = 4096;
     public const int MaxUserSnapshotRequestsPerCall = 256;
+    public const int MaxUserControlInventoryUsers = 256;
+    public const int MaxUserControlInventoryEntries = 4096;
+    public const int MaxUserControlRequestsPerCall = 256;
     public const int MaxSyncTcpFrameBytes = MaxIncomingDeltaPayloadBytes + 4096;
     public const int MaxIncomingDeltaFutureSeconds = 300;
     public const int MaxInvalidIncomingSyncAttempts = 5;
@@ -58,7 +63,7 @@ public static class SyncConstants
     public const int SyncTcpIdleTimeoutSeconds = 30;
     public const int SyncTcpWriteTimeoutSeconds = 30;
 
-    public const int EnrollmentSnapshotEncryptionVersion = 1;
+    public const int EnrollmentSnapshotEncryptionVersion = 2;
     public const int EnrollmentSnapshotEncryptionNonceBytes = 12;
     public const int EnrollmentSnapshotEncryptionTagBytes = 16;
     public const int EnrollmentCodeNoiseBytes = 16;
