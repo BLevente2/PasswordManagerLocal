@@ -8,6 +8,7 @@ using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Hosting;
+using PasswordManagerLocal.Backend.Internal.Devices;
 using PasswordManagerLocal.Backend.Persistence;
 using PasswordManagerLocal.Backend.Repositories;
 using PasswordManagerLocal.Backend.Security;
@@ -261,6 +262,13 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserCanonicalHealthService, UserCanonicalHealthService>();
             services.AddScoped<IDatabaseHealthService, DatabaseHealthService>();
             services.AddScoped<IUserRecoverySessionService, UserRecoverySessionService>();
+            services.AddScoped<IUserRegistrationService, UserRegistrationService>();
+            services.AddScoped<IUserLoginService, UserLoginService>();
+            services.AddScoped<AuthSessionService>();
+            services.AddScoped<IAuthSessionService>(sp => sp.GetRequiredService<AuthSessionService>());
+            services.AddScoped<IAuthenticatedSessionIssuer>(sp => sp.GetRequiredService<AuthSessionService>());
+            services.AddScoped<ICredentialVerificationService, CredentialVerificationService>();
+            services.AddScoped<IMasterPasswordRotationService, MasterPasswordRotationService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserSessionService, UserSessionService>();
             services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
@@ -273,6 +281,13 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IRememberMeService, RememberMeService>();
             services.AddScoped<IUserProfileService, UserProfileService>();
+            services.AddScoped<LocalUserDeviceLinkManager>();
+            services.AddScoped<UserDeviceAccessor>();
+            services.AddScoped<UserDeviceMetadataEditor>();
+            services.AddScoped<ILocalDeviceSettingsService, LocalDeviceSettingsService>();
+            services.AddScoped<IUserDeviceQueryService, UserDeviceQueryService>();
+            services.AddScoped<IUserDeviceSettingsService, UserDeviceSettingsService>();
+            services.AddScoped<IUserDeviceDisconnectionService, UserDeviceDisconnectionService>();
             services.AddScoped<IDeviceService, DeviceService>();
             services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
 

@@ -1,0 +1,156 @@
+using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
+using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Internal.Devices;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Backend.Utils;
+using static PasswordManagerLocal.Backend.Constants.SyncConstants;
+
+namespace PasswordManagerLocal.Backend.Services;
+
+public sealed class UserDeviceQueryService : IUserDeviceQueryService
+{
+    private readonly IUserLookupService _userLookup;
+    private readonly IUserDataReaderService _userDataReader;
+    private readonly IDeviceIdentityService _identity;
+    private readonly IUserDeviceRepository _userDevices;
+    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly LocalUserDeviceLinkManager _localLinkManager;
+    private readonly UserDeviceMetadataEditor _metadataEditor;
+
+    public UserDeviceQueryService(
+        IUserLookupService userLookup,
+        IUserDataReaderService userDataReader,
+        IDeviceIdentityService identity,
+        IUserDeviceRepository userDevices,
+        IDiscoveredDeviceEndpointCache endpointCache,
+        LocalUserDeviceLinkManager localLinkManager,
+        UserDeviceMetadataEditor metadataEditor)
+    {
+        _userLookup = userLookup;
+        _userDataReader = userDataReader;
+        _identity = identity;
+        _userDevices = userDevices;
+        _endpointCache = endpointCache;
+        _localLinkManager = localLinkManager;
+        _metadataEditor = metadataEditor;
+    }
+
+    public async Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(Guid token, CancellationToken ct = default)
+    {
+        var user = await _userLookup.GetAndVerifyUserAsync(token, ct);
+        var bundle = await _userDataReader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
+        var userDevicesData = bundle.UserDevicesData;
+        var localLink = await _localLinkManager.GetOrCreateAsync(user.UId, ct);
+        var links = await _userDevices.ListByUserWithDevicesAsync(user.UId, ct);
+
+        var changed = _metadataEditor.EnsureDeviceData(userDevicesData, _identity.LocalDeviceId, DateTimeOffset.UtcNow);
+        foreach (var link in links.Where(x => !x.IsDeleted))
+            changed |= _metadataEditor.EnsureDeviceData(userDevicesData, link.DeviceId, link.LastModifiedAt);
+        if (changed)
+            await _metadataEditor.PersistAsync(bundle, token, ct);
+
+        var encryptedDevices = userDevicesData.Devices.ToDictionary(d => d.Id);
+        var visibleDeviceIds = links
+            .Where(link => !link.IsDeleted)
+            .Select(link => link.DeviceId)
+            .Append(_identity.LocalDeviceId)
+            .ToHashSet();
+        var presentationNames = UserDevicePresentationUtil.ResolveNames(
+            userDevicesData.Devices.Where(device => visibleDeviceIds.Contains(device.Id)));
+        var result = new List<UserDeviceInfoResponse>();
+        var localCanSync = localLink.IsSyncOn && _identity.IsSyncOn;
+        if (encryptedDevices.TryGetValue(_identity.LocalDeviceId, out var localDeviceData))
+            result.Add(BuildLocalResponse(
+                localLink,
+                localDeviceData,
+                presentationNames[_identity.LocalDeviceId],
+                localCanSync));
+
+        foreach (var link in links.Where(x => !x.IsDeleted && x.Device is not null))
+        {
+            if (encryptedDevices.TryGetValue(link.DeviceId, out var deviceData))
+                result.Add(BuildRemoteResponse(
+                    link,
+                    link.Device!,
+                    deviceData,
+                    presentationNames[link.DeviceId],
+                    IsRemoteDeviceOnline(localCanSync, link, link.Device!)));
+        }
+
+        return result
+            .OrderByDescending(d => d.IsCurrentDevice)
+            .ThenByDescending(d => d.LastSync ?? d.LastSeen ?? DateTime.MinValue)
+            .ToList();
+    }
+
+    private UserDeviceInfoResponse BuildLocalResponse(
+        LocalUserDevice link,
+        UserDeviceData deviceData,
+        string presentationName,
+        bool isOnline) => new()
+    {
+        DeviceId = _identity.LocalDeviceId,
+        Name = presentationName,
+        DeviceType = _identity.DeviceType,
+        TlsCertFingerprint = _identity.FingerprintHex,
+        LastSync = null,
+        LastSeen = null,
+        LastLoginDate = ToMeaningfulUtc(deviceData.LastLoginDate),
+        IsTrusted = true,
+        IsBlocked = false,
+        InvalidSyncAttemptCount = 0,
+        IsSyncOn = link.IsSyncOn,
+        IsOnline = isOnline,
+        IsDeleted = false,
+        LinkedAt = UtcDateTimeUtil.ToUtc(deviceData.LinkedAt),
+        DeletedAt = null,
+        IsCurrentDevice = true
+    };
+
+    private UserDeviceInfoResponse BuildRemoteResponse(
+        UserDevice link,
+        Device device,
+        UserDeviceData deviceData,
+        string presentationName,
+        bool isOnline) => new()
+    {
+        DeviceId = link.DeviceId,
+        Name = presentationName,
+        DeviceType = device.DeviceType,
+        TlsCertFingerprint = device.TlsCertFingerprint,
+        LastSync = ToMeaningfulUtc(device.LastSync),
+        LastSeen = ToMeaningfulUtc(device.LastSeen),
+        LastLoginDate = ToMeaningfulUtc(deviceData.LastLoginDate),
+        IsTrusted = device.IsTrusted,
+        IsBlocked = device.IsBlocked,
+        BlockedReason = device.BlockedReason,
+        BlockedAt = UtcDateTimeUtil.ToUtc(device.BlockedAt),
+        InvalidSyncAttemptCount = device.InvalidSyncAttemptCount,
+        IsSyncOn = link.IsSyncOn,
+        IsOnline = isOnline,
+        IsDeleted = link.IsDeleted,
+        LinkedAt = UtcDateTimeUtil.ToUtc(deviceData.LinkedAt),
+        DeletedAt = UtcDateTimeUtil.ToUtc(link.DeletedAt),
+        IsCurrentDevice = false
+    };
+
+    private DateTime? ToMeaningfulUtc(DateTime value) =>
+        value == default || value == UtcDateTimeUtil.MinDateTime
+            ? null
+            : UtcDateTimeUtil.ToUtc(value);
+
+    private bool IsRemoteDeviceOnline(bool localCanSync, UserDevice link, Device device) =>
+        localCanSync &&
+        link.IsSyncOn &&
+        !link.IsDeleted &&
+        device.IsTrusted &&
+        !device.IsBlocked &&
+        device.PublicKey.Length != 0 &&
+        device.SignPublicKey.Length != 0 &&
+        _endpointCache.IsRecentlyDiscovered(
+            device.TlsCertFingerprint,
+            TimeSpan.FromSeconds(LocalDiscoveryOnlineTimeoutSeconds));
+}

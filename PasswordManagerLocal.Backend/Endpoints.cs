@@ -16,23 +16,23 @@ public sealed class Endpoints : IEndpoints
     }
 
     public Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default) =>
-        RunAsync<IAuthService, Guid>(service => service.RegisterAsync(request, ct));
+        RunAsync<IUserRegistrationService, Guid>(service => service.RegisterAsync(request, ct));
 
     public Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default) =>
-        RunAsync<IAuthService, Guid>(service => service.LoginAsync(request, ct));
+        RunAsync<IUserLoginService, Guid>(service => service.LoginAsync(request, ct));
 
     public Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default) =>
-        RunAsync<IAuthService, Guid>(service => service.RenewSessionAsync(token, ct));
+        RunAsync<IAuthSessionService, Guid>(service => service.RenewSessionAsync(token, ct));
 
     public void Logout(Guid token) =>
-        Run<IAuthService>(service => service.Logout(token));
+        Run<IAuthSessionService>(service => service.Logout(token));
 
     public Task<AuthSessionStatusResponse> GetAuthSessionStatusAsync(Guid token, CancellationToken ct = default) =>
-        RunAsync<IAuthService, AuthSessionStatusResponse>(service =>
+        RunAsync<IAuthSessionService, AuthSessionStatusResponse>(service =>
             Task.FromResult(service.GetSessionStatus(token)));
 
     public Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default) =>
-        RunAsync<IAuthService>(service => service.ChangeMasterPasswordAsync(request, ct));
+        RunAsync<IMasterPasswordRotationService>(service => service.ChangeMasterPasswordAsync(request, ct));
 
     public Task<UserProfileInfoResponse> GetUserProfileInfoAsync(Guid token, CancellationToken ct = default) =>
         RunAsync<IUserProfileService, UserProfileInfoResponse>(service =>
@@ -48,21 +48,21 @@ public sealed class Endpoints : IEndpoints
         RunAsync<IUserProfileService>(service => service.UpdateUserProfileInfoAsync(request, ct));
 
     public Task<LocalDeviceInfoResponse> GetLocalDeviceInfoAsync(CancellationToken ct = default) =>
-        RunAsync<IDeviceService, LocalDeviceInfoResponse>(service => service.GetLocalDeviceInfoAsync(ct));
+        RunAsync<ILocalDeviceSettingsService, LocalDeviceInfoResponse>(service => service.GetLocalDeviceInfoAsync(ct));
 
     public Task<bool> GetLocalUserSyncOnAsync(Guid token, CancellationToken ct = default) =>
-        RunAsync<IDeviceService, bool>(service => service.GetLocalUserSyncOnAsync(token, ct));
+        RunAsync<ILocalDeviceSettingsService, bool>(service => service.GetLocalUserSyncOnAsync(token, ct));
 
     public Task SetLocalUserSyncOnAsync(Guid token, bool isSyncOn, CancellationToken ct = default) =>
-        RunAsync<IDeviceService>(service => service.SetLocalUserSyncOnAsync(token, isSyncOn, ct));
+        RunAsync<ILocalDeviceSettingsService>(service => service.SetLocalUserSyncOnAsync(token, isSyncOn, ct));
 
     public Task SetLocalDeviceNameAsync(Guid token, string name, CancellationToken ct = default) =>
-        RunAsync<IDeviceService>(service => service.SetLocalDeviceNameAsync(token, name, ct));
+        RunAsync<ILocalDeviceSettingsService>(service => service.SetLocalDeviceNameAsync(token, name, ct));
 
     public Task<IReadOnlyList<UserDeviceInfoResponse>> GetUserDevicesAsync(
         Guid token,
         CancellationToken ct = default) =>
-        RunAsync<IDeviceService, IReadOnlyList<UserDeviceInfoResponse>>(service =>
+        RunAsync<IUserDeviceQueryService, IReadOnlyList<UserDeviceInfoResponse>>(service =>
             service.GetUserDevicesAsync(token, ct));
 
     public Task SetUserDeviceNameAsync(
@@ -70,24 +70,24 @@ public sealed class Endpoints : IEndpoints
         Guid deviceId,
         string name,
         CancellationToken ct = default) =>
-        RunAsync<IDeviceService>(service => service.SetUserDeviceNameAsync(token, deviceId, name, ct));
+        RunAsync<IUserDeviceSettingsService>(service => service.SetUserDeviceNameAsync(token, deviceId, name, ct));
 
     public Task SetUserDeviceSyncOnAsync(
         Guid token,
         Guid deviceId,
         bool isSyncOn,
         CancellationToken ct = default) =>
-        RunAsync<IDeviceService>(service => service.SetUserDeviceSyncOnAsync(token, deviceId, isSyncOn, ct));
+        RunAsync<IUserDeviceSettingsService>(service => service.SetUserDeviceSyncOnAsync(token, deviceId, isSyncOn, ct));
 
     public Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default) =>
-        RunAsync<IDeviceService>(service => service.UnblockUserDeviceAsync(token, deviceId, ct));
+        RunAsync<IUserDeviceSettingsService>(service => service.UnblockUserDeviceAsync(token, deviceId, ct));
 
     public Task<DeviceRemovalResultResponse> DisconnectUserDeviceAsync(
         Guid token,
         Guid deviceId,
         byte[] masterPassword,
         CancellationToken ct = default) =>
-        RunAsync<IDeviceService, DeviceRemovalResultResponse>(service =>
+        RunAsync<IUserDeviceDisconnectionService, DeviceRemovalResultResponse>(service =>
             service.DisconnectUserDeviceAsync(token, deviceId, masterPassword, ct));
 
     public Task<DeviceEnrollmentCodeResponse> StartDeviceEnrollmentAsync(CancellationToken ct = default) =>

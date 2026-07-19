@@ -23,7 +23,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly IUserSyncKeyResolverService _keyResolver;
     private readonly IUserRepository _users;
     private readonly IUserRevisionKnowledgeRepository _revisionKnowledge;
-    private readonly IAuthService _auth;
+    private readonly IAuthSessionService _auth;
     private readonly IUserControlOperationInboxService _controlOperationInbox;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
@@ -42,7 +42,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         IUserSyncKeyResolverService keyResolver,
         IUserRepository users,
         IUserRevisionKnowledgeRepository revisionKnowledge,
-        IAuthService auth,
+        IAuthSessionService auth,
         IUserControlOperationInboxService controlOperationInbox,
         IUserTombstoneGarbageCollector? garbageCollector = null)
     {

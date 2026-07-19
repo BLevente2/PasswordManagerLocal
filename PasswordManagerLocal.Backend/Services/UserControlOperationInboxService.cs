@@ -18,7 +18,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
     private readonly IUserDeviceRepository _userDevices;
     private readonly IUserSyncSnapshotRepository _snapshots;
     private readonly IUserLifecycleCoordinator _lifecycle;
-    private readonly IAuthService _auth;
+    private readonly IAuthSessionService _auth;
     private readonly IUnitOfWork _uow;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
     private readonly IUserMembershipAuthorizationRepository _authorizationRows;
@@ -41,7 +41,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         IUserDeviceRepository userDevices,
         IUserSyncSnapshotRepository snapshots,
         IUserLifecycleCoordinator lifecycle,
-        IAuthService auth,
+        IAuthSessionService auth,
         IUnitOfWork uow,
         IUserMembershipAuthorizationService membershipAuthorization,
         IUserMembershipAuthorizationRepository authorizationRows,

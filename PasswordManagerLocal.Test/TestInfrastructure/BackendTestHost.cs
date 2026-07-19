@@ -11,6 +11,7 @@ using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Internal.Devices;
 using PasswordManagerLocal.Test.Fakes;
 using System.Text;
 
@@ -114,6 +115,13 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserService, UserService>();
         sc.AddSingleton<IUserProfileService, UserProfileService>();
         sc.AddSingleton<IRememberMeService, RememberMeService>();
+        sc.AddSingleton<IUserRegistrationService, UserRegistrationService>();
+        sc.AddSingleton<IUserLoginService, UserLoginService>();
+        sc.AddSingleton<AuthSessionService>();
+        sc.AddSingleton<IAuthSessionService>(sp => sp.GetRequiredService<AuthSessionService>());
+        sc.AddSingleton<IAuthenticatedSessionIssuer>(sp => sp.GetRequiredService<AuthSessionService>());
+        sc.AddSingleton<ICredentialVerificationService, CredentialVerificationService>();
+        sc.AddSingleton<IMasterPasswordRotationService, MasterPasswordRotationService>();
         sc.AddSingleton<IAuthService, AuthService>();
         sc.AddSingleton<IPasswordService, PasswordService>();
         sc.AddSingleton<ICustomUserColorService, CustomUserColorService>();
@@ -121,6 +129,13 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserPasswordsService, UserPasswordsService>();
         sc.AddSingleton<IUserCustomColorService, UserCustomColorService>();
         sc.AddSingleton<IUserPasswordTagService, UserPasswordTagService>();
+        sc.AddSingleton<LocalUserDeviceLinkManager>();
+        sc.AddSingleton<UserDeviceAccessor>();
+        sc.AddSingleton<UserDeviceMetadataEditor>();
+        sc.AddSingleton<ILocalDeviceSettingsService, LocalDeviceSettingsService>();
+        sc.AddSingleton<IUserDeviceQueryService, UserDeviceQueryService>();
+        sc.AddSingleton<IUserDeviceSettingsService, UserDeviceSettingsService>();
+        sc.AddSingleton<IUserDeviceDisconnectionService, UserDeviceDisconnectionService>();
         sc.AddSingleton<IDeviceService, DeviceService>();
 
         _sp = sc.BuildServiceProvider(new ServiceProviderOptions

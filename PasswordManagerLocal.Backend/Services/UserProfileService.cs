@@ -18,7 +18,7 @@ public class UserProfileService : IUserProfileService
     private readonly IUserDataWriterService _writer;
     private readonly IUserSessionService _sessions;
     private readonly IUserDeletionService _deletion;
-    private readonly IAuthService _authService;
+    private readonly ICredentialVerificationService _authService;
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserLifecycleCoordinator _lifecycle;
 
@@ -28,7 +28,7 @@ public class UserProfileService : IUserProfileService
         IUserDataWriterService writer,
         IUserSessionService sessions,
         IUserDeletionService deletion,
-        IAuthService authService,
+        ICredentialVerificationService authService,
         ISyncVersionClockService versionClock,
         IUserLifecycleCoordinator lifecycle)
     {

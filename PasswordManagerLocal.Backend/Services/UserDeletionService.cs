@@ -20,7 +20,7 @@ public sealed class UserDeletionService : IUserDeletionService
     private readonly IUserControlStateRepository _controlStates;
     private readonly IDeletedUserBarrierRepository _barriers;
     private readonly IUserAccountDeletionCleanupService _cleanup;
-    private readonly IAuthService _auth;
+    private readonly IAuthSessionService _auth;
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly IUnitOfWork _uow;
     private readonly IDeviceEnrollmentService? _enrollment;
@@ -33,7 +33,7 @@ public sealed class UserDeletionService : IUserDeletionService
         IUserControlStateRepository controlStates,
         IDeletedUserBarrierRepository barriers,
         IUserAccountDeletionCleanupService cleanup,
-        IAuthService auth,
+        IAuthSessionService auth,
         ISyncRuntimeService syncRuntime,
         IUnitOfWork uow,
         IDeviceEnrollmentService? enrollment = null)

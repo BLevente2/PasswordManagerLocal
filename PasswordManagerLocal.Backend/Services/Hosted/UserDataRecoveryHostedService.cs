@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Services;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 

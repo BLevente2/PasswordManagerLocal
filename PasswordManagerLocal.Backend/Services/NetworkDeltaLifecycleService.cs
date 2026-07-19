@@ -29,7 +29,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncAuthorizationService _authorization;
     private readonly ISyncRuntimeService _syncRuntime;
-    private readonly IAuthService _auth;
+    private readonly IAuthSessionService _auth;
     private readonly IUnitOfWork _uow;
     private readonly IUserControlOperationRepository? _controlOperations;
     private readonly IUserMembershipAuthorizationRepository? _membershipAuthorizations;
@@ -46,7 +46,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         IDeviceIdentityService identity,
         ISyncAuthorizationService authorization,
         ISyncRuntimeService syncRuntime,
-        IAuthService auth,
+        IAuthSessionService auth,
         IUnitOfWork uow,
         IUserControlOperationRepository? controlOperations = null,
         IUserMembershipAuthorizationRepository? membershipAuthorizations = null)

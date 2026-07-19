@@ -29,7 +29,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncAuthorizationService _authorization;
-    private readonly IAuthService _auth;
+    private readonly IAuthSessionService _auth;
     private readonly ISyncRelationshipReconciliationService _relationships;
     private readonly IUserMembershipAuthorizationRepository _membershipAuthorizations;
 
@@ -45,7 +45,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDeviceIdentityService identity,
         ISyncAuthorizationService authorization,
-        IAuthService auth,
+        IAuthSessionService auth,
         ISyncRelationshipReconciliationService relationships,
         IUserMembershipAuthorizationRepository membershipAuthorizations)
     {
