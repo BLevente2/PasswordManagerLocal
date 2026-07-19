@@ -22,6 +22,7 @@ public class RememberMeService : IRememberMeService
     private readonly IUserSnapshotMergeCoordinator _snapshotMerge;
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
 
     public RememberMeService(
         ITokenService tokens,
@@ -34,7 +35,8 @@ public class RememberMeService : IRememberMeService
         IDeviceIdentityService identity,
         IUserSnapshotMergeCoordinator snapshotMerge,
         ISyncVersionClockService versionClock,
-        IUserTombstoneGarbageCollector? garbageCollector = null)
+        IUserTombstoneGarbageCollector? garbageCollector = null,
+        IUserCanonicalHealthService? canonicalHealth = null)
     {
         _tokens = tokens;
         _keys = keys;
@@ -47,6 +49,7 @@ public class RememberMeService : IRememberMeService
         _snapshotMerge = snapshotMerge;
         _versionClock = versionClock;
         _garbageCollector = garbageCollector;
+        _canonicalHealth = canonicalHealth;
     }
 
 
@@ -88,7 +91,7 @@ public class RememberMeService : IRememberMeService
         using var key = _sessions.GetEncryptionKeyFromToken(token);
 
         SetRememberMe(user, rememberMe, key);
-        await _writer.UpdateUserAsync(user, ct);
+        await _writer.UpdateSavedKeyOnlyAsync(user, ct);
     }
 
 
@@ -129,7 +132,7 @@ public class RememberMeService : IRememberMeService
         {
             rawKey = _protector.Unprotect(user.SavedKey);
             using var key = EncryptionKey.FromRaw(rawKey);
-            await _snapshotMerge.TryMergePendingAsync(user.UId, key, ct);
+            await _snapshotMerge.TryMergePendingAsync(user.UId, key, UserSyncKeyConfidence.RememberMe, ct);
             if (_garbageCollector is not null)
             {
                 try
@@ -143,6 +146,16 @@ public class RememberMeService : IRememberMeService
             }
             user = await _lookup.GetAndVerifyUserByUidAsync(user.UId, ct);
             var bundle = await _reader.GetAndVerifyUserDataBundleAsync(user, key, ct);
+            if (_canonicalHealth is not null)
+            {
+                var health = await _canonicalHealth.VerifyAsync(
+                    user, key, UserSyncKeyConfidence.RememberMe, recordFault: true, ct: ct);
+                if (health.State is not (UserDataVerificationState.Healthy or UserDataVerificationState.CheckpointMissing))
+                {
+                    bundle.Dispose();
+                    throw new UnauthorizedAccessException("The local account copy could not be verified.");
+                }
+            }
             UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
                 bundle.UserDevicesData,
                 _identity.LocalDeviceId,
@@ -182,7 +195,7 @@ public class RememberMeService : IRememberMeService
                 CryptographicOperations.ZeroMemory(user.SavedKey);
 
             user.SavedKey = null;
-            await _writer.UpdateUserAsync(user, ct);
+            await _writer.UpdateSavedKeyOnlyAsync(user, ct);
         }
         catch
         {

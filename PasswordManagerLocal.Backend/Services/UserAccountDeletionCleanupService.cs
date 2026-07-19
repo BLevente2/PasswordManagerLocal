@@ -64,6 +64,14 @@ public sealed class UserAccountDeletionCleanupService : IUserAccountDeletionClea
         if (syncState is not null)
             _db.UserSyncStates.Remove(syncState);
 
+        var checkpoint = await _db.UserCanonicalCheckpoints.FirstOrDefaultAsync(item => item.UserId == userId, ct);
+        if (checkpoint is not null)
+            _db.UserCanonicalCheckpoints.Remove(checkpoint);
+
+        var healthFaults = await _db.UserSyncFaults.Where(item => item.UserId == userId).ToListAsync(ct);
+        if (healthFaults.Count != 0)
+            _db.UserSyncFaults.RemoveRange(healthFaults);
+
         var enrollmentCommits = await _db.DeviceEnrollmentCommits.Where(item => item.UserId == userId).ToListAsync(ct);
         if (enrollmentCommits.Count != 0)
             _db.DeviceEnrollmentCommits.RemoveRange(enrollmentCommits);

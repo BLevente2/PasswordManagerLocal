@@ -18,6 +18,7 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
     private readonly IUserDeviceRepository _userDevices;
     private readonly ISyncTombstoneRepository _tombstones;
     private readonly ILocalDeviceMatcherService _localDevices;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
 
     public SyncItemLifecycleService(
         ISyncItemRepository syncItems,
@@ -27,7 +28,8 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
         IDeviceRepository devices,
         IUserDeviceRepository userDevices,
         ISyncTombstoneRepository tombstones,
-        ILocalDeviceMatcherService localDevices)
+        ILocalDeviceMatcherService localDevices,
+        IUserCanonicalHealthService? canonicalHealth = null)
     {
         _syncItems = syncItems;
         _syncQueue = syncQueue;
@@ -37,6 +39,7 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
         _userDevices = userDevices;
         _tombstones = tombstones;
         _localDevices = localDevices;
+        _canonicalHealth = canonicalHealth;
     }
 
     public async Task<SyncItem> GetOrCreateAsync(SyncItem item, long changedAtTs, CancellationToken ct = default)
@@ -85,9 +88,29 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
             if (user is null)
                 return;
 
+            // A queue/lifecycle timestamp touch must never turn an externally corrupted row into
+            // a newly signed checkpoint while the user key is unavailable. Verify the existing
+            // row and checkpoint before changing any synchronized canonical field.
+            if (_canonicalHealth is not null)
+            {
+                var baseline = await _canonicalHealth.VerifyAsync(
+                    user,
+                    key: null,
+                    keyConfidence: UserSyncKeyConfidence.UnconfirmedPassword,
+                    recordFault: true,
+                    ct: ct);
+                if (!baseline.IsPublishable)
+                {
+                    throw new InvalidDataException(
+                        "Local canonical user data is not healthy enough for a synchronization lifecycle update.");
+                }
+            }
+
             user.LastModifiedAt = modifiedAt;
             user.GenerateIntegrityHash();
             _users.Update(user);
+            if (_canonicalHealth is not null)
+                await _canonicalHealth.UpdateCheckpointAsync(user, ct);
             await RemoveTombstoneAsync(item, ct);
             return;
         }

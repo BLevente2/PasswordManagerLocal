@@ -129,9 +129,9 @@ public sealed class UserTombstoneGarbageCollector : IUserTombstoneGarbageCollect
             var retainedSnapshots = await _snapshots.ListForUserAsync(userId, ct);
             if (retainedSnapshots.Count > TombstoneConstants.MaxCausalSnapshotEvidenceRowsPerUser)
                 return await RollbackBlockedAsync(transaction, userId, TombstoneGarbageCollectionReason.EvidenceLimitExceeded, ct);
-            if (retainedSnapshots.Any(row => row.Status == UserSyncSnapshotStatus.Pending))
+            if (retainedSnapshots.Any(row => row.Status is UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.RecoveryCandidate))
                 return await RollbackBlockedAsync(transaction, userId, TombstoneGarbageCollectionReason.PendingSnapshotMerge, ct);
-            if (retainedSnapshots.Any(row => row.Status == UserSyncSnapshotStatus.Quarantined))
+            if (retainedSnapshots.Any(row => row.Status is UserSyncSnapshotStatus.IsolatedFork or UserSyncSnapshotStatus.IsolatedCorrupt))
                 return await RollbackBlockedAsync(transaction, userId, TombstoneGarbageCollectionReason.QuarantinedEvidence, ct);
 
             var authorizations = await _authorizations.ListForUserAsync(userId, ct);
@@ -333,8 +333,11 @@ public sealed class UserTombstoneGarbageCollector : IUserTombstoneGarbageCollect
         if (rows.Any(row => row.Status is not (
                 UserSyncSnapshotStatus.Pending or
                 UserSyncSnapshotStatus.LocalPublished or
-                UserSyncSnapshotStatus.Quarantined or
-                UserSyncSnapshotStatus.MergedReceipt)))
+                UserSyncSnapshotStatus.IsolatedFork or
+                UserSyncSnapshotStatus.MergedReceipt or
+                UserSyncSnapshotStatus.RecoveryCandidate or
+                UserSyncSnapshotStatus.IsolatedCorrupt or
+                UserSyncSnapshotStatus.SupersededBadEvidence)))
         {
             return new ReceiptLoadResult(
                 new Dictionary<(Guid DeviceId, Guid OriginInstanceId), List<UserSnapshotEnvelope>>(),

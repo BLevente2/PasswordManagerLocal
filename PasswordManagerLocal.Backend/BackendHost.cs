@@ -244,6 +244,8 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserOriginRemovalCutoffRepository, UserOriginRemovalCutoffRepository>();
             services.AddScoped<IDeviceEnrollmentCommitRepository, DeviceEnrollmentCommitRepository>();
             services.AddScoped<IDeletedUserBarrierRepository, DeletedUserBarrierRepository>();
+            services.AddScoped<IUserCanonicalCheckpointRepository, UserCanonicalCheckpointRepository>();
+            services.AddScoped<IUserSyncFaultRepository, UserSyncFaultRepository>();
 
             services.AddScoped<IUserPasswordsService, UserPasswordsService>();
             services.AddScoped<IUserCustomColorService, UserCustomColorService>();
@@ -254,6 +256,9 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IGroupService, GroupService>();
             services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
             services.AddScoped<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
+            services.AddScoped<IUserDataBundleVerificationService, UserDataBundleVerificationService>();
+            services.AddScoped<IUserSyncFaultService, UserSyncFaultService>();
+            services.AddScoped<IUserCanonicalHealthService, UserCanonicalHealthService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserSessionService, UserSessionService>();
             services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();

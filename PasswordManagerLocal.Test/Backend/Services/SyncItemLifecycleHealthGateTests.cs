@@ -1,0 +1,95 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Security;
+using PasswordManagerLocal.Backend.Services;
+using PasswordManagerLocal.Test.TestInfrastructure;
+
+using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+
+namespace PasswordManagerLocal.Test.Backend.Services;
+
+[TestClass]
+public sealed class SyncItemLifecycleHealthGateTests
+{
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task TouchLocalStateAsync_UnhealthyCanonicalBaseline_DoesNotResignOrMutateUser()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var originalModifiedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var user = new User
+        {
+            UId = Guid.NewGuid(),
+            KeyEpoch = 1,
+            MembershipEpoch = 1,
+            LastModifiedAt = originalModifiedAt
+        };
+        user.GenerateIntegrityHash();
+        await database.Users.AddAsync(user);
+        await database.UnitOfWork.SaveChangesAsync();
+        database.Db.ChangeTracker.Clear();
+
+        var health = new RejectingCanonicalHealthService();
+        var lifecycle = new SyncItemLifecycleService(
+            database.SyncItems,
+            database.SyncQueue,
+            database.Users,
+            database.Groups,
+            database.Devices,
+            database.UserDevices,
+            database.Tombstones,
+            localDevices: null!,
+            canonicalHealth: health);
+
+        await MSTestAssert.ThrowsExactlyAsync<InvalidDataException>(() => lifecycle.TouchLocalStateAsync(
+            new SyncItem
+            {
+                ModelId = user.UId,
+                ModelType = SyncModelType.User,
+                ChangeType = SyncChangeType.Updated
+            },
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+
+        database.Db.ChangeTracker.Clear();
+        var reloaded = await database.Users.GetByIdAsync(user.UId);
+        MSTestAssert.IsNotNull(reloaded);
+        MSTestAssert.AreEqual(originalModifiedAt, reloaded.LastModifiedAt);
+        MSTestAssert.AreEqual(1, health.VerifyCalls);
+        MSTestAssert.AreEqual(0, health.UpdateCheckpointCalls);
+    }
+
+    private sealed class RejectingCanonicalHealthService : IUserCanonicalHealthService
+    {
+        public int VerifyCalls { get; private set; }
+        public int UpdateCheckpointCalls { get; private set; }
+
+        public Task<CanonicalHealthResult> VerifyAsync(
+            User user,
+            EncryptionKey? key,
+            UserSyncKeyConfidence keyConfidence,
+            bool recordFault,
+            CancellationToken ct = default)
+        {
+            VerifyCalls++;
+            return Task.FromResult(new CanonicalHealthResult(
+                UserDataVerificationState.CheckpointFailure,
+                UserDataBlobKind.All,
+                keyConfidence,
+                "canonical-checkpoint-mismatch")
+            {
+                RowIntegrityVerified = true
+            });
+        }
+
+        public Task UpdateCheckpointAsync(User user, CancellationToken ct = default)
+        {
+            UpdateCheckpointCalls++;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteCheckpointAsync(Guid userId, CancellationToken ct = default) => Task.CompletedTask;
+    }
+}

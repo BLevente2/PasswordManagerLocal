@@ -23,6 +23,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUnitOfWork _uow;
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
 
     public UserLoginIdentityProjectionService(
         IUserRepository users,
@@ -30,7 +31,8 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
         IUserMembershipAuthorizationService membershipAuthorization,
         IUserLifecycleCoordinator lifecycle,
         IUnitOfWork uow,
-        IDeletedUserBarrierRepository? deletionBarriers = null)
+        IDeletedUserBarrierRepository? deletionBarriers = null,
+        IUserCanonicalHealthService? canonicalHealth = null)
     {
         _users = users;
         _snapshots = snapshots;
@@ -38,6 +40,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
         _lifecycle = lifecycle;
         _uow = uow;
         _deletionBarriers = deletionBarriers;
+        _canonicalHealth = canonicalHealth;
     }
 
     public async Task<UserLoginIdentityState> SetCanonicalAsync(
@@ -183,6 +186,25 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
             return null;
         }
 
+        if (_canonicalHealth is not null)
+        {
+            var canonicalHealth = await _canonicalHealth.VerifyAsync(
+                user,
+                key: null,
+                keyConfidence: UserSyncKeyConfidence.UnconfirmedPassword,
+                recordFault: true,
+                ct: ct);
+            if (!canonicalHealth.IsPublishable)
+            {
+                return await UpsertInvalidAsync(
+                    existing,
+                    user,
+                    UserLoginIdentityStatus.InvalidSource,
+                    "The local canonical login identity is not covered by a valid signed checkpoint.",
+                    ct);
+            }
+        }
+
         Candidate winner;
         try
         {
@@ -198,9 +220,35 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
 
         foreach (var row in await _snapshots.ListForUserAsync(userId, ct))
         {
-            if (row.Status == UserSyncSnapshotStatus.Quarantined || row.UserKeyEpoch != user.KeyEpoch)
+            if (row.UserKeyEpoch != user.KeyEpoch || row.MembershipEpoch > user.MembershipEpoch)
                 continue;
-            if (row.MembershipEpoch > user.MembershipEpoch)
+            if (row.Status == UserSyncSnapshotStatus.IsolatedFork)
+            {
+                return await UpsertInvalidAsync(
+                    existing, user, UserLoginIdentityStatus.IntegrityConflict,
+                    "A terminal origin fork prevents proving an effective login identity.", ct);
+            }
+            if (row.Status is UserSyncSnapshotStatus.IsolatedCorrupt or UserSyncSnapshotStatus.RecoveryCandidate)
+            {
+                try
+                {
+                    var isolatedEnvelope = DeserializeAndValidate(row);
+                    await _membershipAuthorization.VerifySnapshotAuthorAsync(isolatedEnvelope, ct);
+                    if (SyncVersionStampComparer.Instance.Compare(
+                            isolatedEnvelope.User.GeneralUserDataVersion, winner.Version) > 0)
+                    {
+                        return await UpsertInvalidAsync(
+                            existing, user, UserLoginIdentityStatus.InvalidSource,
+                            "A newer signed username mutation exists only in isolated, not yet verified evidence.", ct);
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException or JsonException)
+                {
+                    return await UpsertInvalidAsync(existing, user, UserLoginIdentityStatus.InvalidSource, ex.Message, ct);
+                }
+                continue;
+            }
+            if (row.Status == UserSyncSnapshotStatus.SupersededBadEvidence)
                 continue;
 
             UserSnapshotEnvelope envelope;
@@ -278,7 +326,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
             projection.KeyEpoch,
             projection.SourceOriginRevision,
             ct);
-        if (row is null || row.Status == UserSyncSnapshotStatus.Quarantined)
+        if (row is null || row.Status is not (UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.LocalPublished or UserSyncSnapshotStatus.MergedReceipt))
             throw new InvalidDataException("The effective login projection source is no longer retained or eligible.");
 
         var envelope = DeserializeAndValidate(row);

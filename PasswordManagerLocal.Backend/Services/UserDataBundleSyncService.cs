@@ -19,25 +19,39 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
     private readonly IUserPasswordsDataMergeService _passwordsDataMerge;
     private readonly IUserDevicesDataMergeService _devicesDataMerge;
     private readonly ISyncVersionClockService _versionClock;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
+    private readonly IUserDataBundleVerificationService _verification;
 
     public UserDataBundleSyncService(
         IUserRepository users,
         IUserDataBundleIntegrityService integrity,
         IUserPasswordsDataMergeService passwordsDataMerge,
         IUserDevicesDataMergeService devicesDataMerge,
-        ISyncVersionClockService versionClock)
+        ISyncVersionClockService versionClock,
+        IUserCanonicalHealthService? canonicalHealth = null,
+        IUserDataBundleVerificationService? verification = null)
     {
         _users = users;
         _integrity = integrity;
         _passwordsDataMerge = passwordsDataMerge;
         _devicesDataMerge = devicesDataMerge;
         _versionClock = versionClock;
+        _canonicalHealth = canonicalHealth;
+        _verification = verification ?? new UserDataBundleVerificationService(integrity);
     }
+
+    public Task<UserSnapshotMergeBatchResult> TryVerifyAndMergeManyAsync(
+        User existing,
+        IReadOnlyList<UserSnapshotEnvelope> snapshots,
+        EncryptionKey key,
+        CancellationToken ct = default) =>
+        TryVerifyAndMergeManyAsync(existing, snapshots, key, UserSyncKeyConfidence.ExplicitlyTrusted, ct);
 
     public async Task<UserSnapshotMergeBatchResult> TryVerifyAndMergeManyAsync(
         User existing,
         IReadOnlyList<UserSnapshotEnvelope> snapshots,
         EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
         CancellationToken ct = default)
     {
         if (snapshots.Count == 0)
@@ -49,8 +63,41 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             .ThenBy(snapshot => snapshot.OriginRevision)
             .ToArray();
 
-        var canonicalBundle = await ReadAndVerifyUserDataBundleForSyncAsync(existing, key, ct);
-        UserLoginIdentityMetadataUtil.Verify(existing, canonicalBundle.GeneralUserData);
+        var canonicalVerification = await _verification.VerifyCanonicalAsync(existing, key, keyConfidence, ct);
+        if (!canonicalVerification.IsHealthy)
+        {
+            var candidateResults = new List<UserSnapshotMergeEntryResult>(ordered.Length);
+            var candidateConfidence = keyConfidence;
+            foreach (var snapshot in ordered)
+            {
+                ct.ThrowIfCancellationRequested();
+                using var verification = await _verification.VerifySnapshotAsync(snapshot, key, candidateConfidence, ct);
+                if (verification.IsHealthy)
+                {
+                    candidateConfidence = UserSyncKeyConfidence.VerifiedRemoteSnapshot;
+                    candidateResults.Add(new UserSnapshotMergeEntryResult(
+                        snapshot.OriginDeviceId,
+                        snapshot.OriginInstanceId,
+                        snapshot.OriginRevision,
+                        true,
+                        VerificationState: UserDataVerificationState.Healthy,
+                        DiagnosticCode: "healthy-recovery-evidence"));
+                }
+                else
+                {
+                    candidateResults.Add(Failed(snapshot, verification));
+                }
+            }
+
+            return new UserSnapshotMergeBatchResult(
+                false,
+                candidateResults,
+                canonicalVerification.State,
+                canonicalVerification.FailedBlobs,
+                canonicalVerification.DiagnosticCode);
+        }
+
+        var canonicalBundle = canonicalVerification.VerifiedBundle!;
         var incomingBundles = new List<UserDataBundle>(ordered.Length);
         var results = new List<UserSnapshotMergeEntryResult>(ordered.Length);
         var changedBlobs = UserDataBlobKind.None;
@@ -64,40 +111,33 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
 
                 if (!existing.PasswordSalt.SequenceEqual(snapshot.User.PasswordSalt))
                 {
-                    results.Add(Failed(snapshot, "The snapshot password salt does not match the active key epoch."));
+                    results.Add(new UserSnapshotMergeEntryResult(
+                        snapshot.OriginDeviceId,
+                        snapshot.OriginInstanceId,
+                        snapshot.OriginRevision,
+                        false,
+                        "The snapshot password salt does not match the active key epoch.",
+                        UserDataVerificationState.EpochFailure,
+                        UserDataBlobKind.All,
+                        "password-salt-mismatch"));
                     continue;
                 }
 
-                UserDataBundle incomingBundle;
-                try
+                var incomingVerification = await _verification.VerifySnapshotAsync(
+                    snapshot,
+                    key,
+                    keyConfidence == UserSyncKeyConfidence.UnconfirmedPassword
+                        ? UserSyncKeyConfidence.VerifiedRemoteSnapshot
+                        : keyConfidence,
+                    ct);
+                if (!incomingVerification.IsHealthy)
                 {
-                    var incomingUser = CreateUser(snapshot.User);
-                    CopyUserData(snapshot.User, incomingUser);
-                    incomingUser.LastModifiedAt = FromTimestamp(snapshot.CreatedAtUtc.ToUnixTimeMilliseconds());
-                    incomingUser.GenerateIntegrityHash();
-                    incomingBundle = await ReadAndVerifyUserDataBundleForSyncAsync(incomingUser, key, ct);
-                }
-                catch (Exception ex) when (IsSnapshotVerificationFailure(ex))
-                {
-                    results.Add(Failed(snapshot, ex.Message));
+                    results.Add(Failed(snapshot, incomingVerification));
+                    incomingVerification.Dispose();
                     continue;
                 }
 
-                try
-                {
-                    UserLoginIdentityMetadataUtil.Verify(
-                        snapshot.User.UsernameHash,
-                        snapshot.User.UsernameSalt,
-                        snapshot.User.GeneralUserDataVersion,
-                        incomingBundle.GeneralUserData);
-                }
-                catch (Exception ex) when (IsSnapshotVerificationFailure(ex))
-                {
-                    incomingBundle.Dispose();
-                    results.Add(Failed(snapshot, ex.Message));
-                    continue;
-                }
-
+                var incomingBundle = incomingVerification.VerifiedBundle!;
                 incomingBundles.Add(incomingBundle);
                 _versionClock.Observe(SyncVersionStampTraversal.Enumerate(incomingBundle));
                 anyVerified = true;
@@ -157,7 +197,9 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                     snapshot.OriginDeviceId,
                     snapshot.OriginInstanceId,
                     snapshot.OriginRevision,
-                    true));
+                    true,
+                    VerificationState: UserDataVerificationState.Healthy,
+                    DiagnosticCode: "healthy"));
             }
 
             if (!anyVerified)
@@ -168,25 +210,30 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
 
             existing.GenerateIntegrityHash();
             _users.Update(existing);
+            if (_canonicalHealth is not null)
+                await _canonicalHealth.UpdateCheckpointAsync(existing, ct);
             return new UserSnapshotMergeBatchResult(changedBlobs != UserDataBlobKind.None, results);
         }
         finally
         {
-            // Merge services may move item references from an incoming bundle into the canonical bundle.
-            // Dispose canonical first; child disposals are idempotent when incoming bundles are disposed next.
             canonicalBundle.Dispose();
             foreach (var incomingBundle in incomingBundles)
                 incomingBundle.Dispose();
         }
     }
 
-    private static UserSnapshotMergeEntryResult Failed(UserSnapshotEnvelope snapshot, string reason) =>
+    private static UserSnapshotMergeEntryResult Failed(
+        UserSnapshotEnvelope snapshot,
+        UserDataBundleVerificationResult verification) =>
         new(
             snapshot.OriginDeviceId,
             snapshot.OriginInstanceId,
             snapshot.OriginRevision,
             false,
-            reason.Length <= 512 ? reason : reason[..512]);
+            verification.DiagnosticCode,
+            verification.State,
+            verification.FailedBlobs,
+            verification.DiagnosticCode);
 
     private static bool IsSnapshotVerificationFailure(Exception ex) =>
         ex is UnauthorizedAccessException or

@@ -39,6 +39,8 @@ public class AppDbContext : DbContext
     public DbSet<DeletedUserBarrier> DeletedUserBarriers => Set<DeletedUserBarrier>();
     public DbSet<SyncVersionClockState> SyncVersionClockStates => Set<SyncVersionClockState>();
     public DbSet<UserLoginIdentityState> UserLoginIdentityStates => Set<UserLoginIdentityState>();
+    public DbSet<UserCanonicalCheckpoint> UserCanonicalCheckpoints => Set<UserCanonicalCheckpoint>();
+    public DbSet<UserSyncFault> UserSyncFaults => Set<UserSyncFault>();
 
     public override int SaveChanges()
     {
@@ -259,6 +261,50 @@ public class AppDbContext : DbContext
             .OnDelete(DeleteBehavior.Cascade);
         loginIdentity.HasIndex(identity => identity.Status);
         loginIdentity.HasIndex(identity => new { identity.KeyEpoch, identity.MembershipEpoch });
+
+        var canonicalCheckpoint = model.Entity<UserCanonicalCheckpoint>();
+        canonicalCheckpoint.ToTable("UserCanonicalCheckpoints");
+        canonicalCheckpoint.HasKey(checkpoint => checkpoint.UserId);
+        canonicalCheckpoint.Property(checkpoint => checkpoint.CheckpointSequence).IsRequired().IsConcurrencyToken();
+        canonicalCheckpoint.Property(checkpoint => checkpoint.LocalDeviceId).IsRequired();
+        canonicalCheckpoint.Property(checkpoint => checkpoint.LocalOriginInstanceId).IsRequired();
+        canonicalCheckpoint.Property(checkpoint => checkpoint.KeyEpoch).IsRequired();
+        canonicalCheckpoint.Property(checkpoint => checkpoint.MembershipEpoch).IsRequired();
+        canonicalCheckpoint.Property(checkpoint => checkpoint.CanonicalContentHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes).IsConcurrencyToken();
+        canonicalCheckpoint.Property(checkpoint => checkpoint.UserIntegrityHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        canonicalCheckpoint.Property(checkpoint => checkpoint.SignPublicKey).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519PublicKeyBytes);
+        canonicalCheckpoint.Property(checkpoint => checkpoint.Signature).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaEd25519SignatureBytes);
+        canonicalCheckpoint.Property(checkpoint => checkpoint.CreatedAtUtc).IsRequired();
+        canonicalCheckpoint.HasOne<User>()
+            .WithOne()
+            .HasForeignKey<UserCanonicalCheckpoint>(checkpoint => checkpoint.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        var syncFault = model.Entity<UserSyncFault>();
+        syncFault.ToTable("UserSyncFaults");
+        syncFault.HasKey(fault => fault.Id);
+        syncFault.Property(fault => fault.Scope).HasConversion<byte>().IsRequired();
+        syncFault.Property(fault => fault.Kind).HasConversion<byte>().IsRequired();
+        syncFault.Property(fault => fault.Status).HasConversion<byte>().IsRequired();
+        syncFault.Property(fault => fault.AffectedComponent).IsRequired().HasMaxLength(128);
+        syncFault.Property(fault => fault.ExpectedHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        syncFault.Property(fault => fault.ObservedHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        syncFault.Property(fault => fault.ConflictingHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
+        syncFault.Property(fault => fault.DiagnosticCode).IsRequired().HasMaxLength(128);
+        syncFault.Property(fault => fault.FirstDetectedAtUtc).IsRequired();
+        syncFault.Property(fault => fault.LastDetectedAtUtc).IsRequired();
+        syncFault.Property(fault => fault.RecoveryAttemptCount).IsRequired();
+        syncFault.Property(fault => fault.BlocksPublishing).IsRequired();
+        syncFault.Property(fault => fault.BlocksMerge).IsRequired();
+        syncFault.Property(fault => fault.BlocksLogin).IsRequired();
+        syncFault.Property(fault => fault.BlocksGarbageCollection).IsRequired();
+        syncFault.Property(fault => fault.BlocksLifecycle).IsRequired();
+        syncFault.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(fault => fault.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        syncFault.HasIndex(fault => new { fault.UserId, fault.Status, fault.Scope });
+        syncFault.HasIndex(fault => new { fault.UserId, fault.Scope, fault.Kind, fault.OriginDeviceId, fault.OriginInstanceId, fault.KeyEpoch });
 
         var userSyncSnapshot = model.Entity<UserSyncSnapshot>();
         userSyncSnapshot.ToTable("UserSyncSnapshots");

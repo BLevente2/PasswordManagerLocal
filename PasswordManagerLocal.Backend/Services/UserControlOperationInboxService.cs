@@ -29,6 +29,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
     private readonly IDeviceEnrollmentService? _enrollment;
     private readonly IUserLoginIdentityProjectionService? _loginIdentities;
     private readonly ISyncVersionClockService? _versionClock;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
+    private readonly IUserSyncFaultService? _syncFaults;
 
     public UserControlOperationInboxService(
         IUserControlOperationRepository operations,
@@ -49,7 +51,9 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         IUserAccountDeletionCleanupService? deletionCleanup = null,
         IDeviceEnrollmentService? enrollment = null,
         IUserLoginIdentityProjectionService? loginIdentities = null,
-        ISyncVersionClockService? versionClock = null)
+        ISyncVersionClockService? versionClock = null,
+        IUserCanonicalHealthService? canonicalHealth = null,
+        IUserSyncFaultService? syncFaults = null)
     {
         _operations = operations;
         _states = states;
@@ -70,6 +74,8 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         _enrollment = enrollment;
         _loginIdentities = loginIdentities;
         _versionClock = versionClock;
+        _canonicalHealth = canonicalHealth;
+        _syncFaults = syncFaults;
     }
 
     public async Task<UserControlOperationReceiptResult> StoreAndApplyAsync(
@@ -87,7 +93,11 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             {
                 var stored = await StoreCoreAsync(envelope, transportPeerDeviceId, token);
                 if (stored.State is UserControlOperationReceiptState.Quarantined or UserControlOperationReceiptState.Rejected or UserControlOperationReceiptState.Obsolete)
+                {
+                    if (stored.State == UserControlOperationReceiptState.Quarantined)
+                        await RecordControlFaultAsync(envelope, stored.Detail, token);
                     return stored;
+                }
 
                 if (envelope.OperationType == UserControlOperationType.AccountDeletion)
                 {
@@ -101,7 +111,10 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                     }
                 }
 
-                return await TryApplyStoredSafelyAsync(envelope.OperationId, token);
+                var applied = await TryApplyStoredSafelyAsync(envelope.OperationId, token);
+                if (applied.State == UserControlOperationReceiptState.Quarantined)
+                    await RecordControlFaultAsync(envelope, applied.Detail, token);
+                return applied;
             },
             ct);
     }
@@ -114,7 +127,13 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             ?? throw new InvalidOperationException("The stored control operation does not exist.");
         return await _lifecycle.ExecuteAsync(
             row.UserId,
-            token => TryApplyStoredSafelyAsync(operationId, token),
+            async token =>
+            {
+                var result = await TryApplyStoredSafelyAsync(operationId, token);
+                if (result.State == UserControlOperationReceiptState.Quarantined)
+                    await RecordControlFaultAsync(UserControlOperationEnvelopeUtil.Deserialize(row.EnvelopePayload), result.Detail, token);
+                return result;
+            },
             ct);
     }
 
@@ -624,6 +643,27 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
 
         UserControlOperationEnvelopeUtil.ApplyKeyEpochReplacementPayload(payload, user);
         _users.Update(user);
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
+        if (_syncFaults is not null)
+        {
+            // A locked installation can authenticate and apply the authority transition, but it
+            // cannot prove the replacement bundle decrypts under the new user key. Preserve the
+            // signed checkpoint while blocking publication until a keyed health gate verifies it.
+            await _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+            {
+                UserId = user.UId,
+                Scope = UserSyncFaultScope.LocalCanonical,
+                Kind = UserSyncFaultKind.CanonicalKeyVerificationPending,
+                Status = UserSyncHealthStatus.AwaitingEvidence,
+                AffectedComponent = "key-epoch-replacement",
+                KeyEpoch = user.KeyEpoch,
+                MembershipEpoch = user.MembershipEpoch,
+                ExpectedHash = user.IntegrityHash,
+                DiagnosticCode = "key-epoch-replacement-awaiting-keyed-verification",
+                BlocksPublishing = true
+            }, ct);
+        }
 
         // Explicit old-epoch policy: remove verified, non-quarantined obsolete snapshots. Durable
         // fork/quarantine rows and the authoritative transition operation are retained.
@@ -779,6 +819,13 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         user.MembershipEpoch = payload.ResultingMembershipEpoch;
         user.GenerateIntegrityHash();
         _users.Update(user);
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
+        await RecordCanonicalVerificationPendingAsync(
+            user,
+            "membership-addition",
+            "membership-addition-awaiting-keyed-verification",
+            ct);
         MarkApplied(row, state, envelope, null);
         if (_loginIdentities is not null)
             await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
@@ -849,6 +896,13 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         user.MembershipEpoch = payload.ResultingMembershipEpoch;
         user.GenerateIntegrityHash();
         _users.Update(user);
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
+        await RecordCanonicalVerificationPendingAsync(
+            user,
+            "membership-removal",
+            "membership-removal-awaiting-keyed-verification",
+            ct);
         MarkApplied(row, state, envelope, null);
         if (_loginIdentities is not null)
             await _loginIdentities.RecalculateUnderLifecycleAsync(user.UId, ct);
@@ -958,6 +1012,63 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         };
         await _states.AddAsync(state, ct);
         return state;
+    }
+
+    private Task RecordCanonicalVerificationPendingAsync(
+        User user,
+        string affectedComponent,
+        string diagnosticCode,
+        CancellationToken ct)
+    {
+        if (_syncFaults is null)
+            return Task.CompletedTask;
+
+        // Membership operations can be authenticated while the installation is locked. The
+        // checkpoint is updated transactionally, but publication remains blocked until a trusted
+        // user key verifies the complete encrypted bundle and clears this scoped fault.
+        return _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+        {
+            UserId = user.UId,
+            Scope = UserSyncFaultScope.LocalCanonical,
+            Kind = UserSyncFaultKind.CanonicalKeyVerificationPending,
+            Status = UserSyncHealthStatus.AwaitingEvidence,
+            AffectedComponent = affectedComponent,
+            KeyEpoch = user.KeyEpoch,
+            MembershipEpoch = user.MembershipEpoch,
+            ExpectedHash = user.IntegrityHash,
+            DiagnosticCode = diagnosticCode,
+            BlocksPublishing = true
+        }, ct);
+    }
+
+    private async Task RecordControlFaultAsync(UserControlOperationEnvelope envelope, string? reason, CancellationToken ct)
+    {
+        if (_syncFaults is null)
+            return;
+
+        var kind = envelope.OperationType switch
+        {
+            UserControlOperationType.KeyEpochReplacement => UserSyncFaultKind.KeyEpochConflict,
+            UserControlOperationType.DeviceAddition or UserControlOperationType.DeviceRemoval => UserSyncFaultKind.MembershipConflict,
+            _ => UserSyncFaultKind.ControlOperationFork
+        };
+        await _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+        {
+            UserId = envelope.UserId,
+            Scope = UserSyncFaultScope.ControlPlane,
+            Kind = kind,
+            Status = UserSyncHealthStatus.TerminalConflict,
+            AffectedComponent = envelope.OperationType.ToString(),
+            OriginDeviceId = envelope.OriginDeviceId,
+            OriginInstanceId = envelope.OriginInstanceId,
+            KeyEpoch = envelope.PreviousKeyEpoch,
+            MembershipEpoch = envelope.PreviousMembershipEpoch,
+            OriginRevision = envelope.OriginSequence,
+            ObservedHash = envelope.OperationHash.ToArray(),
+            DiagnosticCode = string.IsNullOrWhiteSpace(reason) ? "control-conflict" : Truncate(reason),
+            BlocksLifecycle = true
+        }, ct);
+        await _uow.SaveChangesAsync(ct);
     }
 
     private async Task MarkConflictAsync(

@@ -844,6 +844,53 @@ public sealed class UserSnapshotInboxServiceTests
         MSTestAssert.HasCount(0, await database.Db.UserSyncSnapshots.ToListAsync());
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task StoreAsync_HigherRevisionAfterOrdinaryCorruption_BecomesRecoveryCandidate()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = await AddCanonicalUserAsync(database);
+        var service = new UserSnapshotInboxService(
+            database.Users,
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            new FakeUserMembershipAuthorizationService());
+        using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var originDeviceId = Guid.NewGuid();
+        var originInstanceId = Guid.NewGuid();
+
+        var revisionFive = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 5, originKey, marker: 0x55);
+        await service.StoreAsync(revisionFive, Guid.NewGuid());
+        var retained = await database.UserSyncSnapshots.GetAsync(user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.IsNotNull(retained);
+        retained.Status = UserSyncSnapshotStatus.IsolatedCorrupt;
+        retained.QuarantineReason = "root-integrity-failed";
+        database.UserSyncSnapshots.Update(retained);
+        var knowledge = await database.UserRevisionKnowledge.GetAsync(
+            user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.IsNotNull(knowledge);
+        knowledge.HighestMergedRevision = 10;
+        database.UserRevisionKnowledge.Update(knowledge);
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var revisionSix = CreateSignedEnvelope(user, originDeviceId, originInstanceId, 6, originKey, marker: 0x66);
+        var receipt = await service.StoreAsync(revisionSix, Guid.NewGuid());
+
+        database.Db.ChangeTracker.Clear();
+        var healedCandidate = await database.UserSyncSnapshots.GetAsync(user.UId, originDeviceId, originInstanceId, user.KeyEpoch);
+        MSTestAssert.AreEqual(UserSnapshotReceiptState.ReplacedOlderPending, receipt.State);
+        MSTestAssert.IsNotNull(healedCandidate);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.RecoveryCandidate, healedCandidate.Status);
+        MSTestAssert.AreEqual(6L, healedCandidate.OriginRevision);
+        MSTestAssert.IsNull(healedCandidate.QuarantineReason);
+        CollectionAssert.AreEqual(revisionSix.SnapshotHash, healedCandidate.SnapshotHash);
+    }
+
     private static async Task<User> AddCanonicalUserAsync(SqliteIntegrationTestDatabase database)
     {
         var now = DateTimeOffset.UtcNow.AddMinutes(-5);

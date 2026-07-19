@@ -20,6 +20,7 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
     private readonly IDeviceIdentityService _identity;
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUnitOfWork _uow;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
 
     public UserControlOperationWriterService(
         IUserControlOperationRepository operations,
@@ -31,7 +32,8 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         IUserMembershipAuthorizationService membershipAuthorization,
         IDeviceIdentityService identity,
         IUserLifecycleCoordinator lifecycle,
-        IUnitOfWork uow)
+        IUnitOfWork uow,
+        IUserCanonicalHealthService? canonicalHealth = null)
     {
         _operations = operations;
         _states = states;
@@ -43,6 +45,7 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         _identity = identity;
         _lifecycle = lifecycle;
         _uow = uow;
+        _canonicalHealth = canonicalHealth;
     }
 
     public Task<UserControlOperationEnvelope> CreateAppliedKeyEpochReplacementAsync(User resultingCanonicalUser, long previousKeyEpoch, CancellationToken ct = default)
@@ -136,6 +139,8 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         _users.Update(user);
         state.AppliedMembershipEpoch = user.MembershipEpoch;
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
         return envelope;
     }
@@ -186,6 +191,8 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         _users.Update(user);
         state.AppliedMembershipEpoch = user.MembershipEpoch;
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
         return envelope;
     }

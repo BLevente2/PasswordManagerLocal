@@ -35,14 +35,14 @@ public sealed class UserSyncSnapshotRepository : IUserSyncSnapshotRepository
                 snapshot.UserId == userId &&
                 snapshot.UserKeyEpoch == userKeyEpoch &&
                 snapshot.MembershipEpoch == membershipEpoch &&
-                snapshot.Status == UserSyncSnapshotStatus.Pending)
+                (snapshot.Status == UserSyncSnapshotStatus.Pending || snapshot.Status == UserSyncSnapshotStatus.RecoveryCandidate))
             .OrderBy(snapshot => snapshot.OriginDeviceId)
             .ThenBy(snapshot => snapshot.OriginInstanceId)
             .ThenBy(snapshot => snapshot.OriginRevision)
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<UserSyncSnapshot>> ListPendingForKeyEpochAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
-        await _snapshots.Where(snapshot => snapshot.UserId == userId && snapshot.UserKeyEpoch == userKeyEpoch && snapshot.Status == UserSyncSnapshotStatus.Pending)
+        await _snapshots.Where(snapshot => snapshot.UserId == userId && snapshot.UserKeyEpoch == userKeyEpoch && (snapshot.Status == UserSyncSnapshotStatus.Pending || snapshot.Status == UserSyncSnapshotStatus.RecoveryCandidate))
             .OrderBy(snapshot => snapshot.MembershipEpoch).ThenBy(snapshot => snapshot.OriginDeviceId).ThenBy(snapshot => snapshot.OriginInstanceId).ThenBy(snapshot => snapshot.OriginRevision)
             .ToListAsync(ct);
 

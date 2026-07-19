@@ -8,21 +8,33 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserSyncKeyResolverService : IUserSyncKeyResolverService
 {
-    private readonly IAuthService _auth;
+    private readonly ITokenService _tokens;
+    private readonly IKeyVaultService _keys;
     private readonly IKeyProtector _protector;
 
-    public UserSyncKeyResolverService(IAuthService auth, IKeyProtector protector)
+    public UserSyncKeyResolverService(ITokenService tokens, IKeyVaultService keys, IKeyProtector protector)
     {
-        _auth = auth;
+        _tokens = tokens;
+        _keys = keys;
         _protector = protector;
     }
 
-    public bool TryResolve(User user, out EncryptionKey? key)
+    public bool TryResolve(User user, out EncryptionKey? key) =>
+        TryResolve(user, out key, out _);
+
+    public bool TryResolve(User user, out EncryptionKey? key, out UserSyncKeyConfidence confidence)
     {
-        if (_auth.TryGetActiveUserEncryptionKey(user.UId, out key) && key is not null)
-            return true;
+        foreach (var token in _tokens.ListTokensByUid(user.UId))
+        {
+            if (_keys.TryGetEncryptionKey(token, out key) && key is not null)
+            {
+                confidence = UserSyncKeyConfidence.AuthenticatedSession;
+                return true;
+            }
+        }
 
         key = null;
+        confidence = UserSyncKeyConfidence.UnconfirmedPassword;
         if (user.SavedKey is null || user.SavedKey.Length == 0)
             return false;
 
@@ -31,11 +43,13 @@ public sealed class UserSyncKeyResolverService : IUserSyncKeyResolverService
         {
             raw = _protector.Unprotect(user.SavedKey);
             key = EncryptionKey.FromRaw(raw);
+            confidence = UserSyncKeyConfidence.RememberMe;
             return true;
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {
             key = null;
+            confidence = UserSyncKeyConfidence.UnconfirmedPassword;
             return false;
         }
         finally

@@ -43,6 +43,7 @@ public sealed class AuthService : IAuthService
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
     private readonly IUserLoginIdentityProjectionService _loginIdentities;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -71,7 +72,8 @@ public sealed class AuthService : IAuthService
         IUserSyncStateRepository syncStates,
         ISyncVersionClockService versionClock,
         IUserLoginIdentityProjectionService loginIdentities,
-        IUserTombstoneGarbageCollector? garbageCollector = null)
+        IUserTombstoneGarbageCollector? garbageCollector = null,
+        IUserCanonicalHealthService? canonicalHealth = null)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -100,6 +102,7 @@ public sealed class AuthService : IAuthService
         _versionClock = versionClock;
         _loginIdentities = loginIdentities;
         _garbageCollector = garbageCollector;
+        _canonicalHealth = canonicalHealth;
     }
 
 
@@ -352,7 +355,7 @@ public sealed class AuthService : IAuthService
         var user = await _userLookup.GetAndVerifyUserByUidAsync(expectedUserId, ct);
         using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
 
-        await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, ct);
+        await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, UserSyncKeyConfidence.UnconfirmedPassword, ct);
         if (_garbageCollector is not null)
         {
             try
@@ -370,6 +373,13 @@ public sealed class AuthService : IAuthService
         try
         {
             UserLoginIdentityMetadataUtil.Verify(user, bundle.GeneralUserData);
+            if (_canonicalHealth is not null)
+            {
+                var health = await _canonicalHealth.VerifyAsync(
+                    user, key, UserSyncKeyConfidence.ExplicitlyTrusted, recordFault: true, ct: ct);
+                if (health.State is not (UserDataVerificationState.Healthy or UserDataVerificationState.CheckpointMissing))
+                    throw new UnauthorizedAccessException("The local account copy could not be verified.");
+            }
             var postMergeResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
             if (postMergeResolution.State != UserLoginIdentityMatchState.Matched ||
                 postMergeResolution.UserId != expectedUserId)
@@ -540,7 +550,7 @@ public sealed class AuthService : IAuthService
             throw new InvalidInputException();
 
         using (var currentKey = _userSessions.GetEncryptionKeyFromToken(request.Token))
-            await _snapshotMerge.TryMergePendingAsync(userId, currentKey, ct);
+            await _snapshotMerge.TryMergePendingAsync(userId, currentKey, UserSyncKeyConfidence.AuthenticatedSession, ct);
 
         var user = await _userLookup.GetAndVerifyUserByUidAsync(userId, ct);
         if (await _snapshots.HasQuarantinedAsync(user.UId, user.KeyEpoch, user.MembershipEpoch, ct))

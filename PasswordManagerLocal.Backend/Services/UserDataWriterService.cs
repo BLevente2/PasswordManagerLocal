@@ -29,6 +29,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUnitOfWork _uow;
     private readonly IUserLoginIdentityProjectionService _loginIdentities;
+    private readonly IUserCanonicalHealthService? _canonicalHealth;
 
     public UserDataWriterService(
         IUserRepository users,
@@ -43,7 +44,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
         IDeviceIdentityService identity,
         IUserLifecycleCoordinator lifecycle,
         IUnitOfWork uow,
-        IUserLoginIdentityProjectionService loginIdentities)
+        IUserLoginIdentityProjectionService loginIdentities,
+        IUserCanonicalHealthService? canonicalHealth = null)
     {
         _users = users;
         _cache = cache;
@@ -58,6 +60,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         _lifecycle = lifecycle;
         _uow = uow;
         _loginIdentities = loginIdentities;
+        _canonicalHealth = canonicalHealth;
     }
 
     public async Task AddNewUserAsync(User user, CancellationToken ct = default)
@@ -67,6 +70,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
         EnsureBlobTimestamps(user, now);
         user.GenerateIntegrityHash();
         await _users.AddAsync(user, ct);
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
     }
 
@@ -78,6 +83,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
         user.LastModifiedAt = DateTimeOffset.UtcNow;
         user.GenerateIntegrityHash();
         _users.Update(user);
+        if (_canonicalHealth is not null)
+            await _canonicalHealth.UpdateCheckpointAsync(user, ct);
 
         if (enqueueSync)
         {
@@ -429,6 +436,8 @@ public sealed class UserDataWriterService : IUserDataWriterService
         {
             user.GenerateIntegrityHash();
             _users.Update(user);
+            if (_canonicalHealth is not null)
+                await _canonicalHealth.UpdateCheckpointAsync(user, ct);
             await _uow.SaveChangesAsync(ct);
         }
         else

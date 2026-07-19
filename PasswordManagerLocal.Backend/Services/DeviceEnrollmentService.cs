@@ -374,7 +374,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                     if ((await snapshots.ListForUserAsync(userId, lifecycleToken)).Any(row => row.Status == UserSyncSnapshotStatus.Quarantined))
                         throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "Enrollment is blocked by unresolved snapshot fork evidence.");
 
-                    await snapshotMerge.TryMergePendingUnderLifecycleAsync(userId, mergeKey, lifecycleToken);
+                    await snapshotMerge.TryMergePendingUnderLifecycleAsync(userId, mergeKey, UserSyncKeyConfidence.AuthenticatedSession, lifecycleToken);
                     canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
 
                     await using var transaction = await unitOfWork.BeginTransactionAsync(lifecycleToken);

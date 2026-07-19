@@ -120,7 +120,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                         storedRevision = retained.OriginRevision;
                         storedHash = retained.SnapshotHash;
                     }
-                    else if (retained.Status == UserSyncSnapshotStatus.Quarantined)
+                    else if (retained.Status == UserSyncSnapshotStatus.IsolatedFork)
                     {
                         if (retained.OriginRevision <= 0 || retained.SnapshotHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)
                             throw new InvalidDataException("A quarantined user snapshot has invalid revision metadata.");
@@ -220,6 +220,17 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
                 localEntries.TryGetValue(key, out var localEntry);
                 if (localEntry is not null && localEntry.QuarantinedRevision > 0)
                     continue;
+                var sameKnownBadRevision = localEntry is not null &&
+                                           localEntry.HighestStoredRevision == 0 &&
+                                           localEntry.HighestMergedRevision < localEntry.KnownSnapshotRevision &&
+                                           localEntry.KnownSnapshotRevision == remoteEntry.HighestStoredRevision &&
+                                           localEntry.KnownSnapshotHash.Length == SyncConstants.SyncDeltaPayloadHashBytes &&
+                                           CryptographicOperations.FixedTimeEquals(
+                                               localEntry.KnownSnapshotHash.ToByteArray(),
+                                               remoteEntry.HighestStoredSnapshotHash.ToByteArray());
+                if (sameKnownBadRevision)
+                    continue;
+
                 var sameKnownRevisionFork = localEntry is not null &&
                                             localEntry.KnownSnapshotRevision == remoteEntry.HighestStoredRevision &&
                                             localEntry.KnownSnapshotHash.Length == SyncConstants.SyncDeltaPayloadHashBytes &&

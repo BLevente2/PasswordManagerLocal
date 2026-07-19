@@ -1,7 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
@@ -119,6 +122,96 @@ public sealed class UserSnapshotPublisherServiceTests
         MSTestAssert.AreEqual(2, snapshots.Select(snapshot => snapshot.OriginInstanceId).Distinct().Count());
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task GetOrCreateAsync_UnhealthyCanonicalGateDoesNotCreateOrSignSnapshot()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = CreateUser();
+        await database.Users.AddAsync(user);
+        await database.UnitOfWork.SaveChangesAsync();
+        using var signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var identity = CreateIdentity(signingKey);
+        var service = new UserSnapshotPublisherService(
+            database.UserSyncSnapshots,
+            database.UserSyncStates,
+            database.UserRevisionKnowledge,
+            identity,
+            database.UnitOfWork,
+            new UserLifecycleCoordinator(),
+            canonicalHealth: new FixedCanonicalHealthService(new CanonicalHealthResult(
+                UserDataVerificationState.CheckpointFailure,
+                UserDataBlobKind.All,
+                UserSyncKeyConfidence.UnconfirmedPassword,
+                "canonical-checkpoint-mismatch")
+            {
+                RowIntegrityVerified = true,
+                CheckpointVerified = false
+            }));
+
+        await MSTestAssert.ThrowsAsync<InvalidDataException>(() => service.GetOrCreateAsync(user));
+
+        MSTestAssert.AreEqual(0, await database.Db.UserSyncSnapshots.CountAsync());
+        MSTestAssert.AreEqual(0, await database.Db.UserSyncStates.CountAsync());
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task GetOrCreateAsync_AfterHealthRecovery_ReusesIsolatedLocalOriginRowWithNewRevision()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = CreateUser();
+        await database.Users.AddAsync(user);
+        await database.UnitOfWork.SaveChangesAsync();
+        using var signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var identity = CreateIdentity(signingKey);
+        var lifecycle = new UserLifecycleCoordinator();
+        var initialPublisher = new UserSnapshotPublisherService(
+            database.UserSyncSnapshots,
+            database.UserSyncStates,
+            database.UserRevisionKnowledge,
+            identity,
+            database.UnitOfWork,
+            lifecycle);
+
+        var first = await initialPublisher.GetOrCreateAsync(user);
+        first.Status = UserSyncSnapshotStatus.IsolatedCorrupt;
+        first.QuarantineReason = "canonical-checkpoint-mismatch";
+        database.UserSyncSnapshots.Update(first);
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var recoveredPublisher = new UserSnapshotPublisherService(
+            database.UserSyncSnapshots,
+            database.UserSyncStates,
+            database.UserRevisionKnowledge,
+            identity,
+            database.UnitOfWork,
+            lifecycle,
+            canonicalHealth: new FixedCanonicalHealthService(new CanonicalHealthResult(
+                UserDataVerificationState.Healthy,
+                UserDataBlobKind.None,
+                UserSyncKeyConfidence.ExplicitlyTrusted,
+                "canonical-fully-verified")
+            {
+                RowIntegrityVerified = true,
+                CheckpointVerified = true,
+                FullyVerified = true
+            }));
+
+        var republished = await recoveredPublisher.GetOrCreateAsync(user);
+        database.Db.ChangeTracker.Clear();
+        var rows = await database.Db.UserSyncSnapshots.Where(row => row.UserId == user.UId).ToListAsync();
+
+        MSTestAssert.HasCount(1, rows);
+        MSTestAssert.AreEqual(first.Id, republished.Id);
+        MSTestAssert.AreEqual(2L, republished.OriginRevision);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.LocalPublished, republished.Status);
+        MSTestAssert.IsNull(republished.QuarantineReason);
+    }
+
     private static User CreateUser()
     {
         var now = DateTimeOffset.UtcNow;
@@ -156,4 +249,21 @@ public sealed class UserSnapshotPublisherServiceTests
             SignPublicKey = key.PublicKey.Export(KeyBlobFormat.RawPublicKey),
             SignHandler = data => SignatureAlgorithm.Ed25519.Sign(key, data)
         };
+    private sealed class FixedCanonicalHealthService : IUserCanonicalHealthService
+    {
+        private readonly CanonicalHealthResult _result;
+
+        public FixedCanonicalHealthService(CanonicalHealthResult result) => _result = result;
+
+        public Task<CanonicalHealthResult> VerifyAsync(
+            User user,
+            EncryptionKey? key,
+            UserSyncKeyConfidence keyConfidence,
+            bool recordFault,
+            CancellationToken ct = default) => Task.FromResult(_result);
+
+        public Task UpdateCheckpointAsync(User user, CancellationToken ct = default) => Task.CompletedTask;
+        public Task DeleteCheckpointAsync(Guid userId, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
 }

@@ -51,8 +51,6 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         var revisionKnowledge = services.GetRequiredService<IUserRevisionKnowledgeRepository>();
         var pendingSnapshots = services.GetRequiredService<IUserSyncSnapshotRepository>();
         var syncStates = services.GetRequiredService<IUserSyncStateRepository>();
-        var publisher = services.GetRequiredService<IUserSnapshotPublisherService>();
-        var queueWriter = services.GetRequiredService<ISyncQueueWriterService>();
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
         var loginIdentities = services.GetRequiredService<IUserLoginIdentityProjectionService>();
@@ -288,19 +286,11 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             syncState.LastPublishedContentHash = [];
             syncState.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
 
+            // The imported canonical bytes are authenticated by the enrollment graph but have not
+            // yet been decrypted on this installation. Do not mint a new local-origin signature for
+            // them. The first successful password/Remember-Me verification creates the local signed
+            // canonical checkpoint and queues publication through the normal user-data writer path.
             await loginIdentities.RecalculateUnderLifecycleAsync(snapshot.PrimaryUserId, ct);
-            await unitOfWork.SaveChangesAsync(ct);
-            user = await users.GetByIdAsync(snapshot.PrimaryUserId, ct)
-                ?? throw new InvalidDataException("The imported user disappeared before local snapshot publication.");
-            var localSnapshot = await publisher.GetOrCreateAsync(user, ct);
-            await queueWriter.EnqueueAsync(new SyncItem
-            {
-                ModelId = user.UId,
-                ModelType = SyncModelType.User,
-                ChangeType = SyncChangeType.Updated,
-                ChangedAtTs = localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds()
-            }, localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds(), [_identity.LocalDeviceId], true, false, ct);
-
             await unitOfWork.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }

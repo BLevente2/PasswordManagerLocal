@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync;
@@ -130,7 +131,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
-    public async Task TryMergePendingAsync_InvalidOriginIsQuarantinedWithoutDeletingUnrelatedValidCandidate()
+    public async Task TryMergePendingAsync_InvalidOriginIsIsolatedWithoutDeletingUnrelatedValidCandidate()
     {
         await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
         using var localSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
@@ -175,7 +176,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
 
         database.Db.ChangeTracker.Clear();
         var rows = await database.Db.UserSyncSnapshots.Where(snapshot => snapshot.UserId == user.UId).ToListAsync();
-        var quarantined = rows.Single(snapshot => snapshot.Status == UserSyncSnapshotStatus.Quarantined);
+        var quarantined = rows.Single(snapshot => snapshot.Status == UserSyncSnapshotStatus.IsolatedCorrupt);
         MSTestAssert.IsTrue(merged);
         MSTestAssert.AreEqual(invalidOrigin.DeviceId, quarantined.OriginDeviceId);
         MSTestAssert.IsFalse(string.IsNullOrWhiteSpace(quarantined.QuarantineReason));
@@ -237,6 +238,243 @@ public sealed class UserSnapshotMergeCoordinatorTests
         MSTestAssert.HasCount(0, queue.EnqueuedItems);
         MSTestAssert.IsNotNull(reloadedUser);
         CollectionAssert.AreEqual(originalGeneral, reloadedUser.EncryptedGeneralUserDataPayload);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    [TestCategory("Security")]
+    public async Task TryMergePendingAsync_CanonicalFailureWithHealthyRemote_AttributesLocalAndRetainsRecoveryCandidate()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        using var localSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var originSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var localIdentity = CreateIdentity(Guid.NewGuid(), Guid.NewGuid(), localSigningKey);
+        var origin = (DeviceId: Guid.NewGuid(), InstanceId: Guid.NewGuid());
+        var user = await AddUserAndMembershipAsync(
+            database,
+            localIdentity,
+            (origin.DeviceId, origin.InstanceId, originSigningKey));
+        await AddPendingAsync(database, CreateEnvelope(user, origin.DeviceId, origin.InstanceId, 7, originSigningKey, 0x77));
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var lifecycle = new UserLifecycleCoordinator();
+        var faultService = new UserSyncFaultService(database.UserSyncFaults);
+        var bundleSync = new FakeUserDataBundleSyncService
+        {
+            Handler = (_, snapshots, _, _) => Task.FromResult(new UserSnapshotMergeBatchResult(
+                CanonicalChanged: false,
+                snapshots.Select(snapshot => new UserSnapshotMergeEntryResult(
+                    snapshot.OriginDeviceId,
+                    snapshot.OriginInstanceId,
+                    snapshot.OriginRevision,
+                    Verified: true,
+                    VerificationState: UserDataVerificationState.Healthy,
+                    DiagnosticCode: "healthy-recovery-evidence")).ToArray(),
+                CanonicalState: UserDataVerificationState.RootIntegrityFailure,
+                CanonicalFailedBlobs: UserDataBlobKind.All,
+                CanonicalDiagnosticCode: "root-integrity-failed"))
+        };
+        var queue = new FakeSyncQueueWriterService();
+        var coordinator = new UserSnapshotMergeCoordinator(
+            database.Users,
+            CreateMembershipAuthorizationService(database, localIdentity),
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            bundleSync,
+            new UserSnapshotPublisherService(
+                database.UserSyncSnapshots,
+                database.UserSyncStates,
+                database.UserRevisionKnowledge,
+                localIdentity,
+                database.UnitOfWork,
+                lifecycle),
+            queue,
+            new FakeSyncQueueService(),
+            database.UnitOfWork,
+            lifecycle,
+            syncFaults: faultService);
+
+        using var key = EncryptionKey.Create();
+        var merged = await coordinator.TryMergePendingAsync(
+            user.UId,
+            key,
+            UserSyncKeyConfidence.ExplicitlyTrusted);
+
+        database.Db.ChangeTracker.Clear();
+        var retained = await database.UserSyncSnapshots.GetAsync(
+            user.UId, origin.DeviceId, origin.InstanceId, user.KeyEpoch);
+        var faults = await database.UserSyncFaults.ListForUserAsync(user.UId);
+
+        MSTestAssert.IsFalse(merged);
+        MSTestAssert.IsNotNull(retained);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.RecoveryCandidate, retained.Status);
+        MSTestAssert.HasCount(1, faults);
+        MSTestAssert.AreEqual(UserSyncFaultScope.LocalCanonical, faults[0].Scope);
+        MSTestAssert.AreEqual(UserSyncFaultKind.CanonicalRootIntegrityFailure, faults[0].Kind);
+        MSTestAssert.AreEqual(UserSyncHealthStatus.AwaitingEvidence, faults[0].Status);
+        MSTestAssert.IsTrue(faults[0].BlocksPublishing);
+        MSTestAssert.HasCount(0, queue.EnqueuedItems);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    [TestCategory("Security")]
+    public async Task TryMergePendingAsync_HealthyCanonicalAndBadCandidate_IsolatesOnlyBadOrigin()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        using var localSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var goodSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var badSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var localIdentity = CreateIdentity(Guid.NewGuid(), Guid.NewGuid(), localSigningKey);
+        var goodOrigin = (DeviceId: Guid.NewGuid(), InstanceId: Guid.NewGuid());
+        var badOrigin = (DeviceId: Guid.NewGuid(), InstanceId: Guid.NewGuid());
+        var user = await AddUserAndMembershipAsync(
+            database,
+            localIdentity,
+            (goodOrigin.DeviceId, goodOrigin.InstanceId, goodSigningKey),
+            (badOrigin.DeviceId, badOrigin.InstanceId, badSigningKey));
+        await AddPendingAsync(database, CreateEnvelope(user, goodOrigin.DeviceId, goodOrigin.InstanceId, 3, goodSigningKey, 0x31));
+        await AddPendingAsync(database, CreateEnvelope(user, badOrigin.DeviceId, badOrigin.InstanceId, 4, badSigningKey, 0x41));
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var lifecycle = new UserLifecycleCoordinator();
+        var faultService = new UserSyncFaultService(database.UserSyncFaults);
+        var bundleSync = new FakeUserDataBundleSyncService
+        {
+            Handler = (_, snapshots, _, _) => Task.FromResult(new UserSnapshotMergeBatchResult(
+                CanonicalChanged: false,
+                snapshots.Select(snapshot => snapshot.OriginDeviceId == goodOrigin.DeviceId
+                    ? new UserSnapshotMergeEntryResult(
+                        snapshot.OriginDeviceId,
+                        snapshot.OriginInstanceId,
+                        snapshot.OriginRevision,
+                        Verified: true,
+                        VerificationState: UserDataVerificationState.Healthy,
+                        DiagnosticCode: "healthy")
+                    : new UserSnapshotMergeEntryResult(
+                        snapshot.OriginDeviceId,
+                        snapshot.OriginInstanceId,
+                        snapshot.OriginRevision,
+                        Verified: false,
+                        FailureReason: "general-integrity-failed",
+                        VerificationState: UserDataVerificationState.GeneralBlobFailure,
+                        FailedBlobs: UserDataBlobKind.General,
+                        DiagnosticCode: "general-integrity-failed")).ToArray()))
+        };
+        var coordinator = new UserSnapshotMergeCoordinator(
+            database.Users,
+            CreateMembershipAuthorizationService(database, localIdentity),
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            bundleSync,
+            new UserSnapshotPublisherService(
+                database.UserSyncSnapshots,
+                database.UserSyncStates,
+                database.UserRevisionKnowledge,
+                localIdentity,
+                database.UnitOfWork,
+                lifecycle),
+            new FakeSyncQueueWriterService(),
+            new FakeSyncQueueService(),
+            database.UnitOfWork,
+            lifecycle,
+            syncFaults: faultService);
+
+        using var key = EncryptionKey.Create();
+        var merged = await coordinator.TryMergePendingAsync(user.UId, key);
+
+        database.Db.ChangeTracker.Clear();
+        var rows = await database.Db.UserSyncSnapshots.Where(snapshot => snapshot.UserId == user.UId).ToListAsync();
+        var faults = await database.UserSyncFaults.ListForUserAsync(user.UId);
+
+        MSTestAssert.IsTrue(merged);
+        MSTestAssert.IsTrue(rows.Any(snapshot =>
+            snapshot.OriginDeviceId == goodOrigin.DeviceId &&
+            snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
+        MSTestAssert.IsTrue(rows.Any(snapshot =>
+            snapshot.OriginDeviceId == badOrigin.DeviceId &&
+            snapshot.Status == UserSyncSnapshotStatus.IsolatedCorrupt));
+        MSTestAssert.IsTrue(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
+        MSTestAssert.HasCount(1, faults);
+        MSTestAssert.AreEqual(UserSyncFaultScope.SnapshotOrigin, faults[0].Scope);
+        MSTestAssert.AreEqual(badOrigin.DeviceId, faults[0].OriginDeviceId);
+        MSTestAssert.AreEqual(UserSyncFaultKind.IncomingIntegrityFailure, faults[0].Kind);
+        MSTestAssert.IsFalse(faults.Any(fault => fault.Scope == UserSyncFaultScope.LocalCanonical));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    [TestCategory("Security")]
+    public async Task TryMergePendingAsync_UnconfirmedPasswordFailingCanonicalAndAllCandidates_DoesNotPersistCorruptionFault()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        using var localSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var originSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var localIdentity = CreateIdentity(Guid.NewGuid(), Guid.NewGuid(), localSigningKey);
+        var origin = (DeviceId: Guid.NewGuid(), InstanceId: Guid.NewGuid());
+        var user = await AddUserAndMembershipAsync(
+            database,
+            localIdentity,
+            (origin.DeviceId, origin.InstanceId, originSigningKey));
+        await AddPendingAsync(database, CreateEnvelope(user, origin.DeviceId, origin.InstanceId, 8, originSigningKey, 0x88));
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var lifecycle = new UserLifecycleCoordinator();
+        var faultService = new UserSyncFaultService(database.UserSyncFaults);
+        var bundleSync = new FakeUserDataBundleSyncService
+        {
+            Handler = (_, snapshots, _, _) => Task.FromResult(new UserSnapshotMergeBatchResult(
+                CanonicalChanged: false,
+                snapshots.Select(snapshot => new UserSnapshotMergeEntryResult(
+                    snapshot.OriginDeviceId,
+                    snapshot.OriginInstanceId,
+                    snapshot.OriginRevision,
+                    Verified: false,
+                    FailureReason: "root-decrypt-failed",
+                    VerificationState: UserDataVerificationState.RootDecryptFailure,
+                    FailedBlobs: UserDataBlobKind.All,
+                    DiagnosticCode: "root-decrypt-failed")).ToArray(),
+                CanonicalState: UserDataVerificationState.RootDecryptFailure,
+                CanonicalFailedBlobs: UserDataBlobKind.All,
+                CanonicalDiagnosticCode: "root-decrypt-failed"))
+        };
+        var coordinator = new UserSnapshotMergeCoordinator(
+            database.Users,
+            CreateMembershipAuthorizationService(database, localIdentity),
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            bundleSync,
+            new UserSnapshotPublisherService(
+                database.UserSyncSnapshots,
+                database.UserSyncStates,
+                database.UserRevisionKnowledge,
+                localIdentity,
+                database.UnitOfWork,
+                lifecycle),
+            new FakeSyncQueueWriterService(),
+            new FakeSyncQueueService(),
+            database.UnitOfWork,
+            lifecycle,
+            syncFaults: faultService);
+
+        using var key = EncryptionKey.Create();
+        var merged = await coordinator.TryMergePendingAsync(
+            user.UId,
+            key,
+            UserSyncKeyConfidence.UnconfirmedPassword);
+
+        database.Db.ChangeTracker.Clear();
+        var retained = await database.UserSyncSnapshots.GetAsync(
+            user.UId, origin.DeviceId, origin.InstanceId, user.KeyEpoch);
+        var faults = await database.UserSyncFaults.ListForUserAsync(user.UId);
+
+        MSTestAssert.IsFalse(merged);
+        MSTestAssert.IsNotNull(retained);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.Pending, retained.Status);
+        MSTestAssert.HasCount(0, faults);
     }
 
     private static async Task<User> AddUserAndMembershipAsync(

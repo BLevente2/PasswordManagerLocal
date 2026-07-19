@@ -21,6 +21,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
     private readonly IUserLoginIdentityProjectionService? _loginIdentities;
     private readonly ISyncVersionClockService? _versionClock;
+    private readonly IUserSyncFaultService? _syncFaults;
 
     public UserSnapshotInboxService(
         IUserRepository users,
@@ -32,7 +33,8 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         IUserMembershipAuthorizationService membershipAuthorization,
         IDeletedUserBarrierRepository? deletionBarriers = null,
         IUserLoginIdentityProjectionService? loginIdentities = null,
-        ISyncVersionClockService? versionClock = null)
+        ISyncVersionClockService? versionClock = null,
+        IUserSyncFaultService? syncFaults = null)
     {
         _users = users;
         _snapshots = snapshots;
@@ -44,6 +46,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         _deletionBarriers = deletionBarriers;
         _loginIdentities = loginIdentities;
         _versionClock = versionClock;
+        _syncFaults = syncFaults;
     }
 
     public async Task<UserSnapshotReceiptResult> StoreAsync(
@@ -138,6 +141,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         if (envelope.OriginDeviceId == _identity.LocalDeviceId &&
             envelope.OriginInstanceId == _identity.OriginInstanceId)
         {
+            await RecordForkAsync(envelope, "duplicate-local-origin", envelope.SnapshotHash, [], ct);
             return Receipt(
                 envelope,
                 UserSnapshotReceiptState.Quarantined,
@@ -157,7 +161,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             envelope.UserKeyEpoch,
             ct);
 
-        if (existing is not null && existing.Status == UserSyncSnapshotStatus.Quarantined)
+        if (existing is not null && existing.Status == UserSyncSnapshotStatus.IsolatedFork)
             return Receipt(envelope, UserSnapshotReceiptState.Quarantined, existing.QuarantineReason ?? "This origin is quarantined.");
 
         if (knowledge is not null &&
@@ -180,6 +184,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
                 Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, reason);
             }
 
+            await RecordForkAsync(envelope, "same-revision-fork", envelope.SnapshotHash, knowledge.HighestStoredSnapshotHash, ct);
             return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
         }
 
@@ -212,7 +217,9 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             }
 
             const string reason = "The same origin revision was received with a different snapshot hash.";
+            var retainedHash = existing.SnapshotHash.ToArray();
             Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, reason);
+            await RecordForkAsync(envelope, "same-revision-fork", envelope.SnapshotHash, retainedHash, ct);
             return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
         }
 
@@ -226,18 +233,27 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
                 if (!CoverageDominates(envelope, retainedEnvelope))
                 {
                     const string reason = "A newer snapshot does not dominate the retained merged-coverage receipt.";
+                    var retainedHash = existing.SnapshotHash.ToArray();
                     Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, reason);
+                    await RecordForkAsync(envelope, "revision-rollback", envelope.SnapshotHash, retainedHash, ct);
                     return Receipt(envelope, UserSnapshotReceiptState.Quarantined, reason);
                 }
             }
             catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException)
             {
+                var retainedHash = existing.SnapshotHash.ToArray();
                 Quarantine(existing, envelope.SnapshotHash, transportPeerDeviceId, ex.Message);
+                await RecordForkAsync(envelope, "retained-envelope-invalid", envelope.SnapshotHash, retainedHash, ct);
                 return Receipt(envelope, UserSnapshotReceiptState.Quarantined, ex.Message);
             }
         }
 
-        if (knowledge is not null &&
+        // A namespace with an ordinary semantically corrupt retained revision may accept a
+        // higher authenticated revision, but that replacement must remain a recovery candidate
+        // until a keyed device verifies it. Merged-coverage knowledge from another envelope is
+        // not sufficient to make the replacement relayable.
+        if (existing?.Status is not (UserSyncSnapshotStatus.IsolatedCorrupt or UserSyncSnapshotStatus.RecoveryCandidate) &&
+            knowledge is not null &&
             knowledge.HighestMergedRevision >= envelope.OriginRevision)
         {
             if (existing is not null && existing.OriginRevision > envelope.OriginRevision)
@@ -320,6 +336,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         }
 
         var now = DateTimeOffset.UtcNow;
+        var isRecoveryCandidate = existing?.Status == UserSyncSnapshotStatus.IsolatedCorrupt;
         var row = existing ?? new UserSyncSnapshot
         {
             UserId = envelope.UserId,
@@ -336,7 +353,9 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         row.OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray();
         row.OriginSignature = envelope.OriginSignature.ToArray();
         row.EnvelopePayload = serialized;
-        row.Status = UserSyncSnapshotStatus.Pending;
+        row.Status = isRecoveryCandidate
+            ? UserSyncSnapshotStatus.RecoveryCandidate
+            : UserSyncSnapshotStatus.Pending;
         row.QuarantineReason = null;
         row.ConflictingSnapshotHash = null;
 
@@ -371,6 +390,40 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             existing is null ? UserSnapshotReceiptState.StoredPending : UserSnapshotReceiptState.ReplacedOlderPending);
     }
 
+    private async Task RecordForkAsync(
+        UserSnapshotEnvelope envelope,
+        string diagnosticCode,
+        byte[] observedHash,
+        byte[] conflictingHash,
+        CancellationToken ct)
+    {
+        if (_syncFaults is null)
+            return;
+        await _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+        {
+            UserId = envelope.UserId,
+            Scope = UserSyncFaultScope.SnapshotFork,
+            Kind = diagnosticCode == "revision-rollback"
+                ? UserSyncFaultKind.RevisionRollback
+                : diagnosticCode == "duplicate-local-origin"
+                    ? UserSyncFaultKind.DuplicateOriginInstallation
+                    : UserSyncFaultKind.SameRevisionFork,
+            Status = UserSyncHealthStatus.TerminalConflict,
+            AffectedComponent = "snapshot-envelope",
+            OriginDeviceId = envelope.OriginDeviceId,
+            OriginInstanceId = envelope.OriginInstanceId,
+            KeyEpoch = envelope.UserKeyEpoch,
+            MembershipEpoch = envelope.MembershipEpoch,
+            OriginRevision = envelope.OriginRevision,
+            ObservedHash = observedHash,
+            ConflictingHash = conflictingHash,
+            DiagnosticCode = diagnosticCode,
+            BlocksMerge = true,
+            BlocksLogin = true,
+            BlocksGarbageCollection = true
+        }, ct);
+    }
+
     private async Task<UserSyncSnapshot> CreateQuarantinedEvidenceAsync(
         UserSnapshotEnvelope envelope,
         Guid transportPeerDeviceId,
@@ -394,7 +447,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray(),
             OriginSignature = envelope.OriginSignature.ToArray(),
             EnvelopePayload = serialized,
-            Status = UserSyncSnapshotStatus.Quarantined,
+            Status = UserSyncSnapshotStatus.IsolatedFork,
             QuarantineReason = reason,
             ConflictingSnapshotHash = conflictingHash.ToArray()
         };
@@ -408,7 +461,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         Guid transportPeerDeviceId,
         string reason)
     {
-        row.Status = UserSyncSnapshotStatus.Quarantined;
+        row.Status = UserSyncSnapshotStatus.IsolatedFork;
         row.QuarantineReason = reason;
         row.ConflictingSnapshotHash = conflictingHash.ToArray();
         row.ReceivedAtUtc = DateTimeOffset.UtcNow;

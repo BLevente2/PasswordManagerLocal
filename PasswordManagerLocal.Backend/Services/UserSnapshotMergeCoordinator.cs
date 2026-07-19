@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
@@ -25,6 +26,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
     private readonly IUserLoginIdentityProjectionService? _loginIdentities;
+    private readonly IUserSyncFaultService? _syncFaults;
 
     public UserSnapshotMergeCoordinator(
         IUserRepository users,
@@ -39,7 +41,8 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         IUserLifecycleCoordinator lifecycle,
         IDeletedUserBarrierRepository? deletionBarriers = null,
         IUserTombstoneGarbageCollector? garbageCollector = null,
-        IUserLoginIdentityProjectionService? loginIdentities = null)
+        IUserLoginIdentityProjectionService? loginIdentities = null,
+        IUserSyncFaultService? syncFaults = null)
     {
         _users = users;
         _membershipAuthorization = membershipAuthorization;
@@ -54,15 +57,34 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _deletionBarriers = deletionBarriers;
         _garbageCollector = garbageCollector;
         _loginIdentities = loginIdentities;
+        _syncFaults = syncFaults;
     }
 
     public Task<bool> TryMergePendingAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
-        _lifecycle.ExecuteAsync(userId, token => TryMergePendingCoreAsync(userId, key, token), ct);
+        TryMergePendingAsync(userId, key, UserSyncKeyConfidence.ExplicitlyTrusted, ct);
+
+    public Task<bool> TryMergePendingAsync(
+        Guid userId,
+        EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        CancellationToken ct = default) =>
+        _lifecycle.ExecuteAsync(userId, token => TryMergePendingCoreAsync(userId, key, keyConfidence, token), ct);
 
     public Task<bool> TryMergePendingUnderLifecycleAsync(Guid userId, EncryptionKey key, CancellationToken ct = default) =>
-        TryMergePendingCoreAsync(userId, key, ct);
+        TryMergePendingCoreAsync(userId, key, UserSyncKeyConfidence.ExplicitlyTrusted, ct);
 
-    private async Task<bool> TryMergePendingCoreAsync(Guid userId, EncryptionKey key, CancellationToken ct)
+    public Task<bool> TryMergePendingUnderLifecycleAsync(
+        Guid userId,
+        EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        CancellationToken ct = default) =>
+        TryMergePendingCoreAsync(userId, key, keyConfidence, ct);
+
+    private async Task<bool> TryMergePendingCoreAsync(
+        Guid userId,
+        EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        CancellationToken ct)
     {
         if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
             return false;
@@ -98,25 +120,44 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
                 var envelope = Deserialize(row);
                 await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);
                 if (envelope.UserKeyEpoch != user.KeyEpoch || envelope.MembershipEpoch > user.MembershipEpoch)
-                    throw new InvalidDataException("The snapshot epoch is not safely applicable to canonical state.");
+                {
+                    IsolateCorrupt(row, "The snapshot epoch is not safely applicable to canonical state.");
+                    await RecordOriginFaultAsync(
+                        row,
+                        UserSyncFaultKind.InvalidEpoch,
+                        "retained-snapshot-epoch-invalid",
+                        UserDataBlobKind.None,
+                        ct);
+                    continue;
+                }
 
                 candidates.Add((row, envelope));
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                IsolateCorrupt(row, ex.Message);
+                await RecordOriginFaultAsync(
+                    row,
+                    UserSyncFaultKind.UnauthorizedOrigin,
+                    "retained-snapshot-author-unauthorized",
+                    UserDataBlobKind.None,
+                    ct);
+            }
             catch (Exception ex) when (IsCandidateFailure(ex))
             {
-                Quarantine(row, ex.Message);
+                IsolateCorrupt(row, ex.Message);
+                await RecordOriginFaultAsync(
+                    row,
+                    UserSyncFaultKind.IncomingMetadataMismatch,
+                    "retained-envelope-or-authorization-invalid",
+                    UserDataBlobKind.None,
+                    ct);
             }
         }
 
         if (candidates.Count == 0)
         {
-            await _uow.SaveChangesAsync(ct);
-            if (_loginIdentities is not null)
-            {
-                await _loginIdentities.RecalculateUnderLifecycleAsync(userId, ct);
-                await _uow.SaveChangesAsync(ct);
-            }
-            await transaction.CommitAsync(ct);
+            await CommitIsolationOnlyAsync(transaction, userId, ct);
             return false;
         }
 
@@ -127,22 +168,18 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
                 user,
                 candidates.Select(candidate => candidate.Envelope).ToArray(),
                 key,
+                keyConfidence,
                 ct);
         }
-        catch (DeterministicSyncConflictException)
+        catch (DeterministicSyncConflictException ex)
         {
-            // Exact-version/content disagreement is an impossible state under valid local
-            // generation. Roll back all canonical work and surface the non-secret conflict
-            // diagnostics instead of silently resolving or quarantining by arrival order.
             await transaction.RollbackAsync(CancellationToken.None);
             _uow.ClearTrackedChanges();
+            await RecordDeterministicConflictAsync(userId, candidates, ex, ct);
             throw;
         }
         catch (Exception ex) when (IsCandidateFailure(ex))
         {
-            // A decryption/integrity failure may occur after an in-memory candidate has begun
-            // merging. Roll the whole unit back so no partial canonical metadata can be
-            // persisted; the immutable candidates remain pending.
             await transaction.RollbackAsync(CancellationToken.None);
             _uow.ClearTrackedChanges();
             return false;
@@ -150,27 +187,65 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
 
         var results = mergeResult.Entries.ToDictionary(
             result => (result.OriginDeviceId, result.OriginInstanceId, result.OriginRevision));
-        var mergedRows = new List<UserSyncSnapshot>();
-        foreach (var candidate in candidates)
+
+        if (!mergeResult.CanonicalVerified)
         {
-            var keyTuple = (
-                candidate.Envelope.OriginDeviceId,
-                candidate.Envelope.OriginInstanceId,
-                candidate.Envelope.OriginRevision);
-            if (!results.TryGetValue(keyTuple, out var result) || !result.Verified)
+            var healthyRemoteExists = mergeResult.Entries.Any(entry => entry.Verified);
+            var keyIsConfirmed = keyConfidence != UserSyncKeyConfidence.UnconfirmedPassword || healthyRemoteExists;
+            if (!keyIsConfirmed)
             {
-                Quarantine(
-                    candidate.Row,
-                    result?.FailureReason ?? "The encrypted snapshot could not be decrypted and verified with the active user key.");
-                continue;
+                // A password-derived key that verifies neither canonical nor any authenticated
+                // remote snapshot remains an ordinary authentication failure. Do not persist a
+                // corruption conclusion from ambiguous evidence.
+                await transaction.RollbackAsync(CancellationToken.None);
+                _uow.ClearTrackedChanges();
+                return false;
             }
 
-            await RecordMergedKnowledgeAsync(candidate.Envelope, ct);
-            mergedRows.Add(candidate.Row);
-        }
+            if (_syncFaults is not null)
+            {
+                await _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+                {
+                    UserId = userId,
+                    Scope = UserSyncFaultScope.LocalCanonical,
+                    Kind = CanonicalFaultKind(mergeResult.CanonicalState),
+                    Status = healthyRemoteExists
+                        ? UserSyncHealthStatus.AwaitingEvidence
+                        : UserSyncHealthStatus.Isolated,
+                    AffectedComponent = mergeResult.CanonicalFailedBlobs.ToString(),
+                    KeyEpoch = user.KeyEpoch,
+                    MembershipEpoch = user.MembershipEpoch,
+                    ExpectedHash = user.IntegrityHash,
+                    DiagnosticCode = mergeResult.CanonicalDiagnosticCode ?? "canonical-verification-failed",
+                    BlocksPublishing = true,
+                    BlocksMerge = false,
+                    BlocksLogin = true,
+                    BlocksGarbageCollection = true,
+                    BlocksLifecycle = true
+                }, ct);
+            }
 
-        if (mergedRows.Count == 0)
-        {
+            foreach (var candidate in candidates)
+            {
+                var tuple = (candidate.Envelope.OriginDeviceId, candidate.Envelope.OriginInstanceId, candidate.Envelope.OriginRevision);
+                if (results.TryGetValue(tuple, out var result) && result.Verified)
+                {
+                    candidate.Row.Status = UserSyncSnapshotStatus.RecoveryCandidate;
+                    candidate.Row.QuarantineReason = null;
+                    candidate.Row.ConflictingSnapshotHash = null;
+                    _snapshots.Update(candidate.Row);
+                    continue;
+                }
+
+                IsolateCorrupt(candidate.Row, result?.FailureReason ?? "snapshot-verification-failed");
+                await RecordOriginFaultAsync(
+                    candidate.Row,
+                    CandidateFaultKind(result?.VerificationState ?? UserDataVerificationState.RootDecryptFailure),
+                    result?.DiagnosticCode ?? "snapshot-verification-failed",
+                    result?.FailedBlobs ?? UserDataBlobKind.All,
+                    ct);
+            }
+
             await _uow.SaveChangesAsync(ct);
             if (_loginIdentities is not null)
             {
@@ -181,10 +256,37 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             return false;
         }
 
-        // Persist the canonical merge and newly created revision-knowledge rows inside the
-        // still-open transaction before the publisher queries coverage. EF queries do not
-        // include Added rows that have not yet been saved, which previously caused the fresh
-        // local snapshot to omit the exact remote revisions it had just merged.
+        var mergedRows = new List<UserSyncSnapshot>();
+        foreach (var candidate in candidates)
+        {
+            var keyTuple = (
+                candidate.Envelope.OriginDeviceId,
+                candidate.Envelope.OriginInstanceId,
+                candidate.Envelope.OriginRevision);
+            if (!results.TryGetValue(keyTuple, out var result) || !result.Verified)
+            {
+                IsolateCorrupt(
+                    candidate.Row,
+                    result?.FailureReason ?? "The encrypted snapshot could not be decrypted and verified with the active user key.");
+                await RecordOriginFaultAsync(
+                    candidate.Row,
+                    CandidateFaultKind(result?.VerificationState ?? UserDataVerificationState.RootDecryptFailure),
+                    result?.DiagnosticCode ?? "snapshot-verification-failed",
+                    result?.FailedBlobs ?? UserDataBlobKind.All,
+                    ct);
+                continue;
+            }
+
+            await RecordMergedKnowledgeAsync(candidate.Envelope, ct);
+            mergedRows.Add(candidate.Row);
+        }
+
+        if (mergedRows.Count == 0)
+        {
+            await CommitIsolationOnlyAsync(transaction, userId, ct);
+            return false;
+        }
+
         await _uow.SaveChangesAsync(ct);
 
         if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
@@ -210,14 +312,22 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             activateTargets: false,
             ct);
 
-        // Keep the latest immutable envelope from each remote origin as an authenticated,
-        // relayable merged-coverage receipt. One row per origin/key namespace bounds storage.
         foreach (var mergedRow in mergedRows)
         {
             mergedRow.Status = UserSyncSnapshotStatus.MergedReceipt;
             mergedRow.QuarantineReason = null;
             mergedRow.ConflictingSnapshotHash = null;
             _snapshots.Update(mergedRow);
+            if (_syncFaults is not null)
+            {
+                await _syncFaults.MarkOriginRecoveredAsync(
+                    mergedRow.UserId,
+                    mergedRow.OriginDeviceId,
+                    mergedRow.OriginInstanceId,
+                    mergedRow.UserKeyEpoch,
+                    mergedRow.OriginRevision,
+                    ct);
+            }
         }
         if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(userId, ct))
         {
@@ -241,15 +351,11 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             }
             catch
             {
-                // The canonical merge is already committed. Tombstone compaction is conservative
-                // maintenance and may be retried at the next safe key-available trigger.
             }
         }
 
         try
         {
-            // The queue row is durable. Activation is only a wake-up optimization and must not
-            // turn a committed merge into a reported merge failure.
             await _activation.ActivatePendingAsync(CancellationToken.None);
         }
         catch
@@ -258,6 +364,113 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         return true;
     }
 
+    private async Task CommitIsolationOnlyAsync(
+        IUnitOfWorkTransaction transaction,
+        Guid userId,
+        CancellationToken ct)
+    {
+        await _uow.SaveChangesAsync(ct);
+        if (_loginIdentities is not null)
+        {
+            await _loginIdentities.RecalculateUnderLifecycleAsync(userId, ct);
+            await _uow.SaveChangesAsync(ct);
+        }
+        await transaction.CommitAsync(ct);
+    }
+
+    private async Task RecordOriginFaultAsync(
+        UserSyncSnapshot row,
+        UserSyncFaultKind kind,
+        string diagnosticCode,
+        UserDataBlobKind failedBlobs,
+        CancellationToken ct)
+    {
+        if (_syncFaults is null)
+            return;
+        await _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+        {
+            UserId = row.UserId,
+            Scope = UserSyncFaultScope.SnapshotOrigin,
+            Kind = kind,
+            Status = UserSyncHealthStatus.Isolated,
+            AffectedComponent = failedBlobs == UserDataBlobKind.None ? "snapshot-envelope" : failedBlobs.ToString(),
+            OriginDeviceId = row.OriginDeviceId,
+            OriginInstanceId = row.OriginInstanceId,
+            KeyEpoch = row.UserKeyEpoch,
+            MembershipEpoch = row.MembershipEpoch,
+            OriginRevision = row.OriginRevision,
+            ObservedHash = row.SnapshotHash,
+            ConflictingHash = row.ConflictingSnapshotHash ?? [],
+            DiagnosticCode = diagnosticCode,
+            BlocksMerge = true,
+            BlocksGarbageCollection = true
+        }, ct);
+    }
+
+    private async Task RecordDeterministicConflictAsync(
+        Guid userId,
+        IReadOnlyList<(UserSyncSnapshot Row, UserSnapshotEnvelope Envelope)> candidates,
+        DeterministicSyncConflictException conflict,
+        CancellationToken ct)
+    {
+        if (_syncFaults is null)
+            return;
+
+        await using var transaction = await _uow.BeginTransactionAsync(ct);
+        foreach (var candidate in candidates)
+        {
+            await _syncFaults.RecordAsync(new UserSyncFaultDescriptor
+            {
+                UserId = userId,
+                Scope = UserSyncFaultScope.DeterministicItem,
+                Kind = UserSyncFaultKind.DeterministicItemConflict,
+                Status = UserSyncHealthStatus.TerminalConflict,
+                AffectedComponent = $"{conflict.ItemType}:{conflict.ItemId:N}",
+                OriginDeviceId = candidate.Row.OriginDeviceId,
+                OriginInstanceId = candidate.Row.OriginInstanceId,
+                KeyEpoch = candidate.Row.UserKeyEpoch,
+                MembershipEpoch = candidate.Row.MembershipEpoch,
+                OriginRevision = candidate.Row.OriginRevision,
+                ExpectedHash = Convert.FromHexString(conflict.FirstContentHashHex),
+                ObservedHash = Convert.FromHexString(conflict.SecondContentHashHex),
+                DiagnosticCode = "deterministic-item-version-content-conflict",
+                BlocksMerge = true,
+                BlocksLogin = true,
+                BlocksGarbageCollection = true
+            }, ct);
+        }
+        await _uow.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+    }
+
+    private static UserSyncFaultKind CanonicalFaultKind(UserDataVerificationState state) => state switch
+    {
+        UserDataVerificationState.RowIntegrityFailure => UserSyncFaultKind.CanonicalIntegrityMismatch,
+        UserDataVerificationState.CheckpointMissing => UserSyncFaultKind.CanonicalCheckpointMissing,
+        UserDataVerificationState.CheckpointFailure => UserSyncFaultKind.CanonicalCheckpointMismatch,
+        UserDataVerificationState.RootDecryptFailure => UserSyncFaultKind.CanonicalRootDecryptFailure,
+        UserDataVerificationState.RootIntegrityFailure => UserSyncFaultKind.CanonicalRootIntegrityFailure,
+        UserDataVerificationState.GeneralBlobFailure => UserSyncFaultKind.CanonicalGeneralBlobFailure,
+        UserDataVerificationState.PasswordsBlobFailure => UserSyncFaultKind.CanonicalPasswordsBlobFailure,
+        UserDataVerificationState.DevicesBlobFailure => UserSyncFaultKind.CanonicalDevicesBlobFailure,
+        UserDataVerificationState.BundleLinkFailure => UserSyncFaultKind.CanonicalBundleLinkFailure,
+        UserDataVerificationState.LoginMetadataFailure => UserSyncFaultKind.LoginProjectionConflict,
+        _ => UserSyncFaultKind.CanonicalIntegrityMismatch
+    };
+
+    private static UserSyncFaultKind CandidateFaultKind(UserDataVerificationState state) => state switch
+    {
+        UserDataVerificationState.RootDecryptFailure => UserSyncFaultKind.IncomingDecryptFailure,
+        UserDataVerificationState.RootIntegrityFailure or
+        UserDataVerificationState.GeneralBlobFailure or
+        UserDataVerificationState.PasswordsBlobFailure or
+        UserDataVerificationState.DevicesBlobFailure or
+        UserDataVerificationState.BundleLinkFailure => UserSyncFaultKind.IncomingIntegrityFailure,
+        UserDataVerificationState.AuthorizationFailure => UserSyncFaultKind.UnauthorizedOrigin,
+        UserDataVerificationState.EpochFailure => UserSyncFaultKind.InvalidEpoch,
+        UserDataVerificationState.LoginMetadataFailure => UserSyncFaultKind.IncomingMetadataMismatch,
+        _ => UserSyncFaultKind.IncomingIntegrityFailure
+    };
 
     private async Task RecordMergedKnowledgeAsync(UserSnapshotEnvelope envelope, CancellationToken ct)
     {
@@ -323,10 +536,11 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             _knowledge.Update(item);
     }
 
-    private void Quarantine(UserSyncSnapshot row, string reason)
+    private void IsolateCorrupt(UserSyncSnapshot row, string reason)
     {
-        row.Status = UserSyncSnapshotStatus.Quarantined;
+        row.Status = UserSyncSnapshotStatus.IsolatedCorrupt;
         row.QuarantineReason = reason.Length <= 512 ? reason : reason[..512];
+        row.ConflictingSnapshotHash = null;
         _snapshots.Update(row);
     }
 

@@ -36,6 +36,8 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
         UserOriginRemovalCutoffs = new UserOriginRemovalCutoffRepository(db);
         DeviceEnrollmentCommits = new DeviceEnrollmentCommitRepository(db);
         DeletedUserBarriers = new DeletedUserBarrierRepository(db);
+        UserCanonicalCheckpoints = new UserCanonicalCheckpointRepository(db);
+        UserSyncFaults = new UserSyncFaultRepository(db);
     }
 
     public AppDbContext Db { get; }
@@ -58,6 +60,8 @@ public sealed class SqliteIntegrationTestDatabase : IAsyncDisposable
     public UserOriginRemovalCutoffRepository UserOriginRemovalCutoffs { get; }
     public DeviceEnrollmentCommitRepository DeviceEnrollmentCommits { get; }
     public DeletedUserBarrierRepository DeletedUserBarriers { get; }
+    public UserCanonicalCheckpointRepository UserCanonicalCheckpoints { get; }
+    public UserSyncFaultRepository UserSyncFaults { get; }
 
     public static async Task<SqliteIntegrationTestDatabase> CreateAsync()
     {

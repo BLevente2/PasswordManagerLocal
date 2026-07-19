@@ -291,7 +291,7 @@ public sealed class DeviceService : IDeviceService
                 if (await _snapshotsHasQuarantine(user, lifecycleToken))
                     throw new InvalidOperationException("Device removal is blocked by unresolved snapshot fork evidence.");
 
-                await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, lifecycleToken);
+                await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, UserSyncKeyConfidence.AuthenticatedSession, lifecycleToken);
                 user = await _userLookup.GetAndVerifyUserAsync(token, lifecycleToken);
                 var activeAuthorizations = await _membershipAuthorizations.ListActiveForDeviceAsync(user.UId, deviceId, lifecycleToken);
                 if (activeAuthorizations.Count == 0)

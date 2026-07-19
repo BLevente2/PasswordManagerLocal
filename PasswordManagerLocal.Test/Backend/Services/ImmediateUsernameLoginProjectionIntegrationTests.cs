@@ -104,9 +104,10 @@ public sealed class ImmediateUsernameLoginProjectionIntegrationTests
             ?? throw new AssertFailedException("The canonical user disappeared after quarantine.");
         CollectionAssert.AreEqual(scenario.CanonicalHashBefore, canonicalAfter.UsernameHash);
         MSTestAssert.AreEqual(scenario.CanonicalVersionBefore, canonicalAfter.GetGeneralUserDataVersion());
-        MSTestAssert.AreEqual(
-            scenario.UserId,
-            (await lookup.GetUserByUsernameAsync(Encoding.UTF8.GetBytes(scenario.OldUsername)))?.UId);
+        // A known newer signed username mutation exists, but its decrypted username metadata
+        // could not be verified. The account must remain frozen instead of falling back to the
+        // older canonical username, which could otherwise make an unsafe stale identity effective.
+        MSTestAssert.IsNull(await lookup.GetUserByUsernameAsync(Encoding.UTF8.GetBytes(scenario.OldUsername)));
         MSTestAssert.IsNull(await lookup.GetUserByUsernameAsync(Encoding.UTF8.GetBytes(scenario.AdvertisedUsername)));
         var retained = await snapshots.GetAsync(
             scenario.UserId,
@@ -114,7 +115,7 @@ public sealed class ImmediateUsernameLoginProjectionIntegrationTests
             scenario.SourceInstanceId,
             canonicalAfter.KeyEpoch);
         MSTestAssert.IsNotNull(retained);
-        MSTestAssert.AreEqual(UserSyncSnapshotStatus.Quarantined, retained!.Status);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.IsolatedCorrupt, retained!.Status);
     }
 
     [TestMethod]

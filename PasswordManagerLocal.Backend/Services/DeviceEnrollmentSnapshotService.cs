@@ -152,12 +152,16 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
             using var verifiedBundle = await services.GetRequiredService<IUserDataReaderService>()
                 .GetAndVerifyUserDataBundleAsync(verifiedUser, activeKey, ct);
             UserLoginIdentityMetadataUtil.Verify(verifiedUser, verifiedBundle.GeneralUserData);
+            var canonicalHealth = await services.GetRequiredService<IUserCanonicalHealthService>()
+                .VerifyAsync(verifiedUser, activeKey, UserSyncKeyConfidence.ExplicitlyTrusted, recordFault: true, ct: ct);
+            if (!canonicalHealth.FullyVerified)
+                throw new InvalidDataException("Enrollment export requires a fully verified signed canonical checkpoint.");
         }
 
         var user = await users.GetByIdAsNoTrackingWithRelationsAsync(userId, ct) ?? throw new UserNotFoundException();
         if (user.KeyEpoch <= 0 || user.MembershipEpoch <= 0)
             throw new InvalidDataException("The canonical enrollment epochs are invalid.");
-        user.GenerateIntegrityHash();
+        user.VerifyIntegrity();
 
         var authorizations = await authorizationsRepository.ListForUserAsync(userId, ct);
         var targetAuthorization = authorizations.SingleOrDefault(row => row.IsActive && row.DeviceId == target.DeviceId && row.OriginInstanceId == target.OriginInstanceId)
@@ -237,7 +241,13 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
 
         var knowledge = await knowledgeRepository.ListForUserAsync(userId, ct);
         var cutoffs = await cutoffsRepository.ListForUserAsync(userId, ct);
-        var retainedSnapshots = await snapshotsRepository.ListForUserAsync(userId, ct);
+        var retainedSnapshots = (await snapshotsRepository.ListForUserAsync(userId, ct))
+            .Where(row => row.Status is
+                UserSyncSnapshotStatus.Pending or
+                UserSyncSnapshotStatus.LocalPublished or
+                UserSyncSnapshotStatus.MergedReceipt or
+                UserSyncSnapshotStatus.IsolatedFork)
+            .ToList();
         if (authorizations.Count > TombstoneConstants.MaxMembershipHistoryRowsPerUser ||
             cutoffs.Count > TombstoneConstants.MaxRemovalCutoffRowsPerUser ||
             knowledge.Count > TombstoneConstants.MaxRevisionKnowledgeRowsPerUser ||
