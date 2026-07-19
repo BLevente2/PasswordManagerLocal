@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Models;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 
+using PasswordManagerLocal.Backend.Sync.Recovery;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserDataRecoveryScheduler : IUserDataRecoveryScheduler
@@ -28,7 +29,3 @@ public sealed class UserDataRecoveryScheduler : IUserDataRecoveryScheduler
     // creating concurrent work or losing the retrigger.
     internal void BeginProcessing(Guid userId) => _scheduled.TryRemove(userId, out _);
 }
-
-internal sealed record UserDataRecoveryWorkItem(
-    Guid UserId,
-    UserDataRecoveryTrigger Trigger);

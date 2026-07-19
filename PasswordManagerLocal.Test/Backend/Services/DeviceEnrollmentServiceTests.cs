@@ -7,6 +7,7 @@ using PasswordManagerLocal.Test.Fakes;
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 using PasswordManagerLocal.Backend.Caching;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -63,15 +64,4 @@ public sealed class DeviceEnrollmentServiceTests
         return new EnrollmentServiceSetup(service, provider, runtime);
     }
 
-    private sealed record EnrollmentServiceSetup(
-        DeviceEnrollmentService Service,
-        ServiceProvider Provider,
-        FakeSyncRuntimeService Runtime) : IDisposable
-    {
-        public void Dispose()
-        {
-            Service.Dispose();
-            Provider.Dispose();
-        }
-    }
 }

@@ -9,6 +9,7 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 using PasswordManagerLocal.Backend.Caching;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -485,9 +486,4 @@ public sealed class SyncQueueServiceIntegrationTests
         return device;
     }
 
-    private sealed record SeededUserRoutes(
-        User User,
-        IReadOnlyList<Device> EnabledRemotes,
-        IReadOnlyList<Device> DisabledRemotes,
-        FakeDeviceIdentityService Identity);
 }

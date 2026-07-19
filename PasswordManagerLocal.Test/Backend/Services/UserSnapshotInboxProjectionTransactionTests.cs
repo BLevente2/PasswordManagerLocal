@@ -14,6 +14,7 @@ using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.TestDoubles;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -236,31 +237,4 @@ public sealed class UserSnapshotInboxProjectionTransactionTests
     };
 
 
-    private sealed class RecordingVersionClock : ISyncVersionClockService
-    {
-        public List<SyncVersionStamp> Observed { get; } = [];
-
-        public SyncVersionStamp Next() => throw new NotSupportedException();
-
-        public void Observe(IEnumerable<SyncVersionStamp> stamps) => Observed.AddRange(stamps);
-    }
-
-    private sealed class ThrowingProjectionService : IUserLoginIdentityProjectionService
-    {
-        private readonly IUserLoginIdentityProjectionService _inner;
-
-        public ThrowingProjectionService(IUserLoginIdentityProjectionService inner) => _inner = inner;
-
-        public Task<UserLoginIdentityState> SetCanonicalAsync(User user, SyncVersionStamp generalUserDataVersion, CancellationToken ct = default) =>
-            _inner.SetCanonicalAsync(user, generalUserDataVersion, ct);
-
-        public Task<UserLoginIdentityState?> RecalculateAsync(Guid userId, CancellationToken ct = default) =>
-            throw new InvalidOperationException("Injected projection persistence failure.");
-
-        public Task<UserLoginIdentityState?> RecalculateUnderLifecycleAsync(Guid userId, CancellationToken ct = default) =>
-            throw new InvalidOperationException("Injected projection persistence failure.");
-
-        public Task<UserLoginIdentityMatchResult> FindByUsernameAsync(byte[] normalizedUsername, CancellationToken ct = default) =>
-            _inner.FindByUsernameAsync(normalizedUsername, ct);
-    }
 }

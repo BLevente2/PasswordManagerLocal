@@ -448,7 +448,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         }
     }
 
-    private static async Task<byte[]> EncryptBlobAsync<T>(
+    private async Task<byte[]> EncryptBlobAsync<T>(
         T data,
         byte[] rawKey,
         System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo,
@@ -458,13 +458,13 @@ public sealed class UserDataWriterService : IUserDataWriterService
         return await SerializeCompressEncryptAsync(data, key, typeInfo, ct: ct);
     }
 
-    private static void ZeroCompletedEncryptionTask(Task<byte[]> task)
+    private void ZeroCompletedEncryptionTask(Task<byte[]> task)
     {
         if (task.Status == TaskStatus.RanToCompletion)
             CryptographicOperations.ZeroMemory(task.Result);
     }
 
-    private static void ReplaceEncryptedPayload(
+    private void ReplaceEncryptedPayload(
         byte[] currentPayload,
         byte[] replacementPayload,
         Action<byte[]> assignReplacement)
@@ -477,7 +477,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         assignReplacement(replacementPayload);
     }
 
-    private static void EnsureBlobTimestamps(User user, DateTimeOffset value)
+    private void EnsureBlobTimestamps(User user, DateTimeOffset value)
     {
         if (user.UserDataLastModifiedAt == default)
             user.UserDataLastModifiedAt = value;

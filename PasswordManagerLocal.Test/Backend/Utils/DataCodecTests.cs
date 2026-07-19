@@ -6,6 +6,7 @@ using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Serialization;
 namespace PasswordManagerLocal.Test.Backend.Utils;
 
 [TestClass]
@@ -103,10 +104,4 @@ public sealed class DataCodecTests
         MSTestAssert.IsNull(decoded);
     }
 
-    public sealed class CodecPayload
-    {
-        public string Name { get; set; } = string.Empty;
-        public byte[] Data { get; set; } = [];
-        public DateTimeOffset CreatedAt { get; set; }
-    }
 }

@@ -80,6 +80,6 @@ public sealed class SyncRouteRepository : ISyncRouteRepository
             link.IsSyncOn &&
             _localUsers.Any(local => local.UserId == link.UserId && local.IsSyncOn));
 
-    private static Guid[] NormalizeUserIds(IReadOnlyCollection<Guid> userIds) =>
+    private Guid[] NormalizeUserIds(IReadOnlyCollection<Guid> userIds) =>
         userIds.Where(id => id != Guid.Empty).Distinct().ToArray();
 }

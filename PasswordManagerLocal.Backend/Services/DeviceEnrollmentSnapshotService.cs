@@ -362,7 +362,7 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         };
     }
 
-    private static DeviceEnrollmentDeviceSnapshot ToDeviceSnapshot(Device device)
+    private DeviceEnrollmentDeviceSnapshot ToDeviceSnapshot(Device device)
     {
         device.GenerateIntegrityHash();
         return new DeviceEnrollmentDeviceSnapshot

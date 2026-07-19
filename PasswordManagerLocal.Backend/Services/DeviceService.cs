@@ -550,7 +550,7 @@ public sealed class DeviceService : IDeviceService
         IsCurrentDevice = false
     };
 
-    private static DateTime? ToMeaningfulUtc(DateTime value) =>
+    private DateTime? ToMeaningfulUtc(DateTime value) =>
         value == default || value == UtcDateTimeUtil.MinDateTime
             ? null
             : UtcDateTimeUtil.ToUtc(value);

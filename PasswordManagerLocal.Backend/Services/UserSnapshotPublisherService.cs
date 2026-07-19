@@ -333,7 +333,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         return payload;
     }
 
-    private static byte[] CalculatePublishedContentHash(User user, IReadOnlyList<UserSnapshotCoverageEntry> coverage) =>
+    private byte[] CalculatePublishedContentHash(User user, IReadOnlyList<UserSnapshotCoverageEntry> coverage) =>
         Hashing.SHA256Hash(hash =>
         {
             hash.WriteString("PasswordManagerLocal.Backend.UserSnapshot.PublishedContent.v3");
@@ -366,7 +366,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
             }
         });
 
-    private static void CopyEnvelopeToRow(UserSnapshotEnvelope envelope, byte[] serialized, UserSyncSnapshot row)
+    private void CopyEnvelopeToRow(UserSnapshotEnvelope envelope, byte[] serialized, UserSyncSnapshot row)
     {
         row.OriginRevision = envelope.OriginRevision;
         row.MembershipEpoch = envelope.MembershipEpoch;

@@ -233,7 +233,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             throw new UnauthorizedAccessException("The control-operation inventory peer is not authorized.");
     }
 
-    private static void ValidateInventory(
+    private void ValidateInventory(
         UserControlOperationInventoryExchangeRequest remote,
         UserControlOperationInventoryExchangeRequest local)
     {
@@ -259,7 +259,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
         }
     }
 
-    private static void ValidateInventoryEntry(UserControlOperationInventoryEntry entry)
+    private void ValidateInventoryEntry(UserControlOperationInventoryEntry entry)
     {
         _ = ParseGuid(entry.OperationId, "operation");
         _ = ParseGuid(entry.OriginDeviceId, "origin device");
@@ -274,7 +274,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             throw new InvalidDataException("A non-quarantined operation cannot advertise a conflicting hash.");
     }
 
-    private static void ValidateRequest(UserControlOperationRequest request)
+    private void ValidateRequest(UserControlOperationRequest request)
     {
         _ = ParseGuid(request.OperationId, "operation");
         _ = ParseGuid(request.UserId, "user");
@@ -286,7 +286,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             throw new InvalidDataException("The control-operation request hash is invalid.");
     }
 
-    private static UserControlOperationInventoryEntry ToInventoryEntry(UserControlOperation row) =>
+    private UserControlOperationInventoryEntry ToInventoryEntry(UserControlOperation row) =>
         new()
         {
             OperationId = row.OperationId.ToString("N"),
@@ -306,7 +306,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
                     : [])
         };
 
-    private static UserControlOperationRequest ToRequest(Guid userId, UserControlOperationInventoryEntry entry) =>
+    private UserControlOperationRequest ToRequest(Guid userId, UserControlOperationInventoryEntry entry) =>
         new()
         {
             OperationId = entry.OperationId,
@@ -322,7 +322,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
             ExpectedOperationHash = entry.OperationHash
         };
 
-    private static bool RequestMatchesRow(UserControlOperationRequest request, UserControlOperation row) =>
+    private bool RequestMatchesRow(UserControlOperationRequest request, UserControlOperation row) =>
         row.OperationId == ParseGuid(request.OperationId, "operation") &&
         row.UserId == ParseGuid(request.UserId, "user") &&
         row.OriginDeviceId == ParseGuid(request.OriginDeviceId, "origin device") &&
@@ -335,7 +335,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
         row.ResultingMembershipEpoch == request.ResultingMembershipEpoch &&
         CryptographicOperations.FixedTimeEquals(row.OperationHash, request.ExpectedOperationHash.ToByteArray());
 
-    private static void EnsureRowMatchesEnvelope(UserControlOperation row, UserControlOperationEnvelope envelope)
+    private void EnsureRowMatchesEnvelope(UserControlOperation row, UserControlOperationEnvelope envelope)
     {
         if (row.OperationId != envelope.OperationId || row.UserId != envelope.UserId ||
             row.OriginDeviceId != envelope.OriginDeviceId || row.OriginInstanceId != envelope.OriginInstanceId ||
@@ -346,7 +346,7 @@ public sealed class UserControlOperationAntiEntropyService : IUserControlOperati
         }
     }
 
-    private static Guid ParseGuid(string value, string fieldName)
+    private Guid ParseGuid(string value, string fieldName)
     {
         if (!Guid.TryParse(value, out var parsed) || parsed == Guid.Empty)
             throw new InvalidDataException($"The {fieldName} id is invalid.");

@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 using PasswordManagerLocal.Backend.Utils;
 using PasswordManagerLocal.Backend.Abstractions.Caching;
 
+using PasswordManagerLocal.Backend.Internal.Sync;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
@@ -38,8 +39,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         _endpointCache = endpointCache;
         _identity = identity;
     }
-
-
 
 
     public bool TryStart(DiscoveredDeviceEndpoint endpoint, Device device)
@@ -404,14 +403,14 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         return fulfilled.Count == expected.Count;
     }
 
-    private static Guid ParseControlRequestKey(UserControlOperationRequest request)
+    private Guid ParseControlRequestKey(UserControlOperationRequest request)
     {
         if (!Guid.TryParse(request.OperationId, out var operationId) || operationId == Guid.Empty)
             throw new InvalidDataException("The control-operation request identity is invalid.");
         return operationId;
     }
 
-    private static bool IsDurableControlOperationReceipt(UserControlOperationReceiptState state) =>
+    private bool IsDurableControlOperationReceipt(UserControlOperationReceiptState state) =>
         state is UserControlOperationReceiptState.StoredPending or
             UserControlOperationReceiptState.AlreadyStored or
             UserControlOperationReceiptState.Applied or
@@ -503,7 +502,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     }
 
 
-    private static (Guid UserId, Guid OriginDeviceId, Guid OriginInstanceId, long Revision) BuildSnapshotRequestKey(
+    private (Guid UserId, Guid OriginDeviceId, Guid OriginInstanceId, long Revision) BuildSnapshotRequestKey(
         UserSnapshotRequest request)
     {
         if (!Guid.TryParse(request.UserId, out var userId) ||
@@ -517,7 +516,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     }
 
 
-    private static bool IsDurableSnapshotReceipt(UserSnapshotReceiptState state) =>
+    private bool IsDurableSnapshotReceipt(UserSnapshotReceiptState state) =>
         state is UserSnapshotReceiptState.StoredPending or
             UserSnapshotReceiptState.ReplacedOlderPending or
             UserSnapshotReceiptState.AlreadyStored or
@@ -564,8 +563,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
         return true;
     }
-
-
 
 
     private async Task CleanupDetachedDeviceIfSyncCompletedAsync(IServiceProvider services, SyncItem syncItem, Guid targetDeviceId, CancellationToken ct)
@@ -641,8 +638,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     }
 
 
-
-
     private Device CloneDevice(Device source) =>
         new()
         {
@@ -665,7 +660,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         };
 
 
-    private static DiscoveredDeviceEndpoint CloneEndpoint(DiscoveredDeviceEndpoint source) =>
+    private DiscoveredDeviceEndpoint CloneEndpoint(DiscoveredDeviceEndpoint source) =>
         new()
         {
             Host = source.Host,
@@ -674,5 +669,4 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         };
 
 
-    private sealed record PendingDeviceSyncStart(DiscoveredDeviceEndpoint Endpoint, Device Device);
 }

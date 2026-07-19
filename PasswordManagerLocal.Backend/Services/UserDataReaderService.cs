@@ -226,7 +226,7 @@ public sealed class UserDataReaderService : IUserDataReaderService
             _integrity.VerifyUserDevicesData,
             ct);
 
-    private static void DisposeCompletedTaskResult<T>(Task<T> task) where T : IDisposable
+    private void DisposeCompletedTaskResult<T>(Task<T> task) where T : IDisposable
     {
         if (task.Status == TaskStatus.RanToCompletion)
             task.Result.Dispose();

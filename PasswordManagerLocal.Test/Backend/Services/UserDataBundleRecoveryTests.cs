@@ -11,6 +11,7 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.TestDoubles;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -242,23 +243,4 @@ public sealed class UserDataBundleRecoveryTests
                 .Select(item => $"{item.Id:N}:{item.Name}:{item.Version.PhysicalTimeUnixMilliseconds}:{item.Version.LogicalCounter}:{item.Version.OriginDeviceId:N}:{item.Version.OriginInstanceId:N}")));
     }
 
-    private sealed class MemoryCheckpointRepository : IUserCanonicalCheckpointRepository
-    {
-        private UserCanonicalCheckpoint? _checkpoint;
-
-        public MemoryCheckpointRepository(UserCanonicalCheckpoint checkpoint) => _checkpoint = checkpoint;
-
-        public Task<UserCanonicalCheckpoint?> GetAsync(Guid userId, CancellationToken ct = default) =>
-            Task.FromResult(_checkpoint?.UserId == userId ? _checkpoint : null);
-
-        public Task AddAsync(UserCanonicalCheckpoint checkpoint, CancellationToken ct = default)
-        {
-            _checkpoint = checkpoint;
-            return Task.CompletedTask;
-        }
-
-        public void Update(UserCanonicalCheckpoint checkpoint) => _checkpoint = checkpoint;
-
-        public void Delete(UserCanonicalCheckpoint checkpoint) => _checkpoint = null;
-    }
 }

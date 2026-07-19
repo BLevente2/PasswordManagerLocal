@@ -9,10 +9,11 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Security.Cryptography;
 using System.Text.Json;
 
+using PasswordManagerLocal.Backend.Internal.Identity;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
-/// Rebuildable effective login-identity projection. Candidate ordering uses the same
+/// Rebuildable effective login-identity projection. UserLoginIdentityCandidate ordering uses the same
 /// deterministic GeneralUserData version used by the encrypted true-merge path.
 /// </summary>
 public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProjectionService
@@ -71,7 +72,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
         }
 
         user.SetGeneralUserDataVersion(generalUserDataVersion);
-        var candidate = Candidate.FromCanonical(user, generalUserDataVersion);
+        var candidate = UserLoginIdentityCandidate.FromCanonical(user, generalUserDataVersion);
         return await UpsertAsync(existing, candidate, UserLoginIdentityStatus.Active, null, ct);
     }
 
@@ -205,13 +206,13 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
             }
         }
 
-        Candidate winner;
+        UserLoginIdentityCandidate winner;
         try
         {
             var canonicalVersion = user.GetGeneralUserDataVersion();
             SyncVersionStampComparer.Validate(canonicalVersion);
             ValidateUsernameMetadata(user.UsernameHash, user.UsernameSalt);
-            winner = Candidate.FromCanonical(user, canonicalVersion);
+            winner = UserLoginIdentityCandidate.FromCanonical(user, canonicalVersion);
         }
         catch (InvalidDataException ex)
         {
@@ -264,7 +265,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
                 return await UpsertInvalidAsync(existing, user, UserLoginIdentityStatus.InvalidSource, ex.Message, ct);
             }
 
-            var candidate = Candidate.FromSnapshot(envelope);
+            var candidate = UserLoginIdentityCandidate.FromSnapshot(envelope);
             var comparison = SyncVersionStampComparer.Instance.Compare(candidate.Version, winner.Version);
             if (comparison == 0)
             {
@@ -356,13 +357,13 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
                 OriginInstanceId = user.UId
             };
         }
-        var candidate = Candidate.FromCanonical(user, version);
+        var candidate = UserLoginIdentityCandidate.FromCanonical(user, version);
         return await UpsertAsync(existing, candidate, status, reason, ct);
     }
 
     private async Task<UserLoginIdentityState> UpsertAsync(
         UserLoginIdentityState? existing,
-        Candidate candidate,
+        UserLoginIdentityCandidate candidate,
         UserLoginIdentityStatus status,
         string? reason,
         CancellationToken ct)
@@ -389,7 +390,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
         return state;
     }
 
-    private static UserSnapshotEnvelope DeserializeAndValidate(UserSyncSnapshot row)
+    private UserSnapshotEnvelope DeserializeAndValidate(UserSyncSnapshot row)
     {
         if (row.EnvelopePayload.Length == 0 || row.EnvelopePayload.Length > Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes)
             throw new InvalidDataException("The stored user snapshot envelope size is invalid.");
@@ -407,49 +408,13 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
         return envelope;
     }
 
-    private static void ValidateUsernameMetadata(byte[] hash, byte[] salt)
+    private void ValidateUsernameMetadata(byte[] hash, byte[] salt)
     {
         if (hash.Length != Hashing.SHA256HashSizeInBytes || salt.Length != Hashing.SHA256HashSizeInBytes)
             throw new InvalidDataException("The authenticated username projection metadata has an invalid size.");
     }
 
-    private static bool SameUsernameMetadata(byte[] firstHash, byte[] firstSalt, byte[] secondHash, byte[] secondSalt) =>
+    private bool SameUsernameMetadata(byte[] firstHash, byte[] firstSalt, byte[] secondHash, byte[] secondSalt) =>
         Hashing.Verify(firstHash, secondHash) && Hashing.Verify(firstSalt, secondSalt);
 
-    private sealed record Candidate(
-        Guid UserId,
-        byte[] UsernameHash,
-        byte[] UsernameSalt,
-        SyncVersionStamp Version,
-        Guid SourceOriginDeviceId,
-        Guid SourceOriginInstanceId,
-        long SourceOriginRevision,
-        byte[] SourceSnapshotHash,
-        long KeyEpoch,
-        long MembershipEpoch)
-    {
-        public static Candidate FromCanonical(User user, SyncVersionStamp version) => new(
-            user.UId,
-            user.UsernameHash,
-            user.UsernameSalt,
-            version,
-            version.OriginDeviceId,
-            version.OriginInstanceId,
-            0,
-            [],
-            user.KeyEpoch,
-            user.MembershipEpoch);
-
-        public static Candidate FromSnapshot(UserSnapshotEnvelope envelope) => new(
-            envelope.UserId,
-            envelope.User.UsernameHash,
-            envelope.User.UsernameSalt,
-            envelope.User.GeneralUserDataVersion,
-            envelope.OriginDeviceId,
-            envelope.OriginInstanceId,
-            envelope.OriginRevision,
-            envelope.SnapshotHash,
-            envelope.UserKeyEpoch,
-            envelope.MembershipEpoch);
-    }
 }

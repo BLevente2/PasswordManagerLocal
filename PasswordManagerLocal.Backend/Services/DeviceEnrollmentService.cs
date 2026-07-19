@@ -505,7 +505,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         }
     }
 
-    private static void ValidateRecoverableEnrollmentCommit(DeviceEnrollmentCommit commit, EnrollmentEndpoint endpoint)
+    private void ValidateRecoverableEnrollmentCommit(DeviceEnrollmentCommit commit, EnrollmentEndpoint endpoint)
     {
         if (commit.TargetDeviceId != endpoint.DeviceId || commit.TargetOriginInstanceId != endpoint.OriginInstanceId ||
             !Hashing.Verify(commit.TargetSignPublicKeyHash, Hashing.SHA256Hash(endpoint.SignPublicKey)) ||

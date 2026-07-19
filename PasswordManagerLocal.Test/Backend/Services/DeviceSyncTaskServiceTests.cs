@@ -11,6 +11,7 @@ using PasswordManagerLocal.Test.Fakes;
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 using PasswordManagerLocal.Backend.Caching;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -234,21 +235,4 @@ public sealed class DeviceSyncTaskServiceTests
         }
     }
 
-    private sealed record DeviceSyncTaskSetup(
-        DeviceSyncTaskService Service,
-        ServiceProvider Provider,
-        FakeSyncQueueRepository Queue,
-        FakeUnitOfWork UnitOfWork,
-        FakeSyncTransportClientService Transport,
-        DiscoveredDeviceEndpointCache EndpointCache,
-        FakeDeviceIdentityService Identity,
-        Device Device,
-        DiscoveredDeviceEndpoint Endpoint) : IDisposable
-    {
-        public void Dispose()
-        {
-            Service.Dispose();
-            Provider.Dispose();
-        }
-    }
 }

@@ -10,6 +10,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 
+using PasswordManagerLocal.Backend.Internal.Recovery;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
@@ -673,7 +674,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         return [fault];
     }
 
-    private static void MarkAttempt(IReadOnlyList<UserSyncFault> faults, DateTimeOffset now, bool recovering)
+    private void MarkAttempt(IReadOnlyList<UserSyncFault> faults, DateTimeOffset now, bool recovering)
     {
         foreach (var fault in faults)
         {
@@ -684,7 +685,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         }
     }
 
-    private static bool IsBackoffActive(IEnumerable<UserSyncFault> faults, DateTimeOffset now) =>
+    private bool IsBackoffActive(IEnumerable<UserSyncFault> faults, DateTimeOffset now) =>
         faults.Where(fault => fault.NextRecoveryAttemptAtUtc.HasValue)
             .Select(fault => fault.NextRecoveryAttemptAtUtc!.Value)
             .DefaultIfEmpty(DateTimeOffset.MinValue)
@@ -905,7 +906,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         }
     }
 
-    private static void SetAwaitingEvidence(IEnumerable<UserSyncFault> faults, DateTimeOffset now)
+    private void SetAwaitingEvidence(IEnumerable<UserSyncFault> faults, DateTimeOffset now)
     {
         foreach (var fault in faults)
         {
@@ -914,30 +915,30 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         }
     }
 
-    private static TimeSpan CalculateBackoff(int attemptCount)
+    private TimeSpan CalculateBackoff(int attemptCount)
     {
         var exponent = Math.Clamp(attemptCount - 1, 0, 10);
         var seconds = Math.Min(6 * 60 * 60, 30 * (1 << exponent));
         return TimeSpan.FromSeconds(seconds);
     }
 
-    private static bool IsEligibleEvidenceStatus(UserSyncSnapshotStatus status) =>
+    private bool IsEligibleEvidenceStatus(UserSyncSnapshotStatus status) =>
         status is UserSyncSnapshotStatus.Pending or
             UserSyncSnapshotStatus.RecoveryCandidate or
             UserSyncSnapshotStatus.MergedReceipt or
             UserSyncSnapshotStatus.LocalPublished;
 
-    private static bool IsIndependentlyTrusted(UserSyncKeyConfidence confidence) =>
+    private bool IsIndependentlyTrusted(UserSyncKeyConfidence confidence) =>
         confidence != UserSyncKeyConfidence.UnconfirmedPassword;
 
-    private static bool IsTerminalFork(UserSyncFault fault) =>
+    private bool IsTerminalFork(UserSyncFault fault) =>
         fault.Status == UserSyncHealthStatus.TerminalConflict &&
         (fault.Scope == UserSyncFaultScope.SnapshotFork ||
          fault.Kind is UserSyncFaultKind.SameRevisionFork or
              UserSyncFaultKind.RevisionRollback or
              UserSyncFaultKind.DuplicateOriginInstallation);
 
-    private static bool IsControlPlaneConflict(UserSyncFault fault) =>
+    private bool IsControlPlaneConflict(UserSyncFault fault) =>
         fault.Status == UserSyncHealthStatus.TerminalConflict &&
         (fault.Scope is UserSyncFaultScope.ControlPlane or UserSyncFaultScope.DeterministicItem ||
          fault.Kind is UserSyncFaultKind.KeyEpochConflict or
@@ -945,7 +946,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
              UserSyncFaultKind.ControlOperationFork or
              UserSyncFaultKind.DeterministicItemConflict);
 
-    private static UserSyncFaultKind CanonicalFaultKind(UserDataVerificationState state) => state switch
+    private UserSyncFaultKind CanonicalFaultKind(UserDataVerificationState state) => state switch
     {
         UserDataVerificationState.RowIntegrityFailure => UserSyncFaultKind.CanonicalIntegrityMismatch,
         UserDataVerificationState.CheckpointMissing => UserSyncFaultKind.CanonicalCheckpointMissing,
@@ -960,7 +961,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         _ => UserSyncFaultKind.CanonicalIntegrityMismatch
     };
 
-    private static UserSyncFaultKind MapCandidateFault(RecoveryCandidateState state) => state switch
+    private UserSyncFaultKind MapCandidateFault(RecoveryCandidateState state) => state switch
     {
         RecoveryCandidateState.DecryptFailed => UserSyncFaultKind.IncomingDecryptFailure,
         RecoveryCandidateState.UnauthorizedOrigin or RecoveryCandidateState.PostRemovalCutoff => UserSyncFaultKind.UnauthorizedOrigin,
@@ -971,10 +972,10 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         _ => UserSyncFaultKind.IncomingIntegrityFailure
     };
 
-    private static string CandidateIdentity(Guid deviceId, Guid instanceId, long revision, byte[] snapshotHash) =>
+    private string CandidateIdentity(Guid deviceId, Guid instanceId, long revision, byte[] snapshotHash) =>
         $"{deviceId:N}:{instanceId:N}:{revision}:{Convert.ToHexString(snapshotHash)}";
 
-    private static UserSnapshotEnvelope DeserializeAndValidateRow(UserSyncSnapshot row)
+    private UserSnapshotEnvelope DeserializeAndValidateRow(UserSyncSnapshot row)
     {
         if (row.EnvelopePayload.Length == 0 || row.EnvelopePayload.Length > Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes)
             throw new InvalidDataException("The retained recovery envelope size is invalid.");
@@ -1000,23 +1001,12 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         return envelope;
     }
 
-    private static bool IsCandidateFailure(Exception ex) =>
+    private bool IsCandidateFailure(Exception ex) =>
         ex is InvalidDataException or
             UnauthorizedAccessException or
             System.Security.Cryptography.CryptographicException or
             InvalidDataIntegrityException or
             JsonException;
 
-    private sealed class AccountDeletedDuringRecoveryException : Exception { }
 
-    private sealed record EpochResolution(
-        bool Success,
-        long KeyEpoch,
-        long MembershipEpoch,
-        UserDataRecoveryState State,
-        string? DiagnosticCode)
-    {
-        public static EpochResolution Failed(UserDataRecoveryState state, string diagnosticCode) =>
-            new(false, 0, 0, state, diagnosticCode);
-    }
 }

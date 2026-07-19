@@ -210,10 +210,10 @@ public sealed class UserCanonicalHealthService : IUserCanonicalHealthService
             BlocksGarbageCollection = true
         }, ct);
 
-    private static bool IsIndependentlyTrusted(UserSyncKeyConfidence confidence) =>
+    private bool IsIndependentlyTrusted(UserSyncKeyConfidence confidence) =>
         confidence != UserSyncKeyConfidence.UnconfirmedPassword;
 
-    private static UserSyncFaultKind MapCanonicalFaultKind(UserDataVerificationState state) => state switch
+    private UserSyncFaultKind MapCanonicalFaultKind(UserDataVerificationState state) => state switch
     {
         UserDataVerificationState.RootDecryptFailure => UserSyncFaultKind.CanonicalRootDecryptFailure,
         UserDataVerificationState.RootIntegrityFailure => UserSyncFaultKind.CanonicalRootIntegrityFailure,

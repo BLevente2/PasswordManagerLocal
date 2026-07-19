@@ -9,6 +9,7 @@ using System.Text.Json;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -447,7 +448,7 @@ public sealed class DeterministicItemVersionMergeTests
             new UserDataBundleIntegrityService().VerifyUserPasswordsData(restored));
     }
 
-    private static GeneralUserData General(string username, DateTime displayTime, SyncVersionStamp version)
+    internal static GeneralUserData General(string username, DateTime displayTime, SyncVersionStamp version)
     {
         var data = new GeneralUserData
         {
@@ -603,7 +604,7 @@ public sealed class DeterministicItemVersionMergeTests
         return data;
     }
 
-    private static UserPasswordsData Clone(UserPasswordsData source)
+    internal static UserPasswordsData Clone(UserPasswordsData source)
     {
         var data = new UserPasswordsData { PasswordKey = source.PasswordKey.ToArray() };
         foreach (var item in source.Passwords)
@@ -671,7 +672,7 @@ public sealed class DeterministicItemVersionMergeTests
         return data;
     }
 
-    private static UserDevicesData Clone(UserDevicesData source)
+    internal static UserDevicesData Clone(UserDevicesData source)
     {
         var data = new UserDevicesData();
         foreach (var item in source.Devices)
@@ -698,107 +699,6 @@ public sealed class DeterministicItemVersionMergeTests
         return data;
     }
 
-    private sealed class LogicalBundleState : IDisposable
-    {
-        private LogicalBundleState(
-            GeneralUserData general,
-            UserPasswordsData passwords,
-            UserDevicesData devices,
-            User user,
-            UserSyncPayload payload)
-        {
-            General = general;
-            Passwords = passwords;
-            Devices = devices;
-            User = user;
-            Payload = payload;
-        }
-
-        public GeneralUserData General { get; }
-        public UserPasswordsData Passwords { get; }
-        public UserDevicesData Devices { get; }
-        public User User { get; }
-        public UserSyncPayload Payload { get; }
-
-        public static LogicalBundleState Create(
-            GeneralUserData general,
-            UserPasswordsData passwords,
-            UserDevicesData devices,
-            byte identityByte)
-        {
-            var userId = Guid.Parse("03000000-0000-0000-0000-000000000030");
-            var usernameHash = Enumerable.Repeat(identityByte, 32).ToArray();
-            var usernameSalt = Enumerable.Repeat((byte)(identityByte + 10), 16).ToArray();
-            return new LogicalBundleState(
-                general,
-                passwords,
-                devices,
-                new User
-                {
-                    UId = userId,
-                    UsernameHash = usernameHash.ToArray(),
-                    UsernameSalt = usernameSalt.ToArray()
-                },
-                new UserSyncPayload
-                {
-                    UId = userId,
-                    UsernameHash = usernameHash,
-                    UsernameSalt = usernameSalt
-                });
-        }
-
-        public LogicalBundleState Clone()
-        {
-            var general = DeterministicItemVersionMergeTests.General(
-                General.Username,
-                General.LastUpdatedAt,
-                General.Version);
-            general.FirstName = General.FirstName;
-            general.LastName = General.LastName;
-            general.Email = General.Email;
-            general.RegistrationDate = General.RegistrationDate;
-            general.GenerateIntegrityHash();
-            return new LogicalBundleState(
-                general,
-                DeterministicItemVersionMergeTests.Clone(Passwords),
-                DeterministicItemVersionMergeTests.Clone(Devices),
-                new User
-                {
-                    UId = User.UId,
-                    UsernameHash = User.UsernameHash.ToArray(),
-                    UsernameSalt = User.UsernameSalt.ToArray()
-                },
-                new UserSyncPayload
-                {
-                    UId = Payload.UId,
-                    UsernameHash = Payload.UsernameHash.ToArray(),
-                    UsernameSalt = Payload.UsernameSalt.ToArray()
-                });
-        }
-
-        public bool MergeFrom(LogicalBundleState incoming)
-        {
-            var changed = GeneralUserDataMergeUtil.Merge(General, incoming.General, User, incoming.Payload);
-            changed |= new UserPasswordsDataMergeService().Merge(Passwords, incoming.Passwords);
-            changed |= new UserDevicesDataMergeService().Merge(Devices, incoming.Devices);
-            return changed;
-        }
-
-        public string Fingerprint() => string.Join(
-            "|",
-            Convert.ToHexString(General.CalculateIntegrityHash()),
-            Convert.ToHexString(User.UsernameHash),
-            Convert.ToHexString(User.UsernameSalt),
-            Convert.ToHexString(Passwords.CalculateIntegrityHash()),
-            Convert.ToHexString(Devices.CalculateIntegrityHash()));
-
-        public void Dispose()
-        {
-            General.Dispose();
-            Passwords.Dispose();
-            Devices.Dispose();
-        }
-    }
 
     private static IEnumerable<T[]> Permutations<T>(T[] values)
     {

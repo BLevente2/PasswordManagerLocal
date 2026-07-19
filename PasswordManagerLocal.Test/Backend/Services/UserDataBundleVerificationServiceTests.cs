@@ -10,6 +10,7 @@ using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -231,5 +232,4 @@ public sealed class UserDataBundleVerificationServiceTests
         }
     }
 
-    private sealed record VerificationFixture(User User, EncryptionKey Key);
 }

@@ -161,7 +161,7 @@ public sealed class SyncItemLifecycleService : ISyncItemLifecycleService
             _tombstones.Delete(tombstone);
     }
 
-    private static SyncChangeType MergeChangeType(SyncChangeType current, SyncChangeType incoming)
+    private SyncChangeType MergeChangeType(SyncChangeType current, SyncChangeType incoming)
     {
         if (current == incoming)
             return current;

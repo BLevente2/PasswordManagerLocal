@@ -138,7 +138,7 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
 
 
 
-    private static void Canonicalize(UserPasswordsData data)
+    private void Canonicalize(UserPasswordsData data)
     {
         foreach (var password in data.Passwords)
             password.TagIds = password.TagIds.Order().ToList();
@@ -150,7 +150,7 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
         data.DeletedTags = data.DeletedTags.OrderBy(item => item.Id).ToList();
     }
 
-    private static void Canonicalize(UserDevicesData data)
+    private void Canonicalize(UserDevicesData data)
     {
         data.Devices = data.Devices.OrderBy(item => item.Id).ToList();
         data.DeletedDevices = data.DeletedDevices.OrderBy(item => item.Id).ToList();

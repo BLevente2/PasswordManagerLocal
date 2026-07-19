@@ -11,6 +11,7 @@ using System.Security.Cryptography;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.TestDoubles;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -656,11 +657,6 @@ public sealed class AuthoritativeAccountDeletionTests
         return device;
     }
 
-    private sealed class ThrowingDeletionCleanupService : PasswordManagerLocal.Backend.Abstractions.Services.IUserAccountDeletionCleanupService
-    {
-        public Task DeleteCanonicalAndPendingStateAsync(Guid userId, CancellationToken ct = default) =>
-            throw new InvalidOperationException("Injected cleanup failure.");
-    }
 
     private static User CreateUser(Guid userId, byte[]? savedKey)
     {

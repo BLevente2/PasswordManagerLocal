@@ -286,7 +286,7 @@ public sealed class OutgoingDeltaBuilderService : IOutgoingDeltaBuilderService
     }
 
 
-    private static UserSnapshotEnvelope DeserializeSnapshot(UserSyncSnapshot snapshot)
+    private UserSnapshotEnvelope DeserializeSnapshot(UserSyncSnapshot snapshot)
     {
         var envelope = JsonSerializer.Deserialize(
             snapshot.EnvelopePayload,

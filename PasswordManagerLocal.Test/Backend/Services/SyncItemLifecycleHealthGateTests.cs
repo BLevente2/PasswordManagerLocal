@@ -8,6 +8,7 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.TestDoubles;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -61,35 +62,4 @@ public sealed class SyncItemLifecycleHealthGateTests
         MSTestAssert.AreEqual(0, health.UpdateCheckpointCalls);
     }
 
-    private sealed class RejectingCanonicalHealthService : IUserCanonicalHealthService
-    {
-        public int VerifyCalls { get; private set; }
-        public int UpdateCheckpointCalls { get; private set; }
-
-        public Task<CanonicalHealthResult> VerifyAsync(
-            User user,
-            EncryptionKey? key,
-            UserSyncKeyConfidence keyConfidence,
-            bool recordFault,
-            CancellationToken ct = default)
-        {
-            VerifyCalls++;
-            return Task.FromResult(new CanonicalHealthResult(
-                UserDataVerificationState.CheckpointFailure,
-                UserDataBlobKind.All,
-                keyConfidence,
-                "canonical-checkpoint-mismatch")
-            {
-                RowIntegrityVerified = true
-            });
-        }
-
-        public Task UpdateCheckpointAsync(User user, CancellationToken ct = default)
-        {
-            UpdateCheckpointCalls++;
-            return Task.CompletedTask;
-        }
-
-        public Task DeleteCheckpointAsync(Guid userId, CancellationToken ct = default) => Task.CompletedTask;
-    }
 }

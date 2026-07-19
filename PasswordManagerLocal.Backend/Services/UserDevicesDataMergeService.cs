@@ -86,7 +86,7 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
         return true;
     }
 
-    private static T? SelectSameKind<T>(T? first, T? second, Guid id, string itemType)
+    private T? SelectSameKind<T>(T? first, T? second, Guid id, string itemType)
         where T : PasswordManagerLocal.Backend.Security.IntegrityCheckableBase
     {
         if (first is null)
@@ -107,14 +107,14 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
         return first;
     }
 
-    private static SyncVersionStamp GetVersion<T>(T item) => item switch
+    private SyncVersionStamp GetVersion<T>(T item) => item switch
     {
         UserDeviceData device => device.Version,
         DeletedUserDeviceData deleted => deleted.Version,
         _ => throw new InvalidOperationException($"Unsupported versioned device item type {typeof(T).Name}.")
     };
 
-    private static UserDeviceData Clone(UserDeviceData source)
+    private UserDeviceData Clone(UserDeviceData source)
     {
         var clone = new UserDeviceData
         {
@@ -129,7 +129,7 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
         return clone;
     }
 
-    private static DeletedUserDeviceData Clone(DeletedUserDeviceData source)
+    private DeletedUserDeviceData Clone(DeletedUserDeviceData source)
     {
         var clone = new DeletedUserDeviceData
         {
@@ -142,7 +142,7 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
         return clone;
     }
 
-    private static Dictionary<Guid, T> ToUniqueDictionary<T>(
+    private Dictionary<Guid, T> ToUniqueDictionary<T>(
         IEnumerable<T> source,
         Func<T, Guid> id,
         string itemType)
@@ -157,7 +157,7 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
         return result;
     }
 
-    private static bool Equivalent<T>(
+    private bool Equivalent<T>(
         IReadOnlyList<T> first,
         IReadOnlyList<T> second,
         Func<T, Guid> id)

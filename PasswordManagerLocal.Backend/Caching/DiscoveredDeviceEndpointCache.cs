@@ -7,7 +7,7 @@ namespace PasswordManagerLocal.Backend.Caching;
 
 public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCache
 {
-    private readonly ConcurrentDictionary<string, CachedEndpoint> _endpointsByFingerprint = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DiscoveredDeviceCachedEndpoint> _endpointsByFingerprint = new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<DateTimeOffset> _utcNow;
 
     public DiscoveredDeviceEndpointCache()
@@ -29,7 +29,7 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
         if (fingerprint.Length == 0 || string.IsNullOrWhiteSpace(endpoint.Host) || endpoint.Port <= 0)
             return;
 
-        _endpointsByFingerprint[fingerprint] = new CachedEndpoint(Clone(endpoint), _utcNow());
+        _endpointsByFingerprint[fingerprint] = new DiscoveredDeviceCachedEndpoint(Clone(endpoint), _utcNow());
     }
 
     public bool TryGetByFingerprint(string tlsFingerprint, out DiscoveredDeviceEndpoint? endpoint)
@@ -75,5 +75,4 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
             TlsCertFingerprint = endpoint.TlsCertFingerprint
         };
 
-    private sealed record CachedEndpoint(DiscoveredDeviceEndpoint Endpoint, DateTimeOffset ObservedAt);
 }

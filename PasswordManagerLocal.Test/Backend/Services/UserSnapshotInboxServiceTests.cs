@@ -13,6 +13,7 @@ using System.Text.Json;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Backend.Sync.Tombstones;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -701,7 +702,7 @@ public sealed class UserSnapshotInboxServiceTests
                 HighestMergedRevision = reference.OriginRevision
             }
         };
-        var descriptor = new UserTombstoneGarbageCollector.TombstoneDescriptor(
+        var descriptor = new TombstoneDescriptor(
             TombstoneItemType.Password,
             Guid.NewGuid(),
             new SyncVersionStamp
@@ -728,7 +729,7 @@ public sealed class UserSnapshotInboxServiceTests
                 }
             ]
         };
-        var before = UserTombstoneGarbageCollector.Evaluate(
+        var before = TombstoneGarbageCollectionRules.Evaluate(
             user.UId,
             descriptor,
             authorizations,
@@ -773,7 +774,7 @@ public sealed class UserSnapshotInboxServiceTests
             BackendJsonSerializerContext.Default.UserSnapshotEnvelope)
             ?? throw new AssertFailedException("The retained receipt envelope could not be deserialized.");
         receipts[(reportingDeviceId, reportingInstanceId)] = [persistedEnvelope];
-        var after = UserTombstoneGarbageCollector.Evaluate(
+        var after = TombstoneGarbageCollectionRules.Evaluate(
             user.UId,
             descriptor,
             authorizations,

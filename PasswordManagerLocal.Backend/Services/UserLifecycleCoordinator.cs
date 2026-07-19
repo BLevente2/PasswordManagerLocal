@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using System.Collections.Concurrent;
 
+using PasswordManagerLocal.Backend.Internal.Lifecycle;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
@@ -11,7 +12,7 @@ namespace PasswordManagerLocal.Backend.Services;
 /// </summary>
 public sealed class UserLifecycleCoordinator : IUserLifecycleCoordinator
 {
-    private readonly ConcurrentDictionary<Guid, LockEntry> _entries = new();
+    private readonly ConcurrentDictionary<Guid, UserLifecycleLockEntry> _entries = new();
     private readonly AsyncLocal<IReadOnlyDictionary<Guid, int>?> _heldDepths = new();
 
     public Task ExecuteAsync(
@@ -74,11 +75,11 @@ public sealed class UserLifecycleCoordinator : IUserLifecycleCoordinator
         }
     }
 
-    private LockEntry AcquireEntry(Guid userId)
+    private UserLifecycleLockEntry AcquireEntry(Guid userId)
     {
         while (true)
         {
-            var entry = _entries.GetOrAdd(userId, static _ => new LockEntry());
+            var entry = _entries.GetOrAdd(userId, static _ => new UserLifecycleLockEntry());
             lock (entry.ReferenceGate)
             {
                 // A caller can obtain a dictionary value immediately before the final releaser
@@ -107,7 +108,7 @@ public sealed class UserLifecycleCoordinator : IUserLifecycleCoordinator
         _heldDepths.Value = replacement.Count == 0 ? null : replacement;
     }
 
-    private void ReleaseReference(Guid userId, LockEntry entry)
+    private void ReleaseReference(Guid userId, UserLifecycleLockEntry entry)
     {
         var remove = false;
         lock (entry.ReferenceGate)
@@ -126,16 +127,9 @@ public sealed class UserLifecycleCoordinator : IUserLifecycleCoordinator
         if (!remove)
             return;
 
-        ((ICollection<KeyValuePair<Guid, LockEntry>>)_entries)
-            .Remove(new KeyValuePair<Guid, LockEntry>(userId, entry));
+        ((ICollection<KeyValuePair<Guid, UserLifecycleLockEntry>>)_entries)
+            .Remove(new KeyValuePair<Guid, UserLifecycleLockEntry>(userId, entry));
         entry.Semaphore.Dispose();
     }
 
-    private sealed class LockEntry
-    {
-        public object ReferenceGate { get; } = new();
-        public SemaphoreSlim Semaphore { get; } = new(1, 1);
-        public int ReferenceCount;
-        public bool IsRetired;
-    }
 }

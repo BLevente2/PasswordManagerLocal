@@ -281,14 +281,3 @@ internal sealed class RecoveryTestMaterial : IDisposable
         _disposed = true;
     }
 }
-
-internal sealed class RecoveryTestVersionClock : ISyncVersionClockService
-{
-    public SyncVersionStamp Next() => throw new InvalidOperationException("Recovery must not create new deterministic item versions.");
-
-    public void Observe(IEnumerable<SyncVersionStamp> stamps)
-    {
-        foreach (var stamp in stamps)
-            SyncVersionStampComparer.Validate(stamp);
-    }
-}

@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
+using PasswordManagerLocal.Backend.Internal.Recovery;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserDataBundleVerificationService : IUserDataBundleVerificationService
@@ -249,7 +250,7 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
         }
     }
 
-    private static UserDataBundleVerificationResult Failed(
+    private UserDataBundleVerificationResult Failed(
         UserDataVerificationState state,
         UserDataBlobKind blobs,
         UserSyncKeyConfidence confidence,
@@ -262,17 +263,12 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
             DiagnosticCode = diagnosticCode
         };
 
-    private static bool IsDecryptFailure(Exception ex) =>
+    private bool IsDecryptFailure(Exception ex) =>
         ex is UnauthorizedAccessException or CryptographicException or InvalidDataException or JsonException or ArgumentException;
 
-    private static bool IsIntegrityFailure(Exception ex) =>
+    private bool IsIntegrityFailure(Exception ex) =>
         ex is InvalidDataIntegrityException or InvalidDataException;
 
-    private static bool IsVerificationFailure(Exception ex) => IsDecryptFailure(ex) || IsIntegrityFailure(ex);
+    private bool IsVerificationFailure(Exception ex) => IsDecryptFailure(ex) || IsIntegrityFailure(ex);
 
-    private sealed record BlobVerificationResult(bool Success, IDisposable? Value, UserDataBundleVerificationResult? Failure)
-    {
-        public static BlobVerificationResult Verified(IDisposable value) => new(true, value, null);
-        public static BlobVerificationResult Failed(UserDataBundleVerificationResult failure) => new(false, null, failure);
-    }
 }

@@ -390,7 +390,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         return await _users.ListByIdsAsync(eligibleIds, ct);
     }
 
-    private static void ValidateRemoteInventory(
+    private void ValidateRemoteInventory(
         UserSnapshotInventoryExchangeRequest remote,
         UserSnapshotInventoryExchangeRequest local)
     {
@@ -425,7 +425,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         }
     }
 
-    private static void ValidateRevision(
+    private void ValidateRevision(
         UserSnapshotRevisionInventory entry,
         long expectedKeyEpoch,
         long currentMembershipEpoch)
@@ -478,7 +478,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         }
     }
 
-    private static void ValidateRequest(UserSnapshotRequest request)
+    private void ValidateRequest(UserSnapshotRequest request)
     {
         if (request.OriginRevision <= 0 || request.UserKeyEpoch <= 0 || request.MembershipEpoch <= 0)
             throw new InvalidDataException("The requested user snapshot revision or epoch is invalid.");
@@ -498,7 +498,7 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         };
 
 
-    private static UserSnapshotEnvelope Deserialize(UserSyncSnapshot snapshot)
+    private UserSnapshotEnvelope Deserialize(UserSyncSnapshot snapshot)
     {
         if (snapshot.EnvelopePayload.Length == 0 || snapshot.EnvelopePayload.Length > SyncConstants.MaxUserSnapshotEnvelopeBytes)
             throw new InvalidDataException("The stored user snapshot envelope size is invalid.");
@@ -510,12 +510,12 @@ public sealed class UserSnapshotAntiEntropyService : IUserSnapshotAntiEntropySer
         return envelope;
     }
 
-    private static Guid ParseUserId(UserSnapshotUserInventory user) => ParseGuid(user.UserId, "user");
+    private Guid ParseUserId(UserSnapshotUserInventory user) => ParseGuid(user.UserId, "user");
 
-    private static (Guid OriginDeviceId, Guid OriginInstanceId, long KeyEpoch) ParseRevisionKey(UserSnapshotRevisionInventory entry) =>
+    private (Guid OriginDeviceId, Guid OriginInstanceId, long KeyEpoch) ParseRevisionKey(UserSnapshotRevisionInventory entry) =>
         (ParseGuid(entry.OriginDeviceId, "origin device"), ParseGuid(entry.OriginInstanceId, "origin instance"), entry.UserKeyEpoch);
 
-    private static Guid ParseGuid(string value, string fieldName)
+    private Guid ParseGuid(string value, string fieldName)
     {
         if (!Guid.TryParse(value, out var parsed) || parsed == Guid.Empty)
             throw new InvalidDataException($"The {fieldName} id is invalid.");

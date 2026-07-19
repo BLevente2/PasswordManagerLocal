@@ -140,7 +140,7 @@ public sealed class SyncVersionClockService : ISyncVersionClockService
             throw new InvalidOperationException("The local device identity must be initialized before issuing item versions.");
     }
 
-    private static SyncVersionClockState GetOrCreateState(AppDbContext db)
+    private SyncVersionClockState GetOrCreateState(AppDbContext db)
     {
         var state = db.SyncVersionClockStates.SingleOrDefault(row => row.Id == SyncVersionClockState.SingletonId);
         if (state is not null)

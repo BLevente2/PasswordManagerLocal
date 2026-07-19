@@ -94,7 +94,7 @@ public sealed class UserMembershipAuthorizationRepository : IUserMembershipAutho
         return rows.Any(row => MatchesCurrentDeviceIdentity(row.SignPublicKeyHash, row.TlsCertFingerprint, device));
     }
 
-    private static bool MatchesCurrentDeviceIdentity(byte[] signPublicKeyHash, string tlsCertFingerprint, Device device) =>
+    private bool MatchesCurrentDeviceIdentity(byte[] signPublicKeyHash, string tlsCertFingerprint, Device device) =>
         Hashing.Verify(signPublicKeyHash, device.SignPublicKeyHash) &&
         string.Equals(
             SyncIdentityUtil.NormalizeFingerprint(tlsCertFingerprint),

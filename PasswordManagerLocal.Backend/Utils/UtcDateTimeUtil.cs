@@ -67,7 +67,7 @@ public static class UtcDateTimeUtil
 
     public static T NormalizeObjectGraph<T>(T value) where T : class
     {
-        NormalizeObjectGraph(value, new HashSet<object>(ReferenceEqualityComparer.Instance));
+        NormalizeObjectGraph(value, new HashSet<object>(UtcDateTimeReferenceEqualityComparer.Instance));
         return value;
     }
 
@@ -119,12 +119,4 @@ public static class UtcDateTimeUtil
                type == typeof(byte[]);
     }
 
-    private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
-    {
-        public static readonly ReferenceEqualityComparer Instance = new();
-
-        public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
-
-        public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
-    }
 }

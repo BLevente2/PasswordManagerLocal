@@ -6,6 +6,7 @@ using PasswordManagerLocal.Test.Fakes;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -216,10 +217,4 @@ public sealed class SyncAuthorizationServiceTests
             IsDeleted = isDeleted
         });
 
-    private sealed record SyncAuthorizationSetup(
-        SyncAuthorizationService Service,
-        FakeGroupRepository Groups,
-        FakeUserDeviceRepository UserDevices,
-        FakeLocalUserDeviceRepository LocalUsers,
-        FakeDeviceIdentityService Identity);
 }

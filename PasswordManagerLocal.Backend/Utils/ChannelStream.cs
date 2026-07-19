@@ -5,9 +5,9 @@ namespace PasswordManagerLocal.Backend.Utils;
 
 internal sealed class ChannelStream : Stream
 {
-    private readonly Channel<PooledSegment> _channel;
+    private readonly Channel<ChannelStreamPooledSegment> _channel;
     private readonly int _segmentSize;
-    private PooledSegment _current;
+    private ChannelStreamPooledSegment _current;
     private int _currentPosition;
     private bool _hasCurrent;
     private bool _completed;
@@ -21,7 +21,7 @@ internal sealed class ChannelStream : Stream
             throw new ArgumentOutOfRangeException(nameof(capacitySegments));
 
         _segmentSize = segmentSize;
-        _channel = Channel.CreateBounded<PooledSegment>(new BoundedChannelOptions(capacitySegments)
+        _channel = Channel.CreateBounded<ChannelStreamPooledSegment>(new BoundedChannelOptions(capacitySegments)
         {
             FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
@@ -150,7 +150,7 @@ internal sealed class ChannelStream : Stream
             try
             {
                 source[..count].CopyTo(buffer.AsMemory(0, count));
-                await _channel.Writer.WriteAsync(new PooledSegment(buffer, count), cancellationToken).ConfigureAwait(false);
+                await _channel.Writer.WriteAsync(new ChannelStreamPooledSegment(buffer, count), cancellationToken).ConfigureAwait(false);
                 ownershipTransferred = true;
             }
             finally
@@ -190,5 +190,4 @@ internal sealed class ChannelStream : Stream
     private static void ReturnSensitiveBuffer(byte[] buffer) =>
         ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
 
-    private readonly record struct PooledSegment(byte[] Buffer, int Length);
 }

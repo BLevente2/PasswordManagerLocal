@@ -9,6 +9,8 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 
+using PasswordManagerLocal.Backend.Internal.Enrollment;
+using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
@@ -150,7 +152,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
                 var existing = await operations.GetByIdAsync(item.Envelope.OperationId, ct);
                 if (existing is null)
                 {
-                    var row = UserControlOperationWriterService.CreateRow(item.Envelope, item.Snapshot.EnvelopePayload.ToArray(), item.Snapshot.Status);
+                    var row = UserControlOperationFactory.Create(item.Envelope, item.Snapshot.EnvelopePayload.ToArray(), item.Snapshot.Status);
                     row.StatusReason = item.Snapshot.StatusReason;
                     row.ConflictingOperationHash = item.Snapshot.ConflictingOperationHash?.ToArray();
                     row.ReceivedAtUtc = UtcDateTimeUtil.ToUtc(item.Snapshot.ReceivedAtUtc);
@@ -480,7 +482,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         return new ValidatedEnrollmentGraph(userSnapshot, controlState, controlItems, pendingItems, currentRemoteDevices);
     }
 
-    private static void VerifyUserSnapshot(DeviceEnrollmentUserSnapshot source)
+    private void VerifyUserSnapshot(DeviceEnrollmentUserSnapshot source)
     {
         SyncVersionStampComparer.Validate(source.GeneralUserDataVersion);
         if (source.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
@@ -495,7 +497,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             throw new InvalidDataException("The enrollment bootstrap user integrity hash is invalid for its real epochs.");
     }
 
-    private static void ApplyUser(DeviceEnrollmentUserSnapshot source, User target)
+    private void ApplyUser(DeviceEnrollmentUserSnapshot source, User target)
     {
         target.UId = source.UId;
         target.UsernameHash = source.UsernameHash.ToArray();
@@ -517,7 +519,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         target.GenerateIntegrityHash();
     }
 
-    private static void ValidateAuthorization(DeviceEnrollmentMembershipAuthorizationSnapshot row, Guid userId)
+    private void ValidateAuthorization(DeviceEnrollmentMembershipAuthorizationSnapshot row, Guid userId)
     {
         if (row.AuthorizationId == Guid.Empty || row.UserId != userId || row.DeviceId == Guid.Empty || row.OriginInstanceId == Guid.Empty ||
             row.SignPublicKey.Length == 0 || row.SignPublicKeyHash.Length != Hashing.SHA256HashSizeInBytes ||
@@ -533,7 +535,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             throw new InvalidDataException("The enrollment bootstrap contains invalid membership history.");
     }
 
-    private static void ValidateCutoff(DeviceEnrollmentRemovalCutoffSnapshot row, IReadOnlyDictionary<Guid, DeviceEnrollmentMembershipAuthorizationSnapshot> authById)
+    private void ValidateCutoff(DeviceEnrollmentRemovalCutoffSnapshot row, IReadOnlyDictionary<Guid, DeviceEnrollmentMembershipAuthorizationSnapshot> authById)
     {
         if (row.CutoffId == Guid.Empty || row.UserId == Guid.Empty || row.DeviceId == Guid.Empty || row.OriginInstanceId == Guid.Empty ||
             row.UserKeyEpoch <= 0 || row.HighestAcceptedSnapshotRevision < 0 || row.HighestAcceptedControlSequence < 0 ||
@@ -544,7 +546,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             throw new InvalidDataException("The enrollment bootstrap contains an invalid removal cutoff.");
     }
 
-    private static UserMembershipAuthorization FindAuthorization(IEnumerable<DeviceEnrollmentMembershipAuthorizationSnapshot> rows, Guid deviceId, Guid originId, long membershipEpoch, long keyEpoch)
+    private UserMembershipAuthorization FindAuthorization(IEnumerable<DeviceEnrollmentMembershipAuthorizationSnapshot> rows, Guid deviceId, Guid originId, long membershipEpoch, long keyEpoch)
     {
         var row = rows.SingleOrDefault(item => item.DeviceId == deviceId && item.OriginInstanceId == originId &&
             item.StartedMembershipEpoch <= membershipEpoch && (!item.EndedMembershipEpoch.HasValue || membershipEpoch < item.EndedMembershipEpoch.Value) &&
@@ -553,7 +555,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         return ToAuthorization(row);
     }
 
-    private static void ValidateControlPayload(UserControlOperationEnvelope envelope)
+    private void ValidateControlPayload(UserControlOperationEnvelope envelope)
     {
         switch (envelope.OperationType)
         {
@@ -586,7 +588,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         }
     }
 
-    private static void ValidateAppliedTransitionChains(IReadOnlyList<ValidatedControlOperation> operations, DeviceEnrollmentUserSnapshot user)
+    private void ValidateAppliedTransitionChains(IReadOnlyList<ValidatedControlOperation> operations, DeviceEnrollmentUserSnapshot user)
     {
         var membership = operations.Where(item => item.Snapshot.Status == UserControlOperationStatus.Applied &&
             item.Envelope.OperationType is UserControlOperationType.DeviceAddition or UserControlOperationType.DeviceRemoval).ToList();
@@ -606,7 +608,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         }
     }
 
-    private static void ValidateDeviceSnapshot(DeviceEnrollmentDeviceSnapshot source)
+    private void ValidateDeviceSnapshot(DeviceEnrollmentDeviceSnapshot source)
     {
         if (source.Id == Guid.Empty || source.PublicKey.Length == 0 || source.SignPublicKey.Length == 0 ||
             string.IsNullOrWhiteSpace(source.TlsCertFingerprint) || !DeviceTypeDetector.IsValid(source.DeviceType))
@@ -625,7 +627,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             throw new InvalidDataException("The enrollment bootstrap current device integrity hash is invalid.");
     }
 
-    private static async Task UpsertRemoteDeviceAsync(IDeviceRepository devices, IUserDeviceRepository userDevices, DeviceEnrollmentDeviceSnapshot source, CancellationToken ct)
+    private async Task UpsertRemoteDeviceAsync(IDeviceRepository devices, IUserDeviceRepository userDevices, DeviceEnrollmentDeviceSnapshot source, CancellationToken ct)
     {
         var existing = await devices.GetByIdAsync(source.Id, ct);
         if (existing is null)
@@ -659,7 +661,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         existing.GenerateIntegrityHash();
     }
 
-    private static UserSyncSnapshot CreateSnapshotRow(ValidatedPendingSnapshot item, UserSnapshotEnvelope envelope) => new()
+    private UserSyncSnapshot CreateSnapshotRow(ValidatedPendingSnapshot item, UserSnapshotEnvelope envelope) => new()
     {
         UserId = envelope.UserId,
         OriginDeviceId = envelope.OriginDeviceId,
@@ -680,7 +682,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         ConflictingSnapshotHash = item.Snapshot.ConflictingSnapshotHash?.ToArray()
     };
 
-    private static void CopySnapshotRow(UserSyncSnapshot source, UserSyncSnapshot target)
+    private void CopySnapshotRow(UserSyncSnapshot source, UserSyncSnapshot target)
     {
         target.OriginRevision = source.OriginRevision;
         target.MembershipEpoch = source.MembershipEpoch;
@@ -695,14 +697,14 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         target.ConflictingSnapshotHash = source.ConflictingSnapshotHash;
     }
 
-    private static bool HashesEqual(byte[]? left, byte[]? right)
+    private bool HashesEqual(byte[]? left, byte[]? right)
     {
         if (left is null || right is null)
             return left is null && right is null;
         return Hashing.Verify(left, right);
     }
 
-    private static UserMembershipAuthorization ToAuthorization(DeviceEnrollmentMembershipAuthorizationSnapshot row) => new()
+    private UserMembershipAuthorization ToAuthorization(DeviceEnrollmentMembershipAuthorizationSnapshot row) => new()
     {
         AuthorizationId = row.AuthorizationId, UserId = row.UserId, DeviceId = row.DeviceId, OriginInstanceId = row.OriginInstanceId,
         SignPublicKey = row.SignPublicKey.ToArray(), SignPublicKeyHash = row.SignPublicKeyHash.ToArray(), AgreementPublicKeyHash = row.AgreementPublicKeyHash.ToArray(),
@@ -714,7 +716,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         CreatedAtUtc = UtcDateTimeUtil.ToUtc(row.CreatedAtUtc), EndedAtUtc = UtcDateTimeUtil.ToUtc(row.EndedAtUtc)
     };
 
-    private static UserOriginRemovalCutoff ToCutoff(DeviceEnrollmentRemovalCutoffSnapshot row) => new()
+    private UserOriginRemovalCutoff ToCutoff(DeviceEnrollmentRemovalCutoffSnapshot row) => new()
     {
         CutoffId = row.CutoffId, UserId = row.UserId, DeviceId = row.DeviceId, OriginInstanceId = row.OriginInstanceId,
         UserKeyEpoch = row.UserKeyEpoch, HighestAcceptedSnapshotRevision = row.HighestAcceptedSnapshotRevision,
@@ -723,7 +725,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         RemovalOperationHash = row.RemovalOperationHash.ToArray(), CreatedAtUtc = UtcDateTimeUtil.ToUtc(row.CreatedAtUtc)
     };
 
-    private static void RequireSameAuthorization(UserMembershipAuthorization existing, DeviceEnrollmentMembershipAuthorizationSnapshot row)
+    private void RequireSameAuthorization(UserMembershipAuthorization existing, DeviceEnrollmentMembershipAuthorizationSnapshot row)
     {
         var imported = ToAuthorization(row);
         if (existing.UserId != imported.UserId || existing.DeviceId != imported.DeviceId || existing.OriginInstanceId != imported.OriginInstanceId ||
@@ -733,7 +735,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             throw new InvalidDataException("A locally retained membership authorization conflicts with the enrollment bootstrap.");
     }
 
-    private static void RequireSameCutoff(UserOriginRemovalCutoff existing, DeviceEnrollmentRemovalCutoffSnapshot row)
+    private void RequireSameCutoff(UserOriginRemovalCutoff existing, DeviceEnrollmentRemovalCutoffSnapshot row)
     {
         if (existing.CutoffId != row.CutoffId || existing.AuthorizationId != row.AuthorizationId || existing.RemovalOperationId != row.RemovalOperationId ||
             existing.HighestAcceptedSnapshotRevision != row.HighestAcceptedSnapshotRevision || existing.HighestAcceptedControlSequence != row.HighestAcceptedControlSequence ||
@@ -741,12 +743,4 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             throw new InvalidDataException("A locally retained removal cutoff conflicts with the enrollment bootstrap.");
     }
 
-    private sealed record ValidatedControlOperation(DeviceEnrollmentControlOperationSnapshot Snapshot, UserControlOperationEnvelope Envelope);
-    private sealed record ValidatedPendingSnapshot(DeviceEnrollmentPendingSnapshot Snapshot, UserSnapshotEnvelope Envelope);
-    private sealed record ValidatedEnrollmentGraph(
-        DeviceEnrollmentUserSnapshot User,
-        DeviceEnrollmentControlStateSnapshot ControlState,
-        IReadOnlyList<ValidatedControlOperation> ControlOperations,
-        IReadOnlyList<ValidatedPendingSnapshot> PendingSnapshots,
-        IReadOnlyList<DeviceEnrollmentDeviceSnapshot> CurrentRemoteDevices);
 }

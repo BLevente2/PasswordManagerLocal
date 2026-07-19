@@ -14,6 +14,7 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.TestDoubles;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -302,21 +303,5 @@ public sealed class UserSnapshotPublisherServiceTests
             SignPublicKey = key.PublicKey.Export(KeyBlobFormat.RawPublicKey),
             SignHandler = data => SignatureAlgorithm.Ed25519.Sign(key, data)
         };
-    private sealed class FixedCanonicalHealthService : IUserCanonicalHealthService
-    {
-        private readonly CanonicalHealthResult _result;
-
-        public FixedCanonicalHealthService(CanonicalHealthResult result) => _result = result;
-
-        public Task<CanonicalHealthResult> VerifyAsync(
-            User user,
-            EncryptionKey? key,
-            UserSyncKeyConfidence keyConfidence,
-            bool recordFault,
-            CancellationToken ct = default) => Task.FromResult(_result);
-
-        public Task UpdateCheckpointAsync(User user, CancellationToken ct = default) => Task.CompletedTask;
-        public Task DeleteCheckpointAsync(Guid userId, CancellationToken ct = default) => Task.CompletedTask;
-    }
 
 }

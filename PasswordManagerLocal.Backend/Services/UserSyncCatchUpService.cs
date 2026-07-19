@@ -82,6 +82,6 @@ public sealed class UserSyncCatchUpService : IUserSyncCatchUpService
         }
     }
 
-    private static long ToSyncTimestamp(DateTimeOffset modifiedAt) =>
+    private long ToSyncTimestamp(DateTimeOffset modifiedAt) =>
         (modifiedAt == default ? DateTimeOffset.UtcNow : modifiedAt).ToUnixTimeMilliseconds();
 }

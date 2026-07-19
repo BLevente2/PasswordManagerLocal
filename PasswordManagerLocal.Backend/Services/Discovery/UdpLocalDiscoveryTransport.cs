@@ -238,7 +238,7 @@ internal sealed class UdpLocalDiscoveryTransport : ILocalDiscoveryTransport, IDi
     }
 
 
-    private static async Task ReceiveLoopAsync(
+    private async Task ReceiveLoopAsync(
         Socket socket,
         Func<LocalDiscoveryDatagram, CancellationToken, Task> receiveHandler,
         CancellationToken ct)

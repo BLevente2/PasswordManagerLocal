@@ -6,6 +6,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using Microsoft.EntityFrameworkCore;
 
+using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserControlOperationInboxService : IUserControlOperationInboxService
@@ -220,7 +221,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         if (!isAccountDeletion && state?.HasConflict == true)
         {
             var reason = state.ConflictReason ?? "The account control plane is quarantined.";
-            var quarantined = UserControlOperationWriterService.CreateRow(
+            var quarantined = UserControlOperationFactory.Create(
                 envelope,
                 serialized,
                 UserControlOperationStatus.Quarantined,
@@ -241,7 +242,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 foreach (var conflict in sameBase)
                     Quarantine(conflict, envelope.OperationHash, reason);
 
-                var incomingConflict = UserControlOperationWriterService.CreateRow(
+                var incomingConflict = UserControlOperationFactory.Create(
                     envelope,
                     serialized,
                     UserControlOperationStatus.Quarantined,
@@ -264,7 +265,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 var reason = "Multiple authoritative membership operations claim the same base transition.";
                 foreach (var conflict in sameBase)
                     Quarantine(conflict, envelope.OperationHash, reason);
-                var incomingConflict = UserControlOperationWriterService.CreateRow(envelope, serialized, UserControlOperationStatus.Quarantined, transportPeerDeviceId);
+                var incomingConflict = UserControlOperationFactory.Create(envelope, serialized, UserControlOperationStatus.Quarantined, transportPeerDeviceId);
                 incomingConflict.StatusReason = reason;
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();
                 await _operations.AddAsync(incomingConflict, ct);
@@ -275,7 +276,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             }
         }
 
-        var incomingRow = UserControlOperationWriterService.CreateRow(
+        var incomingRow = UserControlOperationFactory.Create(
             envelope,
             serialized,
             UserControlOperationStatus.StoredPending,
@@ -360,7 +361,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                     Quarantine(conflict, envelope.OperationHash, reason);
 
                 var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
-                var incomingConflict = UserControlOperationWriterService.CreateRow(
+                var incomingConflict = UserControlOperationFactory.Create(
                     envelope,
                     serialized,
                     UserControlOperationStatus.Quarantined,
@@ -400,7 +401,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                     Quarantine(conflict, envelope.OperationHash, reason);
 
                 var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
-                var incomingConflict = UserControlOperationWriterService.CreateRow(
+                var incomingConflict = UserControlOperationFactory.Create(
                     envelope,
                     serialized,
                     UserControlOperationStatus.Quarantined,
@@ -1137,7 +1138,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
     }
 
 
-    private static UserControlOperationReceiptState ToExistingReceiptState(UserControlOperationStatus status) =>
+    private UserControlOperationReceiptState ToExistingReceiptState(UserControlOperationStatus status) =>
         status switch
         {
             UserControlOperationStatus.Applied => UserControlOperationReceiptState.Applied,
@@ -1146,12 +1147,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             _ => UserControlOperationReceiptState.AlreadyStored
         };
 
-    private static bool HashEquals(byte[] left, byte[] right) =>
+    private bool HashEquals(byte[] left, byte[] right) =>
         left.Length == right.Length && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(left, right);
 
-    private static string Truncate(string value) => value.Length <= 512 ? value : value[..512];
+    private string Truncate(string value) => value.Length <= 512 ? value : value[..512];
 
-    private static UserControlOperationReceiptResult Receipt(
+    private UserControlOperationReceiptResult Receipt(
         UserControlOperationEnvelope envelope,
         UserControlOperationReceiptState state,
         string? detail = null) =>

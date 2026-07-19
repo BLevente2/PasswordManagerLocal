@@ -6,6 +6,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 using PasswordManagerLocal.Backend.Utils;
 
+using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserControlOperationWriterService : IUserControlOperationWriterService
@@ -342,7 +343,7 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
     private async Task PersistAppliedEnvelopeAsync(UserControlOperationEnvelope envelope, UserControlState state, CancellationToken ct)
     {
         var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
-        await _operations.AddAsync(CreateRow(envelope, serialized, UserControlOperationStatus.Applied), ct);
+        await _operations.AddAsync(UserControlOperationFactory.Create(envelope, serialized, UserControlOperationStatus.Applied), ct);
         state.NextOriginSequence = checked(state.NextOriginSequence + 1);
         state.AppliedKeyEpoch = envelope.ResultingKeyEpoch;
         state.AppliedMembershipEpoch = envelope.ResultingMembershipEpoch;
@@ -367,28 +368,4 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         return state;
     }
 
-    internal static UserControlOperation CreateRow(UserControlOperationEnvelope envelope, byte[] serialized, UserControlOperationStatus status, Guid? lastReceivedFromDeviceId = null) =>
-        new()
-        {
-            OperationId = envelope.OperationId,
-            UserId = envelope.UserId,
-            OperationType = envelope.OperationType,
-            OriginDeviceId = envelope.OriginDeviceId,
-            OriginInstanceId = envelope.OriginInstanceId,
-            OriginSequence = envelope.OriginSequence,
-            PreviousKeyEpoch = envelope.PreviousKeyEpoch,
-            ResultingKeyEpoch = envelope.ResultingKeyEpoch,
-            PreviousMembershipEpoch = envelope.PreviousMembershipEpoch,
-            ResultingMembershipEpoch = envelope.ResultingMembershipEpoch,
-            CreatedAtUtc = envelope.CreatedAtUtc,
-            ReceivedAtUtc = DateTimeOffset.UtcNow,
-            AppliedAtUtc = status == UserControlOperationStatus.Applied ? DateTimeOffset.UtcNow : null,
-            LastReceivedFromDeviceId = lastReceivedFromDeviceId,
-            PayloadHash = envelope.PayloadHash.ToArray(),
-            OperationHash = envelope.OperationHash.ToArray(),
-            OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray(),
-            OriginSignature = envelope.OriginSignature.ToArray(),
-            EnvelopePayload = serialized,
-            Status = status
-        };
 }

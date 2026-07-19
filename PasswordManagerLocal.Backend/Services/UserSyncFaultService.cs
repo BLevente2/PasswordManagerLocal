@@ -119,6 +119,6 @@ public sealed class UserSyncFaultService : IUserSyncFaultService
         CancellationToken ct = default) =>
         _faults.HasTerminalOriginFaultAsync(userId, originDeviceId, originInstanceId, keyEpoch, ct);
 
-    private static byte[] CopyHash(byte[] value) => value.Length == 0 ? [] : value.ToArray();
-    private static string Limit(string value, int length) => value.Length <= length ? value : value[..length];
+    private byte[] CopyHash(byte[] value) => value.Length == 0 ? [] : value.ToArray();
+    private string Limit(string value, int length) => value.Length <= length ? value : value[..length];
 }

@@ -14,6 +14,7 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 using PasswordManagerLocal.Backend.Abstractions.Providers;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -202,16 +203,4 @@ public sealed class NetworkDeltaServiceTests
         }
     }
 
-    private sealed record ValidDeltaSetup(
-        NetworkDelta Delta,
-        DeviceIdentityService Recipient,
-        ServiceProvider SenderProvider,
-        ServiceProvider RecipientProvider) : IDisposable
-    {
-        public void Dispose()
-        {
-            SenderProvider.Dispose();
-            RecipientProvider.Dispose();
-        }
-    }
 }

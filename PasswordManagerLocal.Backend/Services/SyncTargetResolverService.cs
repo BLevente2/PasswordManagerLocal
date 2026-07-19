@@ -147,7 +147,7 @@ public sealed class SyncTargetResolverService : ISyncTargetResolverService
                 : !link.IsDeleted && link.IsSyncOn));
     }
 
-    private static IReadOnlyList<Device> SelectDistinctDevices(IEnumerable<UserDevice> links) =>
+    private IReadOnlyList<Device> SelectDistinctDevices(IEnumerable<UserDevice> links) =>
         links
             .Where(link => link.Device is not null)
             .Select(link => link.Device!)

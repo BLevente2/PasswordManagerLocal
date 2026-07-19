@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Utils;
 
+using PasswordManagerLocal.Backend.Internal.Merging;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeService
@@ -91,7 +92,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return true;
     }
 
-    private static MergeResult<TLive, TDeleted> MergeVersionedCollection<TLive, TDeleted>(
+    private UserPasswordsMergeResult<TLive, TDeleted> MergeVersionedCollection<TLive, TDeleted>(
         IReadOnlyList<TLive> localLive,
         IReadOnlyList<TLive> incomingLive,
         IReadOnlyList<TDeleted> localDeleted,
@@ -162,10 +163,10 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
                 mergedDeleted.Add(cloneDeleted(deleted));
         }
 
-        return new MergeResult<TLive, TDeleted>(mergedLive, mergedDeleted);
+        return new UserPasswordsMergeResult<TLive, TDeleted>(mergedLive, mergedDeleted);
     }
 
-    private static T? SelectSameKind<T>(
+    private T? SelectSameKind<T>(
         T? first,
         T? second,
         Guid itemId,
@@ -190,7 +191,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return first;
     }
 
-    private static Dictionary<Guid, T> ToUniqueDictionary<T>(
+    private Dictionary<Guid, T> ToUniqueDictionary<T>(
         IEnumerable<T> source,
         Func<T, Guid> idSelector,
         string itemType,
@@ -206,7 +207,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return result;
     }
 
-    private static bool Equivalent<T>(
+    private bool Equivalent<T>(
         IReadOnlyList<T> first,
         IReadOnlyList<T> second,
         Func<T, Guid> id,
@@ -223,7 +224,7 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return true;
     }
 
-    private static SecurePassword Clone(SecurePassword source)
+    private SecurePassword Clone(SecurePassword source)
     {
         var clone = new SecurePassword
         {
@@ -241,14 +242,14 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return clone;
     }
 
-    private static DeletedPasswordData Clone(DeletedPasswordData source)
+    private DeletedPasswordData Clone(DeletedPasswordData source)
     {
         var clone = new DeletedPasswordData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version, CausalReference = source.CausalReference };
         clone.GenerateIntegrityHash();
         return clone;
     }
 
-    private static CustomUserColor Clone(CustomUserColor source)
+    private CustomUserColor Clone(CustomUserColor source)
     {
         var clone = new CustomUserColor
         {
@@ -262,14 +263,14 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return clone;
     }
 
-    private static DeletedCustomUserColorData Clone(DeletedCustomUserColorData source)
+    private DeletedCustomUserColorData Clone(DeletedCustomUserColorData source)
     {
         var clone = new DeletedCustomUserColorData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version, CausalReference = source.CausalReference };
         clone.GenerateIntegrityHash();
         return clone;
     }
 
-    private static PasswordTag Clone(PasswordTag source)
+    private PasswordTag Clone(PasswordTag source)
     {
         var clone = new PasswordTag
         {
@@ -283,14 +284,14 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
         return clone;
     }
 
-    private static DeletedPasswordTagData Clone(DeletedPasswordTagData source)
+    private DeletedPasswordTagData Clone(DeletedPasswordTagData source)
     {
         var clone = new DeletedPasswordTagData { Id = source.Id, DeletedAt = source.DeletedAt, Version = source.Version, CausalReference = source.CausalReference };
         clone.GenerateIntegrityHash();
         return clone;
     }
 
-    private static void DisposeAll(params System.Collections.IEnumerable[] collections)
+    private void DisposeAll(params System.Collections.IEnumerable[] collections)
     {
         foreach (var collection in collections)
             foreach (var item in collection)
@@ -298,5 +299,4 @@ public sealed class UserPasswordsDataMergeService : IUserPasswordsDataMergeServi
                     disposable.Dispose();
     }
 
-    private sealed record MergeResult<TLive, TDeleted>(List<TLive> Live, List<TDeleted> Deleted);
 }

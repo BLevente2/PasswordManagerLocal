@@ -105,7 +105,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
     }
 
 
-    private static bool IsAcceptedForVersionObservation(UserSnapshotReceiptState state) =>
+    private bool IsAcceptedForVersionObservation(UserSnapshotReceiptState state) =>
         state is UserSnapshotReceiptState.StoredPending or
             UserSnapshotReceiptState.ReplacedOlderPending or
             UserSnapshotReceiptState.AlreadyStored or
@@ -481,7 +481,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         _snapshots.Update(row);
     }
 
-    private static byte[] SerializeEnvelope(UserSnapshotEnvelope envelope)
+    private byte[] SerializeEnvelope(UserSnapshotEnvelope envelope)
     {
         var serialized = JsonSerializer.SerializeToUtf8Bytes(
             envelope,
@@ -491,7 +491,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         return serialized;
     }
 
-    private static UserSnapshotEnvelope DeserializeRetainedEnvelope(UserSyncSnapshot row)
+    private UserSnapshotEnvelope DeserializeRetainedEnvelope(UserSyncSnapshot row)
     {
         if (row.EnvelopePayload.Length == 0 ||
             row.EnvelopePayload.Length > Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes)
@@ -521,7 +521,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         return envelope;
     }
 
-    private static bool CoverageDominates(
+    private bool CoverageDominates(
         UserSnapshotEnvelope candidate,
         UserSnapshotEnvelope retained)
     {
@@ -538,7 +538,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         return retained.Coverage.All(entry => Covers(candidate, entry));
     }
 
-    private static bool Covers(
+    private bool Covers(
         UserSnapshotEnvelope envelope,
         UserSnapshotCoverageEntry reference)
     {
@@ -557,7 +557,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
             entry.OriginRevision >= reference.OriginRevision);
     }
 
-    private static UserSnapshotReceiptResult Receipt(
+    private UserSnapshotReceiptResult Receipt(
         UserSnapshotEnvelope envelope,
         UserSnapshotReceiptState state,
         string? detail = null) =>

@@ -17,6 +17,7 @@ using System.Text.Json;
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 using PasswordManagerLocal.Backend.Abstractions.Providers;
 
+using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -447,7 +448,7 @@ public sealed class OutgoingDeltaBuilderServiceTests
         trustedOrigin.GenerateIntegrityHash();
         var devices = new FakeDeviceRepository();
         devices.Seed(trustedOrigin);
-        var stored = UserControlOperationWriterService.CreateRow(
+        var stored = UserControlOperationFactory.Create(
             envelope,
             UserControlOperationEnvelopeUtil.Serialize(envelope),
             UserControlOperationStatus.StoredPending,

@@ -39,7 +39,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         EnsurePasswordTagReferencesCanBePersisted(bundle.UserPasswordsData);
     }
 
-    private static void EnsurePasswordDataCanBePersisted(UserPasswordsData passwordsData)
+    private void EnsurePasswordDataCanBePersisted(UserPasswordsData passwordsData)
     {
         if (passwordsData.PasswordKey.Length == 0)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
@@ -59,7 +59,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
             throw new InvalidOperationException("Refusing to persist too many user data tombstones.");
     }
 
-    private static void EnsureUserDeviceDataCanBePersisted(UserDevicesData? userDevicesData)
+    private void EnsureUserDeviceDataCanBePersisted(UserDevicesData? userDevicesData)
     {
         if (userDevicesData is null)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
@@ -81,7 +81,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         // deterministic derived view ordered by item version and device ID.
     }
 
-    private static void EnsureCustomColorsCanBePersisted(UserPasswordsData passwordsData)
+    private void EnsureCustomColorsCanBePersisted(UserPasswordsData passwordsData)
     {
         if (passwordsData.CustomColors.Any(color =>
                 color.Id == Guid.Empty ||
@@ -97,7 +97,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         // still reject such duplicates; merged authenticated items must remain persistable.
     }
 
-    private static void EnsurePasswordTagsCanBePersisted(UserPasswordsData passwordsData)
+    private void EnsurePasswordTagsCanBePersisted(UserPasswordsData passwordsData)
     {
         if (passwordsData.Tags.Any(tag =>
                 tag.Id == Guid.Empty ||
@@ -113,7 +113,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         // the normal uniqueness rule for newly authored changes.
     }
 
-    private static void EnsurePasswordTagReferencesCanBePersisted(UserPasswordsData passwordsData)
+    private void EnsurePasswordTagReferencesCanBePersisted(UserPasswordsData passwordsData)
     {
         // References to tags that lost to a deletion are retained as deterministic derived data.
         // Read models filter them against the live tag set; removing them during merge would
@@ -126,7 +126,7 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
             throw new InvalidOperationException("Refusing to persist invalid password tag references.");
     }
 
-    private static bool HasDuplicates<TItem, TKey>(
+    private bool HasDuplicates<TItem, TKey>(
         IEnumerable<TItem> items,
         Func<TItem, TKey> keySelector,
         IEqualityComparer<TKey>? comparer = null) =>

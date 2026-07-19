@@ -19,6 +19,7 @@ using System.Text.Json;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -315,16 +316,4 @@ public sealed class ImmediateUsernameLoginProjectionIntegrationTests
             ?? throw new AssertFailedException("User data clone failed.");
     }
 
-    private sealed record PendingRenameScenario(
-        Guid UserId,
-        string OldUsername,
-        string AdvertisedUsername,
-        byte[] CanonicalHashBefore,
-        SyncVersionStamp CanonicalVersionBefore,
-        byte[] AdvertisedHash,
-        SyncVersionStamp IncomingVersion,
-        Guid SourceDeviceId,
-        Guid SourceInstanceId,
-        Guid RelayDeviceId,
-        UserSnapshotReceiptResult Receipt);
 }

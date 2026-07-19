@@ -24,10 +24,4 @@ public sealed class FakeUnitOfWork : IUnitOfWork
     {
     }
 
-    private sealed class FakeUnitOfWorkTransaction : IUnitOfWorkTransaction
-    {
-        public Task CommitAsync(CancellationToken ct = default) => Task.CompletedTask;
-        public Task RollbackAsync(CancellationToken ct = default) => Task.CompletedTask;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
 }

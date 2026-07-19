@@ -532,7 +532,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     }
 
 
-    private static bool CanUseForAuthenticatedDiscovery(Device? device) =>
+    private bool CanUseForAuthenticatedDiscovery(Device? device) =>
         device is not null &&
         device.Id != Guid.Empty &&
         device.IsTrusted &&
@@ -542,7 +542,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         !string.IsNullOrWhiteSpace(device.TlsCertFingerprint);
 
 
-    private static Device CloneDiscoveryDevice(Device device) =>
+    private Device CloneDiscoveryDevice(Device device) =>
         new()
         {
             Id = device.Id,
@@ -716,7 +716,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     }
 
 
-    private static byte[]? FingerprintHexToBytes(string fingerprint)
+    private byte[]? FingerprintHexToBytes(string fingerprint)
     {
         try
         {

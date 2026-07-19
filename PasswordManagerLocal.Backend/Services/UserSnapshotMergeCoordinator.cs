@@ -443,7 +443,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         await transaction.CommitAsync(ct);
     }
 
-    private static UserSyncFaultKind CanonicalFaultKind(UserDataVerificationState state) => state switch
+    private UserSyncFaultKind CanonicalFaultKind(UserDataVerificationState state) => state switch
     {
         UserDataVerificationState.RowIntegrityFailure => UserSyncFaultKind.CanonicalIntegrityMismatch,
         UserDataVerificationState.CheckpointMissing => UserSyncFaultKind.CanonicalCheckpointMissing,
@@ -458,7 +458,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _ => UserSyncFaultKind.CanonicalIntegrityMismatch
     };
 
-    private static UserSyncFaultKind CandidateFaultKind(UserDataVerificationState state) => state switch
+    private UserSyncFaultKind CandidateFaultKind(UserDataVerificationState state) => state switch
     {
         UserDataVerificationState.RootDecryptFailure => UserSyncFaultKind.IncomingDecryptFailure,
         UserDataVerificationState.RootIntegrityFailure or
@@ -544,7 +544,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         _snapshots.Update(row);
     }
 
-    private static bool IsCandidateFailure(Exception ex) =>
+    private bool IsCandidateFailure(Exception ex) =>
         ex is InvalidDataException or
             UnauthorizedAccessException or
             System.Security.Cryptography.CryptographicException or
@@ -552,7 +552,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             JsonException;
 
 
-    private static UserSnapshotEnvelope Deserialize(UserSyncSnapshot row)
+    private UserSnapshotEnvelope Deserialize(UserSyncSnapshot row)
     {
         if (row.EnvelopePayload.Length == 0 || row.EnvelopePayload.Length > Constants.SyncConstants.MaxUserSnapshotEnvelopeBytes)
             throw new InvalidDataException("The stored user snapshot envelope size is invalid.");

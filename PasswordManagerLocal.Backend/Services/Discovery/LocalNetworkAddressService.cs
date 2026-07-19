@@ -257,7 +257,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
+    private int GetNetworkInterfaceTypePriority(NetworkInterfaceType interfaceType) =>
         interfaceType switch
         {
             NetworkInterfaceType.Wireless80211 => 3000,
@@ -270,7 +270,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
         };
 
 
-    private static bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
+    private bool IsVirtualOrNonLanAdapter(NetworkInterface networkInterface)
     {
         var text = $"{networkInterface.Name} {networkInterface.Description}".ToLowerInvariant();
 
@@ -297,7 +297,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
+    private bool IsWindowsHostOnlyGatewayAddress(IPAddress address, bool isVirtualAdapter)
     {
         if (!isVirtualAdapter || address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -307,7 +307,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static bool IsUsableUnicastAddress(IPAddress address)
+    private bool IsUsableUnicastAddress(IPAddress address)
     {
         if (IPAddress.IsLoopback(address) ||
             address.Equals(IPAddress.Any) ||
@@ -325,7 +325,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static bool IsApipaIpv4(IPAddress address)
+    private bool IsApipaIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -335,7 +335,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
+    private bool IsInSameIpv4Subnet(IPAddress remoteAddress, IPAddress localAddress, IPAddress mask)
     {
         if (remoteAddress.AddressFamily != AddressFamily.InterNetwork ||
             localAddress.AddressFamily != AddressFamily.InterNetwork ||
@@ -359,7 +359,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static int GetPrivateAddressPriority(IPAddress address)
+    private int GetPrivateAddressPriority(IPAddress address)
     {
         if (address.AddressFamily == AddressFamily.InterNetwork)
         {
@@ -383,7 +383,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static bool IsPrivateIpv4(IPAddress address)
+    private bool IsPrivateIpv4(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetwork)
             return false;
@@ -396,7 +396,7 @@ internal sealed class LocalNetworkAddressService : ILocalNetworkAddressService
     }
 
 
-    private static bool IsPrivateIpv6(IPAddress address)
+    private bool IsPrivateIpv6(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetworkV6)
             return false;

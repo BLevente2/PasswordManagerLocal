@@ -10,6 +10,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
+using PasswordManagerLocal.Backend.Internal.Recovery;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
@@ -683,14 +684,14 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         }
     }
 
-    private static bool HasSameRootKeyMaterial(UserData first, UserData second) =>
+    private bool HasSameRootKeyMaterial(UserData first, UserData second) =>
         first.FormatVersion == second.FormatVersion &&
         first.UId == second.UId &&
         Hashing.Verify(first.GeneralUserDataKey, second.GeneralUserDataKey) &&
         Hashing.Verify(first.UserPasswordsDataKey, second.UserPasswordsDataKey) &&
         Hashing.Verify(first.UserDevicesDataKey, second.UserDevicesDataKey);
 
-    private static UserSyncPayload CreateRecoveryMetadata(User source, GeneralUserData? trustedGeneral)
+    private UserSyncPayload CreateRecoveryMetadata(User source, GeneralUserData? trustedGeneral)
     {
         var metadata = new UserSyncPayload
         {
@@ -714,41 +715,8 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         return metadata;
     }
 
-    private sealed class CanonicalSalvage : IDisposable
-    {
-        public CanonicalSalvage(
-            UserData root,
-            GeneralUserData? general,
-            UserPasswordsData? passwords,
-            UserDevicesData? devices,
-            UserDataBlobKind failedComponents,
-            DateTimeOffset lastModifiedAt)
-        {
-            Root = root;
-            General = general;
-            Passwords = passwords;
-            Devices = devices;
-            FailedComponents = failedComponents;
-            LastModifiedAt = lastModifiedAt;
-        }
 
-        public UserData Root { get; }
-        public GeneralUserData? General { get; }
-        public UserPasswordsData? Passwords { get; }
-        public UserDevicesData? Devices { get; }
-        public UserDataBlobKind FailedComponents { get; }
-        public DateTimeOffset LastModifiedAt { get; }
-
-        public void Dispose()
-        {
-            Root.Dispose();
-            General?.Dispose();
-            Passwords?.Dispose();
-            Devices?.Dispose();
-        }
-    }
-
-    private static RecoveryCandidateVerificationResult CandidateFailure(
+    private RecoveryCandidateVerificationResult CandidateFailure(
         UserSnapshotEnvelope snapshot,
         RecoveryCandidateState state,
         UserDataBlobKind failedComponents,
@@ -762,7 +730,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             failedComponents,
             diagnosticCode);
 
-    private static RecoveryCandidateState MapRecoveryCandidateState(UserDataVerificationState state) => state switch
+    private RecoveryCandidateState MapRecoveryCandidateState(UserDataVerificationState state) => state switch
     {
         UserDataVerificationState.RootDecryptFailure => RecoveryCandidateState.DecryptFailed,
         UserDataVerificationState.RootIntegrityFailure or
@@ -777,7 +745,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         _ => RecoveryCandidateState.IntegrityFailed
     };
 
-    private static void CopyRecoveryMetadata(UserSyncPayload source, User target)
+    private void CopyRecoveryMetadata(UserSyncPayload source, User target)
     {
         CryptographicOperations.ZeroMemory(target.UsernameHash);
         CryptographicOperations.ZeroMemory(target.UsernameSalt);
@@ -792,7 +760,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         target.UserDevicesDataLastModifiedAt = source.UserDevicesDataLastModifiedAt;
     }
 
-    private static UserSnapshotMergeEntryResult Failed(
+    private UserSnapshotMergeEntryResult Failed(
         UserSnapshotEnvelope snapshot,
         UserDataBundleVerificationResult verification) =>
         new(
@@ -805,7 +773,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             verification.FailedBlobs,
             verification.DiagnosticCode);
 
-    private static bool IsSnapshotVerificationFailure(Exception ex) =>
+    private bool IsSnapshotVerificationFailure(Exception ex) =>
         ex is UnauthorizedAccessException or
             CryptographicException or
             InvalidDataException or
@@ -1036,7 +1004,6 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
     }
 
 
-
-    private static DateTimeOffset FromTimestamp(long ts) =>
+    private DateTimeOffset FromTimestamp(long ts) =>
         DateTimeOffset.FromUnixTimeMilliseconds(ts);
 }
