@@ -71,6 +71,25 @@ public sealed class UserSyncFaultRepository : IUserSyncFaultRepository
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<UserSyncFault>> ListRecoverableLocalCanonicalAsync(
+        DateTimeOffset nowUtc,
+        CancellationToken ct = default)
+    {
+        var rows = await _faults
+            .Where(fault =>
+                fault.Scope == UserSyncFaultScope.LocalCanonical &&
+                fault.Status != UserSyncHealthStatus.Recovered &&
+                fault.Status != UserSyncHealthStatus.Superseded &&
+                fault.Status != UserSyncHealthStatus.TerminalConflict)
+            .ToListAsync(ct);
+
+        return rows
+            .Where(fault => !fault.NextRecoveryAttemptAtUtc.HasValue || fault.NextRecoveryAttemptAtUtc <= nowUtc)
+            .OrderBy(fault => fault.NextRecoveryAttemptAtUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(fault => fault.UserId)
+            .ToArray();
+    }
+
     public Task<bool> HasBlockingPublishingFaultAsync(Guid userId, CancellationToken ct = default) =>
         _faults.AnyAsync(fault =>
             fault.UserId == userId &&

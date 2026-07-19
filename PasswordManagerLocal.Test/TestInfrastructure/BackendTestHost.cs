@@ -82,6 +82,8 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserMembershipAuthorizationService, UserMembershipAuthorizationService>();
         sc.AddSingleton<IUserSyncKeyResolverService, UserSyncKeyResolverService>();
         sc.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
+        sc.AddSingleton<FakeUserDataRecoveryCoordinator>();
+        sc.AddSingleton<IUserDataRecoveryCoordinator>(sp => sp.GetRequiredService<FakeUserDataRecoveryCoordinator>());
         sc.AddSingleton<IUserControlOperationWriterService, FakeUserControlOperationWriterService>();
         sc.AddSingleton<IUserSnapshotPublisherService, FakeUserSnapshotPublisherService>();
         sc.AddSingleton<ISyncQueueWriterService, FakeSyncQueueWriterService>();
@@ -100,6 +102,7 @@ public sealed class BackendTestHost : IDisposable
 
         sc.AddSingleton<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
         sc.AddSingleton<IUserSessionService, UserSessionService>();
+        sc.AddSingleton<IUserRecoverySessionService, UserRecoverySessionService>();
         sc.AddSingleton<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
         sc.AddSingleton<IUserLookupService, UserLookupService>();
         sc.AddSingleton<IUserDataReaderService, UserDataReaderService>();

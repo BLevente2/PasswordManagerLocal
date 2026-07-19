@@ -19,6 +19,13 @@ public sealed class FakeUserSnapshotPublisherService : IUserSnapshotPublisherSer
     public Task<UserSyncSnapshot?> GetLatestAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
         Task.FromResult(_latest is { UserId: var id, UserKeyEpoch: var epoch } && id == userId && epoch == userKeyEpoch ? _latest : null);
 
+    public Task<UserSyncSnapshot> GetOrCreateAfterRecoveryAsync(
+        User user,
+        PasswordManagerLocal.Backend.Security.EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        CancellationToken ct = default) =>
+        GetOrCreateAsync(user, ct);
+
     public Task<UserSyncSnapshot> GetOrCreateAsync(User user, CancellationToken ct = default)
     {
         if (_latest is { UserId: var id, UserKeyEpoch: var epoch } && id == user.UId && epoch == user.KeyEpoch)

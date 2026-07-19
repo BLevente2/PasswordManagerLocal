@@ -22,6 +22,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
     private readonly IUserLoginIdentityProjectionService? _loginIdentities;
     private readonly ISyncVersionClockService? _versionClock;
     private readonly IUserSyncFaultService? _syncFaults;
+    private readonly IUserDataRecoveryScheduler? _recoveryScheduler;
 
     public UserSnapshotInboxService(
         IUserRepository users,
@@ -34,7 +35,8 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         IDeletedUserBarrierRepository? deletionBarriers = null,
         IUserLoginIdentityProjectionService? loginIdentities = null,
         ISyncVersionClockService? versionClock = null,
-        IUserSyncFaultService? syncFaults = null)
+        IUserSyncFaultService? syncFaults = null,
+        IUserDataRecoveryScheduler? recoveryScheduler = null)
     {
         _users = users;
         _snapshots = snapshots;
@@ -47,6 +49,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         _loginIdentities = loginIdentities;
         _versionClock = versionClock;
         _syncFaults = syncFaults;
+        _recoveryScheduler = recoveryScheduler;
     }
 
     public async Task<UserSnapshotReceiptResult> StoreAsync(
@@ -87,6 +90,15 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
 
                 if (_versionClock is not null && IsAcceptedForVersionObservation(receipt.State))
                     _versionClock.Observe([envelope.User.GeneralUserDataVersion]);
+                if (receipt.State is UserSnapshotReceiptState.StoredPending or
+                    UserSnapshotReceiptState.ReplacedOlderPending or
+                    UserSnapshotReceiptState.StoredMergedReceipt or
+                    UserSnapshotReceiptState.NeedsKey)
+                {
+                    _recoveryScheduler?.Schedule(
+                        envelope.UserId,
+                        UserDataRecoveryTrigger.HealthyCandidateReceived);
+                }
                 return receipt;
             },
             ct);
@@ -336,7 +348,7 @@ public sealed class UserSnapshotInboxService : IUserSnapshotInboxService
         }
 
         var now = DateTimeOffset.UtcNow;
-        var isRecoveryCandidate = existing?.Status == UserSyncSnapshotStatus.IsolatedCorrupt;
+        var isRecoveryCandidate = existing?.Status is UserSyncSnapshotStatus.IsolatedCorrupt or UserSyncSnapshotStatus.RecoveryCandidate;
         var row = existing ?? new UserSyncSnapshot
         {
             UserId = envelope.UserId,

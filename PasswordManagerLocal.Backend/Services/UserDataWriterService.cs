@@ -120,8 +120,10 @@ public sealed class UserDataWriterService : IUserDataWriterService
             key,
             BackendJsonSerializerContext.Default.UserData,
             ct: ct);
-        CryptographicOperations.ZeroMemory(user.EncryptedPayload);
-        user.EncryptedPayload = newEncryptedPayload;
+        ReplaceEncryptedPayload(
+            user.EncryptedPayload,
+            newEncryptedPayload,
+            value => user.EncryptedPayload = value);
         user.UserDataLastModifiedAt = DateTimeOffset.UtcNow;
         await UpdateUserAsync(user, enqueueSync, ct);
     }
@@ -467,7 +469,11 @@ public sealed class UserDataWriterService : IUserDataWriterService
         byte[] replacementPayload,
         Action<byte[]> assignReplacement)
     {
-        CryptographicOperations.ZeroMemory(currentPayload);
+        // User ciphertext columns are EF Core concurrency tokens. Do not mutate the tracked
+        // current byte[] in place: EF's OriginalValue may reference that same instance, and
+        // zeroing it would make the generated concurrency predicate use zeroed bytes. The old
+        // value is encrypted data and can be released normally after the successful update.
+        _ = currentPayload;
         assignReplacement(replacementPayload);
     }
 

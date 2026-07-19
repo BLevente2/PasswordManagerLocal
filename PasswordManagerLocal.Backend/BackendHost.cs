@@ -259,6 +259,8 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserDataBundleVerificationService, UserDataBundleVerificationService>();
             services.AddScoped<IUserSyncFaultService, UserSyncFaultService>();
             services.AddScoped<IUserCanonicalHealthService, UserCanonicalHealthService>();
+            services.AddScoped<IDatabaseHealthService, DatabaseHealthService>();
+            services.AddScoped<IUserRecoverySessionService, UserRecoverySessionService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserSessionService, UserSessionService>();
             services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
@@ -307,6 +309,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserDevicesDataMergeService, UserDevicesDataMergeService>();
             services.AddScoped<ISyncRelationshipReconciliationService, SyncRelationshipReconciliationService>();
             services.AddScoped<IUserDataBundleSyncService, UserDataBundleSyncService>();
+            services.AddScoped<IUserDataRecoveryCoordinator, UserDataRecoveryCoordinator>();
             services.AddScoped<IUserSnapshotPublisherService, UserSnapshotPublisherService>();
             services.AddScoped<IUserSnapshotInboxService, UserSnapshotInboxService>();
             services.AddScoped<IUserSnapshotMergeCoordinator, UserSnapshotMergeCoordinator>();
@@ -335,6 +338,11 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IUserSyncCatchUpService, UserSyncCatchUpService>();
             services.AddScoped<ISyncQueueService, SyncQueueService>();
             services.AddScoped<ISyncService, SyncService>();
+
+            services.AddSingleton<UserDataRecoveryScheduler>();
+            services.AddSingleton<IUserDataRecoveryScheduler>(sp => sp.GetRequiredService<UserDataRecoveryScheduler>());
+            services.AddSingleton<UserDataRecoveryHostedService>();
+            services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<UserDataRecoveryHostedService>());
 
             services.AddSingleton<ExpiredEntriesPurgeHostedService>();
             services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<ExpiredEntriesPurgeHostedService>());

@@ -55,6 +55,29 @@ public sealed class UserSyncSnapshotRepository : IUserSyncSnapshotRepository
             .ThenBy(snapshot => snapshot.OriginRevision)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<UserSyncSnapshot>> ListRecoveryEvidenceAsync(
+        Guid userId,
+        long userKeyEpoch,
+        CancellationToken ct = default)
+    {
+        var rows = await _snapshots
+            .Where(snapshot =>
+                snapshot.UserId == userId &&
+                snapshot.UserKeyEpoch == userKeyEpoch &&
+                (snapshot.Status == UserSyncSnapshotStatus.Pending ||
+                 snapshot.Status == UserSyncSnapshotStatus.RecoveryCandidate ||
+                 snapshot.Status == UserSyncSnapshotStatus.MergedReceipt ||
+                 snapshot.Status == UserSyncSnapshotStatus.LocalPublished))
+            .ToListAsync(ct);
+
+        return rows
+            .OrderBy(snapshot => snapshot.OriginDeviceId)
+            .ThenBy(snapshot => snapshot.OriginInstanceId)
+            .ThenBy(snapshot => snapshot.OriginRevision)
+            .ThenBy(snapshot => Convert.ToHexString(snapshot.SnapshotHash), StringComparer.Ordinal)
+            .ToArray();
+    }
+
     public Task<bool> HasQuarantinedAsync(Guid userId, long userKeyEpoch, long membershipEpoch, CancellationToken ct = default) =>
         _snapshots.AnyAsync(snapshot =>
             snapshot.UserId == userId &&

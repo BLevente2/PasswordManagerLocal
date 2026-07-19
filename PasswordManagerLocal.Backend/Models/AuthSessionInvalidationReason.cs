@@ -1,4 +1,4 @@
-﻿namespace PasswordManagerLocal.Backend.Models;
+namespace PasswordManagerLocal.Backend.Models;
 
 public enum AuthSessionInvalidationReason
 {
@@ -6,5 +6,6 @@ public enum AuthSessionInvalidationReason
     LoggedOut,
     Expired,
     ProfilePasswordChanged,
+    CanonicalRecovered,
     ProfileRemoved
 }

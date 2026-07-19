@@ -29,6 +29,7 @@ public sealed class UserSnapshotInboxServiceTests
         var originalPasswords = user.EncryptedUserPasswordsDataPayload.ToArray();
         var originalDevices = user.EncryptedUserDevicesDataPayload.ToArray();
         var localIdentity = CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid());
+        var recoveryScheduler = new FakeUserDataRecoveryScheduler();
         var service = new UserSnapshotInboxService(
             database.Users,
             database.UserSyncSnapshots,
@@ -36,7 +37,8 @@ public sealed class UserSnapshotInboxServiceTests
             localIdentity,
             database.UnitOfWork,
             new UserLifecycleCoordinator(),
-            new FakeUserMembershipAuthorizationService());
+            new FakeUserMembershipAuthorizationService(),
+            recoveryScheduler: recoveryScheduler);
 
         using var originKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
         var originDeviceId = Guid.NewGuid();
@@ -71,6 +73,9 @@ public sealed class UserSnapshotInboxServiceTests
         CollectionAssert.AreEqual(originalGeneral, reloadedUser.EncryptedGeneralUserDataPayload);
         CollectionAssert.AreEqual(originalPasswords, reloadedUser.EncryptedUserPasswordsDataPayload);
         CollectionAssert.AreEqual(originalDevices, reloadedUser.EncryptedUserDevicesDataPayload);
+        MSTestAssert.AreEqual(
+            (user.UId, UserDataRecoveryTrigger.HealthyCandidateReceived),
+            recoveryScheduler.Calls.Single());
     }
 
     [TestMethod]
@@ -733,6 +738,7 @@ public sealed class UserSnapshotInboxServiceTests
         MSTestAssert.AreEqual(TombstoneGarbageCollectionReason.MissingMergedReceipt, before.Reason);
         MSTestAssert.AreEqual(reportingDeviceId, before.BlockingDeviceId);
 
+        var recoveryScheduler = new FakeUserDataRecoveryScheduler();
         var inbox = new UserSnapshotInboxService(
             database.Users,
             database.UserSyncSnapshots,
@@ -740,13 +746,17 @@ public sealed class UserSnapshotInboxServiceTests
             CreateUnsignedIdentity(Guid.NewGuid(), Guid.NewGuid()),
             database.UnitOfWork,
             new UserLifecycleCoordinator(),
-            new FakeUserMembershipAuthorizationService());
+            new FakeUserMembershipAuthorizationService(),
+            recoveryScheduler: recoveryScheduler);
         var receipt = await inbox.StoreAsync(reportingEnvelope, Guid.NewGuid());
 
         database.Db.ChangeTracker.Clear();
         var retained = await database.UserSyncSnapshots.GetAsync(
             user.UId, reportingDeviceId, reportingInstanceId, user.KeyEpoch);
         MSTestAssert.AreEqual(UserSnapshotReceiptState.StoredMergedReceipt, receipt.State);
+        MSTestAssert.AreEqual(
+            (user.UId, UserDataRecoveryTrigger.HealthyCandidateReceived),
+            recoveryScheduler.Calls.Single());
         MSTestAssert.IsNotNull(retained);
         MSTestAssert.AreEqual(UserSyncSnapshotStatus.MergedReceipt, retained.Status);
         MSTestAssert.IsEmpty(await database.UserSyncSnapshots.ListPendingForKeyEpochAsync(user.UId, user.KeyEpoch));

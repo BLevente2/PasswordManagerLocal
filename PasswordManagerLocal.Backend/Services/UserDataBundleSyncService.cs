@@ -21,6 +21,8 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserCanonicalHealthService? _canonicalHealth;
     private readonly IUserDataBundleVerificationService _verification;
+    private readonly IUserCanonicalCheckpointRepository? _checkpoints;
+    private readonly IDeviceIdentityService? _identity;
 
     public UserDataBundleSyncService(
         IUserRepository users,
@@ -29,7 +31,9 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         IUserDevicesDataMergeService devicesDataMerge,
         ISyncVersionClockService versionClock,
         IUserCanonicalHealthService? canonicalHealth = null,
-        IUserDataBundleVerificationService? verification = null)
+        IUserDataBundleVerificationService? verification = null,
+        IUserCanonicalCheckpointRepository? checkpoints = null,
+        IDeviceIdentityService? identity = null)
     {
         _users = users;
         _integrity = integrity;
@@ -38,6 +42,8 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         _versionClock = versionClock;
         _canonicalHealth = canonicalHealth;
         _verification = verification ?? new UserDataBundleVerificationService(integrity);
+        _checkpoints = checkpoints;
+        _identity = identity;
     }
 
     public Task<UserSnapshotMergeBatchResult> TryVerifyAndMergeManyAsync(
@@ -220,6 +226,570 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             foreach (var incomingBundle in incomingBundles)
                 incomingBundle.Dispose();
         }
+    }
+
+    public Task<UserDataRecoveryReconstructionResult> TryReconstructCanonicalAsync(
+        User existing,
+        IReadOnlyList<UserSnapshotEnvelope> snapshots,
+        EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        CancellationToken ct = default) =>
+        TryReconstructCanonicalAsync(
+            existing,
+            snapshots,
+            key,
+            keyConfidence,
+            existing.KeyEpoch,
+            existing.MembershipEpoch,
+            ct);
+
+    public async Task<UserDataRecoveryReconstructionResult> TryReconstructCanonicalAsync(
+        User existing,
+        IReadOnlyList<UserSnapshotEnvelope> snapshots,
+        EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        long expectedKeyEpoch,
+        long expectedMembershipEpoch,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(existing);
+        ArgumentNullException.ThrowIfNull(key);
+        if (snapshots.Count == 0)
+            return new UserDataRecoveryReconstructionResult(false, [], "no-recovery-evidence");
+        if (expectedKeyEpoch <= 0 || expectedMembershipEpoch <= 0)
+            return new UserDataRecoveryReconstructionResult(false, [], "recovery-authoritative-epoch-invalid");
+
+        // Stable immutable ordering makes reconstruction independent from database row order,
+        // receive order and relay path. Exact duplicate envelopes are processed once.
+        var ordered = snapshots
+            .OrderBy(snapshot => snapshot.OriginDeviceId)
+            .ThenBy(snapshot => snapshot.OriginInstanceId)
+            .ThenBy(snapshot => snapshot.OriginRevision)
+            .ThenBy(snapshot => Convert.ToHexString(snapshot.SnapshotHash), StringComparer.Ordinal)
+            .GroupBy(
+                snapshot => $"{snapshot.OriginDeviceId:N}:{snapshot.OriginInstanceId:N}:" +
+                            $"{snapshot.OriginRevision}:{Convert.ToHexString(snapshot.SnapshotHash)}",
+                StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+
+        var verified = new List<(UserSnapshotEnvelope Envelope, UserDataBundleVerificationResult Verification)>();
+        var candidateResults = new List<RecoveryCandidateVerificationResult>(ordered.Length);
+        byte[]? epochPasswordSalt = null;
+        CanonicalSalvage? localSalvage = null;
+        UserSyncPayload? localMetadata = null;
+
+        try
+        {
+            foreach (var snapshot in ordered)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (snapshot.UserId != existing.UId ||
+                    snapshot.User.UId != existing.UId ||
+                    snapshot.UserKeyEpoch != expectedKeyEpoch ||
+                    snapshot.MembershipEpoch <= 0 ||
+                    snapshot.MembershipEpoch > expectedMembershipEpoch)
+                {
+                    candidateResults.Add(CandidateFailure(
+                        snapshot,
+                        RecoveryCandidateState.WrongKeyEpoch,
+                        UserDataBlobKind.All,
+                        "recovery-epoch-mismatch"));
+                    continue;
+                }
+
+                if (snapshot.User.PasswordSalt.Length == 0)
+                {
+                    candidateResults.Add(CandidateFailure(
+                        snapshot,
+                        RecoveryCandidateState.WrongKeyEpoch,
+                        UserDataBlobKind.All,
+                        "recovery-password-salt-missing"));
+                    continue;
+                }
+
+                var verification = await _verification.VerifySnapshotAsync(
+                    snapshot,
+                    key,
+                    keyConfidence == UserSyncKeyConfidence.UnconfirmedPassword
+                        ? UserSyncKeyConfidence.VerifiedRemoteSnapshot
+                        : keyConfidence,
+                    ct);
+                if (!verification.IsHealthy)
+                {
+                    candidateResults.Add(CandidateFailure(
+                        snapshot,
+                        MapRecoveryCandidateState(verification.State),
+                        verification.FailedBlobs,
+                        verification.DiagnosticCode));
+                    verification.Dispose();
+                    continue;
+                }
+
+                var bundle = verification.VerifiedBundle!;
+                if (bundle.UserData.FormatVersion != Constants.SyncConstants.EncryptedUserDataFormatVersion ||
+                    bundle.UserData.UId != existing.UId)
+                {
+                    verification.Dispose();
+                    candidateResults.Add(CandidateFailure(
+                        snapshot,
+                        RecoveryCandidateState.IntegrityFailed,
+                        UserDataBlobKind.All,
+                        "recovery-root-format-invalid"));
+                    continue;
+                }
+
+                // Password salt and root child-key material are immutable within one key epoch.
+                // Individually healthy snapshots that disagree here represent an unresolved
+                // control-plane branch, not evidence from which recovery may pick a winner.
+                if (epochPasswordSalt is null)
+                {
+                    epochPasswordSalt = snapshot.User.PasswordSalt.ToArray();
+                }
+                else if (!Hashing.Verify(epochPasswordSalt, snapshot.User.PasswordSalt))
+                {
+                    verification.Dispose();
+                    throw new RecoveryEvidenceConflictException("recovery-password-salt-conflict");
+                }
+
+                if (verified.Count != 0 &&
+                    !HasSameRootKeyMaterial(verified[0].Verification.VerifiedBundle!.UserData, bundle.UserData))
+                {
+                    verification.Dispose();
+                    throw new RecoveryEvidenceConflictException("recovery-root-key-material-conflict");
+                }
+
+                verified.Add((snapshot, verification));
+                candidateResults.Add(new RecoveryCandidateVerificationResult(
+                    snapshot.OriginDeviceId,
+                    snapshot.OriginInstanceId,
+                    snapshot.OriginRevision,
+                    snapshot.SnapshotHash.ToArray(),
+                    RecoveryCandidateState.Healthy,
+                    DiagnosticCode: "healthy-recovery-evidence"));
+            }
+
+            if (verified.Count == 0)
+                return new UserDataRecoveryReconstructionResult(false, candidateResults, "no-healthy-recovery-candidate");
+
+            // Partial salvage is allowed only when the signed canonical checkpoint verifies, the
+            // root decrypts and verifies, and individual child components
+            // can be independently authenticated through the root's child hashes.
+            localSalvage = await TryReadCanonicalSalvageAsync(
+                existing,
+                key,
+                expectedKeyEpoch,
+                expectedMembershipEpoch,
+                ct);
+            localMetadata = CreateRecoveryMetadata(existing, localSalvage?.General);
+            if (localSalvage is not null &&
+                !HasSameRootKeyMaterial(localSalvage.Root, verified[0].Verification.VerifiedBundle!.UserData))
+            {
+                throw new RecoveryEvidenceConflictException("canonical-candidate-root-key-material-conflict");
+            }
+
+            var baseCandidate = verified[0];
+            var baseBundle = baseCandidate.Verification.VerifiedBundle!;
+            CopyRecoveryMetadata(baseCandidate.Envelope.User, existing);
+            existing.KeyEpoch = expectedKeyEpoch;
+            existing.MembershipEpoch = expectedMembershipEpoch;
+            existing.LastModifiedAt = baseCandidate.Envelope.CreatedAtUtc;
+
+            _versionClock.Observe(SyncVersionStampTraversal.Enumerate(baseBundle));
+            for (var index = 1; index < verified.Count; index++)
+            {
+                MergeRecoveryBundle(
+                    existing,
+                    baseBundle,
+                    verified[index].Verification.VerifiedBundle!,
+                    verified[index].Envelope.User,
+                    verified[index].Envelope.CreatedAtUtc);
+            }
+
+            var recoveredComponents = UserDataBlobKind.All;
+            if (localSalvage is not null)
+            {
+                recoveredComponents = localSalvage.FailedComponents;
+                MergeHealthyLocalSalvage(existing, baseBundle, localSalvage, localMetadata);
+                existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, localSalvage.LastModifiedAt);
+            }
+
+            // Recovery is reconstruction, not a user mutation: item/version stamps are retained.
+            // Aggregate child hashes, root links and local encryption are rebuilt around the
+            // deterministic logical result and then verified again before persistence.
+            _integrity.RebuildModifiedBlobIntegrity(baseBundle, UserDataBlobKind.All);
+            _integrity.VerifyUntrustedBundle(baseBundle);
+            UserLoginIdentityMetadataUtil.Verify(existing, baseBundle.GeneralUserData);
+            await PersistMergedUserBundleAsync(existing, baseBundle, key, UserDataBlobKind.All, ct);
+            existing.GenerateIntegrityHash();
+            existing.VerifyIntegrity();
+            _users.Update(existing);
+
+            return new UserDataRecoveryReconstructionResult(true, candidateResults, "canonical-reconstructed")
+            {
+                RecoveredComponents = recoveredComponents == UserDataBlobKind.None
+                    ? UserDataBlobKind.All
+                    : recoveredComponents
+            };
+        }
+        finally
+        {
+            localSalvage?.Dispose();
+            if (epochPasswordSalt is not null)
+                CryptographicOperations.ZeroMemory(epochPasswordSalt);
+            foreach (var item in verified)
+                item.Verification.Dispose();
+        }
+    }
+
+    private void MergeRecoveryBundle(
+        User existing,
+        UserDataBundle target,
+        UserDataBundle incoming,
+        UserSyncPayload incomingMetadata,
+        DateTimeOffset incomingTimestamp)
+    {
+        _versionClock.Observe(SyncVersionStampTraversal.Enumerate(incoming));
+        var changed = UserDataBlobKind.None;
+        try
+        {
+            if (GeneralUserDataMergeUtil.Merge(target.GeneralUserData, incoming.GeneralUserData, existing, incomingMetadata))
+                changed |= UserDataBlobKind.General;
+            if (_passwordsDataMerge.Merge(target.UserPasswordsData, incoming.UserPasswordsData))
+                changed |= UserDataBlobKind.Passwords;
+            if (_devicesDataMerge.Merge(target.UserDevicesData, incoming.UserDevicesData))
+                changed |= UserDataBlobKind.Devices;
+        }
+        catch (DeterministicSyncConflictException ex) when (!ex.UserId.HasValue)
+        {
+            throw ex.WithUserId(existing.UId);
+        }
+
+        existing.UserDataLastModifiedAt = MaxDateTimeOffset(
+            existing.UserDataLastModifiedAt,
+            incomingMetadata.UserDataLastModifiedAt,
+            incomingTimestamp);
+        if (changed.HasFlag(UserDataBlobKind.General))
+        {
+            existing.GeneralUserDataLastModifiedAt = MaxDateTimeOffset(
+                existing.GeneralUserDataLastModifiedAt,
+                incomingMetadata.GeneralUserDataLastModifiedAt,
+                incomingTimestamp);
+        }
+        if (changed.HasFlag(UserDataBlobKind.Passwords))
+        {
+            existing.UserPasswordsDataLastModifiedAt = MaxDateTimeOffset(
+                existing.UserPasswordsDataLastModifiedAt,
+                incomingMetadata.UserPasswordsDataLastModifiedAt,
+                incomingTimestamp);
+        }
+        if (changed.HasFlag(UserDataBlobKind.Devices))
+        {
+            existing.UserDevicesDataLastModifiedAt = MaxDateTimeOffset(
+                existing.UserDevicesDataLastModifiedAt,
+                incomingMetadata.UserDevicesDataLastModifiedAt,
+                incomingTimestamp);
+        }
+        existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, incomingTimestamp);
+    }
+
+    private void MergeHealthyLocalSalvage(
+        User existing,
+        UserDataBundle target,
+        CanonicalSalvage local,
+        UserSyncPayload localMetadata)
+    {
+        try
+        {
+            if (local.General is not null)
+            {
+                _versionClock.Observe([local.General.Version]);
+                GeneralUserDataMergeUtil.Merge(target.GeneralUserData, local.General, existing, localMetadata);
+                existing.GeneralUserDataLastModifiedAt = MaxDateTimeOffset(
+                    existing.GeneralUserDataLastModifiedAt,
+                    localMetadata.GeneralUserDataLastModifiedAt);
+            }
+            if (local.Passwords is not null)
+            {
+                _versionClock.Observe(SyncVersionStampTraversal.Enumerate(local.Passwords));
+                _passwordsDataMerge.Merge(target.UserPasswordsData, local.Passwords);
+                existing.UserPasswordsDataLastModifiedAt = MaxDateTimeOffset(
+                    existing.UserPasswordsDataLastModifiedAt,
+                    localMetadata.UserPasswordsDataLastModifiedAt);
+            }
+            if (local.Devices is not null)
+            {
+                _versionClock.Observe(SyncVersionStampTraversal.Enumerate(local.Devices));
+                _devicesDataMerge.Merge(target.UserDevicesData, local.Devices);
+                existing.UserDevicesDataLastModifiedAt = MaxDateTimeOffset(
+                    existing.UserDevicesDataLastModifiedAt,
+                    localMetadata.UserDevicesDataLastModifiedAt);
+            }
+        }
+        catch (DeterministicSyncConflictException ex) when (!ex.UserId.HasValue)
+        {
+            throw ex.WithUserId(existing.UId);
+        }
+
+        existing.UserDataLastModifiedAt = MaxDateTimeOffset(
+            existing.UserDataLastModifiedAt,
+            localMetadata.UserDataLastModifiedAt);
+        existing.LastModifiedAt = MaxDateTimeOffset(existing.LastModifiedAt, local.LastModifiedAt);
+    }
+
+    private async Task<CanonicalSalvage?> TryReadCanonicalSalvageAsync(
+        User existing,
+        EncryptionKey key,
+        long expectedKeyEpoch,
+        long expectedMembershipEpoch,
+        CancellationToken ct)
+    {
+        if (_checkpoints is null || _identity is null)
+            return null;
+
+        var checkpoint = await _checkpoints.GetAsync(existing.UId, ct);
+        if (checkpoint is null)
+            return null;
+        try
+        {
+            UserCanonicalCheckpointUtil.VerifyAuthenticity(checkpoint, existing.UId, _identity);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or CryptographicException or ArgumentException)
+        {
+            return null;
+        }
+
+        if (checkpoint.KeyEpoch != expectedKeyEpoch ||
+            checkpoint.MembershipEpoch != expectedMembershipEpoch)
+            return null;
+
+        UserData? root = null;
+        GeneralUserData? general = null;
+        UserPasswordsData? passwords = null;
+        UserDevicesData? devices = null;
+        try
+        {
+            root = await DecryptDecompressDeserializeAsync(
+                existing.EncryptedPayload,
+                key,
+                BackendJsonSerializerContext.Default.UserData,
+                ct: ct);
+            if (root is null)
+                return null;
+            _integrity.VerifyUserData(root);
+
+            general = await TryReadSalvageBlobAsync(
+                existing.EncryptedGeneralUserDataPayload,
+                root.GeneralUserDataKey,
+                BackendJsonSerializerContext.Default.GeneralUserData,
+                _integrity.VerifyGeneralUserData,
+                root.GeneralUserDataIntegrityHash,
+                ct);
+            passwords = await TryReadSalvageBlobAsync(
+                existing.EncryptedUserPasswordsDataPayload,
+                root.UserPasswordsDataKey,
+                BackendJsonSerializerContext.Default.UserPasswordsData,
+                _integrity.VerifyUserPasswordsData,
+                root.UserPasswordsDataIntegrityHash,
+                ct);
+            devices = await TryReadSalvageBlobAsync(
+                existing.EncryptedUserDevicesDataPayload,
+                root.UserDevicesDataKey,
+                BackendJsonSerializerContext.Default.UserDevicesData,
+                _integrity.VerifyUserDevicesData,
+                root.UserDevicesDataIntegrityHash,
+                ct);
+
+            // Cleartext login metadata is part of the canonical identity contract. A locally
+            // healthy general blob is salvageable only when it still agrees with that metadata.
+            if (general is not null)
+            {
+                try
+                {
+                    UserLoginIdentityMetadataUtil.Verify(existing, general);
+                }
+                catch (InvalidDataException)
+                {
+                    general.Dispose();
+                    general = null;
+                }
+            }
+
+            var failed = UserDataBlobKind.None;
+            if (general is null)
+                failed |= UserDataBlobKind.General;
+            if (passwords is null)
+                failed |= UserDataBlobKind.Passwords;
+            if (devices is null)
+                failed |= UserDataBlobKind.Devices;
+            if (failed == UserDataBlobKind.All)
+                return null;
+
+            var result = new CanonicalSalvage(
+                root,
+                general,
+                passwords,
+                devices,
+                failed,
+                existing.LastModifiedAt);
+            root = null;
+            general = null;
+            passwords = null;
+            devices = null;
+            return result;
+        }
+        catch (Exception ex) when (IsSnapshotVerificationFailure(ex) || ex is ArgumentException)
+        {
+            return null;
+        }
+        finally
+        {
+            root?.Dispose();
+            general?.Dispose();
+            passwords?.Dispose();
+            devices?.Dispose();
+        }
+    }
+
+    private async Task<T?> TryReadSalvageBlobAsync<T>(
+        byte[] encryptedBlob,
+        byte[] rawKey,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo,
+        Action<T> verifyIntegrity,
+        byte[] expectedRootHash,
+        CancellationToken ct) where T : class, IDisposable
+    {
+        try
+        {
+            var value = await DecryptAndVerifyEncryptedUserBlobAsync(
+                encryptedBlob,
+                rawKey,
+                typeInfo,
+                verifyIntegrity,
+                ct);
+            if (expectedRootHash.Length != Hashing.SHA256HashSizeInBytes ||
+                value is not IntegrityCheckableBase integrityValue ||
+                !Hashing.Verify(expectedRootHash, integrityValue.IntegrityHash))
+            {
+                value.Dispose();
+                return null;
+            }
+            return value;
+        }
+        catch (Exception ex) when (IsSnapshotVerificationFailure(ex) || ex is ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static bool HasSameRootKeyMaterial(UserData first, UserData second) =>
+        first.FormatVersion == second.FormatVersion &&
+        first.UId == second.UId &&
+        Hashing.Verify(first.GeneralUserDataKey, second.GeneralUserDataKey) &&
+        Hashing.Verify(first.UserPasswordsDataKey, second.UserPasswordsDataKey) &&
+        Hashing.Verify(first.UserDevicesDataKey, second.UserDevicesDataKey);
+
+    private static UserSyncPayload CreateRecoveryMetadata(User source, GeneralUserData? trustedGeneral)
+    {
+        var metadata = new UserSyncPayload
+        {
+            UId = source.UId,
+            UsernameHash = source.UsernameHash.ToArray(),
+            UsernameSalt = source.UsernameSalt.ToArray(),
+            GeneralUserDataVersion = source.GetGeneralUserDataVersion(),
+            PasswordSalt = source.PasswordSalt.ToArray(),
+            UserDataLastModifiedAt = source.UserDataLastModifiedAt,
+            GeneralUserDataLastModifiedAt = source.GeneralUserDataLastModifiedAt,
+            UserPasswordsDataLastModifiedAt = source.UserPasswordsDataLastModifiedAt,
+            UserDevicesDataLastModifiedAt = source.UserDevicesDataLastModifiedAt
+        };
+
+        // TryReadCanonicalSalvageAsync already excludes a general component whose authenticated
+        // login metadata does not match. Never invent a new salt/hash at the same deterministic
+        // version during recovery, because that would create a nondeterministic identity branch.
+        if (trustedGeneral is not null)
+            UserLoginIdentityMetadataUtil.Verify(metadata.UsernameHash, metadata.UsernameSalt, metadata.GeneralUserDataVersion, trustedGeneral);
+
+        return metadata;
+    }
+
+    private sealed class CanonicalSalvage : IDisposable
+    {
+        public CanonicalSalvage(
+            UserData root,
+            GeneralUserData? general,
+            UserPasswordsData? passwords,
+            UserDevicesData? devices,
+            UserDataBlobKind failedComponents,
+            DateTimeOffset lastModifiedAt)
+        {
+            Root = root;
+            General = general;
+            Passwords = passwords;
+            Devices = devices;
+            FailedComponents = failedComponents;
+            LastModifiedAt = lastModifiedAt;
+        }
+
+        public UserData Root { get; }
+        public GeneralUserData? General { get; }
+        public UserPasswordsData? Passwords { get; }
+        public UserDevicesData? Devices { get; }
+        public UserDataBlobKind FailedComponents { get; }
+        public DateTimeOffset LastModifiedAt { get; }
+
+        public void Dispose()
+        {
+            Root.Dispose();
+            General?.Dispose();
+            Passwords?.Dispose();
+            Devices?.Dispose();
+        }
+    }
+
+    private static RecoveryCandidateVerificationResult CandidateFailure(
+        UserSnapshotEnvelope snapshot,
+        RecoveryCandidateState state,
+        UserDataBlobKind failedComponents,
+        string diagnosticCode) =>
+        new(
+            snapshot.OriginDeviceId,
+            snapshot.OriginInstanceId,
+            snapshot.OriginRevision,
+            snapshot.SnapshotHash.ToArray(),
+            state,
+            failedComponents,
+            diagnosticCode);
+
+    private static RecoveryCandidateState MapRecoveryCandidateState(UserDataVerificationState state) => state switch
+    {
+        UserDataVerificationState.RootDecryptFailure => RecoveryCandidateState.DecryptFailed,
+        UserDataVerificationState.RootIntegrityFailure or
+        UserDataVerificationState.GeneralBlobFailure or
+        UserDataVerificationState.PasswordsBlobFailure or
+        UserDataVerificationState.DevicesBlobFailure or
+        UserDataVerificationState.BundleLinkFailure => RecoveryCandidateState.IntegrityFailed,
+        UserDataVerificationState.LoginMetadataFailure => RecoveryCandidateState.MetadataMismatch,
+        UserDataVerificationState.AuthorizationFailure => RecoveryCandidateState.UnauthorizedOrigin,
+        UserDataVerificationState.EpochFailure => RecoveryCandidateState.WrongKeyEpoch,
+        UserDataVerificationState.Fork => RecoveryCandidateState.Forked,
+        _ => RecoveryCandidateState.IntegrityFailed
+    };
+
+    private static void CopyRecoveryMetadata(UserSyncPayload source, User target)
+    {
+        CryptographicOperations.ZeroMemory(target.UsernameHash);
+        CryptographicOperations.ZeroMemory(target.UsernameSalt);
+        CryptographicOperations.ZeroMemory(target.PasswordSalt);
+        target.UsernameHash = source.UsernameHash.ToArray();
+        target.UsernameSalt = source.UsernameSalt.ToArray();
+        target.PasswordSalt = source.PasswordSalt.ToArray();
+        target.SetGeneralUserDataVersion(source.GeneralUserDataVersion);
+        target.UserDataLastModifiedAt = source.UserDataLastModifiedAt;
+        target.GeneralUserDataLastModifiedAt = source.GeneralUserDataLastModifiedAt;
+        target.UserPasswordsDataLastModifiedAt = source.UserPasswordsDataLastModifiedAt;
+        target.UserDevicesDataLastModifiedAt = source.UserDevicesDataLastModifiedAt;
     }
 
     private static UserSnapshotMergeEntryResult Failed(
@@ -416,7 +986,13 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
 
     private void ReplaceEncryptedPayload(byte[] currentPayload, byte[] replacementPayload, Action<byte[]> assignReplacement)
     {
-        CryptographicOperations.ZeroMemory(currentPayload);
+        // These encrypted payload properties are EF Core concurrency tokens. Their tracked
+        // OriginalValue can reference the same byte[] instance as the entity property. Zeroing
+        // that array before SaveChanges would therefore corrupt the optimistic-concurrency
+        // predicate and produce a false DbUpdateConcurrencyException. Ciphertext is replaced
+        // without in-place mutation; decrypted keys and logical bundles retain their existing
+        // explicit disposal/zeroization behavior.
+        _ = currentPayload;
         assignReplacement(replacementPayload);
     }
 

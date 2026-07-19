@@ -61,38 +61,30 @@ public static class UserCanonicalCheckpointUtil
         return checkpoint;
     }
 
-    public static void Verify(
-        User user,
+
+    public static void VerifyAuthenticity(
         UserCanonicalCheckpoint checkpoint,
+        Guid expectedUserId,
         IDeviceIdentityService identity)
     {
-        if (checkpoint.UserId != user.UId ||
+        ArgumentNullException.ThrowIfNull(checkpoint);
+        if (checkpoint.UserId != expectedUserId ||
             checkpoint.CheckpointSequence <= 0 ||
             checkpoint.LocalDeviceId != identity.LocalDeviceId ||
             checkpoint.LocalOriginInstanceId != identity.OriginInstanceId ||
-            checkpoint.KeyEpoch != user.KeyEpoch ||
-            checkpoint.MembershipEpoch != user.MembershipEpoch)
-        {
-            throw new InvalidDataException("The canonical checkpoint identity or epoch is invalid.");
-        }
-
-        if (checkpoint.CanonicalContentHash.Length != SyncConstants.SyncDeltaPayloadHashBytes ||
+            checkpoint.KeyEpoch <= 0 ||
+            checkpoint.MembershipEpoch <= 0 ||
+            checkpoint.CanonicalContentHash.Length != SyncConstants.SyncDeltaPayloadHashBytes ||
             checkpoint.UserIntegrityHash.Length != SyncConstants.SyncDeltaPayloadHashBytes ||
             checkpoint.SignPublicKey.Length != SyncConstants.SyncDeltaEd25519PublicKeyBytes ||
             checkpoint.Signature.Length != SyncConstants.SyncDeltaEd25519SignatureBytes ||
             checkpoint.CreatedAtUtc == default)
         {
-            throw new InvalidDataException("The canonical checkpoint structure is invalid.");
+            throw new InvalidDataException("The canonical checkpoint identity or structure is invalid.");
         }
 
         if (!Hashing.Verify(checkpoint.SignPublicKey, identity.SignPublicKey))
             throw new InvalidDataException("The canonical checkpoint was signed by a different local identity.");
-        if (!Hashing.Verify(checkpoint.UserIntegrityHash, user.IntegrityHash))
-            throw new InvalidDataException("The canonical checkpoint user-integrity commitment does not match.");
-
-        var expectedContentHash = CalculateCanonicalContentHash(user);
-        if (!Hashing.Verify(checkpoint.CanonicalContentHash, expectedContentHash))
-            throw new InvalidDataException("The canonical checkpoint content commitment does not match.");
 
         var publicKey = PublicKey.Import(
             SignatureAlgorithm.Ed25519,
@@ -100,6 +92,22 @@ public static class UserCanonicalCheckpointUtil
             KeyBlobFormat.RawPublicKey);
         if (!SignatureAlgorithm.Ed25519.Verify(publicKey, BuildSignatureBytes(checkpoint), checkpoint.Signature))
             throw new InvalidDataException("The canonical checkpoint signature is invalid.");
+    }
+
+    public static void Verify(
+        User user,
+        UserCanonicalCheckpoint checkpoint,
+        IDeviceIdentityService identity)
+    {
+        VerifyAuthenticity(checkpoint, user.UId, identity);
+        if (checkpoint.KeyEpoch != user.KeyEpoch || checkpoint.MembershipEpoch != user.MembershipEpoch)
+            throw new InvalidDataException("The canonical checkpoint epoch is invalid.");
+        if (!Hashing.Verify(checkpoint.UserIntegrityHash, user.IntegrityHash))
+            throw new InvalidDataException("The canonical checkpoint user-integrity commitment does not match.");
+
+        var expectedContentHash = CalculateCanonicalContentHash(user);
+        if (!Hashing.Verify(checkpoint.CanonicalContentHash, expectedContentHash))
+            throw new InvalidDataException("The canonical checkpoint content commitment does not match.");
     }
 
     private static byte[] BuildSignatureBytes(UserCanonicalCheckpoint checkpoint) =>

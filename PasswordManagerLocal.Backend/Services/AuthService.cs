@@ -44,6 +44,7 @@ public sealed class AuthService : IAuthService
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
     private readonly IUserLoginIdentityProjectionService _loginIdentities;
     private readonly IUserCanonicalHealthService? _canonicalHealth;
+    private readonly IUserDataRecoveryCoordinator? _recoveryCoordinator;
 
     public AuthService(
         IUserLookupService userLookup,
@@ -73,7 +74,8 @@ public sealed class AuthService : IAuthService
         ISyncVersionClockService versionClock,
         IUserLoginIdentityProjectionService loginIdentities,
         IUserTombstoneGarbageCollector? garbageCollector = null,
-        IUserCanonicalHealthService? canonicalHealth = null)
+        IUserCanonicalHealthService? canonicalHealth = null,
+        IUserDataRecoveryCoordinator? recoveryCoordinator = null)
     {
         _userLookup = userLookup;
         _userDataReader = userDataReader;
@@ -103,6 +105,7 @@ public sealed class AuthService : IAuthService
         _loginIdentities = loginIdentities;
         _garbageCollector = garbageCollector;
         _canonicalHealth = canonicalHealth;
+        _recoveryCoordinator = recoveryCoordinator;
     }
 
 
@@ -352,60 +355,97 @@ public sealed class AuthService : IAuthService
             prePasswordResolution.UserId != expectedUserId)
             throw new UsernameChangedDuringLoginException();
 
-        var user = await _userLookup.GetAndVerifyUserByUidAsync(expectedUserId, ct);
-        using var key = EncryptionKey.FromPassword(request.Password, user.PasswordSalt);
-
-        await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, UserSyncKeyConfidence.UnconfirmedPassword, ct);
-        if (_garbageCollector is not null)
+        var user = await _userLookup.GetUserByUidAsync(expectedUserId, ct)
+                   ?? throw new UserNotFoundException();
+        byte[]? authenticatedRecoverySalt = null;
+        try
         {
             try
             {
-                await _garbageCollector.CollectAsync(user.UId, key, ct);
+                user.VerifyIntegrity();
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (InvalidDataIntegrityException) when (_recoveryCoordinator is not null)
             {
-                // Login must remain available when conservative maintenance cannot complete.
+                // A damaged canonical row must not block recovery before the supplied password can
+                // be tested against authenticated current-epoch evidence. The salt resolver never
+                // trusts the damaged row and returns a value only when all eligible signed evidence
+                // agrees on one historically authorized salt.
+                authenticatedRecoverySalt = await _recoveryCoordinator.TryResolvePasswordSaltAsync(user.UId, ct);
+            }
+
+            var passwordSalt = authenticatedRecoverySalt ?? user.PasswordSalt;
+            if (passwordSalt.Length != Hashing.SHA256HashSizeInBytes)
+                throw new UnauthorizedAccessException("Authentication failed.");
+
+            using var key = EncryptionKey.FromPassword(request.Password, passwordSalt);
+
+            await _snapshotMerge.TryMergePendingUnderLifecycleAsync(user.UId, key, UserSyncKeyConfidence.UnconfirmedPassword, ct);
+            if (_recoveryCoordinator is not null)
+            {
+                await _recoveryCoordinator.TryRecoverAsync(
+                    user.UId,
+                    key,
+                    UserSyncKeyConfidence.UnconfirmedPassword,
+                    UserDataRecoveryTrigger.Login,
+                    ct);
+            }
+            if (_garbageCollector is not null)
+            {
+                try
+                {
+                    await _garbageCollector.CollectAsync(user.UId, key, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Login must remain available when conservative maintenance cannot complete.
+                }
+            }
+
+            user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
+            var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
+            try
+            {
+                UserLoginIdentityMetadataUtil.Verify(user, bundle.GeneralUserData);
+                if (_canonicalHealth is not null)
+                {
+                    var health = await _canonicalHealth.VerifyAsync(
+                        user, key, UserSyncKeyConfidence.ExplicitlyTrusted, recordFault: true, ct: ct);
+                    if (health.State is not (UserDataVerificationState.Healthy or UserDataVerificationState.CheckpointMissing))
+                        throw new UnauthorizedAccessException("The local account copy could not be verified.");
+                }
+
+                var postMergeResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+                if (postMergeResolution.State != UserLoginIdentityMatchState.Matched ||
+                    postMergeResolution.UserId != expectedUserId)
+                    throw new UsernameChangedDuringLoginException();
+
+                var modifiedBlobs = UserDataBlobKind.None;
+                UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
+                    bundle.UserDevicesData,
+                    _identity.LocalDeviceId,
+                    DateTimeOffset.UtcNow,
+                    _versionClock.Next());
+                modifiedBlobs |= UserDataBlobKind.Devices;
+                _rememberMe.SetRememberMe(user, request.RememberMe, key);
+                await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
+
+                var finalResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+                if (finalResolution.State != UserLoginIdentityMatchState.Matched ||
+                    finalResolution.UserId != expectedUserId)
+                    throw new UsernameChangedDuringLoginException();
+
+                return CreateAuthenticatedSession(user.UId, key, bundle);
+            }
+            catch
+            {
+                bundle.Dispose();
+                throw;
             }
         }
-
-        user = await _userLookup.GetAndVerifyUserByUidAsync(user.UId, ct);
-        var bundle = await _userDataReader.GetAndVerifyUserDataBundleAsync(user, key, ct);
-        try
+        finally
         {
-            UserLoginIdentityMetadataUtil.Verify(user, bundle.GeneralUserData);
-            if (_canonicalHealth is not null)
-            {
-                var health = await _canonicalHealth.VerifyAsync(
-                    user, key, UserSyncKeyConfidence.ExplicitlyTrusted, recordFault: true, ct: ct);
-                if (health.State is not (UserDataVerificationState.Healthy or UserDataVerificationState.CheckpointMissing))
-                    throw new UnauthorizedAccessException("The local account copy could not be verified.");
-            }
-            var postMergeResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
-            if (postMergeResolution.State != UserLoginIdentityMatchState.Matched ||
-                postMergeResolution.UserId != expectedUserId)
-                throw new UsernameChangedDuringLoginException();
-
-            var modifiedBlobs = UserDataBlobKind.None;
-            UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
-                bundle.UserDevicesData,
-                _identity.LocalDeviceId,
-                DateTimeOffset.UtcNow,
-                _versionClock.Next());
-            modifiedBlobs |= UserDataBlobKind.Devices;
-            _rememberMe.SetRememberMe(user, request.RememberMe, key);
-            await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
-
-            var finalResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
-            if (finalResolution.State != UserLoginIdentityMatchState.Matched ||
-                finalResolution.UserId != expectedUserId)
-                throw new UsernameChangedDuringLoginException();
-
-            return CreateAuthenticatedSession(user.UId, key, bundle);
-        }
-        catch
-        {
-            bundle.Dispose();
-            throw;
+            if (authenticatedRecoverySalt is not null)
+                CryptographicOperations.ZeroMemory(authenticatedRecoverySalt);
         }
     }
 

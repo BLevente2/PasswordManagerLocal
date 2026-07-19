@@ -21,6 +21,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
     private readonly IUserCanonicalHealthService? _canonicalHealth;
     private readonly IUserSyncKeyResolverService? _keyResolver;
     private readonly IUserSyncFaultService? _syncFaults;
+    private readonly IUserDataRecoveryScheduler? _recoveryScheduler;
 
     public UserSnapshotPublisherService(
         IUserSyncSnapshotRepository snapshots,
@@ -32,7 +33,8 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         IDeletedUserBarrierRepository? deletionBarriers = null,
         IUserCanonicalHealthService? canonicalHealth = null,
         IUserSyncKeyResolverService? keyResolver = null,
-        IUserSyncFaultService? syncFaults = null)
+        IUserSyncFaultService? syncFaults = null,
+        IUserDataRecoveryScheduler? recoveryScheduler = null)
     {
         _snapshots = snapshots;
         _states = states;
@@ -44,6 +46,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         _canonicalHealth = canonicalHealth;
         _keyResolver = keyResolver;
         _syncFaults = syncFaults;
+        _recoveryScheduler = recoveryScheduler;
     }
 
     public Task<UserSyncSnapshot?> GetLatestAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
@@ -54,17 +57,31 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         if (user.UId == Guid.Empty)
             throw new InvalidOperationException("Cannot publish a snapshot for an invalid user.");
 
-        return _lifecycle.ExecuteAsync(user.UId, token => GetOrCreateCoreAsync(user, token), ct);
+        return _lifecycle.ExecuteAsync(user.UId, token => GetOrCreateCoreAsync(user, null, UserSyncKeyConfidence.UnconfirmedPassword, token), ct);
     }
 
-    private async Task<UserSyncSnapshot> GetOrCreateCoreAsync(User user, CancellationToken ct)
+    public Task<UserSyncSnapshot> GetOrCreateAfterRecoveryAsync(
+        User user,
+        EncryptionKey key,
+        UserSyncKeyConfidence keyConfidence,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return _lifecycle.ExecuteAsync(user.UId, token => GetOrCreateCoreAsync(user, key, keyConfidence, token), ct);
+    }
+
+    private async Task<UserSyncSnapshot> GetOrCreateCoreAsync(
+        User user,
+        EncryptionKey? suppliedKey,
+        UserSyncKeyConfidence suppliedKeyConfidence,
+        CancellationToken ct)
     {
         if (user.UId == Guid.Empty)
             throw new InvalidOperationException("Cannot publish a snapshot for an invalid user.");
         if (_deletionBarriers is not null && await _deletionBarriers.ExistsAsync(user.UId, ct))
             throw new InvalidOperationException("Cannot publish a snapshot for a permanently deleted account identity.");
 
-        await EnforceCanonicalHealthGateAsync(user, ct);
+        await EnforceCanonicalHealthGateAsync(user, suppliedKey, suppliedKeyConfidence, ct);
 
         var state = await _states.GetAsync(user.UId, ct);
         var isNewState = state is null;
@@ -109,7 +126,7 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         // membership/key epochs, and newly merged remote knowledge participate in reuse.
         var contentHash = CalculatePublishedContentHash(user, remoteCoverage);
         // The schema deliberately retains one row per local origin namespace and key epoch.
-        // A failed health gate may have changed that row to IsolatedCorrupt, so lookup must not
+        // A failed health gate may have changed that row to RecoveryCandidate, so lookup must not
         // filter by LocalPublished here or a later verified publication would attempt to insert a
         // duplicate unique row. Reuse without a new revision is allowed only while the retained
         // row is still an eligible local publication.
@@ -220,7 +237,11 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
         return row;
     }
 
-    private async Task EnforceCanonicalHealthGateAsync(User user, CancellationToken ct)
+    private async Task EnforceCanonicalHealthGateAsync(
+        User user,
+        EncryptionKey? suppliedKey,
+        UserSyncKeyConfidence suppliedKeyConfidence,
+        CancellationToken ct)
     {
         if (_canonicalHealth is null)
         {
@@ -230,11 +251,18 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
             return;
         }
 
-        EncryptionKey? key = null;
-        var confidence = UserSyncKeyConfidence.UnconfirmedPassword;
+        EncryptionKey? resolvedKey = null;
+        var key = suppliedKey;
+        var confidence = suppliedKey is null
+            ? UserSyncKeyConfidence.UnconfirmedPassword
+            : suppliedKeyConfidence;
         try
         {
-            _keyResolver?.TryResolve(user, out key, out confidence);
+            if (key is null)
+            {
+                _keyResolver?.TryResolve(user, out resolvedKey, out confidence);
+                key = resolvedKey;
+            }
             var health = await _canonicalHealth.VerifyAsync(user, key, confidence, recordFault: true, ct: ct);
             var previouslyBlocked = _syncFaults is not null &&
                                     await _syncFaults.IsPublishingBlockedAsync(user.UId, ct);
@@ -250,20 +278,24 @@ public sealed class UserSnapshotPublisherService : IUserSnapshotPublisherService
                 var stale = await GetLatestAsync(user.UId, user.KeyEpoch, ct);
                 if (stale is not null)
                 {
-                    stale.Status = UserSyncSnapshotStatus.IsolatedCorrupt;
-                    stale.QuarantineReason = "Local canonical health verification failed; stale local publication is disabled.";
+                    // The last locally published envelope was created only after the normal
+                    // canonical health gate passed. Disable it for relay/publication, but retain it
+                    // as freshly re-verifiable recovery evidence instead of declaring it corrupt.
+                    stale.Status = UserSyncSnapshotStatus.RecoveryCandidate;
+                    stale.QuarantineReason = "Local canonical health verification failed; prior local publication retained for recovery only.";
                     stale.ConflictingSnapshotHash = null;
                     _snapshots.Update(stale);
                 }
 
                 await _uow.SaveChangesAsync(ct);
+                _recoveryScheduler?.Schedule(user.UId, UserDataRecoveryTrigger.PublisherHealthFailure);
                 throw new InvalidDataException(
                     "Local canonical user data did not pass the snapshot publication health gate.");
             }
         }
         finally
         {
-            key?.Dispose();
+            resolvedKey?.Dispose();
         }
     }
 

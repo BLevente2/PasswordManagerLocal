@@ -31,6 +31,17 @@ public sealed class FakeUserSyncSnapshotRepository : IUserSyncSnapshotRepository
     public Task<IReadOnlyList<UserSyncSnapshot>> ListForUserAsync(Guid userId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<UserSyncSnapshot>>(_items.Where(item => item.UserId == userId).ToList());
 
+    public Task<IReadOnlyList<UserSyncSnapshot>> ListRecoveryEvidenceAsync(Guid userId, long userKeyEpoch, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<UserSyncSnapshot>>(_items.Where(item =>
+            item.UserId == userId && item.UserKeyEpoch == userKeyEpoch &&
+            item.Status is UserSyncSnapshotStatus.Pending or UserSyncSnapshotStatus.RecoveryCandidate or
+                UserSyncSnapshotStatus.MergedReceipt or UserSyncSnapshotStatus.LocalPublished)
+            .OrderBy(item => item.OriginDeviceId)
+            .ThenBy(item => item.OriginInstanceId)
+            .ThenBy(item => item.OriginRevision)
+            .ThenBy(item => Convert.ToHexString(item.SnapshotHash), StringComparer.Ordinal)
+            .ToList());
+
     public Task<bool> HasQuarantinedAsync(Guid userId, long userKeyEpoch, long membershipEpoch, CancellationToken ct = default) =>
         Task.FromResult(_items.Any(item =>
             item.UserId == userId && item.UserKeyEpoch == userKeyEpoch &&

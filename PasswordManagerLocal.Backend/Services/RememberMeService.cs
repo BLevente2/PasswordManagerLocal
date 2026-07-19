@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
@@ -23,6 +24,8 @@ public class RememberMeService : IRememberMeService
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
     private readonly IUserCanonicalHealthService? _canonicalHealth;
+    private readonly IUserDataRecoveryCoordinator? _recoveryCoordinator;
+    private readonly IUserRepository? _users;
 
     public RememberMeService(
         ITokenService tokens,
@@ -36,7 +39,9 @@ public class RememberMeService : IRememberMeService
         IUserSnapshotMergeCoordinator snapshotMerge,
         ISyncVersionClockService versionClock,
         IUserTombstoneGarbageCollector? garbageCollector = null,
-        IUserCanonicalHealthService? canonicalHealth = null)
+        IUserCanonicalHealthService? canonicalHealth = null,
+        IUserDataRecoveryCoordinator? recoveryCoordinator = null,
+        IUserRepository? users = null)
     {
         _tokens = tokens;
         _keys = keys;
@@ -50,6 +55,8 @@ public class RememberMeService : IRememberMeService
         _versionClock = versionClock;
         _garbageCollector = garbageCollector;
         _canonicalHealth = canonicalHealth;
+        _recoveryCoordinator = recoveryCoordinator;
+        _users = users;
     }
 
 
@@ -58,7 +65,12 @@ public class RememberMeService : IRememberMeService
     {
         var initializedTokens = new List<Guid>();
 
-        var usersEnabledRM = await _lookup.GetAndVerifyRememberMeEnabledUsersAsync(ct);
+        // SavedKey is local-only and excluded from the canonical integrity commitment. Loading
+        // raw rows here lets an independently unprotected Remember Me key repair a damaged
+        // canonical row instead of being blocked by pre-recovery integrity verification.
+        var usersEnabledRM = _users is null
+            ? await _lookup.GetAndVerifyRememberMeEnabledUsersAsync(ct)
+            : await _users.GetAllRememberMeEnabledUsersAsync(ct);
         if (usersEnabledRM.Count == 0)
             return initializedTokens;
 
@@ -75,7 +87,9 @@ public class RememberMeService : IRememberMeService
 
     public async Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default)
     {
-        var user = await _lookup.GetAndVerifyUserByUidAsync(userId, ct);
+        var user = _users is null
+            ? await _lookup.GetAndVerifyUserByUidAsync(userId, ct)
+            : await _users.GetByIdAsync(userId, ct) ?? throw new UserNotFoundException();
         var token = await TryInitializeRememberedUserAsync(user, ct);
 
         if (token is null)
@@ -127,60 +141,97 @@ public class RememberMeService : IRememberMeService
             return null;
 
         byte[]? rawKey = null;
-
+        EncryptionKey? key = null;
         try
         {
-            rawKey = _protector.Unprotect(user.SavedKey);
-            using var key = EncryptionKey.FromRaw(rawKey);
-            await _snapshotMerge.TryMergePendingAsync(user.UId, key, UserSyncKeyConfidence.RememberMe, ct);
-            if (_garbageCollector is not null)
+            try
             {
+                rawKey = _protector.Unprotect(user.SavedKey);
+                key = EncryptionKey.FromRaw(rawKey);
+            }
+            catch (Exception ex) when (ex is CryptographicException or ArgumentException)
+            {
+                // Only failure to unprotect or import the local saved key proves that Remember Me
+                // material itself is unusable. Recovery/decryption failures later must not erase it.
+                await DisableBrokenRememberMeAsync(user, ct);
+                return null;
+            }
+
+            try
+            {
+                await _snapshotMerge.TryMergePendingAsync(user.UId, key, UserSyncKeyConfidence.RememberMe, ct);
+                if (_recoveryCoordinator is not null)
+                {
+                    await _recoveryCoordinator.TryRecoverAsync(
+                        user.UId,
+                        key,
+                        UserSyncKeyConfidence.RememberMe,
+                        UserDataRecoveryTrigger.RememberMeStartup,
+                        ct);
+                }
+                if (_garbageCollector is not null)
+                {
+                    try
+                    {
+                        await _garbageCollector.CollectAsync(user.UId, key, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Remember Me unlock remains available when maintenance is conservatively blocked.
+                    }
+                }
+
+                user = await _lookup.GetAndVerifyUserByUidAsync(user.UId, ct);
+                var bundle = await _reader.GetAndVerifyUserDataBundleAsync(user, key, ct);
                 try
                 {
-                    await _garbageCollector.CollectAsync(user.UId, key, ct);
+                    if (_canonicalHealth is not null)
+                    {
+                        var health = await _canonicalHealth.VerifyAsync(
+                            user, key, UserSyncKeyConfidence.RememberMe, recordFault: true, ct: ct);
+                        if (health.State is not (UserDataVerificationState.Healthy or UserDataVerificationState.CheckpointMissing))
+                            throw new UnauthorizedAccessException("The local account copy could not be verified.");
+                    }
+
+                    UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
+                        bundle.UserDevicesData,
+                        _identity.LocalDeviceId,
+                        DateTimeOffset.UtcNow,
+                        _versionClock.Next());
+                    await _writer.UpdateUserDataBundleAsync(
+                        bundle,
+                        user,
+                        key,
+                        UserDataBlobKind.Devices,
+                        true,
+                        ct);
+
+                    var token = _tokens.Issue(user.UId);
+                    _keys.SetUserKey(token, key);
+                    _keys.SetUserBlobKeys(token, bundle.UserData);
+                    return token;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // Remember Me unlock remains available when maintenance is conservatively blocked.
-                }
-            }
-            user = await _lookup.GetAndVerifyUserByUidAsync(user.UId, ct);
-            var bundle = await _reader.GetAndVerifyUserDataBundleAsync(user, key, ct);
-            if (_canonicalHealth is not null)
-            {
-                var health = await _canonicalHealth.VerifyAsync(
-                    user, key, UserSyncKeyConfidence.RememberMe, recordFault: true, ct: ct);
-                if (health.State is not (UserDataVerificationState.Healthy or UserDataVerificationState.CheckpointMissing))
+                catch
                 {
                     bundle.Dispose();
-                    throw new UnauthorizedAccessException("The local account copy could not be verified.");
+                    throw;
                 }
             }
-            UserDeviceLoginUtil.UpdateCurrentDeviceLastLoginDate(
-                bundle.UserDevicesData,
-                _identity.LocalDeviceId,
-                DateTimeOffset.UtcNow,
-                _versionClock.Next());
-            await _writer.UpdateUserDataBundleAsync(
-                bundle,
-                user,
-                key,
-                UserDataBlobKind.Devices,
-                true,
-                ct);
-
-            var token = _tokens.Issue(user.UId);
-            _keys.SetUserKey(token, key);
-            _keys.SetUserBlobKeys(token, bundle.UserData);
-            return token;
-        }
-        catch (Exception ex) when (ex is CryptographicException or ArgumentException)
-        {
-            await DisableBrokenRememberMeAsync(user, ct);
-            return null;
+            catch (Exception ex) when (ex is UnauthorizedAccessException or
+                                           CryptographicException or
+                                           ArgumentException or
+                                           InvalidDataIntegrityException or
+                                           InvalidDataException or
+                                           UserNotFoundException)
+            {
+                // A successfully unprotected key is independently trusted. If canonical recovery
+                // lacks healthy evidence, preserve the key for a later candidate/startup retry.
+                return null;
+            }
         }
         finally
         {
+            key?.Dispose();
             if (rawKey is not null)
                 CryptographicOperations.ZeroMemory(rawKey);
         }

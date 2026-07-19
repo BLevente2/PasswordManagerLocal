@@ -157,6 +157,59 @@ public sealed class UserSnapshotPublisherServiceTests
         MSTestAssert.AreEqual(0, await database.Db.UserSyncStates.CountAsync());
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    [TestCategory("Recovery")]
+    public async Task GetOrCreateAsync_HealthFailureRetainsPriorPublicationAsRecoveryEvidenceAndSchedulesRetry()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        var user = CreateUser();
+        await database.Users.AddAsync(user);
+        await database.UnitOfWork.SaveChangesAsync();
+        using var signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var identity = CreateIdentity(signingKey);
+        var lifecycle = new UserLifecycleCoordinator();
+        var initialPublisher = new UserSnapshotPublisherService(
+            database.UserSyncSnapshots,
+            database.UserSyncStates,
+            database.UserRevisionKnowledge,
+            identity,
+            database.UnitOfWork,
+            lifecycle);
+        var published = await initialPublisher.GetOrCreateAsync(user);
+        var scheduler = new FakeUserDataRecoveryScheduler();
+        var blockedPublisher = new UserSnapshotPublisherService(
+            database.UserSyncSnapshots,
+            database.UserSyncStates,
+            database.UserRevisionKnowledge,
+            identity,
+            database.UnitOfWork,
+            lifecycle,
+            canonicalHealth: new FixedCanonicalHealthService(new CanonicalHealthResult(
+                UserDataVerificationState.RootIntegrityFailure,
+                UserDataBlobKind.All,
+                UserSyncKeyConfidence.AuthenticatedSession,
+                "canonical-root-integrity-failed")),
+            recoveryScheduler: scheduler);
+
+        await MSTestAssert.ThrowsAsync<InvalidDataException>(() => blockedPublisher.GetOrCreateAsync(user));
+
+        database.Db.ChangeTracker.Clear();
+        var retained = await database.UserSyncSnapshots.GetAsync(
+            user.UId,
+            identity.LocalDeviceId,
+            identity.OriginInstanceId,
+            user.KeyEpoch);
+        MSTestAssert.IsNotNull(retained);
+        MSTestAssert.AreEqual(published.Id, retained.Id);
+        MSTestAssert.AreEqual(UserSyncSnapshotStatus.RecoveryCandidate, retained.Status);
+        MSTestAssert.AreEqual(
+            (user.UId, UserDataRecoveryTrigger.PublisherHealthFailure),
+            scheduler.Calls.Single());
+    }
+
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
