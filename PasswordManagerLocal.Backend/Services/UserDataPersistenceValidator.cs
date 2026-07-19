@@ -23,9 +23,9 @@ public sealed class UserDataPersistenceValidator : IUserDataPersistenceValidator
         if (userData.GeneralUserDataKey.Length == 0 ||
             userData.UserPasswordsDataKey.Length == 0 ||
             userData.UserDevicesDataKey.Length == 0 ||
-            userData.GeneralUserDataIntegrityHash.Length != Hashing.SHA256HashSizeInBytes ||
-            userData.UserPasswordsDataIntegrityHash.Length != Hashing.SHA256HashSizeInBytes ||
-            userData.UserDevicesDataIntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            userData.GeneralUserDataIntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            userData.UserPasswordsDataIntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            userData.UserDevicesDataIntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
             throw new InvalidOperationException("Refusing to persist incomplete user data.");
     }
 

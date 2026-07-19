@@ -1,4 +1,5 @@
-﻿using System.Buffers;
+﻿using PasswordManagerLocal.Backend.Constants;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 
@@ -6,10 +7,6 @@ namespace PasswordManagerLocal.Backend.Security;
 
 internal static class AES256
 {
-    internal const int KeySizeInBytes = 32;
-    internal const int NonceSizeInBytes = 12;
-    internal const int TagSizeInBytes = 16;
-    internal const int DefaultFrameSize = 64 * 1024;
 
     private const uint Magic = 0x4D434741;
     private const byte Version = 1;
@@ -18,7 +15,7 @@ internal static class AES256
 
     internal static byte[] GenerateKey()
     {
-        var key = new byte[KeySizeInBytes];
+        var key = new byte[CryptographyConstants.Aes256KeySizeInBytes];
         RandomNumberGenerator.Fill(key);
         return key;
     }
@@ -27,7 +24,7 @@ internal static class AES256
         byte[] data,
         EncryptionKey key,
         byte[]? associatedData = null,
-        int frameSize = DefaultFrameSize)
+        int frameSize = CryptographyConstants.DefaultAesFrameSizeBytes)
     {
         var effectiveFrameSize = data.Length == 0 ? 1 : Math.Min(frameSize, data.Length);
         using var input = new MemoryStream(data, writable: false);
@@ -48,7 +45,7 @@ internal static class AES256
         Stream input,
         EncryptionKey key,
         byte[]? associatedData = null,
-        int frameSize = DefaultFrameSize)
+        int frameSize = CryptographyConstants.DefaultAesFrameSizeBytes)
     {
         var output = new MemoryStream();
         await EncryptToStreamAsync(input, output, key, associatedData, frameSize);
@@ -69,7 +66,7 @@ internal static class AES256
         Stream output,
         EncryptionKey key,
         byte[]? associatedData = null,
-        int frameSize = DefaultFrameSize)
+        int frameSize = CryptographyConstants.DefaultAesFrameSizeBytes)
     {
         if (frameSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(frameSize));
@@ -85,8 +82,8 @@ internal static class AES256
         var cipher = ArrayPool<byte>.Shared.Rent(frameSize);
         var aadLength = HeaderSize + FrameMetadataSize + (associatedData?.Length ?? 0);
         var aadBuffer = ArrayPool<byte>.Shared.Rent(aadLength);
-        var tag = new byte[TagSizeInBytes];
-        var nonce = new byte[NonceSizeInBytes];
+        var tag = new byte[CryptographyConstants.AesGcmTagSizeInBytes];
+        var nonce = new byte[CryptographyConstants.AesGcmNonceSizeInBytes];
         header.AsSpan(5, 8).CopyTo(nonce);
         InitializeAadBuffer(aadBuffer, header, associatedData);
 
@@ -96,7 +93,7 @@ internal static class AES256
 
         try
         {
-            using var gcm = new AesGcm(keyBytes, TagSizeInBytes);
+            using var gcm = new AesGcm(keyBytes, CryptographyConstants.AesGcmTagSizeInBytes);
             while (true)
             {
                 var read = await input.ReadAsync(buffer, 0, buffer.Length);
@@ -115,7 +112,7 @@ internal static class AES256
                 BinaryPrimitives.WriteInt32LittleEndian(lengthBuffer, read);
                 await output.WriteAsync(lengthBuffer, 0, lengthBuffer.Length);
                 await output.WriteAsync(cipher, 0, read);
-                await output.WriteAsync(tag, 0, TagSizeInBytes);
+                await output.WriteAsync(tag, 0, CryptographyConstants.AesGcmTagSizeInBytes);
                 frameIndex++;
             }
         }
@@ -155,8 +152,8 @@ internal static class AES256
         var plaintext = ArrayPool<byte>.Shared.Rent(frameSize);
         var aadLength = HeaderSize + FrameMetadataSize + (associatedData?.Length ?? 0);
         var aadBuffer = ArrayPool<byte>.Shared.Rent(aadLength);
-        var tag = new byte[TagSizeInBytes];
-        var nonce = new byte[NonceSizeInBytes];
+        var tag = new byte[CryptographyConstants.AesGcmTagSizeInBytes];
+        var nonce = new byte[CryptographyConstants.AesGcmNonceSizeInBytes];
         header.AsSpan(5, 8).CopyTo(nonce);
         InitializeAadBuffer(aadBuffer, header, associatedData);
 
@@ -166,7 +163,7 @@ internal static class AES256
 
         try
         {
-            using var gcm = new AesGcm(keyBytes, TagSizeInBytes);
+            using var gcm = new AesGcm(keyBytes, CryptographyConstants.AesGcmTagSizeInBytes);
             while (true)
             {
                 var lengthRead = await input.ReadAsync(lengthBuffer, 0, lengthBuffer.Length);
@@ -180,7 +177,7 @@ internal static class AES256
                     throw new CryptographicException("Invalid chunk length.");
 
                 await ReadExactAsync(input, cipher, 0, chunkLength);
-                await ReadExactAsync(input, tag, 0, TagSizeInBytes);
+                await ReadExactAsync(input, tag, 0, CryptographyConstants.AesGcmTagSizeInBytes);
 
                 BinaryPrimitives.WriteInt32LittleEndian(nonce.AsSpan(8, 4), frameIndex);
                 WriteFrameMetadata(aadBuffer, frameIndex, chunkLength);

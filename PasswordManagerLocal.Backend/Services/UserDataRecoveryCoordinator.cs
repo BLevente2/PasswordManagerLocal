@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using Microsoft.EntityFrameworkCore;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
@@ -159,7 +160,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
                 if (envelope.UserKeyEpoch != epochs.KeyEpoch ||
                     envelope.MembershipEpoch <= 0 ||
                     envelope.MembershipEpoch > epochs.MembershipEpoch ||
-                    envelope.User.PasswordSalt.Length != Hashing.SHA256HashSizeInBytes)
+                    envelope.User.PasswordSalt.Length != CryptographyConstants.Sha256HashSizeInBytes)
                     continue;
 
                 await _membershipAuthorization.VerifySnapshotAuthorAsync(envelope, ct);

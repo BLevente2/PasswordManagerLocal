@@ -12,7 +12,6 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 using System.Security.Cryptography;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Abstractions.Providers;
 
 namespace PasswordManagerLocal.Test.Backend.Services;
 
@@ -105,8 +104,8 @@ public sealed class DeviceIdentityServiceTests
     {
         var repository = new FakeDeviceIdentityRepository();
         var unitOfWork = new FakeUnitOfWork();
-        using var provider = CreateProvider(repository, unitOfWork, DeviceType.Unknown);
-        var service = CreateService(provider);
+        using var provider = CreateProvider(repository, unitOfWork);
+        var service = CreateService(provider, DeviceType.Unknown);
 
         await ExpectThrowsAsync<PlatformNotSupportedException>(() => service.InitializeAsync());
 
@@ -137,14 +136,12 @@ public sealed class DeviceIdentityServiceTests
 
     private static ServiceProvider CreateProvider(
         FakeDeviceIdentityRepository repository,
-        FakeUnitOfWork unitOfWork,
-        DeviceType deviceType = DeviceType.WindowsPc)
+        FakeUnitOfWork unitOfWork)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IDeviceIdentityRepository>(repository);
         services.AddSingleton<IUnitOfWork>(unitOfWork);
         services.AddSingleton<IKeyProtector, TestKeyProtector>();
-        services.AddSingleton<ILocalDeviceTypeProvider>(new FakeLocalDeviceTypeProvider { DeviceType = deviceType });
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
             ValidateOnBuild = true,
@@ -152,10 +149,12 @@ public sealed class DeviceIdentityServiceTests
         });
     }
 
-    private static DeviceIdentityService CreateService(IServiceProvider provider) =>
+    private static DeviceIdentityService CreateService(
+        IServiceProvider provider,
+        DeviceType deviceType = DeviceType.WindowsPc) =>
         new(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            provider.GetRequiredService<ILocalDeviceTypeProvider>());
+            () => deviceType);
 
     private static void ExpectThrows<TException>(Action action) where TException : Exception
     {

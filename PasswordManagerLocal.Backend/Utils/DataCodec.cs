@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Security;
 using System.Buffers;
 using System.Text.Json;
@@ -13,7 +14,7 @@ internal static class DataCodec
         JsonTypeInfo<T> typeInfo,
         int level = 11,
         byte[]? associatedData = null,
-        int aesFrameSize = AES256.DefaultFrameSize,
+        int aesFrameSize = CryptographyConstants.DefaultAesFrameSizeBytes,
         CancellationToken ct = default) where T : class =>
         SerializeCompressEncryptCoreAsync(
             value,

@@ -5,7 +5,7 @@ using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Test.Fakes;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
@@ -45,7 +45,7 @@ public sealed class DeviceEnrollmentServiceTests
         var provider = new ServiceCollection().BuildServiceProvider();
         var runtime = new FakeSyncRuntimeService();
         var identity = new FakeDeviceIdentityService();
-        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var endpointRegistry = new DiscoveredDeviceEndpointRegistry();
         var transport = new FakeSyncTransportClientService();
         var networkAddresses = new FakeLocalNetworkAddressService();
         var snapshotService = new DeviceEnrollmentSnapshotService(identity);
@@ -53,11 +53,11 @@ public sealed class DeviceEnrollmentServiceTests
         var service = new DeviceEnrollmentService(
             provider.GetRequiredService<IServiceScopeFactory>(),
             identity,
-            endpointCache,
+            endpointRegistry,
             runtime,
             new FakeLocalDiscoveryService(),
             new DeviceEnrollmentEndpointService(identity, transport, networkAddresses),
-            new DeviceEnrollmentRegistrationService(identity, endpointCache, networkAddresses, localLinks),
+            new DeviceEnrollmentRegistrationService(identity, endpointRegistry, networkAddresses, localLinks),
             snapshotService,
             new DeviceEnrollmentSnapshotTransferService(identity, transport, snapshotService),
             new DeviceEnrollmentSnapshotImporterService(identity, localLinks));

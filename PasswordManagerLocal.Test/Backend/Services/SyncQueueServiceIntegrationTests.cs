@@ -7,7 +7,7 @@ using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
@@ -58,17 +58,17 @@ public sealed class SyncQueueServiceIntegrationTests
         var existingDevice = seeded.EnabledRemotes.Single();
         var newDevice = CreateRemoteDevice("CC00");
         var syncIdentities = new FakeSyncDeviceIdentityService();
-        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var endpointRegistry = new DiscoveredDeviceEndpointRegistry();
         var syncTasks = new FakeDeviceSyncTaskService();
         var service = CreateService(
             database,
             seeded.Identity,
             new FakeSyncAuthorizationService(),
             syncIdentities,
-            endpointCache,
+            endpointRegistry,
             syncTasks);
 
-        endpointCache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        endpointRegistry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "127.0.0.1",
             Port = 26688,
@@ -349,11 +349,11 @@ public sealed class SyncQueueServiceIntegrationTests
         FakeDeviceIdentityService identity,
         FakeSyncAuthorizationService authorization,
         FakeSyncDeviceIdentityService? syncIdentities = null,
-        DiscoveredDeviceEndpointCache? endpointCache = null,
+        DiscoveredDeviceEndpointRegistry? endpointRegistry = null,
         FakeDeviceSyncTaskService? syncTasks = null)
     {
         syncIdentities ??= new FakeSyncDeviceIdentityService();
-        endpointCache ??= new DiscoveredDeviceEndpointCache();
+        endpointRegistry ??= new DiscoveredDeviceEndpointRegistry();
         syncTasks ??= new FakeDeviceSyncTaskService();
 
         var localDevices = new LocalDeviceMatcherService(identity);
@@ -375,7 +375,7 @@ public sealed class SyncQueueServiceIntegrationTests
         var activation = new PendingSyncActivationService(
             database.Devices,
             syncIdentities,
-            endpointCache,
+            endpointRegistry,
             syncTasks,
             identity,
             localDevices);

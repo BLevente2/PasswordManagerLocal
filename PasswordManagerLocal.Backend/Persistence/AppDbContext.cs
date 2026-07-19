@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PasswordManagerLocal.Backend.Models;
@@ -249,8 +250,8 @@ public class AppDbContext : DbContext
         var loginIdentity = model.Entity<UserLoginIdentityState>();
         loginIdentity.ToTable("UserLoginIdentityStates");
         loginIdentity.HasKey(identity => identity.UserId);
-        loginIdentity.Property(identity => identity.UsernameHash).IsRequired().HasMaxLength(Security.Hashing.SHA256HashSizeInBytes);
-        loginIdentity.Property(identity => identity.UsernameSalt).IsRequired().HasMaxLength(Security.Hashing.SHA256HashSizeInBytes);
+        loginIdentity.Property(identity => identity.UsernameHash).IsRequired().HasMaxLength(CryptographyConstants.Sha256HashSizeInBytes);
+        loginIdentity.Property(identity => identity.UsernameSalt).IsRequired().HasMaxLength(CryptographyConstants.Sha256HashSizeInBytes);
         loginIdentity.Property(identity => identity.SourceSnapshotHash).IsRequired().HasMaxLength(Constants.SyncConstants.SyncDeltaPayloadHashBytes);
         loginIdentity.Property(identity => identity.Status).HasConversion<byte>().IsRequired();
         loginIdentity.Property(identity => identity.StatusReason).HasMaxLength(512);

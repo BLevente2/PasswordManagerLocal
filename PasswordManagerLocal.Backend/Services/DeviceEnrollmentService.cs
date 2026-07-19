@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -13,6 +13,7 @@ using PasswordManagerLocal.Backend.Sync.Enrollment;
 using System.Security.Cryptography;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Utils;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -24,7 +25,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly ISyncRuntimeService _syncRuntime;
     private readonly ILocalDiscoveryService _localDiscovery;
     private readonly IDeviceEnrollmentEndpointService _endpointService;
@@ -39,7 +40,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     public DeviceEnrollmentService(
         IServiceScopeFactory scopeFactory,
         IDeviceIdentityService identity,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         ISyncRuntimeService syncRuntime,
         ILocalDiscoveryService localDiscovery,
         IDeviceEnrollmentEndpointService endpointService,
@@ -50,7 +51,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _syncRuntime = syncRuntime;
         _localDiscovery = localDiscovery;
         _endpointService = endpointService;
@@ -481,7 +482,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 if (remoteDevice is not null)
                 {
                     syncIdentities.TryAdd(remoteDevice);
-                    _endpointCache.AddOrUpdate(new DiscoveredDeviceEndpoint
+                    _endpointRegistry.AddOrUpdate(new DiscoveredDeviceEndpoint
                     {
                         Host = endpoint.Host,
                         Port = endpoint.Port,
@@ -758,7 +759,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 token => _snapshotImporter.ImportAsync(scope.ServiceProvider, snapshot, token),
                 ct);
             await _syncRuntime.RefreshSyncEnabledAsync(ct);
-            await _registrationService.CacheIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
+            await _registrationService.RegisterIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
             DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");
         }
         catch (DeviceEnrollmentException ex)

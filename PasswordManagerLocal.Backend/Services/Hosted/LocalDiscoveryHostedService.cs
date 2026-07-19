@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
@@ -21,7 +21,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 {
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly ILocalNetworkAddressService _networkAddresses;
@@ -43,7 +43,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     public LocalDiscoveryHostedService(
         IDeviceIdentityService identity,
         ISyncDeviceIdentityService syncDeviceIdentities,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         IDeviceSyncTaskService deviceSyncTasks,
         IEnrollmentRuntimeState enrollmentState,
         ILocalNetworkAddressService networkAddresses,
@@ -52,7 +52,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     {
         _identity = identity;
         _syncDeviceIdentities = syncDeviceIdentities;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _deviceSyncTasks = deviceSyncTasks;
         _enrollmentState = enrollmentState;
         _networkAddresses = networkAddresses;
@@ -416,7 +416,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             requester.TlsCertFingerprint);
         if (requesterEndpoint is not null)
         {
-            _endpointCache.AddOrUpdate(requesterEndpoint);
+            _endpointRegistry.AddOrUpdate(requesterEndpoint);
             if (_syncDeviceIdentities.ContainsId(requester.Id))
                 _deviceSyncTasks.TryStart(requesterEndpoint, requester);
         }
@@ -470,7 +470,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         if (endpoint is null)
             return;
 
-        _endpointCache.AddOrUpdate(endpoint);
+        _endpointRegistry.AddOrUpdate(endpoint);
 
         if (IsSyncResponseThrottled(response.ResponderDeviceId, DateTimeOffset.UtcNow))
             return;

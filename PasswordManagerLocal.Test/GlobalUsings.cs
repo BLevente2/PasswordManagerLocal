@@ -1,5 +1,4 @@
 global using Microsoft.Extensions.DependencyInjection;
-global using PasswordManagerLocal.Backend.Factories;
 global using PasswordManagerLocal.Backend.Sync.Recovery;
 global using PasswordManagerLocal.Backend.Sync.Tombstones;
 global using PasswordManagerLocal.Test.TestInfrastructure.Serialization;

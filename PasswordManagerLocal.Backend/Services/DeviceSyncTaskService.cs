@@ -6,9 +6,10 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Sync;
 using System.Collections.Concurrent;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using PasswordManagerLocal.Backend.Utils;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 
 using PasswordManagerLocal.Backend.Internal.Sync;
 namespace PasswordManagerLocal.Backend.Services;
@@ -18,7 +19,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ISyncTransportClientService _syncTransport;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly IDeviceIdentityService _identity;
     private readonly ConcurrentDictionary<Guid, byte> _runningDeviceIds = new();
     private readonly ConcurrentDictionary<Guid, Task> _runningTasks = new();
@@ -30,13 +31,13 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         IServiceScopeFactory scopeFactory,
         ISyncTransportClientService syncTransport,
         ISyncDeviceIdentityService syncDeviceIdentities,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         IDeviceIdentityService identity)
     {
         _scopeFactory = scopeFactory;
         _syncTransport = syncTransport;
         _syncDeviceIdentities = syncDeviceIdentities;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _identity = identity;
     }
 
@@ -207,7 +208,6 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
     private async Task<bool> TrySendNextAsync(DiscoveredDeviceEndpoint endpoint, Device targetDevice, CancellationToken ct)
     {
-        const int batchLimit = 32;
         using var scope = _scopeFactory.CreateScope();
 
         var queue = scope.ServiceProvider.GetRequiredService<ISyncQueueRepository>();
@@ -218,7 +218,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         if (!_identity.IsSyncOn)
             return false;
 
-        var queueItems = await queue.GetNextPendingBatchForDeviceAsync(targetDevice.Id, batchLimit, ct);
+        var queueItems = await queue.GetNextPendingBatchForDeviceAsync(targetDevice.Id, SyncConstants.PendingDeviceDeltaBatchSize, ct);
         if (queueItems.Count == 0)
             return false;
 
@@ -306,7 +306,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
         if (!sent)
         {
-            _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+            _endpointRegistry.TryRemove(endpoint.TlsCertFingerprint);
             return false;
         }
 
@@ -359,7 +359,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
                     requestedDeltas,
                     ct))
             {
-                _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+                _endpointRegistry.TryRemove(endpoint.TlsCertFingerprint);
                 return false;
             }
         }
@@ -454,7 +454,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
                     requestedDeltas,
                     ct))
             {
-                _endpointCache.TryRemove(endpoint.TlsCertFingerprint);
+                _endpointRegistry.TryRemove(endpoint.TlsCertFingerprint);
                 return false;
             }
         }

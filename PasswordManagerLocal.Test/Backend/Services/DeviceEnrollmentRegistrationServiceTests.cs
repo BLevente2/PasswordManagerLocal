@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Test.Fakes;
@@ -30,7 +30,7 @@ public sealed class DeviceEnrollmentRegistrationServiceTests
         var identity = new FakeDeviceIdentityService();
         var service = new DeviceEnrollmentRegistrationService(
             identity,
-            new DiscoveredDeviceEndpointCache(),
+            new DiscoveredDeviceEndpointRegistry(),
             new FakeLocalNetworkAddressService(),
             new DeviceEnrollmentLocalLinkService(identity));
 

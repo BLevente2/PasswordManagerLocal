@@ -4,8 +4,6 @@ namespace PasswordManagerLocal.Backend.Security;
 
 public static class Hashing
 {
-    public const int SHA256HashSizeInBytes = 32;
-
     public static byte[] SHA256Hash(ReadOnlySpan<byte> data)
     {
         return SHA256.HashData(data);

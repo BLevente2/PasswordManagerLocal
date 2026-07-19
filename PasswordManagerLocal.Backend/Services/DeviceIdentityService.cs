@@ -13,14 +13,13 @@ using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
-using PasswordManagerLocal.Backend.Abstractions.Providers;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceIdentityService : IDeviceIdentityService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ILocalDeviceTypeProvider _deviceTypeProvider;
+    private readonly Func<DeviceType> _detectDeviceType;
     private Key? _ka = null;
     private Key? _sig = null;
     private X509Certificate2? _cert = null;
@@ -36,10 +35,20 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
 
 
-    public DeviceIdentityService(IServiceScopeFactory scopeFactory, ILocalDeviceTypeProvider deviceTypeProvider)
+    public DeviceIdentityService(IServiceScopeFactory scopeFactory)
+        : this(scopeFactory, DeviceTypeDetector.Detect)
     {
+    }
+
+    internal DeviceIdentityService(
+        IServiceScopeFactory scopeFactory,
+        Func<DeviceType> detectDeviceType)
+    {
+        ArgumentNullException.ThrowIfNull(scopeFactory);
+        ArgumentNullException.ThrowIfNull(detectDeviceType);
+
         _scopeFactory = scopeFactory;
-        _deviceTypeProvider = deviceTypeProvider;
+        _detectDeviceType = detectDeviceType;
     }
 
 
@@ -354,7 +363,7 @@ public sealed class DeviceIdentityService : IDeviceIdentityService
 
     private async Task CreateIdentity(IDeviceIdentityRepository repo, IKeyProtector keyProtector, IUnitOfWork uow, CancellationToken ct = default)
     {
-        var deviceType = _deviceTypeProvider.GetDeviceType();
+        var deviceType = _detectDeviceType();
         if (!DeviceTypeDetector.IsValid(deviceType))
             throw new PlatformNotSupportedException("The current platform does not have a supported local device type.");
 

@@ -1,18 +1,19 @@
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
-/// Publishes pending remote-device identities for discovery and starts delivery through cached endpoints.
+/// Publishes pending remote-device identities for discovery and starts delivery through registered endpoints.
 /// </summary>
 public sealed class PendingSyncActivationService : IPendingSyncActivationService
 {
     private readonly IDeviceRepository _devices;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly IDeviceIdentityService _identity;
     private readonly ILocalDeviceMatcherService _localDevices;
@@ -20,14 +21,14 @@ public sealed class PendingSyncActivationService : IPendingSyncActivationService
     public PendingSyncActivationService(
         IDeviceRepository devices,
         ISyncDeviceIdentityService syncDeviceIdentities,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         IDeviceSyncTaskService deviceSyncTasks,
         IDeviceIdentityService identity,
         ILocalDeviceMatcherService localDevices)
     {
         _devices = devices;
         _syncDeviceIdentities = syncDeviceIdentities;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _deviceSyncTasks = deviceSyncTasks;
         _identity = identity;
         _localDevices = localDevices;
@@ -71,7 +72,7 @@ public sealed class PendingSyncActivationService : IPendingSyncActivationService
         if (!_identity.IsSyncOn)
             return;
 
-        if (!_endpointCache.TryGetByFingerprint(device.TlsCertFingerprint, out var endpoint) || endpoint is null)
+        if (!_endpointRegistry.TryGetByFingerprint(device.TlsCertFingerprint, out var endpoint) || endpoint is null)
             return;
 
         _deviceSyncTasks.TryStart(endpoint, device);
@@ -88,6 +89,6 @@ public sealed class PendingSyncActivationService : IPendingSyncActivationService
     private void RemoveDiscoveryState(Device device)
     {
         _syncDeviceIdentities.TryRemove(device);
-        _endpointCache.TryRemove(device.TlsCertFingerprint);
+        _endpointRegistry.TryRemove(device.TlsCertFingerprint);
     }
 }

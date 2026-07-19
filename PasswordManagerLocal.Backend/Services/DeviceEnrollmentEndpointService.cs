@@ -17,7 +17,6 @@ using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
 using PasswordManagerLocal.Backend.State;
 
 namespace PasswordManagerLocal.Backend.Services;

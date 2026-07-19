@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
@@ -107,7 +108,7 @@ public sealed class UserLoginService : IUserLoginService
             }
 
             var passwordSalt = authenticatedRecoverySalt ?? user.PasswordSalt;
-            if (passwordSalt.Length != Hashing.SHA256HashSizeInBytes)
+            if (passwordSalt.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 throw new UnauthorizedAccessException("Authentication failed.");
 
             using var key = EncryptionKey.FromPassword(request.Password, passwordSalt);

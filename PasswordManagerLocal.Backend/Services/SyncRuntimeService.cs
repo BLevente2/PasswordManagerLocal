@@ -1,8 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.State;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -12,7 +13,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     private readonly IDeviceIdentityService _identity;
     private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly IEnumerable<ISyncControlledHostedService> _controlledServices;
     private readonly SemaphoreSlim _lock = new(1, 1);
@@ -22,7 +23,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         IDeviceIdentityService identity,
         IEnrollmentRuntimeState enrollmentState,
         ISyncDeviceIdentityService syncDeviceIdentities,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         IDeviceSyncTaskService deviceSyncTasks,
         IEnumerable<ISyncControlledHostedService> controlledServices)
     {
@@ -30,7 +31,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         _identity = identity;
         _enrollmentState = enrollmentState;
         _syncDeviceIdentities = syncDeviceIdentities;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _deviceSyncTasks = deviceSyncTasks;
         _controlledServices = controlledServices;
     }
@@ -152,7 +153,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
             await hostedService.StopAsync(ct);
 
         _syncDeviceIdentities.Clear();
-        _endpointCache.Clear();
+        _endpointRegistry.Clear();
     }
 
     private IReadOnlyList<ISyncControlledHostedService> ListControlledServices() =>

@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
@@ -105,7 +106,7 @@ public sealed class UserDataBundleVerificationServiceTests
     public async Task VerifyCanonicalAsync_UsernameMetadataMismatch_ReportsLoginMetadataFailure()
     {
         var fixture = await CreateFixtureAsync();
-        fixture.User.UsernameHash = Enumerable.Repeat((byte)0xA5, Hashing.SHA256HashSizeInBytes).ToArray();
+        fixture.User.UsernameHash = Enumerable.Repeat((byte)0xA5, CryptographyConstants.Sha256HashSizeInBytes).ToArray();
         fixture.User.GenerateIntegrityHash();
 
         using (fixture.Key)

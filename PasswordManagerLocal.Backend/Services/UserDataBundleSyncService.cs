@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
@@ -669,7 +670,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                 typeInfo,
                 verifyIntegrity,
                 ct);
-            if (expectedRootHash.Length != Hashing.SHA256HashSizeInBytes ||
+            if (expectedRootHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
                 value is not IntegrityCheckableBase integrityValue ||
                 !Hashing.Verify(expectedRootHash, integrityValue.IntegrityHash))
             {

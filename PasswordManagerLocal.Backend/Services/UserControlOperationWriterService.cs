@@ -6,7 +6,6 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 using PasswordManagerLocal.Backend.Utils;
 
-using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserControlOperationWriterService : IUserControlOperationWriterService
@@ -343,7 +342,15 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
     private async Task PersistAppliedEnvelopeAsync(UserControlOperationEnvelope envelope, UserControlState state, CancellationToken ct)
     {
         var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
-        await _operations.AddAsync(UserControlOperationFactory.Create(envelope, serialized, UserControlOperationStatus.Applied), ct);
+        var receivedAtUtc = DateTimeOffset.UtcNow;
+        await _operations.AddAsync(
+            UserControlOperationMapping.ToStoredOperation(
+                envelope,
+                serialized,
+                UserControlOperationStatus.Applied,
+                receivedAtUtc,
+                receivedAtUtc),
+            ct);
         state.NextOriginSequence = checked(state.NextOriginSequence + 1);
         state.AppliedKeyEpoch = envelope.ResultingKeyEpoch;
         state.AppliedMembershipEpoch = envelope.ResultingMembershipEpoch;

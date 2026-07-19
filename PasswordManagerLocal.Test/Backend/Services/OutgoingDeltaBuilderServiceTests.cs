@@ -15,9 +15,7 @@ using PasswordManagerLocal.Test.TestInfrastructure;
 using System.Text.Json;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Abstractions.Providers;
 
-using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]
@@ -448,10 +446,12 @@ public sealed class OutgoingDeltaBuilderServiceTests
         trustedOrigin.GenerateIntegrityHash();
         var devices = new FakeDeviceRepository();
         devices.Seed(trustedOrigin);
-        var stored = UserControlOperationFactory.Create(
+        var stored = UserControlOperationMapping.ToStoredOperation(
             envelope,
             UserControlOperationEnvelopeUtil.Serialize(envelope),
             UserControlOperationStatus.StoredPending,
+            DateTimeOffset.UtcNow,
+            null,
             Guid.NewGuid());
         var userDevices = new FakeUserDeviceRepository();
         var localUsers = new FakeLocalUserDeviceRepository();
@@ -656,7 +656,6 @@ public sealed class OutgoingDeltaBuilderServiceTests
         services.AddSingleton<IDeviceIdentityRepository, FakeDeviceIdentityRepository>();
         services.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         services.AddSingleton<IKeyProtector, TestKeyProtector>();
-        services.AddSingleton<ILocalDeviceTypeProvider, FakeLocalDeviceTypeProvider>();
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
             ValidateOnBuild = true,
@@ -667,7 +666,7 @@ public sealed class OutgoingDeltaBuilderServiceTests
     private static DeviceIdentityService CreateIdentity(IServiceProvider provider) =>
         new(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            provider.GetRequiredService<ILocalDeviceTypeProvider>());
+            () => DeviceType.WindowsPc);
 
     private static Device CreateTargetDevice(DeviceIdentityService recipient) =>
         new()

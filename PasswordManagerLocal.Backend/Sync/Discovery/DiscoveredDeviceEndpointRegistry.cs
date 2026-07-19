@@ -1,21 +1,23 @@
-﻿using PasswordManagerLocal.Backend.Sync;
-using System.Collections.Concurrent;
+﻿using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Utils;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using System.Collections.Concurrent;
 
-namespace PasswordManagerLocal.Backend.Caching;
+namespace PasswordManagerLocal.Backend.Sync.Discovery;
 
-public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCache
+public sealed class DiscoveredDeviceEndpointRegistry : IDiscoveredDeviceEndpointRegistry
 {
-    private readonly ConcurrentDictionary<string, DiscoveredDeviceCachedEndpoint> _endpointsByFingerprint = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<
+        string,
+        (DiscoveredDeviceEndpoint Endpoint, DateTimeOffset ObservedAt)> _endpointsByFingerprint =
+            new(StringComparer.OrdinalIgnoreCase);
     private readonly Func<DateTimeOffset> _utcNow;
 
-    public DiscoveredDeviceEndpointCache()
+    public DiscoveredDeviceEndpointRegistry()
         : this(static () => DateTimeOffset.UtcNow)
     {
     }
 
-    internal DiscoveredDeviceEndpointCache(Func<DateTimeOffset> utcNow)
+    internal DiscoveredDeviceEndpointRegistry(Func<DateTimeOffset> utcNow)
     {
         _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
     }
@@ -29,19 +31,19 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
         if (fingerprint.Length == 0 || string.IsNullOrWhiteSpace(endpoint.Host) || endpoint.Port <= 0)
             return;
 
-        _endpointsByFingerprint[fingerprint] = new DiscoveredDeviceCachedEndpoint(Clone(endpoint), _utcNow());
+        _endpointsByFingerprint[fingerprint] = (Clone(endpoint), _utcNow());
     }
 
     public bool TryGetByFingerprint(string tlsFingerprint, out DiscoveredDeviceEndpoint? endpoint)
     {
         var fingerprint = FingerprintUtil.NormalizeOrEmpty(tlsFingerprint);
-        if (fingerprint.Length == 0 || !_endpointsByFingerprint.TryGetValue(fingerprint, out var cachedEndpoint))
+        if (fingerprint.Length == 0 || !_endpointsByFingerprint.TryGetValue(fingerprint, out var registeredEndpoint))
         {
             endpoint = null;
             return false;
         }
 
-        endpoint = Clone(cachedEndpoint.Endpoint);
+        endpoint = Clone(registeredEndpoint.Endpoint);
         return true;
     }
 
@@ -51,10 +53,10 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
             return false;
 
         var fingerprint = FingerprintUtil.NormalizeOrEmpty(tlsFingerprint);
-        if (fingerprint.Length == 0 || !_endpointsByFingerprint.TryGetValue(fingerprint, out var cachedEndpoint))
+        if (fingerprint.Length == 0 || !_endpointsByFingerprint.TryGetValue(fingerprint, out var registeredEndpoint))
             return false;
 
-        var age = _utcNow() - cachedEndpoint.ObservedAt;
+        var age = _utcNow() - registeredEndpoint.ObservedAt;
         return age >= TimeSpan.Zero && age <= maximumAge;
     }
 
@@ -74,5 +76,4 @@ public sealed class DiscoveredDeviceEndpointCache : IDiscoveredDeviceEndpointCac
             Port = endpoint.Port,
             TlsCertFingerprint = endpoint.TlsCertFingerprint
         };
-
 }

@@ -6,7 +6,6 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using Microsoft.EntityFrameworkCore;
 
-using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserControlOperationInboxService : IUserControlOperationInboxService
@@ -221,10 +220,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         if (!isAccountDeletion && state?.HasConflict == true)
         {
             var reason = state.ConflictReason ?? "The account control plane is quarantined.";
-            var quarantined = UserControlOperationFactory.Create(
+            var quarantined = UserControlOperationMapping.ToStoredOperation(
                 envelope,
                 serialized,
                 UserControlOperationStatus.Quarantined,
+                DateTimeOffset.UtcNow,
+                null,
                 transportPeerDeviceId);
             quarantined.StatusReason = Truncate(reason);
             quarantined.ConflictingOperationHash = state.ConflictingOperationHash?.ToArray();
@@ -242,10 +243,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 foreach (var conflict in sameBase)
                     Quarantine(conflict, envelope.OperationHash, reason);
 
-                var incomingConflict = UserControlOperationFactory.Create(
+                var incomingConflict = UserControlOperationMapping.ToStoredOperation(
                     envelope,
                     serialized,
                     UserControlOperationStatus.Quarantined,
+                    DateTimeOffset.UtcNow,
+                    null,
                     transportPeerDeviceId);
                 incomingConflict.StatusReason = reason;
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();
@@ -265,7 +268,13 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 var reason = "Multiple authoritative membership operations claim the same base transition.";
                 foreach (var conflict in sameBase)
                     Quarantine(conflict, envelope.OperationHash, reason);
-                var incomingConflict = UserControlOperationFactory.Create(envelope, serialized, UserControlOperationStatus.Quarantined, transportPeerDeviceId);
+                var incomingConflict = UserControlOperationMapping.ToStoredOperation(
+                    envelope,
+                    serialized,
+                    UserControlOperationStatus.Quarantined,
+                    DateTimeOffset.UtcNow,
+                    null,
+                    transportPeerDeviceId);
                 incomingConflict.StatusReason = reason;
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();
                 await _operations.AddAsync(incomingConflict, ct);
@@ -276,10 +285,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
             }
         }
 
-        var incomingRow = UserControlOperationFactory.Create(
+        var incomingRow = UserControlOperationMapping.ToStoredOperation(
             envelope,
             serialized,
             UserControlOperationStatus.StoredPending,
+            DateTimeOffset.UtcNow,
+            null,
             transportPeerDeviceId);
         await _operations.AddAsync(incomingRow, ct);
         if (isAccountDeletion)
@@ -361,10 +372,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                     Quarantine(conflict, envelope.OperationHash, reason);
 
                 var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
-                var incomingConflict = UserControlOperationFactory.Create(
+                var incomingConflict = UserControlOperationMapping.ToStoredOperation(
                     envelope,
                     serialized,
                     UserControlOperationStatus.Quarantined,
+                    DateTimeOffset.UtcNow,
+                    null,
                     transportPeerDeviceId);
                 incomingConflict.StatusReason = reason;
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();
@@ -401,10 +414,12 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                     Quarantine(conflict, envelope.OperationHash, reason);
 
                 var serialized = UserControlOperationEnvelopeUtil.Serialize(envelope);
-                var incomingConflict = UserControlOperationFactory.Create(
+                var incomingConflict = UserControlOperationMapping.ToStoredOperation(
                     envelope,
                     serialized,
                     UserControlOperationStatus.Quarantined,
+                    DateTimeOffset.UtcNow,
+                    null,
                     transportPeerDeviceId);
                 incomingConflict.StatusReason = reason;
                 incomingConflict.ConflictingOperationHash = sameBase[0].OperationHash.ToArray();

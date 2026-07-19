@@ -1,4 +1,5 @@
-﻿using PasswordManagerLocal.Backend.Abstractions.Security;
+﻿using PasswordManagerLocal.Backend.Constants;
+using PasswordManagerLocal.Backend.Abstractions.Security;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Constants.KeyProtectorConstants;
@@ -33,15 +34,15 @@ public sealed class PassphraseKeyProtector : IKeyProtector, IDisposable
         var salt = new byte[_saltLen];
         RandomNumberGenerator.Fill(salt);
 
-        var kek = Rfc2898DeriveBytes.Pbkdf2(_passphrase, salt, _iterations, HashAlgorithmName.SHA512, AES256.KeySizeInBytes);
+        var kek = Rfc2898DeriveBytes.Pbkdf2(_passphrase, salt, _iterations, HashAlgorithmName.SHA512, CryptographyConstants.Aes256KeySizeInBytes);
 
-        var nonce = new byte[AES256.NonceSizeInBytes];
+        var nonce = new byte[CryptographyConstants.AesGcmNonceSizeInBytes];
         RandomNumberGenerator.Fill(nonce);
 
         var ct = new byte[plaintext.Length];
-        var tag = new byte[AES256.TagSizeInBytes];
+        var tag = new byte[CryptographyConstants.AesGcmTagSizeInBytes];
 
-        using (var gcm = new AesGcm(kek, AES256.TagSizeInBytes))
+        using (var gcm = new AesGcm(kek, CryptographyConstants.AesGcmTagSizeInBytes))
         {
             gcm.Encrypt(nonce, plaintext, ct, tag);
         }
@@ -72,20 +73,20 @@ public sealed class PassphraseKeyProtector : IKeyProtector, IDisposable
         var ver = protectedBlob[o++]; if (ver != 1) throw new CryptographicException("Unsupported blob.");
         int saltLen = protectedBlob[o++];
         if (saltLen <= 0) throw new CryptographicException("Invalid salt.");
-        if (protectedBlob.Length < 2 + saltLen + 4 + AES256.NonceSizeInBytes + 4 + AES256.TagSizeInBytes) throw new CryptographicException("Invalid blob.");
+        if (protectedBlob.Length < 2 + saltLen + 4 + CryptographyConstants.AesGcmNonceSizeInBytes + 4 + CryptographyConstants.AesGcmTagSizeInBytes) throw new CryptographicException("Invalid blob.");
 
         var salt = protectedBlob.Slice(o, saltLen).ToArray(); o += saltLen;
         int iterations = BinaryPrimitives.ReadInt32LittleEndian(protectedBlob.Slice(o, 4)); o += 4;
-        var nonce = protectedBlob.Slice(o, AES256.NonceSizeInBytes).ToArray(); o += AES256.NonceSizeInBytes;
+        var nonce = protectedBlob.Slice(o, CryptographyConstants.AesGcmNonceSizeInBytes).ToArray(); o += CryptographyConstants.AesGcmNonceSizeInBytes;
         int ctLen = BinaryPrimitives.ReadInt32LittleEndian(protectedBlob.Slice(o, 4)); o += 4;
         if (ctLen < 0) throw new CryptographicException("Invalid length.");
         var ct = protectedBlob.Slice(o, ctLen).ToArray(); o += ctLen;
-        var tag = protectedBlob.Slice(o, AES256.TagSizeInBytes).ToArray();
+        var tag = protectedBlob.Slice(o, CryptographyConstants.AesGcmTagSizeInBytes).ToArray();
 
-        var kek = Rfc2898DeriveBytes.Pbkdf2(_passphrase, salt, iterations, HashAlgorithmName.SHA512, AES256.KeySizeInBytes);
+        var kek = Rfc2898DeriveBytes.Pbkdf2(_passphrase, salt, iterations, HashAlgorithmName.SHA512, CryptographyConstants.Aes256KeySizeInBytes);
 
         var pt = new byte[ctLen];
-        using (var gcm = new AesGcm(kek, AES256.TagSizeInBytes))
+        using (var gcm = new AesGcm(kek, CryptographyConstants.AesGcmTagSizeInBytes))
         {
             gcm.Decrypt(nonce, ct, tag, pt);
         }

@@ -11,6 +11,6 @@ public interface ISyncQueueService
     Task<bool> TryEnqueueAsync(SyncItem item, CancellationToken ct = default);
     Task EnqueueForDeviceAsync(SyncItem item, Guid targetDeviceId, CancellationToken ct = default);
     Task EnqueueUserCatchUpAsync(Guid userId, Guid targetDeviceId, CancellationToken ct = default);
-    /// <summary>Rehydrates discovery identities and starts cached endpoints for all committed pending queue work.</summary>
+    /// <summary>Rehydrates discovery identities and starts registered endpoints for all committed pending queue work.</summary>
     Task ActivatePendingSyncsAsync(CancellationToken ct = default);
 }

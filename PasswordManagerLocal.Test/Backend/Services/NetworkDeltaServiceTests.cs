@@ -12,7 +12,6 @@ using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Abstractions.Providers;
 
 using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
@@ -182,14 +181,13 @@ public sealed class NetworkDeltaServiceTests
         services.AddSingleton<IDeviceIdentityRepository, FakeDeviceIdentityRepository>();
         services.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         services.AddSingleton<IKeyProtector, TestKeyProtector>();
-        services.AddSingleton<ILocalDeviceTypeProvider, FakeLocalDeviceTypeProvider>();
         return services.BuildServiceProvider();
     }
 
     private static DeviceIdentityService CreateIdentity(IServiceProvider provider) =>
         new(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            provider.GetRequiredService<ILocalDeviceTypeProvider>());
+            () => DeviceType.WindowsPc);
 
     private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {

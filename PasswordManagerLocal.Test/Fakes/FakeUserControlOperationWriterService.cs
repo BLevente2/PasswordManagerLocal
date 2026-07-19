@@ -7,7 +7,6 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 using System.Security.Cryptography;
 
-using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Test.Fakes;
 
 public sealed class FakeUserControlOperationWriterService : IUserControlOperationWriterService
@@ -130,11 +129,15 @@ public sealed class FakeUserControlOperationWriterService : IUserControlOperatio
         state.NextOriginSequence++;
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
         _states.Update(state);
-        await _operations.AddAsync(UserControlOperationFactory.Create(
-            envelope,
-            UserControlOperationEnvelopeUtil.Serialize(envelope),
-            UserControlOperationStatus.Applied,
-            null), ct);
+        var receivedAtUtc = DateTimeOffset.UtcNow;
+        await _operations.AddAsync(
+            UserControlOperationMapping.ToStoredOperation(
+                envelope,
+                UserControlOperationEnvelopeUtil.Serialize(envelope),
+                UserControlOperationStatus.Applied,
+                receivedAtUtc,
+                receivedAtUtc),
+            ct);
         return envelope;
     }
 

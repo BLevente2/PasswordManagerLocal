@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -112,8 +113,8 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
         var hasUnusableProjection = false;
         foreach (var identity in identities)
         {
-            if (identity.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
-                identity.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes)
+            if (identity.UsernameHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+                identity.UsernameSalt.Length != CryptographyConstants.Sha256HashSizeInBytes)
             {
                 hasUnusableProjection = true;
                 continue;
@@ -410,7 +411,7 @@ public sealed class UserLoginIdentityProjectionService : IUserLoginIdentityProje
 
     private void ValidateUsernameMetadata(byte[] hash, byte[] salt)
     {
-        if (hash.Length != Hashing.SHA256HashSizeInBytes || salt.Length != Hashing.SHA256HashSizeInBytes)
+        if (hash.Length != CryptographyConstants.Sha256HashSizeInBytes || salt.Length != CryptographyConstants.Sha256HashSizeInBytes)
             throw new InvalidDataException("The authenticated username projection metadata has an invalid size.");
     }
 

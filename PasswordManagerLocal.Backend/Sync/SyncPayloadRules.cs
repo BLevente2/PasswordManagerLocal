@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
@@ -64,7 +65,7 @@ public static class SyncPayloadRules
         if (payload.ChangeType == SyncChangeType.Deleted && payload.UserDevice.DeletedAt is null)
             throw new InvalidDataException("Deleted user-device delta must contain deletion time.");
 
-        if (payload.UserDevice.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+        if (payload.UserDevice.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
             throw new InvalidDataException("User device sync hash is missing.");
     }
 }

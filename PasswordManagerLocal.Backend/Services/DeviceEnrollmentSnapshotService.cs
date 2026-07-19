@@ -17,7 +17,6 @@ using PasswordManagerLocal.Backend.Sync;
 using System.Net;
 using System.Net.Sockets;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
 using PasswordManagerLocal.Backend.State;
 
 namespace PasswordManagerLocal.Backend.Services;

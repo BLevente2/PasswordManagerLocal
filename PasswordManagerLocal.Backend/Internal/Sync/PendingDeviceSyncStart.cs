@@ -6,9 +6,9 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Sync;
 using System.Collections.Concurrent;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using PasswordManagerLocal.Backend.Utils;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
 
 namespace PasswordManagerLocal.Backend.Internal.Sync;
 

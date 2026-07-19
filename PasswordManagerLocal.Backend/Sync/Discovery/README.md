@@ -36,7 +36,7 @@ The LAN is hostile. Discovery is never an authority.
    - the TLS fingerprint equals the stored trusted fingerprint;
    - the Ed25519 signature is valid;
    - the response nonce has not already been accepted from that responder.
-5. Only then may the endpoint cache and synchronization task service be updated.
+5. Only then may the endpoint registry and synchronization task service be updated.
 
 ## Enrollment discovery
 

@@ -20,7 +20,7 @@ public sealed class IntegrityProtectionTests
         using var password = CreateSecurePassword();
         password.GenerateIntegrityHash();
 
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, password.IntegrityHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, password.IntegrityHash);
         MSTestAssert.IsTrue(password.IsIntegrityValid());
 
         password.Password[0] ^= 0x01;
@@ -50,8 +50,8 @@ public sealed class IntegrityProtectionTests
 
         device.GenerateIntegrityHash();
 
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, device.SignPublicKeyHash);
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, device.IntegrityHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, device.SignPublicKeyHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, device.IntegrityHash);
         MSTestAssert.IsTrue(device.IsIntegrityValid());
 
         device.SignPublicKey[0] ^= 0x01;
@@ -209,10 +209,10 @@ public sealed class IntegrityProtectionTests
 
         data.GenerateIntegrityHash();
 
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.PasswordsIntegrityHash);
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.CustomColorsIntegrityHash);
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.PasswordTagsIntegrityHash);
-        MSTestAssert.HasCount(Hashing.SHA256HashSizeInBytes, data.IntegrityHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, data.PasswordsIntegrityHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, data.CustomColorsIntegrityHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, data.PasswordTagsIntegrityHash);
+        MSTestAssert.HasCount(CryptographyConstants.Sha256HashSizeInBytes, data.IntegrityHash);
         MSTestAssert.IsTrue(data.IsIntegrityValid());
     }
 

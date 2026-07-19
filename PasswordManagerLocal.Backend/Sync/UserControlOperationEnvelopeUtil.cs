@@ -559,8 +559,8 @@ public static class UserControlOperationEnvelopeUtil
         }
 
         SyncVersionStampComparer.Validate(payload.GeneralUserDataVersion);
-        if (payload.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
-            payload.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes ||
+        if (payload.UsernameHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            payload.UsernameSalt.Length != CryptographyConstants.Sha256HashSizeInBytes ||
             payload.PasswordSalt.Length == 0 || payload.EncryptedPayload.Length == 0 ||
             payload.EncryptedGeneralUserDataPayload.Length == 0 ||
             payload.EncryptedUserPasswordsDataPayload.Length == 0 ||

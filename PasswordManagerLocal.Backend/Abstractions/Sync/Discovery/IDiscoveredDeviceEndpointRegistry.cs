@@ -1,8 +1,8 @@
-﻿using PasswordManagerLocal.Backend.Sync;
+﻿using PasswordManagerLocal.Backend.Sync.Discovery;
 
-namespace PasswordManagerLocal.Backend.Abstractions.Caching;
+namespace PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 
-public interface IDiscoveredDeviceEndpointCache
+public interface IDiscoveredDeviceEndpointRegistry
 {
     void AddOrUpdate(DiscoveredDeviceEndpoint endpoint);
     bool TryGetByFingerprint(string tlsFingerprint, out DiscoveredDeviceEndpoint? endpoint);

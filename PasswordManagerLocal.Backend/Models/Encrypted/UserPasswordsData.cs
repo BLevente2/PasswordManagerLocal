@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
 
@@ -153,7 +154,7 @@ public sealed class UserPasswordsData : IntegrityCheckableBase, IDisposable
 
 
     private static bool IsSha256Hash(byte[]? hash) =>
-        hash is { Length: Hashing.SHA256HashSizeInBytes };
+        hash is { Length: CryptographyConstants.Sha256HashSizeInBytes };
 
 
     private static byte[] ReplaceHash(byte[]? target, byte[] value)

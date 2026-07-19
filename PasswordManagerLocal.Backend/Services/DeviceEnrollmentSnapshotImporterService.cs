@@ -10,7 +10,6 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 
 using PasswordManagerLocal.Backend.Internal.Enrollment;
-using PasswordManagerLocal.Backend.Factories;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>
@@ -152,11 +151,14 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
                 var existing = await operations.GetByIdAsync(item.Envelope.OperationId, ct);
                 if (existing is null)
                 {
-                    var row = UserControlOperationFactory.Create(item.Envelope, item.Snapshot.EnvelopePayload.ToArray(), item.Snapshot.Status);
+                    var row = UserControlOperationMapping.ToStoredOperation(
+                        item.Envelope,
+                        item.Snapshot.EnvelopePayload.ToArray(),
+                        item.Snapshot.Status,
+                        UtcDateTimeUtil.ToUtc(item.Snapshot.ReceivedAtUtc),
+                        UtcDateTimeUtil.ToUtc(item.Snapshot.AppliedAtUtc));
                     row.StatusReason = item.Snapshot.StatusReason;
                     row.ConflictingOperationHash = item.Snapshot.ConflictingOperationHash?.ToArray();
-                    row.ReceivedAtUtc = UtcDateTimeUtil.ToUtc(item.Snapshot.ReceivedAtUtc);
-                    row.AppliedAtUtc = UtcDateTimeUtil.ToUtc(item.Snapshot.AppliedAtUtc);
                     await operations.AddAsync(row, ct);
                 }
                 else if (!Hashing.Verify(existing.OperationHash, item.Envelope.OperationHash) ||
@@ -426,7 +428,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             if (pending.Status == UserSyncSnapshotStatus.Quarantined)
             {
                 if (string.IsNullOrWhiteSpace(pending.QuarantineReason) ||
-                    pending.ConflictingSnapshotHash is { Length: not Hashing.SHA256HashSizeInBytes })
+                    pending.ConflictingSnapshotHash is { Length: not CryptographyConstants.Sha256HashSizeInBytes })
                 {
                     throw new InvalidDataException("Quarantined snapshot evidence contains invalid diagnostics.");
                 }
@@ -456,7 +458,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         {
             if (knowledge.UserId != snapshot.PrimaryUserId || knowledge.OriginDeviceId == Guid.Empty || knowledge.OriginInstanceId == Guid.Empty ||
                 knowledge.UserKeyEpoch <= 0 || knowledge.HighestStoredRevision < 0 || knowledge.HighestMergedRevision < 0 ||
-                (knowledge.HighestStoredRevision > 0 && knowledge.HighestStoredSnapshotHash.Length != Hashing.SHA256HashSizeInBytes))
+                (knowledge.HighestStoredRevision > 0 && knowledge.HighestStoredSnapshotHash.Length != CryptographyConstants.Sha256HashSizeInBytes))
                 throw new InvalidDataException("The enrollment bootstrap contains invalid revision knowledge.");
         }
 
@@ -485,11 +487,11 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
     private void VerifyUserSnapshot(DeviceEnrollmentUserSnapshot source)
     {
         SyncVersionStampComparer.Validate(source.GeneralUserDataVersion);
-        if (source.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
-            source.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes ||
+        if (source.UsernameHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            source.UsernameSalt.Length != CryptographyConstants.Sha256HashSizeInBytes ||
             source.EncryptedPayload.Length == 0 || source.EncryptedGeneralUserDataPayload.Length == 0 ||
             source.EncryptedUserPasswordsDataPayload.Length == 0 || source.EncryptedUserDevicesDataPayload.Length == 0 ||
-            source.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            source.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
             throw new InvalidDataException("The enrollment bootstrap contains incomplete encrypted user data.");
         var user = new User();
         ApplyUser(source, user);
@@ -522,16 +524,16 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
     private void ValidateAuthorization(DeviceEnrollmentMembershipAuthorizationSnapshot row, Guid userId)
     {
         if (row.AuthorizationId == Guid.Empty || row.UserId != userId || row.DeviceId == Guid.Empty || row.OriginInstanceId == Guid.Empty ||
-            row.SignPublicKey.Length == 0 || row.SignPublicKeyHash.Length != Hashing.SHA256HashSizeInBytes ||
-            row.AgreementPublicKeyHash.Length != Hashing.SHA256HashSizeInBytes ||
+            row.SignPublicKey.Length == 0 || row.SignPublicKeyHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            row.AgreementPublicKeyHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
             !Hashing.Verify(row.SignPublicKeyHash, Hashing.SHA256Hash(row.SignPublicKey)) ||
             string.IsNullOrWhiteSpace(row.TlsCertFingerprint) || !DeviceTypeDetector.IsValid(row.DeviceType) ||
             row.StartedMembershipEpoch <= 0 || row.MinimumKeyEpoch <= 0 ||
             (row.EndedMembershipEpoch.HasValue && row.EndedMembershipEpoch <= row.StartedMembershipEpoch) ||
             row.IsActive == row.EndedMembershipEpoch.HasValue ||
-            (!row.IsGenesis && (!row.AdditionOperationId.HasValue || row.AdditionOperationHash is not { Length: Hashing.SHA256HashSizeInBytes })) ||
+            (!row.IsGenesis && (!row.AdditionOperationId.HasValue || row.AdditionOperationHash is not { Length: CryptographyConstants.Sha256HashSizeInBytes })) ||
             (row.IsGenesis && row.StartedMembershipEpoch != 1) ||
-            (!row.IsActive && (!row.RemovalOperationId.HasValue || row.RemovalOperationHash is not { Length: Hashing.SHA256HashSizeInBytes })))
+            (!row.IsActive && (!row.RemovalOperationId.HasValue || row.RemovalOperationHash is not { Length: CryptographyConstants.Sha256HashSizeInBytes })))
             throw new InvalidDataException("The enrollment bootstrap contains invalid membership history.");
     }
 
@@ -540,7 +542,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         if (row.CutoffId == Guid.Empty || row.UserId == Guid.Empty || row.DeviceId == Guid.Empty || row.OriginInstanceId == Guid.Empty ||
             row.UserKeyEpoch <= 0 || row.HighestAcceptedSnapshotRevision < 0 || row.HighestAcceptedControlSequence < 0 ||
             row.ResultingMembershipEpoch <= 1 || row.RemovalOperationId == Guid.Empty ||
-            row.RemovalOperationHash.Length != Hashing.SHA256HashSizeInBytes || !authById.TryGetValue(row.AuthorizationId, out var auth) ||
+            row.RemovalOperationHash.Length != CryptographyConstants.Sha256HashSizeInBytes || !authById.TryGetValue(row.AuthorizationId, out var auth) ||
             auth.UserId != row.UserId || auth.DeviceId != row.DeviceId || auth.OriginInstanceId != row.OriginInstanceId || auth.IsActive ||
             auth.RemovalOperationId != row.RemovalOperationId || auth.RemovalOperationHash is null || !Hashing.Verify(auth.RemovalOperationHash, row.RemovalOperationHash))
             throw new InvalidDataException("The enrollment bootstrap contains an invalid removal cutoff.");
@@ -623,7 +625,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             LastModifiedAt = UtcDateTimeUtil.ToUtc(source.LastModifiedAt)
         };
         device.GenerateIntegrityHash();
-        if (source.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes || !Hashing.Verify(source.IntegrityHash, device.IntegrityHash))
+        if (source.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes || !Hashing.Verify(source.IntegrityHash, device.IntegrityHash))
             throw new InvalidDataException("The enrollment bootstrap current device integrity hash is invalid.");
     }
 

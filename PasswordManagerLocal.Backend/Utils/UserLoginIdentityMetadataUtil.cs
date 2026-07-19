@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
@@ -32,8 +33,8 @@ public static class UserLoginIdentityMetadataUtil
         SyncVersionStampComparer.Validate(decryptedGeneralData.Version);
         if (!SyncVersionStampComparer.Instance.Equals(advertisedVersion, decryptedGeneralData.Version))
             throw new InvalidDataException("Authenticated login-identity version does not match decrypted general-user-data.");
-        if (usernameHash.Length != Hashing.SHA256HashSizeInBytes ||
-            usernameSalt.Length != Hashing.SHA256HashSizeInBytes)
+        if (usernameHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            usernameSalt.Length != CryptographyConstants.Sha256HashSizeInBytes)
             throw new InvalidDataException("Authenticated login-identity metadata has an invalid size.");
 
         var usernameBytes = Encoding.UTF8.GetBytes(decryptedGeneralData.Username);

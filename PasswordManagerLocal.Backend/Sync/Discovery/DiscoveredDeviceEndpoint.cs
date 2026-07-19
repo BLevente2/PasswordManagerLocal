@@ -1,4 +1,4 @@
-namespace PasswordManagerLocal.Backend.Sync;
+namespace PasswordManagerLocal.Backend.Sync.Discovery;
 
 public sealed class DiscoveredDeviceEndpoint
 {

@@ -1,5 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync;
@@ -19,7 +19,7 @@ public sealed class PendingSyncActivationServiceTests
         var devices = new FakeDeviceRepository();
         devices.Seed(device);
         var identities = new FakeSyncDeviceIdentityService();
-        var endpoints = new DiscoveredDeviceEndpointCache();
+        var endpoints = new DiscoveredDeviceEndpointRegistry();
         var tasks = new FakeDeviceSyncTaskService();
         var identity = new FakeDeviceIdentityService
         {
@@ -58,7 +58,7 @@ public sealed class PendingSyncActivationServiceTests
         devices.Seed(device);
         var identities = new FakeSyncDeviceIdentityService();
         identities.TryAdd(device);
-        var endpoints = new DiscoveredDeviceEndpointCache();
+        var endpoints = new DiscoveredDeviceEndpointRegistry();
         endpoints.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.20",

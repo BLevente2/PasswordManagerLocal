@@ -1,4 +1,5 @@
-﻿using System.Security.Cryptography;
+﻿using PasswordManagerLocal.Backend.Constants;
+using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Constants.EncryptionKeyConstants;
 
 namespace PasswordManagerLocal.Backend.Security;
@@ -18,8 +19,8 @@ public sealed class EncryptionKey : IDisposable, IEquatable<EncryptionKey>
         var raw = AES256.GenerateKey();
         try
         {
-            var copy = new byte[KeySize];
-            Buffer.BlockCopy(raw, 0, copy, 0, KeySize);
+            var copy = new byte[CryptographyConstants.Aes256KeySizeInBytes];
+            Buffer.BlockCopy(raw, 0, copy, 0, CryptographyConstants.Aes256KeySizeInBytes);
             return new EncryptionKey(copy);
         }
         finally
@@ -30,10 +31,10 @@ public sealed class EncryptionKey : IDisposable, IEquatable<EncryptionKey>
 
     public static EncryptionKey FromRaw(ReadOnlySpan<byte> raw)
     {
-        if (raw.Length != KeySize)
+        if (raw.Length != CryptographyConstants.Aes256KeySizeInBytes)
             throw new ArgumentException("Invalid key size.");
 
-        var copy = new byte[KeySize];
+        var copy = new byte[CryptographyConstants.Aes256KeySizeInBytes];
         raw.CopyTo(copy);
         return new EncryptionKey(copy);
     }
@@ -49,7 +50,7 @@ public sealed class EncryptionKey : IDisposable, IEquatable<EncryptionKey>
         if (alg == default)
             alg = HashAlgorithmName.SHA512;
 
-        var raw = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, alg, KeySize);
+        var raw = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, alg, CryptographyConstants.Aes256KeySizeInBytes);
         return new EncryptionKey(raw);
     }
 

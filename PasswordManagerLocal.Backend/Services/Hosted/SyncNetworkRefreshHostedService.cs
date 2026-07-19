@@ -1,9 +1,10 @@
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
 using PasswordManagerLocal.Backend.Utils;
 using System.Net.NetworkInformation;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
@@ -11,7 +12,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
 {
     private readonly IDeviceIdentityService _identity;
     private readonly IEnrollmentRuntimeState _enrollmentState;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly TcpSyncServerHostedService _tcpServer;
@@ -27,7 +28,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
     public SyncNetworkRefreshHostedService(
         IDeviceIdentityService identity,
         IEnrollmentRuntimeState enrollmentState,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         IDeviceSyncTaskService deviceSyncTasks,
         ILocalNetworkAddressService networkAddresses,
         TcpSyncServerHostedService tcpServer,
@@ -35,7 +36,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
     {
         _identity = identity;
         _enrollmentState = enrollmentState;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _deviceSyncTasks = deviceSyncTasks;
         _networkAddresses = networkAddresses;
         _tcpServer = tcpServer;
@@ -241,7 +242,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
             DeviceEnrollmentTrace.Info("Network configuration changed. Restarting local synchronization/enrollment networking.");
 
             await _deviceSyncTasks.StopAllAsync(ct);
-            _endpointCache.Clear();
+            _endpointRegistry.Clear();
 
             await _discovery.StopAsync(ct);
             await _tcpServer.StopAsync(ct);

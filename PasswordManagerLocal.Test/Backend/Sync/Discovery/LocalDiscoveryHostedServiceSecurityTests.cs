@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Services.Hosted;
@@ -144,7 +144,7 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
         using var provider = services.BuildServiceProvider();
 
         var syncIdentities = new FakeSyncDeviceIdentityService();
-        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var endpointRegistry = new DiscoveredDeviceEndpointRegistry();
         var syncTasks = new FakeDeviceSyncTaskService();
         var transport = new FakeLocalDiscoveryTransport();
         using var service = CreateService(
@@ -153,7 +153,7 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
             transport,
             new EnrollmentRuntimeState(),
             syncTasks,
-            endpointCache: endpointCache,
+            endpointRegistry: endpointRegistry,
             scopeFactory: provider.GetRequiredService<IServiceScopeFactory>());
 
         await service.StartAsync();
@@ -173,7 +173,7 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
 
         MSTestAssert.AreEqual(1, transport.UnicastPayloads.Count);
         MSTestAssert.AreEqual(0, syncTasks.Starts.Count);
-        MSTestAssert.IsTrue(endpointCache.IsRecentlyDiscovered(
+        MSTestAssert.IsTrue(endpointRegistry.IsRecentlyDiscovered(
             remoteDevice.TlsCertFingerprint,
             TimeSpan.FromSeconds(SyncConstants.LocalDiscoveryOnlineTimeoutSeconds)));
     }
@@ -458,12 +458,12 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
         EnrollmentRuntimeState enrollmentState,
         FakeDeviceSyncTaskService? syncTasks = null,
         FakeLocalNetworkAddressService? networkAddresses = null,
-        DiscoveredDeviceEndpointCache? endpointCache = null,
+        DiscoveredDeviceEndpointRegistry? endpointRegistry = null,
         IServiceScopeFactory? scopeFactory = null) =>
         new(
             identity,
             syncIdentities,
-            endpointCache ?? new DiscoveredDeviceEndpointCache(),
+            endpointRegistry ?? new DiscoveredDeviceEndpointRegistry(),
             syncTasks ?? new FakeDeviceSyncTaskService(),
             enrollmentState,
             networkAddresses ?? new FakeLocalNetworkAddressService(),

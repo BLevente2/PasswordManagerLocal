@@ -8,7 +8,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Test.Fakes;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.State;
 
 namespace PasswordManagerLocal.Test.Backend.Services;
@@ -115,7 +115,7 @@ public sealed class SyncRuntimeServiceTests
         using var provider = services.BuildServiceProvider();
         var identity = new FakeDeviceIdentityService { IsSyncOn = true };
         var syncIdentities = new FakeSyncDeviceIdentityService();
-        var endpoints = new DiscoveredDeviceEndpointCache();
+        var endpoints = new DiscoveredDeviceEndpointRegistry();
         var tasks = new FakeDeviceSyncTaskService();
         ISyncControlledHostedService[] controlledServices =
         [
@@ -144,14 +144,14 @@ public sealed class SyncRuntimeServiceTests
         FakeDeviceIdentityService identity,
         List<string> calls,
         out FakeSyncDeviceIdentityService syncIdentities,
-        out DiscoveredDeviceEndpointCache endpoints,
+        out DiscoveredDeviceEndpointRegistry endpoints,
         out FakeDeviceSyncTaskService tasks)
     {
         var services = new ServiceCollection();
         services.AddSingleton<ILocalUserDeviceRepository>(localUsers);
         var provider = services.BuildServiceProvider();
         syncIdentities = new FakeSyncDeviceIdentityService();
-        endpoints = new DiscoveredDeviceEndpointCache();
+        endpoints = new DiscoveredDeviceEndpointRegistry();
         tasks = new FakeDeviceSyncTaskService();
         ISyncControlledHostedService[] hostedServices =
         [

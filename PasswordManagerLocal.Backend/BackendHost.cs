@@ -18,11 +18,9 @@ using PasswordManagerLocal.Backend.Services.Discovery;
 using PasswordManagerLocal.Backend.Utils;
 using SQLitePCL;
 using System.Text;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
-using PasswordManagerLocal.Backend.Abstractions.Providers;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.State;
-using PasswordManagerLocal.Backend.Caching;
-using PasswordManagerLocal.Backend.Providers;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.State;
 using PasswordManagerLocal.Backend.Sync.Tcp;
 
@@ -300,11 +298,10 @@ namespace PasswordManagerLocal.Backend
             services.AddSingleton<IDataCachingService, DataCachingService>();
             services.AddSingleton<ITokenService, TokenService>();
 
-            services.AddSingleton<ILocalDeviceTypeProvider, LocalDeviceTypeProvider>();
             services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
             services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
             services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
-            services.AddSingleton<IDiscoveredDeviceEndpointCache, DiscoveredDeviceEndpointCache>();
+            services.AddSingleton<IDiscoveredDeviceEndpointRegistry, DiscoveredDeviceEndpointRegistry>();
             services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
             services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
             services.AddSingleton<ILocalNetworkAddressService, LocalNetworkAddressService>();

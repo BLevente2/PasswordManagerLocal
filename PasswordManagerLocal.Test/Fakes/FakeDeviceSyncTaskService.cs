@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Test.Fakes;
 

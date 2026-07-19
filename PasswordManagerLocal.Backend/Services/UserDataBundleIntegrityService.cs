@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
@@ -240,8 +241,8 @@ public sealed class UserDataBundleIntegrityService : IUserDataBundleIntegritySer
 
     private void VerifyStoredChildHash(byte[] expected, byte[] actual, Type type)
     {
-        if (expected.Length != Hashing.SHA256HashSizeInBytes ||
-            actual.Length != Hashing.SHA256HashSizeInBytes ||
+        if (expected.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            actual.Length != CryptographyConstants.Sha256HashSizeInBytes ||
             !Hashing.Verify(expected, actual))
             throw new InvalidDataIntegrityException(type);
     }

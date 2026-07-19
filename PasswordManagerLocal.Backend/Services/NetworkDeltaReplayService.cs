@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
@@ -49,7 +50,7 @@ public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
 
         if (payload.ModelType == SyncModelType.Group)
         {
-            if (payload.Group is null || payload.Group.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            if (payload.Group is null || payload.Group.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 return false;
 
             var existing = await _groups.GetWithUserIdsAsNoTrackingAsync(payload.ModelId, ct);
@@ -63,7 +64,7 @@ public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
 
         if (payload.ModelType == SyncModelType.Device)
         {
-            if (payload.Device is null || payload.Device.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            if (payload.Device is null || payload.Device.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 return false;
 
             var existing = await _devices.GetByIdWithUserDevicesAsync(payload.ModelId, ct);
@@ -77,7 +78,7 @@ public sealed class NetworkDeltaReplayService : INetworkDeltaReplayService
 
         if (payload.ModelType == SyncModelType.UserDevice)
         {
-            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 return false;
 
             var existing = await _userDevices.GetAsync(payload.UserDevice.UserId, payload.UserDevice.DeviceId, ct);

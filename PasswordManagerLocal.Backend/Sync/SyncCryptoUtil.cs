@@ -144,7 +144,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.Group)
         {
-            if (payload.Group is null || payload.Group.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            if (payload.Group is null || payload.Group.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 throw new InvalidDataException("Group sync hash is missing.");
 
             if (!Hashing.Verify(payload.Group.IntegrityHash, CalculateGroupHash(payload.Group, timestamp)))
@@ -155,7 +155,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.Device)
         {
-            if (payload.Device is null || payload.Device.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            if (payload.Device is null || payload.Device.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 throw new InvalidDataException("Device sync hash is missing.");
 
             if (!Hashing.Verify(payload.Device.IntegrityHash, CalculateDeviceHash(payload.Device, timestamp)))
@@ -166,7 +166,7 @@ public static class SyncCryptoUtil
 
         if (payload.ModelType == SyncModelType.UserDevice)
         {
-            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length != Hashing.SHA256HashSizeInBytes)
+            if (payload.UserDevice is null || payload.UserDevice.IntegrityHash.Length != CryptographyConstants.Sha256HashSizeInBytes)
                 throw new InvalidDataException("User device sync hash is missing.");
 
             if (!Hashing.Verify(payload.UserDevice.IntegrityHash, SyncHashUtil.CalculateUserDeviceHash(payload.UserDevice, timestamp)))

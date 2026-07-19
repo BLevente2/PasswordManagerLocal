@@ -1,5 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -19,24 +19,25 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.State;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegistrationService
 {
     private readonly IDeviceIdentityService _identity;
-    private readonly IDiscoveredDeviceEndpointCache _endpointCache;
+    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly IDeviceEnrollmentLocalLinkService _localLinks;
 
     public DeviceEnrollmentRegistrationService(
         IDeviceIdentityService identity,
-        IDiscoveredDeviceEndpointCache endpointCache,
+        IDiscoveredDeviceEndpointRegistry endpointRegistry,
         ILocalNetworkAddressService networkAddresses,
         IDeviceEnrollmentLocalLinkService localLinks)
     {
         _identity = identity;
-        _endpointCache = endpointCache;
+        _endpointRegistry = endpointRegistry;
         _networkAddresses = networkAddresses;
         _localLinks = localLinks;
     }
@@ -121,7 +122,7 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
     }
 
 
-    public async Task CacheIncomingEnrollmentSourceEndpointAsync(
+    public async Task RegisterIncomingEnrollmentSourceEndpointAsync(
         IServiceProvider services,
         string sourceDeviceId,
         string sourceTlsCertFingerprint,
@@ -163,7 +164,7 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
             TlsCertFingerprint = sourceTlsCertFingerprint
         };
 
-        _endpointCache.AddOrUpdate(endpoint);
+        _endpointRegistry.AddOrUpdate(endpoint);
         syncIdentities.TryAdd(device);
         syncTasks.TryStart(endpoint, device);
     }

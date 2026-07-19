@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocal.Backend.Abstractions.Caching;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
@@ -11,6 +11,7 @@ using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;
 using System.Security.Cryptography;
 using System.Text;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
@@ -111,7 +112,7 @@ public sealed class DeviceServiceTests
         var service = host.Services.GetRequiredService<IDeviceService>();
         var userDevices = (FakeUserDeviceRepository)host.Services.GetRequiredService<IUserDeviceRepository>();
         var devices = (FakeDeviceRepository)host.Services.GetRequiredService<IDeviceRepository>();
-        var endpoints = host.Services.GetRequiredService<IDiscoveredDeviceEndpointCache>();
+        var endpoints = host.Services.GetRequiredService<IDiscoveredDeviceEndpointRegistry>();
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("device_online_status"));
         var userId = users.GetUidFromToken(token);
         var remote = CreateRemoteDevice();

@@ -9,7 +9,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Test.Fakes;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 namespace PasswordManagerLocal.Test.Backend.Services;
@@ -73,11 +73,11 @@ public sealed class DeviceSyncTaskServiceTests
     {
         using var setup = CreateSetup(sendResult: false);
         setup.Queue.Seed(CreateQueueItem(setup.Device.Id));
-        setup.EndpointCache.AddOrUpdate(setup.Endpoint);
+        setup.EndpointRegistry.AddOrUpdate(setup.Endpoint);
 
         MSTestAssert.IsTrue(setup.Service.TryStart(setup.Endpoint, setup.Device));
         await WaitUntilAsync(() => setup.Transport.SendCalls == 1 &&
-            !setup.EndpointCache.TryGetByFingerprint(setup.Endpoint.TlsCertFingerprint, out _));
+            !setup.EndpointRegistry.TryGetByFingerprint(setup.Endpoint.TlsCertFingerprint, out _));
 
         MSTestAssert.AreEqual(1, setup.Queue.Items.Count);
         MSTestAssert.AreEqual(0, setup.UnitOfWork.SaveCalls);
@@ -160,7 +160,7 @@ public sealed class DeviceSyncTaskServiceTests
             SendResult = sendResult,
             SendGate = sendGate
         };
-        var endpointCache = new DiscoveredDeviceEndpointCache();
+        var endpointRegistry = new DiscoveredDeviceEndpointRegistry();
         var syncIdentities = new FakeSyncDeviceIdentityService();
         syncIdentities.TryAdd(device);
         var services = new ServiceCollection();
@@ -180,7 +180,7 @@ public sealed class DeviceSyncTaskServiceTests
             provider.GetRequiredService<IServiceScopeFactory>(),
             transport,
             syncIdentities,
-            endpointCache,
+            endpointRegistry,
             identity);
 
         return new DeviceSyncTaskSetup(
@@ -189,7 +189,7 @@ public sealed class DeviceSyncTaskServiceTests
             queue,
             unitOfWork,
             transport,
-            endpointCache,
+            endpointRegistry,
             identity,
             device,
             endpoint);

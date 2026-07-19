@@ -12,7 +12,6 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class PasswordService : IPasswordService
 {
-    private const int MaxConcurrentPasswordExports = 4;
     private readonly ISyncVersionClockService _versionClock;
 
     public PasswordService() : this(new EphemeralSyncVersionClockService()) { }

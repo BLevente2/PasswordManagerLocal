@@ -251,8 +251,8 @@ public sealed class SyncCryptoUtilTests
         new()
         {
             UId = Guid.Parse("9FC68202-3041-45C5-80B2-2C82CF4662C8"),
-            UsernameHash = Enumerable.Repeat((byte)0x11, Hashing.SHA256HashSizeInBytes).ToArray(),
-            UsernameSalt = Enumerable.Repeat((byte)0x22, Hashing.SHA256HashSizeInBytes).ToArray(),
+            UsernameHash = Enumerable.Repeat((byte)0x11, CryptographyConstants.Sha256HashSizeInBytes).ToArray(),
+            UsernameSalt = Enumerable.Repeat((byte)0x22, CryptographyConstants.Sha256HashSizeInBytes).ToArray(),
             GeneralUserDataVersion = new SyncVersionStamp
             {
                 PhysicalTimeUnixMilliseconds = 1_750_000_000_000L,

@@ -36,6 +36,7 @@ public static class SyncConstants
     public const int MaxIncomingDeltaTotalBytesPerCall = 32 * 1024 * 1024;
     public const int MaxDeviceEnrollmentSnapshotBytes = 64 * 1024 * 1024;
     public const int DeviceEnrollmentSnapshotChunkBytes = 64 * 1024;
+    public const int PendingDeviceDeltaBatchSize = 32;
 
     public const int EncryptedUserDataFormatVersion = 2;
     public const int DeviceEnrollmentPayloadVersion = 3;

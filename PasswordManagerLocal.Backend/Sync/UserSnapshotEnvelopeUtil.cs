@@ -164,8 +164,8 @@ public static class UserSnapshotEnvelopeUtil
             throw new InvalidDataException("User snapshot payload user id does not match the envelope.");
 
         SyncVersionStampComparer.Validate(envelope.User.GeneralUserDataVersion);
-        if (envelope.User.UsernameHash.Length != Hashing.SHA256HashSizeInBytes ||
-            envelope.User.UsernameSalt.Length != Hashing.SHA256HashSizeInBytes)
+        if (envelope.User.UsernameHash.Length != CryptographyConstants.Sha256HashSizeInBytes ||
+            envelope.User.UsernameSalt.Length != CryptographyConstants.Sha256HashSizeInBytes)
             throw new InvalidDataException("User snapshot username projection metadata is invalid.");
 
         if (envelope.User.IntegrityHash.Length != SyncConstants.SyncDeltaPayloadHashBytes)

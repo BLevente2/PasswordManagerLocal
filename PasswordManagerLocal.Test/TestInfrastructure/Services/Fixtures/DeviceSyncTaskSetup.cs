@@ -9,7 +9,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Test.Fakes;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
-using PasswordManagerLocal.Backend.Caching;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 
@@ -19,7 +19,7 @@ internal sealed record DeviceSyncTaskSetup(
     FakeSyncQueueRepository Queue,
     FakeUnitOfWork UnitOfWork,
     FakeSyncTransportClientService Transport,
-    DiscoveredDeviceEndpointCache EndpointCache,
+    DiscoveredDeviceEndpointRegistry EndpointRegistry,
     FakeDeviceIdentityService Identity,
     Device Device,
     DiscoveredDeviceEndpoint Endpoint) : IDisposable

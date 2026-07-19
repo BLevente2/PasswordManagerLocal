@@ -1,12 +1,21 @@
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Sync;
 
-namespace PasswordManagerLocal.Backend.Factories;
+namespace PasswordManagerLocal.Backend.Sync;
 
-internal static class UserControlOperationFactory
+internal static class UserControlOperationMapping
 {
-    internal static UserControlOperation Create(UserControlOperationEnvelope envelope, byte[] serialized, UserControlOperationStatus status, Guid? lastReceivedFromDeviceId = null) =>
-        new()
+    internal static UserControlOperation ToStoredOperation(
+        UserControlOperationEnvelope envelope,
+        byte[] serializedEnvelope,
+        UserControlOperationStatus status,
+        DateTimeOffset receivedAtUtc,
+        DateTimeOffset? appliedAtUtc,
+        Guid? lastReceivedFromDeviceId = null)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        ArgumentNullException.ThrowIfNull(serializedEnvelope);
+
+        return new UserControlOperation
         {
             OperationId = envelope.OperationId,
             UserId = envelope.UserId,
@@ -19,14 +28,15 @@ internal static class UserControlOperationFactory
             PreviousMembershipEpoch = envelope.PreviousMembershipEpoch,
             ResultingMembershipEpoch = envelope.ResultingMembershipEpoch,
             CreatedAtUtc = envelope.CreatedAtUtc,
-            ReceivedAtUtc = DateTimeOffset.UtcNow,
-            AppliedAtUtc = status == UserControlOperationStatus.Applied ? DateTimeOffset.UtcNow : null,
+            ReceivedAtUtc = receivedAtUtc,
+            AppliedAtUtc = appliedAtUtc,
             LastReceivedFromDeviceId = lastReceivedFromDeviceId,
             PayloadHash = envelope.PayloadHash.ToArray(),
             OperationHash = envelope.OperationHash.ToArray(),
             OriginSignPublicKey = envelope.OriginSignPublicKey.ToArray(),
             OriginSignature = envelope.OriginSignature.ToArray(),
-            EnvelopePayload = serialized,
+            EnvelopePayload = serializedEnvelope.ToArray(),
             Status = status
         };
+    }
 }

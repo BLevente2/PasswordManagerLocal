@@ -1,20 +1,19 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocal.Backend.Caching;
-using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync.Discovery;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
-namespace PasswordManagerLocal.Test.Backend.Caching;
+namespace PasswordManagerLocal.Test.Backend.Sync.Discovery;
 
 [TestClass]
-public sealed class DiscoveredDeviceEndpointCacheTests
+public sealed class DiscoveredDeviceEndpointRegistryTests
 {
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Unit")]
     public void AddOrUpdate_NormalizesFingerprint_AndReturnsIndependentCopies()
     {
-        var cache = new DiscoveredDeviceEndpointCache();
+        var registry = new DiscoveredDeviceEndpointRegistry();
         var source = new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.25",
@@ -22,14 +21,14 @@ public sealed class DiscoveredDeviceEndpointCacheTests
             TlsCertFingerprint = "aa:bb:cc"
         };
 
-        cache.AddOrUpdate(source);
+        registry.AddOrUpdate(source);
 
-        MSTestAssert.IsTrue(cache.TryGetByFingerprint("AABBCC", out var first));
+        MSTestAssert.IsTrue(registry.TryGetByFingerprint("AABBCC", out var first));
         MSTestAssert.IsNotNull(first);
         MSTestAssert.AreEqual("192.168.1.25", first.Host);
         MSTestAssert.AreNotSame(source, first);
 
-        MSTestAssert.IsTrue(cache.TryGetByFingerprint("aa bb cc", out var second));
+        MSTestAssert.IsTrue(registry.TryGetByFingerprint("aa bb cc", out var second));
         MSTestAssert.IsNotNull(second);
         MSTestAssert.AreEqual("192.168.1.25", second.Host);
         MSTestAssert.AreNotSame(first, second);
@@ -40,28 +39,28 @@ public sealed class DiscoveredDeviceEndpointCacheTests
     [TestCategory("Unit")]
     public void AddOrUpdate_InvalidEndpoint_IsIgnored()
     {
-        var cache = new DiscoveredDeviceEndpointCache();
+        var registry = new DiscoveredDeviceEndpointRegistry();
 
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = " ",
             Port = 26688,
             TlsCertFingerprint = "AABB"
         });
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.20",
             Port = 0,
             TlsCertFingerprint = "AABB"
         });
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.20",
             Port = 26688,
             TlsCertFingerprint = " "
         });
 
-        MSTestAssert.IsFalse(cache.TryGetByFingerprint("AABB", out _));
+        MSTestAssert.IsFalse(registry.TryGetByFingerprint("AABB", out _));
     }
 
     [TestMethod]
@@ -69,22 +68,22 @@ public sealed class DiscoveredDeviceEndpointCacheTests
     [TestCategory("Unit")]
     public void AddOrUpdate_SameFingerprint_ReplacesEndpoint()
     {
-        var cache = new DiscoveredDeviceEndpointCache();
+        var registry = new DiscoveredDeviceEndpointRegistry();
 
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.20",
             Port = 26688,
             TlsCertFingerprint = "AABB"
         });
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.21",
             Port = 30000,
             TlsCertFingerprint = "aa:bb"
         });
 
-        MSTestAssert.IsTrue(cache.TryGetByFingerprint("AABB", out var endpoint));
+        MSTestAssert.IsTrue(registry.TryGetByFingerprint("AABB", out var endpoint));
         MSTestAssert.IsNotNull(endpoint);
         MSTestAssert.AreEqual("192.168.1.21", endpoint.Host);
         MSTestAssert.AreEqual(30000, endpoint.Port);
@@ -95,16 +94,16 @@ public sealed class DiscoveredDeviceEndpointCacheTests
     [TestCategory("Unit")]
     public void RemoveAndClear_RemoveStoredEndpoints()
     {
-        var cache = new DiscoveredDeviceEndpointCache();
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint { Host = "host-a", Port = 1, TlsCertFingerprint = "AA" });
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint { Host = "host-b", Port = 2, TlsCertFingerprint = "BB" });
+        var registry = new DiscoveredDeviceEndpointRegistry();
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint { Host = "host-a", Port = 1, TlsCertFingerprint = "AA" });
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint { Host = "host-b", Port = 2, TlsCertFingerprint = "BB" });
 
-        MSTestAssert.IsTrue(cache.TryRemove("aa"));
-        MSTestAssert.IsFalse(cache.TryGetByFingerprint("AA", out _));
-        MSTestAssert.IsFalse(cache.TryRemove("AA"));
+        MSTestAssert.IsTrue(registry.TryRemove("aa"));
+        MSTestAssert.IsFalse(registry.TryGetByFingerprint("AA", out _));
+        MSTestAssert.IsFalse(registry.TryRemove("AA"));
 
-        cache.Clear();
-        MSTestAssert.IsFalse(cache.TryGetByFingerprint("BB", out _));
+        registry.Clear();
+        MSTestAssert.IsFalse(registry.TryGetByFingerprint("BB", out _));
     }
 
     [TestMethod]
@@ -113,19 +112,19 @@ public sealed class DiscoveredDeviceEndpointCacheTests
     public void IsRecentlyDiscovered_UsesObservationTimeAndMaximumAge()
     {
         var now = new DateTimeOffset(2026, 7, 13, 18, 0, 0, TimeSpan.Zero);
-        var cache = new DiscoveredDeviceEndpointCache(() => now);
-        cache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        var registry = new DiscoveredDeviceEndpointRegistry(() => now);
+        registry.AddOrUpdate(new DiscoveredDeviceEndpoint
         {
             Host = "192.168.1.25",
             Port = 26688,
             TlsCertFingerprint = "AABB"
         });
 
-        MSTestAssert.IsTrue(cache.IsRecentlyDiscovered("aa:bb", TimeSpan.FromSeconds(75)));
+        MSTestAssert.IsTrue(registry.IsRecentlyDiscovered("aa:bb", TimeSpan.FromSeconds(75)));
 
         now = now.AddSeconds(76);
 
-        MSTestAssert.IsFalse(cache.IsRecentlyDiscovered("AABB", TimeSpan.FromSeconds(75)));
-        MSTestAssert.IsTrue(cache.TryGetByFingerprint("AABB", out _));
+        MSTestAssert.IsFalse(registry.IsRecentlyDiscovered("AABB", TimeSpan.FromSeconds(75)));
+        MSTestAssert.IsTrue(registry.TryGetByFingerprint("AABB", out _));
     }
 }
