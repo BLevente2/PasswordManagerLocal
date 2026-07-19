@@ -12,6 +12,10 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Collections.Concurrent;
 using PasswordManagerLocal.Backend.Abstractions.State;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Sync.Tcp;
 
 public sealed class SyncPeerProtocolHandler

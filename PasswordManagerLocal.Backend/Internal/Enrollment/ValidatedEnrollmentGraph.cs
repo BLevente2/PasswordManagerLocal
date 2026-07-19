@@ -11,6 +11,8 @@ using System.Text.Json;
 
 using PasswordManagerLocal.Backend.Internal.Enrollment;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.Internal.Enrollment;
 
 internal sealed record ValidatedEnrollmentGraph(

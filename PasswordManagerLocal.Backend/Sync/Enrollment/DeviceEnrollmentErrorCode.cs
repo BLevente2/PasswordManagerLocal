@@ -1,4 +1,4 @@
-namespace PasswordManagerLocal.Backend.Exceptions;
+namespace PasswordManagerLocal.Backend.Sync.Enrollment;
 
 public enum DeviceEnrollmentErrorCode
 {

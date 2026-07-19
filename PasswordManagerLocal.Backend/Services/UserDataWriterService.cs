@@ -8,6 +8,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;
+using PasswordManagerLocal.Backend.Sync.Tombstones;
 
 namespace PasswordManagerLocal.Backend.Services;
 

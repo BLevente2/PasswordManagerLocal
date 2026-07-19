@@ -2,6 +2,8 @@ using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Responses;
 using System.Security.Cryptography;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.State;
 
 internal sealed class EnrollmentSession

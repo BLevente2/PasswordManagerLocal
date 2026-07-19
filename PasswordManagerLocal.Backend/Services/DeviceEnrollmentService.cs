@@ -15,6 +15,8 @@ using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Utils;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>

@@ -8,6 +8,8 @@ using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Utils;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Windows;
 
 internal sealed class WindowsFirewallPermissionManager : IFirewallPermissionManager

@@ -12,6 +12,7 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 
 using PasswordManagerLocal.Backend.Internal.Recovery;
+using PasswordManagerLocal.Backend.Sync.Recovery;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>

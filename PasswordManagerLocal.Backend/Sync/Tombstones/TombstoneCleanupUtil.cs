@@ -1,6 +1,8 @@
 using PasswordManagerLocal.Backend.Models.Encrypted;
 
-namespace PasswordManagerLocal.Backend.Utils;
+using PasswordManagerLocal.Backend.Utils;
+
+namespace PasswordManagerLocal.Backend.Sync.Tombstones;
 
 public static class TombstoneCleanupUtil
 {

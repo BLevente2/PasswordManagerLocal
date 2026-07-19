@@ -9,7 +9,8 @@ using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
+using static PasswordManagerLocal.Backend.Validation.DataValidation;
+using PasswordManagerLocal.Backend.Sync.Tombstones;
 
 namespace PasswordManagerLocal.Backend.Services;
 

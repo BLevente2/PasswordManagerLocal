@@ -23,6 +23,7 @@ using PasswordManagerLocal.Backend.Abstractions.State;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.State;
 using PasswordManagerLocal.Backend.Sync.Tcp;
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
 
 namespace PasswordManagerLocal.Backend
 {
@@ -182,8 +183,8 @@ namespace PasswordManagerLocal.Backend
 
         private static void ConfigureServices(IServiceCollection services, IKeyProtector? platformKeyProtector)
         {
-            var dbFolder = PathConstants.AppRootFolder;
-            var dbPath = Path.Combine(dbFolder, PathConstants.DbFileName);
+            var dbFolder = ApplicationPaths.AppRootFolder;
+            var dbPath = Path.Combine(dbFolder, ApplicationFileNames.DbFileName);
 
             if (platformKeyProtector is not null)
             {
@@ -376,10 +377,10 @@ namespace PasswordManagerLocal.Backend
 
         private static void DeleteDatabaseFiles()
         {
-            var root = PathConstants.AppRootFolder;
-            var databasePath = Path.Combine(root, PathConstants.DbFileName);
-            var configPath = Path.Combine(root, PathConstants.DbConfigFileName);
-            var legacyKeyPath = Path.Combine(root, PathConstants.LegacyDbKeyFileName);
+            var root = ApplicationPaths.AppRootFolder;
+            var databasePath = Path.Combine(root, ApplicationFileNames.DbFileName);
+            var configPath = Path.Combine(root, ApplicationFileNames.DbConfigFileName);
+            var legacyKeyPath = Path.Combine(root, ApplicationFileNames.LegacyDbKeyFileName);
 
             DeleteFileIfExists(databasePath);
             DeleteFileIfExists($"{databasePath}-wal");
@@ -388,7 +389,7 @@ namespace PasswordManagerLocal.Backend
             DeleteFileIfExists(configPath);
             DeleteFileIfExists(legacyKeyPath);
 
-            foreach (var temporaryConfigPath in Directory.EnumerateFiles(root, $"{PathConstants.DbConfigFileName}.*.tmp"))
+            foreach (var temporaryConfigPath in Directory.EnumerateFiles(root, $"{ApplicationFileNames.DbConfigFileName}.*.tmp"))
                 DeleteFileIfExists(temporaryConfigPath);
         }
 

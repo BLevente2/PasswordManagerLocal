@@ -3,7 +3,7 @@ using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
+using static PasswordManagerLocal.Backend.Validation.DataValidation;
 
 namespace PasswordManagerLocal.Backend.Internal.Devices;
 

@@ -10,6 +10,8 @@ using System.Text.Json;
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
 using PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
+
+using PasswordManagerLocal.Backend.Sync.Enrollment;
 namespace PasswordManagerLocal.Test.Backend.Services;
 
 [TestClass]

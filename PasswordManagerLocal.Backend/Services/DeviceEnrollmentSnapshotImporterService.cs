@@ -10,6 +10,8 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 
 using PasswordManagerLocal.Backend.Internal.Enrollment;
+
+using PasswordManagerLocal.Backend.Sync.Enrollment;
 namespace PasswordManagerLocal.Backend.Services;
 
 /// <summary>

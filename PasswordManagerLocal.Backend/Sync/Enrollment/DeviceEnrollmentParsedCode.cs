@@ -3,7 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace PasswordManagerLocal.Backend.Sync;
+namespace PasswordManagerLocal.Backend.Sync.Enrollment;
 
 public sealed class DeviceEnrollmentParsedCode
 {

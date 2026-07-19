@@ -5,6 +5,8 @@ using PasswordManagerLocal.Backend.Exceptions;
 using ReactiveUI;
 using System.ComponentModel;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Frontend.ViewModels;
 
 public abstract class ViewModelBase : ReactiveObject

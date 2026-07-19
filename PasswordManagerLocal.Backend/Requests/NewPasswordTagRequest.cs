@@ -1,4 +1,4 @@
-using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
+using static PasswordManagerLocal.Backend.Validation.DataValidation;
 using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
 
 namespace PasswordManagerLocal.Backend.Requests;

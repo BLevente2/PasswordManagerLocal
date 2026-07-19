@@ -5,7 +5,7 @@ using System.Text;
 
 using PasswordManagerLocal.Backend.Models;
 
-namespace PasswordManagerLocal.Backend.Sync;
+namespace PasswordManagerLocal.Backend.Sync.Enrollment;
 
 public sealed class DeviceEnrollmentDirectEndpointInfo
 {

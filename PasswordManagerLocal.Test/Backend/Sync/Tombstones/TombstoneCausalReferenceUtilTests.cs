@@ -1,10 +1,13 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Sync.Tombstones;
 using PasswordManagerLocal.Backend.Utils;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
-namespace PasswordManagerLocal.Test.Backend.Utils;
+using PasswordManagerLocal.Backend.Sync.Tombstones;
+
+namespace PasswordManagerLocal.Test.Backend.Sync.Tombstones;
 
 [TestClass]
 public sealed class TombstoneCausalReferenceUtilTests

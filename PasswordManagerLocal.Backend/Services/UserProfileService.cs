@@ -7,7 +7,7 @@ using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
 using System.Text;
-using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
+using static PasswordManagerLocal.Backend.Validation.DataValidation;
 
 namespace PasswordManagerLocal.Backend.Services;
 

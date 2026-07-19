@@ -1,3 +1,5 @@
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.Exceptions;
 
 public sealed class DeviceEnrollmentException : Exception

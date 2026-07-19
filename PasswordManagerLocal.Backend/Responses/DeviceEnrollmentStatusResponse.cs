@@ -1,5 +1,7 @@
 using PasswordManagerLocal.Backend.Exceptions;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.Responses;
 
 public sealed class DeviceEnrollmentStatusResponse

@@ -14,6 +14,8 @@ using System.Net;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Test.Backend.Sync.Discovery;
 
 [TestClass]

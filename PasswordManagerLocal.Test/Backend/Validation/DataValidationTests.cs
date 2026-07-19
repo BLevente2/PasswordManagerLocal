@@ -2,25 +2,25 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Utils;
+using PasswordManagerLocal.Backend.Validation;
 using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 
-namespace PasswordManagerLocal.Test.Backend.Utils;
+namespace PasswordManagerLocal.Test.Backend.Validation;
 
 [TestClass]
-public sealed class DataValidationUtilTests
+public sealed class DataValidationTests
 {
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Security")]
     public void IsValidEmail_AcceptsConventionalAddressAndRejectsMissingOrInvalidDomainSeparators()
     {
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidEmail("user.name+tag@example-domain.com"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidEmail("user@examplecom"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidEmail("user@example#com"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidEmail("user@.com"));
+        MSTestAssert.IsTrue(DataValidation.IsValidEmail("user.name+tag@example-domain.com"));
+        MSTestAssert.IsFalse(DataValidation.IsValidEmail("user@examplecom"));
+        MSTestAssert.IsFalse(DataValidation.IsValidEmail("user@example#com"));
+        MSTestAssert.IsFalse(DataValidation.IsValidEmail("user@.com"));
     }
 
     [TestMethod]
@@ -28,12 +28,12 @@ public sealed class DataValidationUtilTests
     [TestCategory("Unit")]
     public void IsValidUsername_EnforcesAllowedCharactersAndTrimmedLengthBoundaries()
     {
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidUsername(" abc "));
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidUsername(new string('a', DataLengthConstants.UsernameMaxLength)));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidUsername("ab"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidUsername(new string('a', DataLengthConstants.UsernameMaxLength + 1)));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidUsername("user name"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidUsername("user!"));
+        MSTestAssert.IsTrue(DataValidation.IsValidUsername(" abc "));
+        MSTestAssert.IsTrue(DataValidation.IsValidUsername(new string('a', DataLengthConstants.UsernameMaxLength)));
+        MSTestAssert.IsFalse(DataValidation.IsValidUsername("ab"));
+        MSTestAssert.IsFalse(DataValidation.IsValidUsername(new string('a', DataLengthConstants.UsernameMaxLength + 1)));
+        MSTestAssert.IsFalse(DataValidation.IsValidUsername("user name"));
+        MSTestAssert.IsFalse(DataValidation.IsValidUsername("user!"));
     }
 
     [TestMethod]
@@ -41,10 +41,10 @@ public sealed class DataValidationUtilTests
     [TestCategory("Unit")]
     public void NameValidation_AcceptsUnicodeLettersAndRejectsDigitsOrPunctuation()
     {
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidFirstName("Árvíztűrő"));
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidLastName("Őz"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidFirstName("John2"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidLastName("Smith-Jones"));
+        MSTestAssert.IsTrue(DataValidation.IsValidFirstName("Árvíztűrő"));
+        MSTestAssert.IsTrue(DataValidation.IsValidLastName("Őz"));
+        MSTestAssert.IsFalse(DataValidation.IsValidFirstName("John2"));
+        MSTestAssert.IsFalse(DataValidation.IsValidLastName("Smith-Jones"));
     }
 
     [TestMethod]
@@ -52,11 +52,11 @@ public sealed class DataValidationUtilTests
     [TestCategory("Unit")]
     public void IsValidARGBColor_RequiresHashAndExactlyEightHexDigits()
     {
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidARGBColor("#00FF7FA0"));
-        MSTestAssert.IsTrue(DataValidationUtil.IsValidARGBColor("#ffffffff"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("00FF7FA0"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("#FFF"));
-        MSTestAssert.IsFalse(DataValidationUtil.IsValidARGBColor("#GGFF7FA0"));
+        MSTestAssert.IsTrue(DataValidation.IsValidARGBColor("#00FF7FA0"));
+        MSTestAssert.IsTrue(DataValidation.IsValidARGBColor("#ffffffff"));
+        MSTestAssert.IsFalse(DataValidation.IsValidARGBColor("00FF7FA0"));
+        MSTestAssert.IsFalse(DataValidation.IsValidARGBColor("#FFF"));
+        MSTestAssert.IsFalse(DataValidation.IsValidARGBColor("#GGFF7FA0"));
     }
 
 

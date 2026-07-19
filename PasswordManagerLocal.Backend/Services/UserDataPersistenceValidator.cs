@@ -5,7 +5,7 @@ using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Constants;
 using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
 using static PasswordManagerLocal.Backend.Constants.TombstoneConstants;
-using static PasswordManagerLocal.Backend.Utils.DataValidationUtil;
+using static PasswordManagerLocal.Backend.Validation.DataValidation;
 
 namespace PasswordManagerLocal.Backend.Services;
 

@@ -3,7 +3,8 @@ using PasswordManagerLocal.Backend.Exceptions;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Constants.DatabaseConstants;
-using static PasswordManagerLocal.Backend.Constants.PathConstants;
+using static PasswordManagerLocal.Backend.Constants.ApplicationFileNames;
+using static PasswordManagerLocal.Backend.Hosting.ApplicationPaths;
 
 namespace PasswordManagerLocal.Backend.Security;
 

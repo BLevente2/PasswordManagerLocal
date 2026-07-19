@@ -15,6 +15,8 @@ using System.Net;
 using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
 internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService, ILocalDiscoveryService, IDisposable

@@ -1,6 +1,8 @@
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Responses;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.Abstractions.Services;
 
 public interface IDeviceEnrollmentService

@@ -1,7 +1,7 @@
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 
-namespace PasswordManagerLocal.Backend.Sync;
+namespace PasswordManagerLocal.Backend.Sync.Enrollment;
 
 public sealed class DeviceEnrollmentUserSnapshot
 {

@@ -2,6 +2,8 @@ using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Responses;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Test.Fakes;
 
 public sealed class FakeDeviceEnrollmentService : IDeviceEnrollmentService

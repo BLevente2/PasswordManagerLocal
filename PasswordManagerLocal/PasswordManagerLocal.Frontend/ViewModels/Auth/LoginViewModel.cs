@@ -8,6 +8,8 @@ using PasswordManagerLocal.Backend.Responses;
 using ReactiveUI;
 using System.Reactive;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Frontend.ViewModels.Auth;
 
 public sealed class LoginViewModel : ViewModelBase
@@ -643,7 +645,7 @@ public sealed class LoginViewModel : ViewModelBase
         {
             _deviceTransferPolling?.Cancel();
             IsDeviceTransferSuccess = false;
-            DeviceTransferStatus.ShowError(status.ErrorCode == PasswordManagerLocal.Backend.Exceptions.DeviceEnrollmentErrorCode.Unknown
+            DeviceTransferStatus.ShowError(status.ErrorCode == PasswordManagerLocal.Backend.Sync.Enrollment.DeviceEnrollmentErrorCode.Unknown
                 ? GetTranslation("Login_DeviceTransfer_ErrorMessage")
                 : GetDeviceEnrollmentErrorMessage(status.ErrorCode));
             IsDeviceTransferCodeVisible = false;

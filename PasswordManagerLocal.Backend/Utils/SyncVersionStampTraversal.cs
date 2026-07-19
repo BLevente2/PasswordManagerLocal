@@ -1,5 +1,7 @@
 using PasswordManagerLocal.Backend.Models.Encrypted;
 
+using PasswordManagerLocal.Backend.Sync.Tombstones;
+
 namespace PasswordManagerLocal.Backend.Utils;
 
 public static class SyncVersionStampTraversal

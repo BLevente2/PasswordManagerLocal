@@ -9,6 +9,8 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.Internal.Enrollment;
 
 internal sealed record ValidatedControlOperation(DeviceEnrollmentControlOperationSnapshot Snapshot, UserControlOperationEnvelope Envelope);

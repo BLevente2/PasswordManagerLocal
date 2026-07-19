@@ -6,6 +6,8 @@ using System.Net.NetworkInformation;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
 internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedService, IDisposable

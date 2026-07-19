@@ -19,6 +19,8 @@ using System.Net;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.State;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentSnapshotTransferService

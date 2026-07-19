@@ -2,7 +2,7 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Constants;
 using System.Text.Json.Serialization;
 
-namespace PasswordManagerLocal.Backend.Sync;
+namespace PasswordManagerLocal.Backend.Sync.Enrollment;
 
 public sealed class DeviceEnrollmentSnapshot
 {

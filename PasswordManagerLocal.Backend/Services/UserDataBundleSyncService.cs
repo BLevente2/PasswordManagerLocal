@@ -12,6 +12,7 @@ using System.Text.Json;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
 using PasswordManagerLocal.Backend.Internal.Recovery;
+using PasswordManagerLocal.Backend.Sync.Recovery;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserDataBundleSyncService : IUserDataBundleSyncService

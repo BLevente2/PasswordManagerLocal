@@ -1,24 +1,19 @@
+using PasswordManagerLocal.Backend.Constants;
 using System.Security;
 
-namespace PasswordManagerLocal.Backend.Constants;
+namespace PasswordManagerLocal.Backend.Hosting;
 
-public static class PathConstants
+public static class ApplicationPaths
 {
-    public const string AppFolderName = "PasswordManagerLocal";
-    public const string DbConfigFileName = "DbConfig.bin";
-    public const string AppConfigFileName = "config.json";
-    public const string LegacyDbKeyFileName = "dbkey.bin";
-    public const string DbFileName = "app.db";
-
     public static readonly string AppRootFolder;
 
-    static PathConstants()
+    static ApplicationPaths()
     {
         Exception? lastError = null;
 
-        if (TryInitFromLocalAppData(out var _, out var root, ref lastError) ||
-            TryInitFromBaseDirectory(out var _, out root, ref lastError) ||
-            TryInitFromTemp(out var _, out root, ref lastError))
+        if (TryInitFromLocalAppData(out var root, ref lastError) ||
+            TryInitFromBaseDirectory(out root, ref lastError) ||
+            TryInitFromTemp(out root, ref lastError))
         {
             AppRootFolder = root;
             return;
@@ -27,9 +22,8 @@ public static class PathConstants
         throw new InvalidOperationException("Could not determine or create application root folder.", lastError);
     }
 
-    private static bool TryInitFromLocalAppData(out string basePath, out string root, ref Exception? lastError)
+    private static bool TryInitFromLocalAppData(out string root, ref Exception? lastError)
     {
-        basePath = string.Empty;
         root = string.Empty;
         try
         {
@@ -40,9 +34,7 @@ public static class PathConstants
             if (string.IsNullOrWhiteSpace(candidate))
                 return false;
 
-            var created = EnsureDirectory(Path.Combine(candidate, AppFolderName));
-            basePath = candidate;
-            root = created;
+            root = EnsureDirectory(Path.Combine(candidate, ApplicationFileNames.AppFolderName));
             return true;
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or SecurityException)
@@ -52,16 +44,12 @@ public static class PathConstants
         }
     }
 
-    private static bool TryInitFromBaseDirectory(out string basePath, out string root, ref Exception? lastError)
+    private static bool TryInitFromBaseDirectory(out string root, ref Exception? lastError)
     {
-        basePath = string.Empty;
         root = string.Empty;
         try
         {
-            var candidate = AppContext.BaseDirectory;
-            var created = EnsureDirectory(Path.Combine(candidate, AppFolderName));
-            basePath = candidate;
-            root = created;
+            root = EnsureDirectory(Path.Combine(AppContext.BaseDirectory, ApplicationFileNames.AppFolderName));
             return true;
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or SecurityException)
@@ -71,16 +59,12 @@ public static class PathConstants
         }
     }
 
-    private static bool TryInitFromTemp(out string basePath, out string root, ref Exception? lastError)
+    private static bool TryInitFromTemp(out string root, ref Exception? lastError)
     {
-        basePath = string.Empty;
         root = string.Empty;
         try
         {
-            var candidate = Path.GetTempPath();
-            var created = EnsureDirectory(Path.Combine(candidate, AppFolderName));
-            basePath = candidate;
-            root = created;
+            root = EnsureDirectory(Path.Combine(Path.GetTempPath(), ApplicationFileNames.AppFolderName));
             return true;
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or SecurityException)

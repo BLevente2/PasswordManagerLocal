@@ -2,7 +2,9 @@ using PasswordManagerLocal.Backend.Constants;
 using System.Diagnostics;
 using System.Text;
 
-namespace PasswordManagerLocal.Backend.Utils;
+using PasswordManagerLocal.Backend.Hosting;
+
+namespace PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
 
 public static class DeviceEnrollmentTrace
 {
@@ -17,7 +19,7 @@ public static class DeviceEnrollmentTrace
         {
             try
             {
-                return Path.Combine(PathConstants.AppRootFolder, "device-enrollment.log");
+                return Path.Combine(ApplicationPaths.AppRootFolder, "device-enrollment.log");
             }
             catch
             {

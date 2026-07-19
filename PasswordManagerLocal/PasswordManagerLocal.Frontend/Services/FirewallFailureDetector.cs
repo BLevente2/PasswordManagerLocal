@@ -1,6 +1,8 @@
 using PasswordManagerLocal.Backend.Exceptions;
 using System.Net.Sockets;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Frontend.Services;
 
 public static class FirewallFailureDetector

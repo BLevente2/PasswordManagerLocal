@@ -2,6 +2,8 @@ using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Sync;
 using System.Text.Json.Serialization;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment;
+
 namespace PasswordManagerLocal.Backend.Utils;
 
 [JsonSourceGenerationOptions(WriteIndented = false)]

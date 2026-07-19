@@ -12,6 +12,8 @@ using PasswordManagerLocal.Backend.Utils;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 
 using PasswordManagerLocal.Backend.Internal.Sync;
+
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable

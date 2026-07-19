@@ -19,6 +19,8 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 using PasswordManagerLocal.Backend.State;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointService

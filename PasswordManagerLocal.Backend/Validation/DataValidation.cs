@@ -1,9 +1,9 @@
 ﻿using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
-using static PasswordManagerLocal.Backend.Constants.RegexConstants;
+using static PasswordManagerLocal.Backend.Validation.ValidationPatterns;
 
-namespace PasswordManagerLocal.Backend.Utils;
+namespace PasswordManagerLocal.Backend.Validation;
 
-public static class DataValidationUtil
+public static class DataValidation
 {
     public static bool IsValidEmail(string email)
     {

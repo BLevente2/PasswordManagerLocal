@@ -13,6 +13,8 @@ using System.Security.Cryptography.X509Certificates;
 
 using PasswordManagerLocal.Backend.Utils;
 
+using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class TcpSyncClientService : ISyncTransportClientService
@@ -363,7 +365,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
             var localEndpoint = client.Client.LocalEndPoint?.ToString() ?? "unknown";
             var remoteEndpoint = client.Client.RemoteEndPoint?.ToString() ?? $"{host}:{port}";
-            PasswordManagerLocal.Backend.Utils.DeviceEnrollmentTrace.Info($"TCP connection established. Local={localEndpoint}, Remote={remoteEndpoint}. Starting TLS authentication.");
+            DeviceEnrollmentTrace.Info($"TCP connection established. Local={localEndpoint}, Remote={remoteEndpoint}. Starting TLS authentication.");
 
             var stream = new SslStream(client.GetStream(), false);
             using var handshakeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -383,7 +385,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                 ? string.Empty
                 : _identity.GetFingerprintHex(new X509Certificate2(stream.RemoteCertificate));
 
-            PasswordManagerLocal.Backend.Utils.DeviceEnrollmentTrace.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={FingerprintUtil.Normalize(serverFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(serverFingerprint).Length)]}.");
+            DeviceEnrollmentTrace.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={FingerprintUtil.Normalize(serverFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(serverFingerprint).Length)]}.");
             return new TcpSyncClientConnection(client, stream);
         }
         catch
@@ -414,7 +416,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                     client.Client.Bind(new IPEndPoint(sourceAddress, 0));
 
                 var sourceText = sourceAddress?.ToString() ?? "OS-selected";
-                PasswordManagerLocal.Backend.Utils.DeviceEnrollmentTrace.Info($"TCP connection attempt started. Source={sourceText}, Target={host}:{port}.");
+                DeviceEnrollmentTrace.Info($"TCP connection attempt started. Source={sourceText}, Target={host}:{port}.");
 
                 using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 connectTimeout.CancelAfter(perAttemptTimeout);
@@ -424,13 +426,13 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
             {
                 errors.Add(ex);
-                PasswordManagerLocal.Backend.Utils.DeviceEnrollmentTrace.Error($"TCP connection attempt timed out. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}.", ex);
+                DeviceEnrollmentTrace.Error($"TCP connection attempt timed out. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}.", ex);
                 client.Dispose();
             }
             catch (Exception ex) when (ex is SocketException or IOException or ArgumentException or InvalidOperationException)
             {
                 errors.Add(ex);
-                PasswordManagerLocal.Backend.Utils.DeviceEnrollmentTrace.Error($"TCP connection attempt failed. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}: {ex.Message}", ex);
+                DeviceEnrollmentTrace.Error($"TCP connection attempt failed. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}: {ex.Message}", ex);
                 client.Dispose();
             }
         }

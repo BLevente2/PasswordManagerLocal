@@ -1,9 +1,9 @@
 ﻿using System.Text.RegularExpressions;
 using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
 
-namespace PasswordManagerLocal.Backend.Constants;
+namespace PasswordManagerLocal.Backend.Validation;
 
-public static class RegexConstants
+public static class ValidationPatterns
 {
     public static readonly Regex EmailRegex = new(
     $@"^(?=.{{{EmailMinLength},{EmailMaxLength}}}$)[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{{2,}}$",

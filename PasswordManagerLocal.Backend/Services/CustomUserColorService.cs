@@ -6,6 +6,8 @@ using PasswordManagerLocal.Backend.Responses;
 using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
 using PasswordManagerLocal.Backend.Utils;
 
+using PasswordManagerLocal.Backend.Sync.Tombstones;
+
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class CustomUserColorService : ICustomUserColorService

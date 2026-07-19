@@ -6,6 +6,8 @@ using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Backend.Utils;
 using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
 
+using PasswordManagerLocal.Backend.Sync.Tombstones;
+
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class PasswordTagService : IPasswordTagService

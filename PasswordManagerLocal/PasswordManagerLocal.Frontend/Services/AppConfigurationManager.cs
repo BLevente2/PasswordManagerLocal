@@ -4,6 +4,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
+using PasswordManagerLocal.Backend.Hosting;
+
 namespace PasswordManagerLocal.Frontend.Services;
 
 public static class AppConfigurationManager
@@ -12,7 +14,7 @@ public static class AppConfigurationManager
     private static AppConfiguration? _current;
 
     public static string ConfigurationPath =>
-        Path.Combine(PathConstants.AppRootFolder, PathConstants.AppConfigFileName);
+        Path.Combine(ApplicationPaths.AppRootFolder, ApplicationFileNames.AppConfigFileName);
 
     public static (AppLanguage Language, AppThemeMode Theme) GetUiPreferences()
     {
