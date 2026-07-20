@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Runtime.Abstractions;
 using Avalonia.Media;
 using Avalonia.Threading;
 using PasswordManagerLocal.Frontend.Abstractions.Services;
@@ -7,7 +8,6 @@ using PasswordManagerLocal.Frontend.ViewModels.Auth;
 using PasswordManagerLocal.Frontend.ViewModels.Pages;
 using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Responses;
 using ReactiveUI;
@@ -29,7 +29,7 @@ public sealed class MainViewModel : ViewModelBase
     private static readonly IBrush DarkHeaderSuccessBrush = Brush.Parse("#FF34D399");
 
     private readonly IEndpoints _endpoints;
-    private readonly IBackendRuntime _backendRuntime;
+    private readonly IFrontendBackendClient _backendClient;
     private readonly IAuthSessionRegistry _authSessionRegistry;
     private readonly DeviceAppPreferencesService _deviceAppPreferences;
     private readonly object _initializationGate = new();
@@ -66,26 +66,29 @@ public sealed class MainViewModel : ViewModelBase
     private ViewModelBase? _observedPageStatusViewModel;
     private ViewModelBase? _settingsReturnPageViewModel;
 
-    public MainViewModel(IEndpoints endpoints, IBackendRuntime backendRuntime)
+    public MainViewModel(
+        IEndpoints endpoints,
+        IFrontendBackendClient backendClient,
+        IBackgroundSyncSettingsStore backgroundSyncSettingsStore)
         : this(
             endpoints,
-            backendRuntime,
+            backendClient,
             App.AuthSessionRegistry,
             new UiPreferencesService(),
-            new DeviceAppPreferencesService())
+            new DeviceAppPreferencesService(backgroundSyncSettingsStore))
     {
     }
 
     private MainViewModel(
         IEndpoints endpoints,
-        IBackendRuntime backendRuntime,
+        IFrontendBackendClient backendClient,
         IAuthSessionRegistry authSessionRegistry,
         UiPreferencesService uiPreferences,
         DeviceAppPreferencesService deviceAppPreferences)
         : base(uiPreferences)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
-        _backendRuntime = backendRuntime ?? throw new ArgumentNullException(nameof(backendRuntime));
+        _backendClient = backendClient ?? throw new ArgumentNullException(nameof(backendClient));
         _authSessionRegistry = authSessionRegistry;
         _deviceAppPreferences = deviceAppPreferences ?? throw new ArgumentNullException(nameof(deviceAppPreferences));
 
@@ -117,8 +120,8 @@ public sealed class MainViewModel : ViewModelBase
         DeclineSessionRenewalCommand = ReactiveCommand.Create(DeclineSessionRenewal);
         DatabaseRecoveryPrimaryCommand = ReactiveCommand.CreateFromTask(HandleDatabaseRecoveryPrimaryActionAsync);
         DatabaseRecoverySecondaryCommand = ReactiveCommand.Create(HandleDatabaseRecoverySecondaryAction);
-        _backendRuntime.StateChanged += HandleBackendRuntimeStateChanged;
-        ApplyBackendRuntimeSnapshot(_backendRuntime.Snapshot);
+        _backendClient.StateChanged += HandleBackendRuntimeStateChanged;
+        ApplyBackendRuntimeSnapshot(_backendClient.Snapshot);
         SensitiveDataVisibilityService.HideVisibleSecretsRequested += HandleHideVisibleSecretsRequested;
     }
 
@@ -560,8 +563,8 @@ public sealed class MainViewModel : ViewModelBase
 
         try
         {
-            await _backendRuntime.EnsureStartedAsync();
-            if (!_backendRuntime.Snapshot.IsReady)
+            await _backendClient.ConnectAsync();
+            if (!_backendClient.Snapshot.IsReady)
                 return;
         }
         catch (DatabaseVersionNotSupportedException exception)
@@ -794,7 +797,7 @@ public sealed class MainViewModel : ViewModelBase
 
         try
         {
-            await _backendRuntime.ResetDatabaseAndRestartAsync();
+            await _backendClient.ResetDatabaseAndRestartAsync();
             _databaseVersionException = null;
             _databaseRecoveryStage = DatabaseRecoveryStage.None;
             ClearStatusMessage();

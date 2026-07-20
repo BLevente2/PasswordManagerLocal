@@ -30,8 +30,11 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        var endpoints = new DeferredEndpoints(_context.BackendRuntime);
-        var mainViewModel = new MainViewModel(endpoints, _context.BackendRuntime);
+        var endpoints = new DeferredEndpoints(_context.BackendClient);
+        var mainViewModel = new MainViewModel(
+            endpoints,
+            _context.BackendClient,
+            _context.BackgroundSyncSettingsStore);
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -76,7 +79,7 @@ public partial class App : Application
 
         try
         {
-            await _context.BackendRuntime.WaitUntilReadyAsync();
+            await _context.BackendClient.WaitUntilReadyAsync();
 
             var localDevice = await endpoints.GetLocalDeviceInfoAsync();
             if (!localDevice.IsSyncOn)

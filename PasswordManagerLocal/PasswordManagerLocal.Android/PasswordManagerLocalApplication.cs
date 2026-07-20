@@ -1,7 +1,9 @@
 using Android.App;
 using Android.Runtime;
+using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Backend.Android;
 using PasswordManagerLocal.Backend.Hosting;
+using PasswordManagerLocal.Runtime.Abstractions;
 
 namespace PasswordManagerLocal.Android;
 
@@ -14,6 +16,8 @@ public sealed class PasswordManagerLocalApplication : Application
     }
 
     public IBackendRuntime BackendRuntime { get; private set; } = null!;
+    public IFrontendBackendClient<IEndpoints> BackendClient { get; private set; } = null!;
+    public IBackgroundSyncSettingsStore BackgroundSyncSettingsStore { get; private set; } = null!;
     public string ApplicationDataDirectory { get; private set; } = string.Empty;
 
     public override void OnCreate()
@@ -22,6 +26,9 @@ public sealed class PasswordManagerLocalApplication : Application
 
         var composition = AndroidBackendRuntimeFactory.Create(this);
         BackendRuntime = composition.Runtime;
+        BackendClient = new InProcessFrontendBackendClient(composition.Runtime);
+        BackgroundSyncSettingsStore = new FileBackgroundSyncSettingsStore(
+            composition.ApplicationDataDirectory);
         ApplicationDataDirectory = composition.ApplicationDataDirectory;
     }
 }

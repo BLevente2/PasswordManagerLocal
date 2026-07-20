@@ -683,7 +683,8 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
-          "PasswordManagerLocal.Backend": "[1.0.0, )"
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )"
         }
       },
       "passwordmanagerlocal.frontend": {
@@ -695,11 +696,14 @@
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.18, )",
           "PasswordManagerLocal.Backend": "[1.0.0, )",
-          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )",
           "SkiaSharp": "[3.119.1, )",
           "ZXing.Net": "[0.16.11, )",
           "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"
         }
+      },
+      "passwordmanagerlocal.runtime.abstractions": {
+        "type": "Project"
       },
       "Avalonia": {
         "type": "CentralTransitive",

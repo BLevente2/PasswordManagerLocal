@@ -44,14 +44,6 @@ public static class AppConfigurationManager
         }
     }
 
-    public static bool GetBackgroundSyncEnabled()
-    {
-        lock (Lock)
-        {
-            return GetOrCreateConfiguration().BackgroundSyncEnabled;
-        }
-    }
-
     public static bool IsWindowsFirewallConfigured()
     {
         lock (Lock)
@@ -67,19 +59,6 @@ public static class AppConfigurationManager
             var configuration = GetOrCreateConfiguration();
             configuration.Language = language.ToString();
             configuration.Theme = theme.ToString();
-            SaveConfiguration(configuration);
-        }
-    }
-
-    public static void SaveBackgroundSyncEnabled(bool isEnabled)
-    {
-        lock (Lock)
-        {
-            var configuration = GetOrCreateConfiguration();
-            if (configuration.BackgroundSyncEnabled == isEnabled)
-                return;
-
-            configuration.BackgroundSyncEnabled = isEnabled;
             SaveConfiguration(configuration);
         }
     }
@@ -149,7 +128,6 @@ public static class AppConfigurationManager
         root.ValueKind != JsonValueKind.Object ||
         !root.TryGetProperty("language", out _) ||
         !root.TryGetProperty("theme", out _) ||
-        !root.TryGetProperty("backgroundSyncEnabled", out _) ||
         !root.TryGetProperty("windowsFirewallConfigured", out _);
 
     private static AppConfiguration CreateDefaultConfiguration() =>
@@ -157,7 +135,6 @@ public static class AppConfigurationManager
         {
             Language = DetectDefaultLanguage().ToString(),
             Theme = AppThemeMode.Dark.ToString(),
-            BackgroundSyncEnabled = false,
             WindowsFirewallConfigured = false
         };
 

@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Backend.Hosting;
+using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Responses;
 
@@ -7,11 +7,11 @@ namespace PasswordManagerLocal.Frontend.Services;
 
 public sealed class DeferredEndpoints : IEndpoints
 {
-    private readonly IBackendRuntime _backendRuntime;
+    private readonly IFrontendBackendClient<IEndpoints> _backendClient;
 
-    public DeferredEndpoints(IBackendRuntime backendRuntime)
+    public DeferredEndpoints(IFrontendBackendClient<IEndpoints> backendClient)
     {
-        _backendRuntime = backendRuntime ?? throw new ArgumentNullException(nameof(backendRuntime));
+        _backendClient = backendClient ?? throw new ArgumentNullException(nameof(backendClient));
     }
     public async Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default)
     {
@@ -308,5 +308,5 @@ public sealed class DeferredEndpoints : IEndpoints
 
 
     private Task<IEndpoints> GetEndpointsAsync(CancellationToken ct) =>
-        _backendRuntime.GetEndpointsAsync(ct);
+        _backendClient.GetEndpointsAsync(ct);
 }

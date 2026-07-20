@@ -1,4 +1,4 @@
-namespace PasswordManagerLocal.Backend.Hosting;
+namespace PasswordManagerLocal.Runtime.Abstractions;
 
 public sealed class BackendRuntimeStateChangedEventArgs : EventArgs
 {

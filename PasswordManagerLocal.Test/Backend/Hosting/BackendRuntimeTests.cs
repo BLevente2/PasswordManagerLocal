@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Runtime.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend;

@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Runtime.Abstractions;
 using System.Diagnostics;
 using Android.App;
 using Android.Content;
@@ -11,7 +12,6 @@ using PasswordManagerLocal.Frontend;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels;
 using PasswordManagerLocal.Frontend.Views;
-using PasswordManagerLocal.Backend.Hosting;
 
 namespace PasswordManagerLocal.Android;
 
@@ -38,7 +38,8 @@ public class MainActivity : AvaloniaMainActivity
         var application = Application as PasswordManagerLocalApplication
             ?? throw new InvalidOperationException("The process-level application composition root is unavailable.");
         var frontendContext = new FrontendApplicationContext(
-            application.BackendRuntime,
+            application.BackendClient,
+            application.BackgroundSyncSettingsStore,
             application.ApplicationDataDirectory);
 
         return AppBuilder.Configure(() => new App(frontendContext))
@@ -70,17 +71,17 @@ public class MainActivity : AvaloniaMainActivity
         base.OnResume();
 
         if (Application is PasswordManagerLocalApplication application)
-            _ = ResumeBackendAsync(application.BackendRuntime);
+            _ = ResumeBackendAsync(application.BackendClient);
     }
 
 
-    private static async Task ResumeBackendAsync(IBackendRuntime backendRuntime)
+    private static async Task ResumeBackendAsync(IFrontendBackendClient backendClient)
     {
-        if (backendRuntime.Snapshot.State == BackendRuntimeState.WaitingForDeviceUnlock)
+        if (backendClient.Snapshot.State == BackendRuntimeState.WaitingForDeviceUnlock)
         {
             try
             {
-                await backendRuntime.EnsureStartedAsync();
+                await backendClient.ConnectAsync();
             }
             catch
             {

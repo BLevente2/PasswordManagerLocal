@@ -17,8 +17,12 @@ internal sealed class Program
         FirewallPermissionService.SetPlatformFirewallPermissionManager(new WindowsFirewallPermissionManager());
 
         var composition = WindowsBackendRuntimeFactory.Create();
+        var backendClient = new InProcessFrontendBackendClient(composition.Runtime);
+        var backgroundSyncSettingsStore = new FileBackgroundSyncSettingsStore(
+            composition.ApplicationDataDirectory);
         var frontendContext = new FrontendApplicationContext(
-            composition.Runtime,
+            backendClient,
+            backgroundSyncSettingsStore,
             composition.ApplicationDataDirectory);
 
         try
@@ -28,6 +32,11 @@ internal sealed class Program
         }
         finally
         {
+            backendClient
+                .DisposeAsync()
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
             composition.Runtime
                 .DisposeAsync()
                 .AsTask()
