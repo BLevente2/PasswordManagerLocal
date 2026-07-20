@@ -118,7 +118,7 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
                 return Failed(UserDataVerificationState.RootIntegrityFailure, UserDataBlobKind.All, keyConfidence, "root-integrity-failed");
             }
 
-            var generalResult = await DecryptAndVerifyBlobAsync(
+            var generalTask = DecryptAndVerifyBlobAsync(
                 user.EncryptedGeneralUserDataPayload,
                 root.GeneralUserDataKey,
                 BackendJsonSerializerContext.Default.GeneralUserData,
@@ -128,11 +128,7 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
                 "general",
                 keyConfidence,
                 ct);
-            if (!generalResult.Success)
-                return generalResult.Failure!;
-            general = (GeneralUserData)generalResult.Value!;
-
-            var passwordsResult = await DecryptAndVerifyBlobAsync(
+            var passwordsTask = DecryptAndVerifyBlobAsync(
                 user.EncryptedUserPasswordsDataPayload,
                 root.UserPasswordsDataKey,
                 BackendJsonSerializerContext.Default.UserPasswordsData,
@@ -142,11 +138,7 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
                 "passwords",
                 keyConfidence,
                 ct);
-            if (!passwordsResult.Success)
-                return passwordsResult.Failure!;
-            passwords = (UserPasswordsData)passwordsResult.Value!;
-
-            var devicesResult = await DecryptAndVerifyBlobAsync(
+            var devicesTask = DecryptAndVerifyBlobAsync(
                 user.EncryptedUserDevicesDataPayload,
                 root.UserDevicesDataKey,
                 BackendJsonSerializerContext.Default.UserDevicesData,
@@ -156,8 +148,48 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
                 "devices",
                 keyConfidence,
                 ct);
+
+            BlobVerificationResult generalResult;
+            BlobVerificationResult passwordsResult;
+            BlobVerificationResult devicesResult;
+            try
+            {
+                await Task.WhenAll(generalTask, passwordsTask, devicesTask);
+                generalResult = await generalTask;
+                passwordsResult = await passwordsTask;
+                devicesResult = await devicesTask;
+            }
+            catch
+            {
+                DisposeCompletedBlobVerificationTask(generalTask);
+                DisposeCompletedBlobVerificationTask(passwordsTask);
+                DisposeCompletedBlobVerificationTask(devicesTask);
+                throw;
+            }
+
+            if (!generalResult.Success)
+            {
+                DisposeVerifiedBlobResult(passwordsResult);
+                DisposeVerifiedBlobResult(devicesResult);
+                return generalResult.Failure!;
+            }
+
+            if (!passwordsResult.Success)
+            {
+                DisposeVerifiedBlobResult(generalResult);
+                DisposeVerifiedBlobResult(devicesResult);
+                return passwordsResult.Failure!;
+            }
+
             if (!devicesResult.Success)
+            {
+                DisposeVerifiedBlobResult(generalResult);
+                DisposeVerifiedBlobResult(passwordsResult);
                 return devicesResult.Failure!;
+            }
+
+            general = (GeneralUserData)generalResult.Value!;
+            passwords = (UserPasswordsData)passwordsResult.Value!;
             devices = (UserDevicesData)devicesResult.Value!;
 
             var bundle = new UserDataBundle
@@ -248,6 +280,23 @@ public sealed class UserDataBundleVerificationService : IUserDataBundleVerificat
             value.Dispose();
             return BlobVerificationResult.Failed(Failed(failureState, failedBlob, keyConfidence, $"{diagnosticPrefix}-integrity-failed"));
         }
+        catch
+        {
+            value.Dispose();
+            throw;
+        }
+    }
+
+    private void DisposeCompletedBlobVerificationTask(Task<BlobVerificationResult> task)
+    {
+        if (task.Status == TaskStatus.RanToCompletion)
+            DisposeVerifiedBlobResult(task.Result);
+    }
+
+    private void DisposeVerifiedBlobResult(BlobVerificationResult result)
+    {
+        if (result.Success)
+            result.Value?.Dispose();
     }
 
     private UserDataBundleVerificationResult Failed(

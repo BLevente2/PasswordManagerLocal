@@ -24,6 +24,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
     private readonly ISyncVersionClockService _versionClock;
     private readonly IUserCanonicalHealthService? _canonicalHealth;
     private readonly IUserDataBundleVerificationService _verification;
+    private readonly IUserSnapshotBatchVerificationService _snapshotBatchVerification;
     private readonly IUserCanonicalCheckpointRepository? _checkpoints;
     private readonly IDeviceIdentityService? _identity;
 
@@ -36,7 +37,8 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         IUserCanonicalHealthService? canonicalHealth = null,
         IUserDataBundleVerificationService? verification = null,
         IUserCanonicalCheckpointRepository? checkpoints = null,
-        IDeviceIdentityService? identity = null)
+        IDeviceIdentityService? identity = null,
+        IUserSnapshotBatchVerificationService? snapshotBatchVerification = null)
     {
         _users = users;
         _integrity = integrity;
@@ -45,6 +47,8 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         _versionClock = versionClock;
         _canonicalHealth = canonicalHealth;
         _verification = verification ?? new UserDataBundleVerificationService(integrity);
+        _snapshotBatchVerification = snapshotBatchVerification ??
+            new UserSnapshotBatchVerificationService(_verification);
         _checkpoints = checkpoints;
         _identity = identity;
     }
@@ -76,26 +80,37 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         if (!canonicalVerification.IsHealthy)
         {
             var candidateResults = new List<UserSnapshotMergeEntryResult>(ordered.Length);
-            var candidateConfidence = keyConfidence;
-            foreach (var snapshot in ordered)
+            var candidateVerifications = await _snapshotBatchVerification.VerifyAsync(
+                ordered,
+                key,
+                keyConfidence,
+                ct);
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                using var verification = await _verification.VerifySnapshotAsync(snapshot, key, candidateConfidence, ct);
-                if (verification.IsHealthy)
+                for (var index = 0; index < ordered.Length; index++)
                 {
-                    candidateConfidence = UserSyncKeyConfidence.VerifiedRemoteSnapshot;
-                    candidateResults.Add(new UserSnapshotMergeEntryResult(
-                        snapshot.OriginDeviceId,
-                        snapshot.OriginInstanceId,
-                        snapshot.OriginRevision,
-                        true,
-                        VerificationState: UserDataVerificationState.Healthy,
-                        DiagnosticCode: "healthy-recovery-evidence"));
+                    ct.ThrowIfCancellationRequested();
+                    var snapshot = ordered[index];
+                    var verification = candidateVerifications[index];
+                    if (verification.IsHealthy)
+                    {
+                        candidateResults.Add(new UserSnapshotMergeEntryResult(
+                            snapshot.OriginDeviceId,
+                            snapshot.OriginInstanceId,
+                            snapshot.OriginRevision,
+                            true,
+                            VerificationState: UserDataVerificationState.Healthy,
+                            DiagnosticCode: "healthy-recovery-evidence"));
+                    }
+                    else
+                    {
+                        candidateResults.Add(Failed(snapshot, verification));
+                    }
                 }
-                else
-                {
-                    candidateResults.Add(Failed(snapshot, verification));
-                }
+            }
+            finally
+            {
+                DisposeVerificationResults(candidateVerifications);
             }
 
             return new UserSnapshotMergeBatchResult(
@@ -107,13 +122,25 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         }
 
         var canonicalBundle = canonicalVerification.VerifiedBundle!;
-        var incomingBundles = new List<UserDataBundle>(ordered.Length);
+        IReadOnlyList<UserDataBundleVerificationResult> incomingVerifications = [];
         var results = new List<UserSnapshotMergeEntryResult>(ordered.Length);
         var changedBlobs = UserDataBlobKind.None;
         var anyVerified = false;
 
         try
         {
+            var verificationCandidates = ordered
+                .Where(snapshot => existing.PasswordSalt.SequenceEqual(snapshot.User.PasswordSalt))
+                .ToArray();
+            incomingVerifications = await _snapshotBatchVerification.VerifyAsync(
+                verificationCandidates,
+                key,
+                keyConfidence == UserSyncKeyConfidence.UnconfirmedPassword
+                    ? UserSyncKeyConfidence.VerifiedRemoteSnapshot
+                    : keyConfidence,
+                ct);
+            var verificationIndex = 0;
+
             foreach (var snapshot in ordered)
             {
                 ct.ThrowIfCancellationRequested();
@@ -132,22 +159,14 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                     continue;
                 }
 
-                var incomingVerification = await _verification.VerifySnapshotAsync(
-                    snapshot,
-                    key,
-                    keyConfidence == UserSyncKeyConfidence.UnconfirmedPassword
-                        ? UserSyncKeyConfidence.VerifiedRemoteSnapshot
-                        : keyConfidence,
-                    ct);
+                var incomingVerification = incomingVerifications[verificationIndex++];
                 if (!incomingVerification.IsHealthy)
                 {
                     results.Add(Failed(snapshot, incomingVerification));
-                    incomingVerification.Dispose();
                     continue;
                 }
 
                 var incomingBundle = incomingVerification.VerifiedBundle!;
-                incomingBundles.Add(incomingBundle);
                 _versionClock.Observe(SyncVersionStampTraversal.Enumerate(incomingBundle));
                 anyVerified = true;
                 var snapshotChangedBlobs = UserDataBlobKind.None;
@@ -226,8 +245,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         finally
         {
             canonicalBundle.Dispose();
-            foreach (var incomingBundle in incomingBundles)
-                incomingBundle.Dispose();
+            DisposeVerificationResults(incomingVerifications);
         }
     }
 
@@ -278,47 +296,65 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
 
         var verified = new List<(UserSnapshotEnvelope Envelope, UserDataBundleVerificationResult Verification)>();
         var candidateResults = new List<RecoveryCandidateVerificationResult>(ordered.Length);
+        var prevalidationFailures = new RecoveryCandidateVerificationResult?[ordered.Length];
+        var verificationCandidates = new List<UserSnapshotEnvelope>(ordered.Length);
         byte[]? epochPasswordSalt = null;
         CanonicalSalvage? localSalvage = null;
         UserSyncPayload? localMetadata = null;
+        IReadOnlyList<UserDataBundleVerificationResult> candidateVerifications = [];
+
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var snapshot = ordered[index];
+            if (snapshot.UserId != existing.UId ||
+                snapshot.User.UId != existing.UId ||
+                snapshot.UserKeyEpoch != expectedKeyEpoch ||
+                snapshot.MembershipEpoch <= 0 ||
+                snapshot.MembershipEpoch > expectedMembershipEpoch)
+            {
+                prevalidationFailures[index] = CandidateFailure(
+                    snapshot,
+                    RecoveryCandidateState.WrongKeyEpoch,
+                    UserDataBlobKind.All,
+                    "recovery-epoch-mismatch");
+                continue;
+            }
+
+            if (snapshot.User.PasswordSalt.Length == 0)
+            {
+                prevalidationFailures[index] = CandidateFailure(
+                    snapshot,
+                    RecoveryCandidateState.WrongKeyEpoch,
+                    UserDataBlobKind.All,
+                    "recovery-password-salt-missing");
+                continue;
+            }
+
+            verificationCandidates.Add(snapshot);
+        }
 
         try
         {
-            foreach (var snapshot in ordered)
+            candidateVerifications = await _snapshotBatchVerification.VerifyAsync(
+                verificationCandidates,
+                key,
+                keyConfidence == UserSyncKeyConfidence.UnconfirmedPassword
+                    ? UserSyncKeyConfidence.VerifiedRemoteSnapshot
+                    : keyConfidence,
+                ct);
+            var verificationIndex = 0;
+
+            for (var index = 0; index < ordered.Length; index++)
             {
                 ct.ThrowIfCancellationRequested();
-
-                if (snapshot.UserId != existing.UId ||
-                    snapshot.User.UId != existing.UId ||
-                    snapshot.UserKeyEpoch != expectedKeyEpoch ||
-                    snapshot.MembershipEpoch <= 0 ||
-                    snapshot.MembershipEpoch > expectedMembershipEpoch)
+                var snapshot = ordered[index];
+                if (prevalidationFailures[index] is { } prevalidationFailure)
                 {
-                    candidateResults.Add(CandidateFailure(
-                        snapshot,
-                        RecoveryCandidateState.WrongKeyEpoch,
-                        UserDataBlobKind.All,
-                        "recovery-epoch-mismatch"));
+                    candidateResults.Add(prevalidationFailure);
                     continue;
                 }
 
-                if (snapshot.User.PasswordSalt.Length == 0)
-                {
-                    candidateResults.Add(CandidateFailure(
-                        snapshot,
-                        RecoveryCandidateState.WrongKeyEpoch,
-                        UserDataBlobKind.All,
-                        "recovery-password-salt-missing"));
-                    continue;
-                }
-
-                var verification = await _verification.VerifySnapshotAsync(
-                    snapshot,
-                    key,
-                    keyConfidence == UserSyncKeyConfidence.UnconfirmedPassword
-                        ? UserSyncKeyConfidence.VerifiedRemoteSnapshot
-                        : keyConfidence,
-                    ct);
+                var verification = candidateVerifications[verificationIndex++];
                 if (!verification.IsHealthy)
                 {
                     candidateResults.Add(CandidateFailure(
@@ -326,7 +362,6 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                         MapRecoveryCandidateState(verification.State),
                         verification.FailedBlobs,
                         verification.DiagnosticCode));
-                    verification.Dispose();
                     continue;
                 }
 
@@ -334,7 +369,6 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                 if (bundle.UserData.FormatVersion != Constants.SyncConstants.EncryptedUserDataFormatVersion ||
                     bundle.UserData.UId != existing.UId)
                 {
-                    verification.Dispose();
                     candidateResults.Add(CandidateFailure(
                         snapshot,
                         RecoveryCandidateState.IntegrityFailed,
@@ -352,14 +386,12 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
                 }
                 else if (!Hashing.Verify(epochPasswordSalt, snapshot.User.PasswordSalt))
                 {
-                    verification.Dispose();
                     throw new RecoveryEvidenceConflictException("recovery-password-salt-conflict");
                 }
 
                 if (verified.Count != 0 &&
                     !HasSameRootKeyMaterial(verified[0].Verification.VerifiedBundle!.UserData, bundle.UserData))
                 {
-                    verification.Dispose();
                     throw new RecoveryEvidenceConflictException("recovery-root-key-material-conflict");
                 }
 
@@ -441,8 +473,7 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
             localSalvage?.Dispose();
             if (epochPasswordSalt is not null)
                 CryptographicOperations.ZeroMemory(epochPasswordSalt);
-            foreach (var item in verified)
-                item.Verification.Dispose();
+            DisposeVerificationResults(candidateVerifications);
         }
     }
 
@@ -760,6 +791,13 @@ public sealed class UserDataBundleSyncService : IUserDataBundleSyncService
         target.GeneralUserDataLastModifiedAt = source.GeneralUserDataLastModifiedAt;
         target.UserPasswordsDataLastModifiedAt = source.UserPasswordsDataLastModifiedAt;
         target.UserDevicesDataLastModifiedAt = source.UserDevicesDataLastModifiedAt;
+    }
+
+    private void DisposeVerificationResults(
+        IReadOnlyList<UserDataBundleVerificationResult> verificationResults)
+    {
+        foreach (var verificationResult in verificationResults)
+            verificationResult.Dispose();
     }
 
     private UserSnapshotMergeEntryResult Failed(

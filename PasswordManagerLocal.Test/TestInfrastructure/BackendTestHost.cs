@@ -93,6 +93,8 @@ public sealed class BackendTestHost : IDisposable
         {
             sc.AddSingleton<IUserPasswordsDataMergeService, UserPasswordsDataMergeService>();
             sc.AddSingleton<IUserDevicesDataMergeService, UserDevicesDataMergeService>();
+            sc.AddSingleton<IUserDataBundleVerificationService, UserDataBundleVerificationService>();
+            sc.AddSingleton<IUserSnapshotBatchVerificationService, UserSnapshotBatchVerificationService>();
             sc.AddSingleton<IUserDataBundleSyncService, UserDataBundleSyncService>();
             sc.AddSingleton<IUserSnapshotMergeCoordinator, UserSnapshotMergeCoordinator>();
         }

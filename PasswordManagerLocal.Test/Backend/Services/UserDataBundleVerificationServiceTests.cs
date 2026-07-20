@@ -82,6 +82,22 @@ public sealed class UserDataBundleVerificationServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Security")]
+    public async Task VerifyCanonicalAsync_MultipleChildFailures_ReportsFirstFailureInStableOrder()
+    {
+        await AssertCiphertextMutationAsync(
+            user =>
+            {
+                user.EncryptedGeneralUserDataPayload[0] ^= 0x5A;
+                user.EncryptedUserPasswordsDataPayload[0] ^= 0x5A;
+                user.EncryptedUserDevicesDataPayload[0] ^= 0x5A;
+            },
+            UserDataVerificationState.GeneralBlobFailure,
+            UserDataBlobKind.General);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
     public async Task VerifyCanonicalAsync_ValidRootWithMismatchedChildCommitment_ReportsBundleLinkFailure()
     {
         var fixture = await CreateFixtureAsync(bundle =>

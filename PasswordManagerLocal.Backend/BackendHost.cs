@@ -257,6 +257,7 @@ namespace PasswordManagerLocal.Backend
             services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
             services.AddScoped<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
             services.AddScoped<IUserDataBundleVerificationService, UserDataBundleVerificationService>();
+            services.AddScoped<IUserSnapshotBatchVerificationService, UserSnapshotBatchVerificationService>();
             services.AddScoped<IUserSyncFaultService, UserSyncFaultService>();
             services.AddScoped<IUserCanonicalHealthService, UserCanonicalHealthService>();
             services.AddScoped<IDatabaseHealthService, DatabaseHealthService>();

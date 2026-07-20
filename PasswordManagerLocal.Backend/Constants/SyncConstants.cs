@@ -37,6 +37,8 @@ public static class SyncConstants
     public const int MaxDeviceEnrollmentSnapshotBytes = 64 * 1024 * 1024;
     public const int DeviceEnrollmentSnapshotChunkBytes = 64 * 1024;
     public const int PendingDeviceDeltaBatchSize = 32;
+    // Limits the normal peak to six child-blob verification pipelines.
+    public const int MaxConcurrentSnapshotVerifications = 2;
 
     public const int EncryptedUserDataFormatVersion = 2;
     public const int DeviceEnrollmentPayloadVersion = 5;
