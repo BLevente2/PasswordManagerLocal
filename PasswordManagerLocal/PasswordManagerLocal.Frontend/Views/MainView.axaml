@@ -7,6 +7,7 @@
     xmlns:authVm="clr-namespace:PasswordManagerLocal.Frontend.ViewModels.Auth"
     xmlns:pagesViews="clr-namespace:PasswordManagerLocal.Frontend.Views.Pages"
     xmlns:pagesVm="clr-namespace:PasswordManagerLocal.Frontend.ViewModels.Pages"
+    xmlns:settingsViews="clr-namespace:PasswordManagerLocal.Frontend.Views.Settings"
     xmlns:vm="clr-namespace:PasswordManagerLocal.Frontend.ViewModels"
     x:DataType="vm:MainViewModel">
 
@@ -25,6 +26,9 @@
     </DataTemplate>
     <DataTemplate x:DataType="pagesVm:ProfileViewModel">
       <pagesViews:ProfileView />
+    </DataTemplate>
+    <DataTemplate x:DataType="vm:SettingsViewModel">
+      <settingsViews:SettingsView />
     </DataTemplate>
     <DataTemplate x:DataType="vm:MainPageContentViewModel">
       <ContentControl Content="{Binding PageViewModel}" />
@@ -119,25 +123,18 @@
           </Button>
 
           <Button Grid.Column="2"
-                  Classes="ghost"
+                  Classes="ghost settingsNavigation"
+                  Classes.selected="{Binding IsSettingsPageVisible}"
                   Width="48"
                   Height="48"
                   Padding="12"
                   HorizontalAlignment="Right"
+                  Command="{Binding ShowSettingsCommand}"
                   ToolTip.Tip="{Binding SettingsLabel}">
-            <PathIcon Classes="mediumUiIcon" Data="{StaticResource SettingsGearIconGeometry}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-            <Button.Flyout>
-              <MenuFlyout>
-                <MenuItem Header="{Binding SettingsLanguageLabel}">
-                  <MenuItem Header="{Binding HungarianLanguageDisplayName}" Command="{Binding SetHungarianLanguageCommand}" />
-                  <MenuItem Header="{Binding EnglishLanguageDisplayName}" Command="{Binding SetEnglishLanguageCommand}" />
-                </MenuItem>
-                <MenuItem Header="{Binding SettingsThemeLabel}">
-                  <MenuItem Header="{Binding ThemeLightLabel}" Command="{Binding SetLightThemeCommand}" />
-                  <MenuItem Header="{Binding ThemeDarkLabel}" Command="{Binding SetDarkThemeCommand}" />
-                </MenuItem>
-              </MenuFlyout>
-            </Button.Flyout>
+            <PathIcon Classes="mediumUiIcon"
+                      Data="{StaticResource SettingsGearIconGeometry}"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center" />
           </Button>
         </Grid>
       </Border>
@@ -253,27 +250,20 @@
             </Button>
 
             <Button Grid.Column="1"
-                    Classes="ghost"
+                    Classes="ghost settingsNavigation"
+                    Classes.selected="{Binding IsSettingsPageVisible}"
                     Width="44"
                     Height="44"
                     MinWidth="44"
                     MinHeight="44"
                     Padding="10"
                     HorizontalAlignment="Right"
+                    Command="{Binding ShowSettingsCommand}"
                     ToolTip.Tip="{Binding SettingsLabel}">
-              <PathIcon Classes="mediumUiIcon" Data="{StaticResource SettingsGearIconGeometry}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-              <Button.Flyout>
-                <MenuFlyout>
-                  <MenuItem Header="{Binding SettingsLanguageLabel}">
-                    <MenuItem Header="{Binding HungarianLanguageDisplayName}" Command="{Binding SetHungarianLanguageCommand}" />
-                    <MenuItem Header="{Binding EnglishLanguageDisplayName}" Command="{Binding SetEnglishLanguageCommand}" />
-                  </MenuItem>
-                  <MenuItem Header="{Binding SettingsThemeLabel}">
-                    <MenuItem Header="{Binding ThemeLightLabel}" Command="{Binding SetLightThemeCommand}" />
-                    <MenuItem Header="{Binding ThemeDarkLabel}" Command="{Binding SetDarkThemeCommand}" />
-                  </MenuItem>
-                </MenuFlyout>
-              </Button.Flyout>
+              <PathIcon Classes="mediumUiIcon"
+                        Data="{StaticResource SettingsGearIconGeometry}"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center" />
             </Button>
           </Grid>
         </Grid>

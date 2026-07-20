@@ -2,7 +2,6 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using PasswordManagerLocal.Frontend.Abstractions.Services;
 using PasswordManagerLocal.Frontend.Exceptions;
-using PasswordManagerLocal.Frontend.Localization;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels.Auth;
 using PasswordManagerLocal.Frontend.ViewModels.Pages;
@@ -32,6 +31,7 @@ public sealed class MainViewModel : ViewModelBase
     private readonly IEndpoints _endpoints;
     private readonly IBackendRuntime _backendRuntime;
     private readonly IAuthSessionRegistry _authSessionRegistry;
+    private readonly DeviceAppPreferencesService _deviceAppPreferences;
     private readonly object _initializationGate = new();
     private Task? _initializationTask;
 
@@ -64,9 +64,15 @@ public sealed class MainViewModel : ViewModelBase
     private ProfileViewModel? _profileViewModel;
     private ChangeProfileViewModel? _changeProfileViewModel;
     private ViewModelBase? _observedPageStatusViewModel;
+    private ViewModelBase? _settingsReturnPageViewModel;
 
     public MainViewModel(IEndpoints endpoints, IBackendRuntime backendRuntime)
-        : this(endpoints, backendRuntime, App.AuthSessionRegistry, new UiPreferencesService())
+        : this(
+            endpoints,
+            backendRuntime,
+            App.AuthSessionRegistry,
+            new UiPreferencesService(),
+            new DeviceAppPreferencesService())
     {
     }
 
@@ -74,12 +80,14 @@ public sealed class MainViewModel : ViewModelBase
         IEndpoints endpoints,
         IBackendRuntime backendRuntime,
         IAuthSessionRegistry authSessionRegistry,
-        UiPreferencesService uiPreferences)
+        UiPreferencesService uiPreferences,
+        DeviceAppPreferencesService deviceAppPreferences)
         : base(uiPreferences)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
         _backendRuntime = backendRuntime ?? throw new ArgumentNullException(nameof(backendRuntime));
         _authSessionRegistry = authSessionRegistry;
+        _deviceAppPreferences = deviceAppPreferences ?? throw new ArgumentNullException(nameof(deviceAppPreferences));
 
         LoginViewModel = new LoginViewModel(uiPreferences, _endpoints, NavigateToRegistration, OnAuthenticationSucceededAsync);
 
@@ -87,10 +95,12 @@ public sealed class MainViewModel : ViewModelBase
         _currentAnimatedPageViewModel = new MainPageContentViewModel(LoginViewModel);
         ObservePageStatus(_currentPageViewModel);
 
-        SetHungarianLanguageCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentLanguage = AppLanguage.Hungarian; });
-        SetEnglishLanguageCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentLanguage = AppLanguage.English; });
-        SetLightThemeCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentThemeMode = AppThemeMode.Light; });
-        SetDarkThemeCommand = ReactiveCommand.Create(() => { UiPreferences.CurrentThemeMode = AppThemeMode.Dark; });
+        SettingsViewModel = new SettingsViewModel(
+            uiPreferences,
+            _deviceAppPreferences,
+            NavigateBackFromSettings);
+
+        ShowSettingsCommand = ReactiveCommand.Create(NavigateToSettings);
         ShowPasswordsCommand = ReactiveCommand.Create(NavigateToPasswords);
         ShowProfileCommand = ReactiveCommand.Create(NavigateToProfile);
         ShowDevicesCommand = ReactiveCommand.Create(NavigateToDevices);
@@ -113,6 +123,8 @@ public sealed class MainViewModel : ViewModelBase
     }
 
     public LoginViewModel LoginViewModel { get; }
+
+    public SettingsViewModel SettingsViewModel { get; }
 
     public RegistrationViewModel RegistrationViewModel
     {
@@ -237,6 +249,8 @@ public sealed class MainViewModel : ViewModelBase
 
     public bool IsProfileMainPageSelected => IsAuthenticated && CurrentMainPageIndex == 2;
 
+    public bool IsSettingsPageVisible => ReferenceEquals(CurrentPageViewModel, SettingsViewModel);
+
     public IBrush PasswordsNavigationFrameBrush => IsPasswordsMainPageSelected
         ? SelectedNavigationFrameBrush
         : Brushes.Transparent;
@@ -318,13 +332,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public bool CanChangeRememberMe => IsAuthenticated && !IsSettingRememberMe;
 
-    public ReactiveCommand<Unit, Unit> SetHungarianLanguageCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> SetEnglishLanguageCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> SetLightThemeCommand { get; }
-
-    public ReactiveCommand<Unit, Unit> SetDarkThemeCommand { get; }
+    public ReactiveCommand<Unit, Unit> ShowSettingsCommand { get; }
 
     public ReactiveCommand<Unit, Unit> ShowPasswordsCommand { get; }
 
@@ -411,18 +419,6 @@ public sealed class MainViewModel : ViewModelBase
     public string AppTitle => GetTranslation("AppTitle");
 
     public string SettingsLabel => GetTranslation("Settings");
-
-    public string SettingsLanguageLabel => GetTranslation("Settings_Language");
-
-    public string SettingsThemeLabel => GetTranslation("Settings_Theme");
-
-    public string EnglishLanguageDisplayName => GetTranslation("Language_English");
-
-    public string HungarianLanguageDisplayName => GetTranslation("Language_Hungarian");
-
-    public string ThemeLightLabel => GetTranslation("Theme_Light");
-
-    public string ThemeDarkLabel => GetTranslation("Theme_Dark");
 
     public string PasswordVaultLabel => GetTranslation("Shell_PasswordVault");
 
@@ -700,6 +696,12 @@ public sealed class MainViewModel : ViewModelBase
             return true;
         }
 
+        if (IsSettingsPageVisible)
+        {
+            NavigateBackFromSettings();
+            return true;
+        }
+
         if (_passwordsViewModel is not null && ReferenceEquals(CurrentPageViewModel, _passwordsViewModel))
         {
             return _passwordsViewModel.TryNavigateBack();
@@ -856,12 +858,6 @@ public sealed class MainViewModel : ViewModelBase
     {
         this.RaisePropertyChanged(nameof(AppTitle));
         this.RaisePropertyChanged(nameof(SettingsLabel));
-        this.RaisePropertyChanged(nameof(SettingsLanguageLabel));
-        this.RaisePropertyChanged(nameof(SettingsThemeLabel));
-        this.RaisePropertyChanged(nameof(EnglishLanguageDisplayName));
-        this.RaisePropertyChanged(nameof(HungarianLanguageDisplayName));
-        this.RaisePropertyChanged(nameof(ThemeLightLabel));
-        this.RaisePropertyChanged(nameof(ThemeDarkLabel));
         this.RaisePropertyChanged(nameof(PasswordVaultLabel));
         this.RaisePropertyChanged(nameof(ProfileLabel));
         this.RaisePropertyChanged(nameof(DevicesLabel));
@@ -1070,6 +1066,28 @@ public sealed class MainViewModel : ViewModelBase
         _isBackendInitialized = isInitialized;
         LoginViewModel.SetBackendInitialized(isInitialized);
         _registrationViewModel?.SetBackendInitialized(isInitialized);
+    }
+
+    private void NavigateToSettings()
+    {
+        if (IsSettingsPageVisible)
+            return;
+
+        _settingsReturnPageViewModel = CurrentPageViewModel;
+        IsPageTransitionReversed = false;
+        ClearStatusMessage();
+        CurrentPageViewModel = SettingsViewModel;
+    }
+
+    private void NavigateBackFromSettings()
+    {
+        if (!IsSettingsPageVisible)
+            return;
+
+        var returnPage = _settingsReturnPageViewModel ?? LoginViewModel;
+        _settingsReturnPageViewModel = null;
+        IsPageTransitionReversed = true;
+        CurrentPageViewModel = returnPage;
     }
 
     private void NavigateToLogin()
@@ -2064,6 +2082,7 @@ public sealed class MainViewModel : ViewModelBase
         this.RaisePropertyChanged(nameof(IsPasswordsMainPageSelected));
         this.RaisePropertyChanged(nameof(IsDevicesMainPageSelected));
         this.RaisePropertyChanged(nameof(IsProfileMainPageSelected));
+        this.RaisePropertyChanged(nameof(IsSettingsPageVisible));
         this.RaisePropertyChanged(nameof(PasswordsNavigationFrameBrush));
         this.RaisePropertyChanged(nameof(DevicesNavigationFrameBrush));
         this.RaisePropertyChanged(nameof(ProfileNavigationFrameBrush));

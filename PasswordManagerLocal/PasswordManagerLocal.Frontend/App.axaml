@@ -112,6 +112,23 @@
       <Setter Property="BorderBrush" Value="#FF68A9FF" />
     </Style>
 
+    <Style Selector="Button.settingsNavigation">
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
+
+    <Style Selector="Button.settingsNavigation:pointerover">
+      <Setter Property="Background" Value="#4068A9FF" />
+      <Setter Property="BorderBrush" Value="#FF68A9FF" />
+    </Style>
+
+    <Style Selector="Button.settingsNavigation.selected">
+      <Setter Property="Background" Value="#182D6AE3" />
+      <Setter Property="BorderBrush" Value="#FF1D4ED8" />
+    </Style>
+
     <Style Selector="Button.mobileMainMenuDropdown">
       <Setter Property="MinHeight" Value="32" />
       <Setter Property="Padding" Value="8,4" />

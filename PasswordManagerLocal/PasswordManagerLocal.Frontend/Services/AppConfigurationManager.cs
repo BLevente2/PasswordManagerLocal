@@ -44,6 +44,14 @@ public static class AppConfigurationManager
         }
     }
 
+    public static bool GetBackgroundSyncEnabled()
+    {
+        lock (Lock)
+        {
+            return GetOrCreateConfiguration().BackgroundSyncEnabled;
+        }
+    }
+
     public static bool IsWindowsFirewallConfigured()
     {
         lock (Lock)
@@ -59,6 +67,19 @@ public static class AppConfigurationManager
             var configuration = GetOrCreateConfiguration();
             configuration.Language = language.ToString();
             configuration.Theme = theme.ToString();
+            SaveConfiguration(configuration);
+        }
+    }
+
+    public static void SaveBackgroundSyncEnabled(bool isEnabled)
+    {
+        lock (Lock)
+        {
+            var configuration = GetOrCreateConfiguration();
+            if (configuration.BackgroundSyncEnabled == isEnabled)
+                return;
+
+            configuration.BackgroundSyncEnabled = isEnabled;
             SaveConfiguration(configuration);
         }
     }
@@ -83,12 +104,12 @@ public static class AppConfigurationManager
 
         var configuration = TryLoadConfiguration(
             out var loadedSuccessfully,
-            out var requiredPropertiesMissing) ??
+            out var configurationShapeRequiresRewrite) ??
             CreateDefaultConfiguration();
         var normalized = NormalizeConfiguration(configuration);
         _current = normalized.Configuration;
 
-        if (!loadedSuccessfully || requiredPropertiesMissing || normalized.WasChanged)
+        if (!loadedSuccessfully || configurationShapeRequiresRewrite || normalized.WasChanged)
             SaveConfiguration(_current);
 
         return _current;
@@ -96,10 +117,10 @@ public static class AppConfigurationManager
 
     private static AppConfiguration? TryLoadConfiguration(
         out bool loadedSuccessfully,
-        out bool requiredPropertiesMissing)
+        out bool configurationShapeRequiresRewrite)
     {
         loadedSuccessfully = false;
-        requiredPropertiesMissing = false;
+        configurationShapeRequiresRewrite = false;
 
         try
         {
@@ -108,7 +129,7 @@ public static class AppConfigurationManager
 
             var json = File.ReadAllText(ConfigurationPath, Encoding.UTF8);
             using var document = JsonDocument.Parse(json);
-            requiredPropertiesMissing = !HasRequiredProperties(document.RootElement);
+            configurationShapeRequiresRewrite = RequiresConfigurationRewrite(document.RootElement);
 
             var configuration = JsonSerializer.Deserialize(
                 json,
@@ -124,17 +145,19 @@ public static class AppConfigurationManager
 
 
 
-    private static bool HasRequiredProperties(JsonElement root) =>
-        root.ValueKind == JsonValueKind.Object &&
-        root.TryGetProperty("language", out _) &&
-        root.TryGetProperty("theme", out _) &&
-        root.TryGetProperty("windowsFirewallConfigured", out _);
+    private static bool RequiresConfigurationRewrite(JsonElement root) =>
+        root.ValueKind != JsonValueKind.Object ||
+        !root.TryGetProperty("language", out _) ||
+        !root.TryGetProperty("theme", out _) ||
+        !root.TryGetProperty("backgroundSyncEnabled", out _) ||
+        !root.TryGetProperty("windowsFirewallConfigured", out _);
 
     private static AppConfiguration CreateDefaultConfiguration() =>
         new()
         {
             Language = DetectDefaultLanguage().ToString(),
             Theme = AppThemeMode.Dark.ToString(),
+            BackgroundSyncEnabled = false,
             WindowsFirewallConfigured = false
         };
 
