@@ -1,8 +1,5 @@
-using PasswordManagerLocal.Backend.Constants;
 using System.Diagnostics;
 using System.Text;
-
-using PasswordManagerLocal.Backend.Hosting;
 
 namespace PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
 
@@ -12,29 +9,19 @@ public static class DeviceEnrollmentTrace
     private const long MaxLogBytes = 256 * 1024;
     private static readonly object Lock = new();
 #endif
+    private static string? _logPath;
 
-    public static string LogPath
-    {
-        get
-        {
-            try
-            {
-                return Path.Combine(ApplicationPaths.AppRootFolder, "device-enrollment.log");
-            }
-            catch
-            {
-                return Path.Combine(Path.GetTempPath(), "PasswordManagerLocal-device-enrollment.log");
-            }
-        }
-    }
+    public static string LogPath =>
+        Volatile.Read(ref _logPath) ?? throw new InvalidOperationException("Enrollment diagnostics have not been initialized.");
 
-    public static void InitializeForCurrentBuild()
+    public static void InitializeForCurrentBuild(string logPath)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(logPath);
+        Volatile.Write(ref _logPath, Path.GetFullPath(logPath));
+
 #if !DEBUG
         TryDeleteReleaseLog(LogPath);
         TryDeleteReleaseLog($"{LogPath}.old");
-        TryDeleteReleaseLog(Path.Combine(Path.GetTempPath(), "PasswordManagerLocal-device-enrollment.log"));
-        TryDeleteReleaseLog(Path.Combine(Path.GetTempPath(), "PasswordManagerLocal-device-enrollment.log.old"));
 #endif
     }
 

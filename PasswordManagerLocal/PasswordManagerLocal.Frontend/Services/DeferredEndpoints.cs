@@ -1,6 +1,5 @@
-using Microsoft.Extensions.DependencyInjection;
-using PasswordManagerLocal.Backend;
 using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Responses;
 
@@ -8,6 +7,12 @@ namespace PasswordManagerLocal.Frontend.Services;
 
 public sealed class DeferredEndpoints : IEndpoints
 {
+    private readonly IBackendRuntime _backendRuntime;
+
+    public DeferredEndpoints(IBackendRuntime backendRuntime)
+    {
+        _backendRuntime = backendRuntime ?? throw new ArgumentNullException(nameof(backendRuntime));
+    }
     public async Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
@@ -29,10 +34,10 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public void Logout(Guid token)
+    public async Task LogoutAsync(Guid token, CancellationToken ct = default)
     {
-        var endpoints = GetEndpoints();
-        endpoints.Logout(token);
+        var endpoints = await GetEndpointsAsync(ct);
+        await endpoints.LogoutAsync(token, ct);
     }
 
 
@@ -169,10 +174,10 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    public async Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<Guid>> RestoreRememberedSessionsAsync(CancellationToken ct = default)
     {
         var endpoints = await GetEndpointsAsync(ct);
-        return await endpoints.InicializeAllRememberMeAsync(ct);
+        return await endpoints.RestoreRememberedSessionsAsync(ct);
     }
 
 
@@ -302,16 +307,6 @@ public sealed class DeferredEndpoints : IEndpoints
     }
 
 
-    private static async Task<IEndpoints> GetEndpointsAsync(CancellationToken ct)
-    {
-        await BackendHost.WaitUntilInitializedAsync(ct);
-        return BackendHost.Services.GetRequiredService<IEndpoints>();
-    }
-
-
-    private static IEndpoints GetEndpoints()
-    {
-        BackendHost.WaitUntilInitializedAsync().GetAwaiter().GetResult();
-        return BackendHost.Services.GetRequiredService<IEndpoints>();
-    }
+    private Task<IEndpoints> GetEndpointsAsync(CancellationToken ct) =>
+        _backendRuntime.GetEndpointsAsync(ct);
 }

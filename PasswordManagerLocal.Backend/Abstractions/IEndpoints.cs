@@ -8,7 +8,7 @@ public interface IEndpoints
     Task<Guid> RegisterAsync(RegistrationRequest request, CancellationToken ct = default);
     Task<Guid> LoginAsync(LoginRequest request, CancellationToken ct = default);
     Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default);
-    void Logout(Guid token);
+    Task LogoutAsync(Guid token, CancellationToken ct = default);
     Task<AuthSessionStatusResponse> GetAuthSessionStatusAsync(Guid token, CancellationToken ct = default);
     Task ChangeMasterPasswordAsync(MasterPasswordChangeRequest request, CancellationToken ct = default);
 
@@ -34,7 +34,7 @@ public interface IEndpoints
     Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default);
 
 
-    Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<Guid>> RestoreRememberedSessionsAsync(CancellationToken ct = default);
     Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default);
     Task SetRememberMeAsync(Guid token, bool rememberMe, CancellationToken ct = default);
 

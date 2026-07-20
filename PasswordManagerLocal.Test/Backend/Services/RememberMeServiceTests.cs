@@ -5,6 +5,8 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
+using PasswordManagerLocal.Backend.Exceptions;
+using PasswordManagerLocal.Test.Fakes;
 using System.Linq;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
@@ -43,7 +45,7 @@ public sealed class RememberMeServiceTests
         MSTestAssert.IsNotNull(carol.SavedKey);
         MSTestAssert.IsNotEmpty(carol.SavedKey);
 
-        var issued = await remember.InicializeAllRememberMeAsync();
+        var issued = await remember.RestoreRememberedSessionsAsync();
 
         MSTestAssert.HasCount(1, issued);
 
@@ -54,6 +56,38 @@ public sealed class RememberMeServiceTests
 
         MSTestAssert.IsTrue(tokens.TryGetUid(issuedToken, out var uid2));
         MSTestAssert.AreEqual(uid, uid2);
+    }
+
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task TemporaryKeyUnavailability_DoesNotClearSavedKey()
+    {
+        var protector = new SwitchableKeyProtector();
+        using var host = new BackendTestHost(keyProtector: protector);
+        var auth = host.Services.GetRequiredService<IAuthService>();
+        var remember = host.Services.GetRequiredService<IRememberMeService>();
+        var users = host.Services.GetRequiredService<IUserRepository>();
+        var registration = host.CreateValidRegistrationRequest("remember_locked_device");
+        registration.RememberMe = true;
+        var token = await auth.RegisterAsync(registration);
+        var userId = host.Services.GetRequiredService<IUserService>().GetUidFromToken(token);
+        var savedKeyBefore = (await users.ListAllAsync())
+            .Single(user => user.UId == userId)
+            .SavedKey!
+            .ToArray();
+
+        protector.IsTemporarilyUnavailable = true;
+
+        await MSTestAssert.ThrowsAsync<KeyProtectorUnavailableException>(
+            async () => await remember.RestoreRememberedSessionsAsync());
+
+        var savedKeyAfter = (await users.ListAllAsync())
+            .Single(user => user.UId == userId)
+            .SavedKey;
+        MSTestAssert.IsNotNull(savedKeyAfter);
+        CollectionAssert.AreEqual(savedKeyBefore, savedKeyAfter);
     }
 
     [TestMethod]
@@ -112,7 +146,7 @@ public sealed class RememberMeServiceTests
 
         var user = (await repo.ListAllAsync()).Single(item => item.UId == userId);
         MSTestAssert.IsNull(user.SavedKey);
-        var initialized = await remember.InicializeAllRememberMeAsync();
+        var initialized = await remember.RestoreRememberedSessionsAsync();
         MSTestAssert.HasCount(0, initialized);
     }
 }

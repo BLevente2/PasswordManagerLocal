@@ -24,8 +24,12 @@ public sealed class Endpoints : IEndpoints
     public Task<Guid> RenewAuthSessionAsync(Guid token, CancellationToken ct = default) =>
         RunAsync<IAuthSessionService, Guid>(service => service.RenewSessionAsync(token, ct));
 
-    public void Logout(Guid token) =>
+    public Task LogoutAsync(Guid token, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
         Run<IAuthSessionService>(service => service.Logout(token));
+        return Task.CompletedTask;
+    }
 
     public Task<AuthSessionStatusResponse> GetAuthSessionStatusAsync(Guid token, CancellationToken ct = default) =>
         RunAsync<IAuthSessionService, AuthSessionStatusResponse>(service =>
@@ -104,9 +108,9 @@ public sealed class Endpoints : IEndpoints
     public Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default) =>
         RunAsync<IDeviceEnrollmentService>(service => service.AddDeviceByCodeAsync(token, code, ct));
 
-    public Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default) =>
+    public Task<IReadOnlyList<Guid>> RestoreRememberedSessionsAsync(CancellationToken ct = default) =>
         RunAsync<IRememberMeService, IReadOnlyList<Guid>>(service =>
-            service.InicializeAllRememberMeAsync(ct));
+            service.RestoreRememberedSessionsAsync(ct));
 
     public Task<Guid> InitializeRememberMeSessionAsync(Guid userId, CancellationToken ct = default) =>
         RunAsync<IRememberMeService, Guid>(service =>

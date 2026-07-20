@@ -3,18 +3,24 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using Microsoft.Extensions.DependencyInjection;
+using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Frontend.Abstractions.Services;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels;
 using PasswordManagerLocal.Frontend.Views;
-using PasswordManagerLocal.Backend;
-using PasswordManagerLocal.Backend.Abstractions.Services;
 
 namespace PasswordManagerLocal.Frontend;
 
 public partial class App : Application
 {
+    private readonly FrontendApplicationContext _context;
+
+    public App(FrontendApplicationContext context)
+    {
+        _context = context ?? throw new ArgumentNullException(nameof(context));
+        AppConfigurationManager.Initialize(context.ApplicationDataDirectory);
+    }
+
     public static IAuthSessionRegistry AuthSessionRegistry { get; } = new AuthSessionRegistry();
 
     public override void Initialize()
@@ -24,8 +30,8 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        var endpoints = new DeferredEndpoints();
-        var mainViewModel = new MainViewModel(endpoints);
+        var endpoints = new DeferredEndpoints(_context.BackendRuntime);
+        var mainViewModel = new MainViewModel(endpoints, _context.BackendRuntime);
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -42,7 +48,7 @@ public partial class App : Application
             Dispatcher.UIThread.Post(async () =>
             {
                 await mainViewModel.InitializeAsync();
-                await TryShowFirewallPermissionPromptAsync(mainWindow, mainViewModel);
+                await TryShowFirewallPermissionPromptAsync(mainWindow, mainViewModel, endpoints);
             }, DispatcherPriority.Background);
         }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
@@ -60,19 +66,20 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-
-
-    private static async Task TryShowFirewallPermissionPromptAsync(MainWindow mainWindow, MainViewModel mainViewModel)
+    private async Task TryShowFirewallPermissionPromptAsync(
+        MainWindow mainWindow,
+        MainViewModel mainViewModel,
+        IEndpoints endpoints)
     {
         if (!OperatingSystem.IsWindows())
             return;
 
         try
         {
-            await BackendHost.WaitUntilInitializedAsync();
+            await _context.BackendRuntime.WaitUntilReadyAsync();
 
-            var identity = BackendHost.Services.GetRequiredService<IDeviceIdentityService>();
-            if (!identity.IsSyncOn)
+            var localDevice = await endpoints.GetLocalDeviceInfoAsync();
+            if (!localDevice.IsSyncOn)
                 return;
 
             await FirewallPermissionStartupPrompt.TryShowAsync(mainWindow, mainViewModel.CurrentLanguage);

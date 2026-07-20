@@ -6,14 +6,28 @@ namespace PasswordManagerLocal.Test.Fakes;
 
 internal sealed class FakeLocalDiscoveryTransport : ILocalDiscoveryTransport
 {
+    private readonly IList<string>? _calls;
     private Func<LocalDiscoveryDatagram, CancellationToken, Task>? _receiveHandler;
+
+    public FakeLocalDiscoveryTransport(IList<string>? calls = null)
+    {
+        _calls = calls;
+    }
 
     public List<byte[]> MulticastPayloads { get; } = [];
     public List<(byte[] Payload, IPEndPoint RemoteEndpoint)> UnicastPayloads { get; } = [];
     public bool IsStarted { get; private set; }
+    public int StartCalls { get; private set; }
+    public int StopCalls { get; private set; }
+    public Exception? StartFailure { get; set; }
 
     public Task StartAsync(Func<LocalDiscoveryDatagram, CancellationToken, Task> receiveHandler, CancellationToken ct = default)
     {
+        StartCalls++;
+        _calls?.Add("transport:start");
+        if (StartFailure is not null)
+            return Task.FromException(StartFailure);
+
         _receiveHandler = receiveHandler;
         IsStarted = true;
         return Task.CompletedTask;
@@ -21,6 +35,8 @@ internal sealed class FakeLocalDiscoveryTransport : ILocalDiscoveryTransport
 
     public Task StopAsync(CancellationToken ct = default)
     {
+        StopCalls++;
+        _calls?.Add("transport:stop");
         IsStarted = false;
         return Task.CompletedTask;
     }

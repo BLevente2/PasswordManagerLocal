@@ -1,8 +1,9 @@
 using Avalonia;
 using Avalonia.ReactiveUI;
+using PasswordManagerLocal.Backend.Hosting;
+using PasswordManagerLocal.Backend.Windows;
 using PasswordManagerLocal.Frontend;
 using PasswordManagerLocal.Frontend.Services;
-using PasswordManagerLocal.Backend;
 using System;
 
 namespace PasswordManagerLocal.Windows;
@@ -14,15 +15,32 @@ internal sealed class Program
     {
         ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
         FirewallPermissionService.SetPlatformFirewallPermissionManager(new WindowsFirewallPermissionManager());
-        BackendHost.ConfigurePlatformKeyProtector(new DpapiKeyProtector());
 
-        BuildAvaloniaApp()
-            .StartWithClassicDesktopLifetime(args);
+        var composition = WindowsBackendRuntimeFactory.Create();
+        var frontendContext = new FrontendApplicationContext(
+            composition.Runtime,
+            composition.ApplicationDataDirectory);
+
+        try
+        {
+            BuildAvaloniaApp(frontendContext)
+                .StartWithClassicDesktopLifetime(args);
+        }
+        finally
+        {
+            composition.Runtime
+                .DisposeAsync()
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+        }
     }
 
-    public static AppBuilder BuildAvaloniaApp()
+    public static AppBuilder BuildAvaloniaApp(FrontendApplicationContext frontendContext)
     {
-        var builder = AppBuilder.Configure<App>()
+        ArgumentNullException.ThrowIfNull(frontendContext);
+
+        var builder = AppBuilder.Configure(() => new App(frontendContext))
             .UseWin32()
             .UseSkia()
             .WithInterFont()

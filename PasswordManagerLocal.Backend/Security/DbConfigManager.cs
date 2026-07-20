@@ -1,29 +1,35 @@
 using PasswordManagerLocal.Backend.Abstractions.Security;
+using PasswordManagerLocal.Backend.Configuration;
 using PasswordManagerLocal.Backend.Exceptions;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Constants.DatabaseConstants;
-using static PasswordManagerLocal.Backend.Constants.ApplicationFileNames;
-using static PasswordManagerLocal.Backend.Hosting.ApplicationPaths;
 
 namespace PasswordManagerLocal.Backend.Security;
 
 internal static class DbConfigManager
 {
-    internal static string GetOrCreateSqlCipherPassword(IKeyProtector protector)
+    internal static string GetOrCreateSqlCipherPassword(
+        BackendStoragePaths paths,
+        IKeyProtector protector)
     {
-        var path = Path.Combine(AppRootFolder, DbConfigFileName);
+        ArgumentNullException.ThrowIfNull(paths);
+        ArgumentNullException.ThrowIfNull(protector);
 
-        if (!File.Exists(path))
-            CreateDbConfig(path, protector);
+        if (!File.Exists(paths.DatabaseConfigPath))
+            CreateDbConfig(paths, protector);
 
-        var protectedBlob = ReadAndValidateDbConfig(path);
+        var protectedBlob = ReadAndValidateDbConfig(paths.DatabaseConfigPath);
         try
         {
             byte[] keyBytes;
             try
             {
                 keyBytes = protector.Unprotect(protectedBlob);
+            }
+            catch (KeyProtectorUnavailableException)
+            {
+                throw;
             }
             catch (Exception exception) when (exception is CryptographicException or InvalidDataException)
             {
@@ -45,42 +51,9 @@ internal static class DbConfigManager
         }
     }
 
-    private static void CreateDbConfig(string path, IKeyProtector protector)
+    private static void CreateDbConfig(BackendStoragePaths paths, IKeyProtector protector)
     {
-        var legacyPath = Path.Combine(AppRootFolder, LegacyDbKeyFileName);
-        if (File.Exists(legacyPath))
-        {
-            byte[] legacyProtectedBlob;
-            try
-            {
-                legacyProtectedBlob = File.ReadAllBytes(legacyPath);
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                throw CreateUnsupportedException(null, "The legacy protected database key could not be read.", exception);
-            }
-
-            try
-            {
-                WriteDbConfig(path, legacyProtectedBlob);
-                try
-                {
-                    File.Delete(legacyPath);
-                }
-                catch
-                {
-                }
-
-                return;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(legacyProtectedBlob);
-            }
-        }
-
-        var databasePath = Path.Combine(AppRootFolder, DbFileName);
-        if (File.Exists(databasePath))
+        if (File.Exists(paths.DatabasePath))
             throw CreateUnsupportedException(null, "The database configuration file is missing for the existing database.");
 
         using var key = EncryptionKey.Create();
@@ -90,7 +63,7 @@ internal static class DbConfigManager
             var protectedBlob = protector.Protect(keyBytes);
             try
             {
-                WriteDbConfig(path, protectedBlob);
+                WriteDbConfig(paths.DatabaseConfigPath, protectedBlob);
             }
             finally
             {
@@ -138,15 +111,7 @@ internal static class DbConfigManager
 
     private static byte[] ReadAndValidateDbConfig(string path)
     {
-        byte[] fileBytes;
-        try
-        {
-            fileBytes = File.ReadAllBytes(path);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            throw CreateUnsupportedException(null, "The database configuration file could not be read.", exception);
-        }
+        var fileBytes = File.ReadAllBytes(path);
 
         try
         {

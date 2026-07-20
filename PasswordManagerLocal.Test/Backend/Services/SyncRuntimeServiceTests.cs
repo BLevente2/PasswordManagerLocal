@@ -36,6 +36,7 @@ public sealed class SyncRuntimeServiceTests
 
         MSTestAssert.IsTrue(identity.IsSyncOn);
         MSTestAssert.AreEqual(1, identity.SetSyncOnCalls);
+        MSTestAssert.AreEqual(SyncRuntimeState.Running, service.Snapshot.State);
         CollectionAssert.AreEqual(new[] { "start:early", "start:late" }, calls);
     }
 
@@ -66,6 +67,7 @@ public sealed class SyncRuntimeServiceTests
         MSTestAssert.AreEqual(1, tasks.StopAllCalls);
         MSTestAssert.IsTrue(syncIdentities.IsEmpty());
         MSTestAssert.IsFalse(endpoints.TryGetByFingerprint("AABB", out _));
+        MSTestAssert.AreEqual(SyncRuntimeState.Disabled, service.Snapshot.State);
         CollectionAssert.AreEqual(new[] { "stop:late", "stop:early" }, calls);
     }
 
@@ -86,6 +88,7 @@ public sealed class SyncRuntimeServiceTests
             calls);
         MSTestAssert.AreEqual(1, tasks.StopAllCalls);
         MSTestAssert.IsFalse(identity.IsSyncOn);
+        MSTestAssert.AreEqual(SyncRuntimeState.Disabled, service.Snapshot.State);
     }
 
     [TestMethod]
@@ -137,6 +140,7 @@ public sealed class SyncRuntimeServiceTests
             new[] { "start:early", "start:failing", "stop:failing", "stop:early" },
             calls);
         MSTestAssert.AreEqual(1, tasks.StopAllCalls);
+        MSTestAssert.AreEqual(SyncRuntimeState.Degraded, service.Snapshot.State);
     }
 
     private static SyncRuntimeService CreateService(

@@ -22,7 +22,9 @@ public sealed class BackendTestHost : IDisposable
     private readonly ServiceProvider _sp;
     private readonly Key _signingKey;
 
-    public BackendTestHost(bool useRealSnapshotMergeCoordinator = false)
+    public BackendTestHost(
+        bool useRealSnapshotMergeCoordinator = false,
+        IKeyProtector? keyProtector = null)
     {
         var sc = new ServiceCollection();
         _signingKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
@@ -42,7 +44,7 @@ public sealed class BackendTestHost : IDisposable
             return new DataCachingService(cache, tokens);
         });
 
-        sc.AddSingleton<IKeyProtector, TestKeyProtector>();
+        sc.AddSingleton<IKeyProtector>(keyProtector ?? new TestKeyProtector());
         sc.AddSingleton<IEndpoints, Endpoints>();
 
         sc.AddSingleton<IUserRepository, InMemoryUserRepository>();

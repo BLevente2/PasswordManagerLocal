@@ -61,7 +61,7 @@ public class RememberMeService : IRememberMeService
 
 
 
-    public async Task<IReadOnlyList<Guid>> InicializeAllRememberMeAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<Guid>> RestoreRememberedSessionsAsync(CancellationToken ct = default)
     {
         var initializedTokens = new List<Guid>();
 
@@ -148,6 +148,10 @@ public class RememberMeService : IRememberMeService
             {
                 rawKey = _protector.Unprotect(user.SavedKey);
                 key = EncryptionKey.FromRaw(rawKey);
+            }
+            catch (KeyProtectorUnavailableException)
+            {
+                throw;
             }
             catch (Exception ex) when (ex is CryptographicException or ArgumentException)
             {

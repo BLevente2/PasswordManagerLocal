@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
-using PasswordManagerLocal.Backend.Hosting;
 
 namespace PasswordManagerLocal.Frontend.Services;
 
@@ -12,9 +11,29 @@ public static class AppConfigurationManager
 {
     private static readonly object Lock = new();
     private static AppConfiguration? _current;
+    private static string? _applicationDataDirectory;
 
-    public static string ConfigurationPath =>
-        Path.Combine(ApplicationPaths.AppRootFolder, ApplicationFileNames.AppConfigFileName);
+    public static string ConfigurationPath => Path.Combine(
+        _applicationDataDirectory ?? throw new InvalidOperationException("Application configuration has not been initialized."),
+        ApplicationFileNames.AppConfigFileName);
+
+    public static void Initialize(string applicationDataDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(applicationDataDirectory);
+
+        lock (Lock)
+        {
+            var fullPath = Path.GetFullPath(applicationDataDirectory);
+            if (_applicationDataDirectory is not null &&
+                !string.Equals(_applicationDataDirectory, fullPath, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Application configuration was already initialized for another directory.");
+            }
+
+            Directory.CreateDirectory(fullPath);
+            _applicationDataDirectory = fullPath;
+        }
+    }
 
     public static (AppLanguage Language, AppThemeMode Theme) GetUiPreferences()
     {

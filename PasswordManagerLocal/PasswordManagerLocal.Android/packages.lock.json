@@ -672,6 +672,20 @@
           "SQLitePCLRaw.bundle_e_sqlcipher": "[2.1.11, )"
         }
       },
+      "passwordmanagerlocal.backend.android": {
+        "type": "Project",
+        "dependencies": {
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )"
+        }
+      },
+      "passwordmanagerlocal.backend.hosting": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
+          "PasswordManagerLocal.Backend": "[1.0.0, )"
+        }
+      },
       "passwordmanagerlocal.frontend": {
         "type": "Project",
         "dependencies": {
@@ -680,8 +694,8 @@
           "Avalonia.Fonts.Inter": "[11.3.18, )",
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.18, )",
-          "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
           "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )",
           "SkiaSharp": "[3.119.1, )",
           "ZXing.Net": "[0.16.11, )",
           "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"

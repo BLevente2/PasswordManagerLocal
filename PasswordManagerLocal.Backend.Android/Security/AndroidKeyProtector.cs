@@ -5,10 +5,12 @@ using Java.Security;
 using Javax.Crypto;
 using Javax.Crypto.Spec;
 using PasswordManagerLocal.Backend.Abstractions.Security;
+using PasswordManagerLocal.Backend.Exceptions;
+using PasswordManagerLocal.Backend.Models;
 using System;
 using System.Security.Cryptography;
 
-namespace PasswordManagerLocal.Android;
+namespace PasswordManagerLocal.Backend.Android.Security;
 
 public sealed class AndroidKeyProtector : IKeyProtector
 {
@@ -25,7 +27,14 @@ public sealed class AndroidKeyProtector : IKeyProtector
         if (Build.VERSION.SdkInt < BuildVersionCodes.M)
             throw new PlatformNotSupportedException("Android Keystore AES-GCM protection requires Android 6.0 (API 23) or newer.");
 
-        _key = GetOrCreateSecretKey();
+        try
+        {
+            _key = GetOrCreateSecretKey();
+        }
+        catch (Exception exception) when (IsDeviceLockedFailure(exception))
+        {
+            throw CreateDeviceLockedException(exception);
+        }
     }
 
 
@@ -43,6 +52,10 @@ public sealed class AndroidKeyProtector : IKeyProtector
                              ?? throw new CryptographicException("Android Keystore encryption failed.");
 
             return PackCurrentBlob(iv, ciphertext);
+        }
+        catch (GeneralSecurityException exception) when (IsDeviceLockedFailure(exception))
+        {
+            throw CreateDeviceLockedException(exception);
         }
         catch (GeneralSecurityException exception)
         {
@@ -150,10 +163,38 @@ public sealed class AndroidKeyProtector : IKeyProtector
             return cipher.DoFinal(ciphertext)
                    ?? throw new CryptographicException("Android Keystore decryption failed.");
         }
+        catch (GeneralSecurityException exception) when (IsDeviceLockedFailure(exception))
+        {
+            throw CreateDeviceLockedException(exception);
+        }
         catch (GeneralSecurityException exception)
         {
             throw new CryptographicException("Android Keystore decryption failed.", exception);
         }
+    }
+
+
+    private static KeyProtectorUnavailableException CreateDeviceLockedException(Exception exception) =>
+        new(KeyProtectorUnavailableReason.DeviceLocked, exception);
+
+
+    private static bool IsDeviceLockedFailure(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is UserNotAuthenticatedException)
+                return true;
+
+            var message = current.Message;
+            if (message.Contains("user not authenticated", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("device is locked", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("device locked", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
 

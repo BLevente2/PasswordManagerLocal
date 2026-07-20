@@ -28,6 +28,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     private readonly IEnrollmentRuntimeState _enrollmentState;
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly ILocalDiscoveryTransport _transport;
+    private readonly ILocalDiscoveryNetworkLease _networkLease;
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly object _enrollmentLock = new();
@@ -41,6 +42,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     private CancellationTokenSource? _syncQueryLoopCancellation;
     private Task? _syncQueryLoopTask;
     private bool _started;
+    private bool _networkLeaseAcquired;
 
     public LocalDiscoveryHostedService(
         IDeviceIdentityService identity,
@@ -50,6 +52,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         IEnrollmentRuntimeState enrollmentState,
         ILocalNetworkAddressService networkAddresses,
         ILocalDiscoveryTransport transport,
+        ILocalDiscoveryNetworkLease networkLease,
         IServiceScopeFactory? scopeFactory = null)
     {
         _identity = identity;
@@ -59,6 +62,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         _enrollmentState = enrollmentState;
         _networkAddresses = networkAddresses;
         _transport = transport;
+        _networkLease = networkLease ?? throw new ArgumentNullException(nameof(networkLease));
         _scopeFactory = scopeFactory;
     }
 
@@ -81,8 +85,27 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
             if (!_started)
             {
-                await _transport.StartAsync(HandleDatagramAsync, ct);
-                _started = true;
+                await _networkLease.AcquireAsync(ct);
+                _networkLeaseAcquired = true;
+
+                try
+                {
+                    await _transport.StartAsync(HandleDatagramAsync, ct);
+                    _started = true;
+                }
+                catch (Exception startException)
+                {
+                    try
+                    {
+                        await ReleaseNetworkLeaseAsync();
+                    }
+                    catch (Exception releaseException)
+                    {
+                        throw new AggregateException(startException, releaseException);
+                    }
+
+                    throw;
+                }
             }
 
             if (_identity.IsSyncOn)
@@ -102,18 +125,51 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         await _lifecycleLock.WaitAsync(ct);
         try
         {
-            if (!_started)
+            if (!_started && !_networkLeaseAcquired)
                 return;
 
-            await StopSyncQueryLoopLockedAsync(ct);
-            await _transport.StopAsync(ct);
+            Exception? failure = null;
+
+            try
+            {
+                await StopSyncQueryLoopLockedAsync(ct);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            if (_started)
+            {
+                try
+                {
+                    await _transport.StopAsync(ct);
+                }
+                catch (Exception exception)
+                {
+                    failure ??= exception;
+                }
+            }
+
             _started = false;
+
+            try
+            {
+                await ReleaseNetworkLeaseAsync();
+            }
+            catch (Exception exception)
+            {
+                failure ??= exception;
+            }
 
             _pendingSyncQueryNonces.Clear();
             _lastSyncResponseByDevice.Clear();
             _lastAuthenticatedRequest.Clear();
             _receivedNonces.Clear();
             Volatile.Write(ref _eligibleDiscoveryDevices, new Dictionary<Guid, Device>());
+
+            if (failure is not null)
+                throw failure;
         }
         finally
         {
@@ -235,6 +291,16 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
         _pendingEnrollmentDiscoveries.Clear();
         _lifecycleLock.Dispose();
+    }
+
+
+    private async ValueTask ReleaseNetworkLeaseAsync()
+    {
+        if (!_networkLeaseAcquired)
+            return;
+
+        await _networkLease.ReleaseAsync();
+        _networkLeaseAcquired = false;
     }
 
 

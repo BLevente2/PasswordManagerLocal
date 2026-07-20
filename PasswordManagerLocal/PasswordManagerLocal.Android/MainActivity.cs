@@ -2,7 +2,6 @@ using System.Diagnostics;
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
-using Android.Net.Wifi;
 using Android.Views.InputMethods;
 using Avalonia;
 using Avalonia.Android;
@@ -12,7 +11,7 @@ using PasswordManagerLocal.Frontend;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels;
 using PasswordManagerLocal.Frontend.Views;
-using PasswordManagerLocal.Backend;
+using PasswordManagerLocal.Backend.Hosting;
 
 namespace PasswordManagerLocal.Android;
 
@@ -22,12 +21,11 @@ Theme = "@style/MyTheme.NoActionBar",
 Icon = "@drawable/icon",
 MainLauncher = true,
 ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
-public class MainActivity : AvaloniaMainActivity<App>
+public class MainActivity : AvaloniaMainActivity
 {
     private const int EnrollmentQrScannerRequestCode = 7301;
     private static readonly TimeSpan DuplicateBackRequestSuppressionWindow = TimeSpan.FromMilliseconds(250);
 
-    private WifiManager.MulticastLock? _multicastLock;
     private TaskCompletionSource<string?>? _enrollmentQrScanCompletion;
     private CancellationTokenRegistration _enrollmentQrScanCancellationRegistration;
     private bool _isHandlingBackRequest;
@@ -35,13 +33,24 @@ public class MainActivity : AvaloniaMainActivity<App>
     private AlertDialog? _backConfirmationDialog;
 
 
+    protected override AppBuilder CreateAppBuilder()
+    {
+        var application = Application as PasswordManagerLocalApplication
+            ?? throw new InvalidOperationException("The process-level application composition root is unavailable.");
+        var frontendContext = new FrontendApplicationContext(
+            application.BackendRuntime,
+            application.ApplicationDataDirectory);
+
+        return AppBuilder.Configure(() => new App(frontendContext))
+            .UseAndroid();
+    }
+
+
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         global::PasswordManagerLocal.Frontend.Services.ClipboardService.SetPlatformClipboardWriter(new AndroidClipboardWriter(this));
         SoftwareKeyboardService.SetPlatformHideAction(HideSoftwareKeyboard);
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(new AndroidQrCodeCameraScanner(this));
-        AcquireMulticastLock();
-        BackendHost.ConfigurePlatformKeyProtector(new AndroidKeyProtector());
 
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
@@ -53,6 +62,43 @@ public class MainActivity : AvaloniaMainActivity<App>
     {
         base.OnCreate(savedInstanceState);
         BackRequested += HandleBackRequested;
+    }
+
+
+    protected override void OnResume()
+    {
+        base.OnResume();
+
+        if (Application is PasswordManagerLocalApplication application)
+            _ = ResumeBackendAsync(application.BackendRuntime);
+    }
+
+
+    private static async Task ResumeBackendAsync(IBackendRuntime backendRuntime)
+    {
+        if (backendRuntime.Snapshot.State == BackendRuntimeState.WaitingForDeviceUnlock)
+        {
+            try
+            {
+                await backendRuntime.EnsureStartedAsync();
+            }
+            catch
+            {
+            }
+        }
+
+        if (Avalonia.Application.Current?.ApplicationLifetime is ISingleViewApplicationLifetime singleView &&
+            singleView.MainView?.DataContext is MainViewModel viewModel &&
+            !viewModel.IsAuthenticated)
+        {
+            try
+            {
+                await viewModel.InitializeAsync();
+            }
+            catch
+            {
+            }
+        }
     }
 
 
@@ -79,7 +125,6 @@ public class MainActivity : AvaloniaMainActivity<App>
         CompleteEnrollmentQrScan(null);
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(null);
         SoftwareKeyboardService.SetPlatformHideAction(null);
-        ReleaseMulticastLock();
         base.OnDestroy();
     }
 
@@ -232,38 +277,4 @@ public class MainActivity : AvaloniaMainActivity<App>
         completion?.TrySetResult(enrollmentCode);
     }
 
-
-    private void AcquireMulticastLock()
-    {
-        try
-        {
-            var wifiManager = ApplicationContext?.GetSystemService(Context.WifiService) as WifiManager;
-            _multicastLock = wifiManager?.CreateMulticastLock("PasswordManagerLocal.Mdns");
-            _multicastLock?.SetReferenceCounted(false);
-
-            if (_multicastLock is not null && !_multicastLock.IsHeld)
-                _multicastLock.Acquire();
-        }
-        catch
-        {
-            _multicastLock = null;
-        }
-    }
-
-
-    private void ReleaseMulticastLock()
-    {
-        try
-        {
-            if (_multicastLock is not null && _multicastLock.IsHeld)
-                _multicastLock.Release();
-        }
-        catch
-        {
-        }
-        finally
-        {
-            _multicastLock = null;
-        }
-    }
 }

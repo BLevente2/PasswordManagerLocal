@@ -470,6 +470,7 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
             enrollmentState,
             networkAddresses ?? new FakeLocalNetworkAddressService(),
             transport,
+            new FakeLocalDiscoveryNetworkLease(),
             scopeFactory);
 
 

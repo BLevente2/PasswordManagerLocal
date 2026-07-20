@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
@@ -45,6 +46,10 @@ public sealed class UserSyncKeyResolverService : IUserSyncKeyResolverService
             key = EncryptionKey.FromRaw(raw);
             confidence = UserSyncKeyConfidence.RememberMe;
             return true;
+        }
+        catch (KeyProtectorUnavailableException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {

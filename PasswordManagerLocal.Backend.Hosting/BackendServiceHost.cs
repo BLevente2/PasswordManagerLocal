@@ -3,7 +3,7 @@ using PasswordManagerLocal.Backend.Abstractions.Services;
 
 namespace PasswordManagerLocal.Backend.Hosting;
 
-public sealed class BackendServiceHost : IAsyncDisposable, IDisposable
+internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 {
     private readonly IServiceProvider _services;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);

@@ -1,9 +1,9 @@
-﻿using PasswordManagerLocal.Backend.Abstractions.Security;
+using PasswordManagerLocal.Backend.Abstractions.Security;
 using System;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 
-namespace PasswordManagerLocal.Windows;
+namespace PasswordManagerLocal.Backend.Windows.Security;
 
 [SupportedOSPlatform("windows")]
 public sealed class DpapiKeyProtector : IKeyProtector

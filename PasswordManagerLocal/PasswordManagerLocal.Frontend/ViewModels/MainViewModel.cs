@@ -6,9 +6,9 @@ using PasswordManagerLocal.Frontend.Localization;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels.Auth;
 using PasswordManagerLocal.Frontend.ViewModels.Pages;
-using PasswordManagerLocal.Backend;
 using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Backend.Exceptions;
+using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Responses;
 using ReactiveUI;
@@ -30,7 +30,10 @@ public sealed class MainViewModel : ViewModelBase
     private static readonly IBrush DarkHeaderSuccessBrush = Brush.Parse("#FF34D399");
 
     private readonly IEndpoints _endpoints;
+    private readonly IBackendRuntime _backendRuntime;
     private readonly IAuthSessionRegistry _authSessionRegistry;
+    private readonly object _initializationGate = new();
+    private Task? _initializationTask;
 
     private ViewModelBase _currentPageViewModel;
     private MainPageContentViewModel _currentAnimatedPageViewModel;
@@ -62,15 +65,20 @@ public sealed class MainViewModel : ViewModelBase
     private ChangeProfileViewModel? _changeProfileViewModel;
     private ViewModelBase? _observedPageStatusViewModel;
 
-    public MainViewModel(IEndpoints endpoints)
-        : this(endpoints, App.AuthSessionRegistry, new UiPreferencesService())
+    public MainViewModel(IEndpoints endpoints, IBackendRuntime backendRuntime)
+        : this(endpoints, backendRuntime, App.AuthSessionRegistry, new UiPreferencesService())
     {
     }
 
-    private MainViewModel(IEndpoints endpoints, IAuthSessionRegistry authSessionRegistry, UiPreferencesService uiPreferences)
+    private MainViewModel(
+        IEndpoints endpoints,
+        IBackendRuntime backendRuntime,
+        IAuthSessionRegistry authSessionRegistry,
+        UiPreferencesService uiPreferences)
         : base(uiPreferences)
     {
-        _endpoints = endpoints;
+        _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
+        _backendRuntime = backendRuntime ?? throw new ArgumentNullException(nameof(backendRuntime));
         _authSessionRegistry = authSessionRegistry;
 
         LoginViewModel = new LoginViewModel(uiPreferences, _endpoints, NavigateToRegistration, OnAuthenticationSucceededAsync);
@@ -99,6 +107,8 @@ public sealed class MainViewModel : ViewModelBase
         DeclineSessionRenewalCommand = ReactiveCommand.Create(DeclineSessionRenewal);
         DatabaseRecoveryPrimaryCommand = ReactiveCommand.CreateFromTask(HandleDatabaseRecoveryPrimaryActionAsync);
         DatabaseRecoverySecondaryCommand = ReactiveCommand.Create(HandleDatabaseRecoverySecondaryAction);
+        _backendRuntime.StateChanged += HandleBackendRuntimeStateChanged;
+        ApplyBackendRuntimeSnapshot(_backendRuntime.Snapshot);
         SensitiveDataVisibilityService.HideVisibleSecretsRequested += HandleHideVisibleSecretsRequested;
     }
 
@@ -496,7 +506,56 @@ public sealed class MainViewModel : ViewModelBase
         ? LightHeaderSuccessBrush
         : DarkHeaderSuccessBrush;
 
-    public async Task InitializeAsync()
+    public Task InitializeAsync()
+    {
+        Task operation;
+        TaskCompletionSource? starter = null;
+
+        lock (_initializationGate)
+        {
+            if (IsAuthenticated)
+                return Task.CompletedTask;
+
+            if (_initializationTask is not null)
+            {
+                operation = _initializationTask;
+            }
+            else
+            {
+                starter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _initializationTask = starter.Task;
+                operation = starter.Task;
+            }
+        }
+
+        if (starter is not null)
+            _ = RunInitializationAsync(starter);
+
+        return operation;
+    }
+
+    private async Task RunInitializationAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await InitializeCoreAsync();
+            completion.TrySetResult();
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+        finally
+        {
+            lock (_initializationGate)
+            {
+                if (ReferenceEquals(_initializationTask, completion.Task))
+                    _initializationTask = null;
+            }
+        }
+    }
+
+    private async Task InitializeCoreAsync()
     {
         if (IsAuthenticated)
             return;
@@ -505,42 +564,70 @@ public sealed class MainViewModel : ViewModelBase
 
         try
         {
-            var rememberedTokens = await _endpoints.InicializeAllRememberMeAsync();
-            SetBackendInitialized(true);
-            var loadedRememberedTokens = new List<Guid>();
-
-            foreach (var token in rememberedTokens)
-            {
-                if (await TryAddRememberedSessionAsync(token, false))
-                    loadedRememberedTokens.Add(token);
-            }
-
-            if (loadedRememberedTokens.Count == 1)
-            {
-                await LoadAuthenticatedStateAsync(loadedRememberedTokens[0], GetTranslation("Shell_RememberedSessionLoaded"));
+            await _backendRuntime.EnsureStartedAsync();
+            if (!_backendRuntime.Snapshot.IsReady)
                 return;
-            }
-
-            if (loadedRememberedTokens.Count > 1)
-            {
-                await ShowStartupProfileSelectionAsync(GetTranslation("Shell_ChooseRememberedProfile"));
-                EnsureSessionMonitor();
-                return;
-            }
-
-            if (!IsAuthenticated)
-                ClearStatusMessage();
         }
         catch (DatabaseVersionNotSupportedException exception)
         {
             if (!IsAuthenticated)
                 ShowDatabaseRecoveryDialog(exception);
+            return;
+        }
+        catch (KeyProtectorUnavailableException)
+        {
+            if (!IsAuthenticated)
+                ShowErrorMessage(GetTranslation("Shell_DeviceUnlockRequired"));
+            return;
         }
         catch
         {
             if (!IsAuthenticated)
                 ShowErrorMessage(GetTranslation("Shell_BackendStartupFailed"));
+            return;
         }
+
+        IReadOnlyList<Guid> rememberedTokens;
+        try
+        {
+            rememberedTokens = await _endpoints.RestoreRememberedSessionsAsync();
+        }
+        catch (KeyProtectorUnavailableException)
+        {
+            if (!IsAuthenticated)
+                ShowErrorMessage(GetTranslation("Shell_DeviceUnlockRequired"));
+            return;
+        }
+        catch
+        {
+            if (!IsAuthenticated)
+                ShowErrorMessage(GetTranslation("Shell_RememberedSessionRestoreFailed"));
+            return;
+        }
+
+        var loadedRememberedTokens = new List<Guid>();
+
+        foreach (var token in rememberedTokens)
+        {
+            if (await TryAddRememberedSessionAsync(token, false))
+                loadedRememberedTokens.Add(token);
+        }
+
+        if (loadedRememberedTokens.Count == 1)
+        {
+            await LoadAuthenticatedStateAsync(loadedRememberedTokens[0], GetTranslation("Shell_RememberedSessionLoaded"));
+            return;
+        }
+
+        if (loadedRememberedTokens.Count > 1)
+        {
+            await ShowStartupProfileSelectionAsync(GetTranslation("Shell_ChooseRememberedProfile"));
+            EnsureSessionMonitor();
+            return;
+        }
+
+        if (!IsAuthenticated)
+            ClearStatusMessage();
     }
 
     internal bool HasConfirmableDialogOpen
@@ -681,7 +768,6 @@ public sealed class MainViewModel : ViewModelBase
 
     private void ShowDatabaseRecoveryDialog(DatabaseVersionNotSupportedException exception)
     {
-        SetBackendInitialized(false);
         _databaseVersionException = exception;
         _databaseRecoveryStage = DatabaseRecoveryStage.CompatibilityError;
         _isResettingDatabase = false;
@@ -706,8 +792,7 @@ public sealed class MainViewModel : ViewModelBase
 
         try
         {
-            await BackendHost.ResetDatabaseAndReinitializeAsync();
-            SetBackendInitialized(true);
+            await _backendRuntime.ResetDatabaseAndRestartAsync();
             _databaseVersionException = null;
             _databaseRecoveryStage = DatabaseRecoveryStage.None;
             ClearStatusMessage();
@@ -929,7 +1014,55 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
-    private void SetBackendInitialized(bool isInitialized)
+    private void HandleBackendRuntimeStateChanged(
+        object? sender,
+        BackendRuntimeStateChangedEventArgs args)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            ApplyBackendRuntimeSnapshot(args.Current);
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => ApplyBackendRuntimeSnapshot(args.Current));
+    }
+
+    private void ApplyBackendRuntimeSnapshot(BackendRuntimeSnapshot snapshot)
+    {
+        ApplyBackendAvailability(snapshot.IsReady);
+
+        if (IsAuthenticated)
+            return;
+
+        switch (snapshot.State)
+        {
+            case BackendRuntimeState.NotStarted:
+            case BackendRuntimeState.Starting:
+                ShowInformationMessage(GetTranslation("Shell_BackendStarting"));
+                break;
+            case BackendRuntimeState.WaitingForDeviceUnlock:
+                ShowErrorMessage(GetTranslation("Shell_DeviceUnlockRequired"));
+                break;
+            case BackendRuntimeState.Failed
+                when snapshot.FailureKind == BackendRuntimeFailureKind.DatabaseCompatibility &&
+                     snapshot.Failure is DatabaseVersionNotSupportedException databaseException:
+                ShowDatabaseRecoveryDialog(databaseException);
+                break;
+            case BackendRuntimeState.Failed:
+                ShowErrorMessage(GetTranslation("Shell_BackendStartupFailed"));
+                break;
+            case BackendRuntimeState.Ready:
+                ClearStatusMessage();
+                _ = InitializeAsync();
+                break;
+            case BackendRuntimeState.Stopping:
+            case BackendRuntimeState.Stopped:
+                ShowErrorMessage(GetTranslation("Shell_BackendStopped"));
+                break;
+        }
+    }
+
+    private void ApplyBackendAvailability(bool isInitialized)
     {
         if (_isBackendInitialized == isInitialized)
             return;
@@ -1241,7 +1374,7 @@ public sealed class MainViewModel : ViewModelBase
             var profile = await _endpoints.GetUserProfileInfoAsync(token);
             if (await ContainsActiveUserIdAsync(profile.UId, token))
             {
-                try { _endpoints.Logout(token); } catch { }
+                try { await _endpoints.LogoutAsync(token); } catch { }
                 return false;
             }
 
@@ -1251,7 +1384,7 @@ public sealed class MainViewModel : ViewModelBase
         }
         catch
         {
-            try { _endpoints.Logout(token); } catch { }
+            try { await _endpoints.LogoutAsync(token); } catch { }
             _authSessionRegistry.TryRemove(token);
             return false;
         }
@@ -1312,7 +1445,7 @@ public sealed class MainViewModel : ViewModelBase
 
         if (await ContainsActiveUserIdAsync(profile.UId, token))
         {
-            try { _endpoints.Logout(token); } catch { }
+            try { await _endpoints.LogoutAsync(token); } catch { }
             throw new DuplicateActiveProfileException();
         }
 
@@ -1492,7 +1625,7 @@ public sealed class MainViewModel : ViewModelBase
 
         try
         {
-            _endpoints.Logout(token);
+            await _endpoints.LogoutAsync(token);
         }
         catch
         {
