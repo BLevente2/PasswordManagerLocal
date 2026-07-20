@@ -2,6 +2,7 @@ using PasswordManagerLocal.Frontend.Helpers;
 using PasswordManagerLocal.Frontend.Security;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Responses;
 using ReactiveUI;
@@ -55,6 +56,13 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(LastNameLabel),
         nameof(EmailLabel),
         nameof(RegistrationDateLabel),
+        nameof(RegistrationDateInOriginalTimeZoneLabel),
+        nameof(RegistrationTimeZoneLabel),
+        nameof(RegistrationDeviceTypeLabel),
+        nameof(RegistrationDateText),
+        nameof(RegistrationDateInOriginalTimeZoneText),
+        nameof(RegistrationTimeZoneText),
+        nameof(RegistrationDeviceTypeText),
         nameof(SaveProfileLabel),
         nameof(ChangeUsernameLabel),
         nameof(ChangeMasterPasswordLabel),
@@ -129,6 +137,7 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(AndroidMobileDeviceTypeLabel),
         nameof(UnknownDeviceTypeLabel),
         nameof(DeviceLastLoginDateLabel),
+        nameof(DevicePreviousLoginDateLabel),
         nameof(DeviceLastSyncLabel),
         nameof(CurrentDeviceLinkedAtLabel),
         nameof(RemoteDeviceLinkedAtLabel),
@@ -143,7 +152,6 @@ public sealed class ProfileViewModel : ViewModelBase
         nameof(LocalSyncDialogTitle),
         nameof(LocalSyncDialogWarning),
         nameof(LocalSyncConfirmLabel),
-        nameof(RegistrationDateText),
     ];
 
     private readonly IEndpoints _endpoints;
@@ -158,6 +166,8 @@ public sealed class ProfileViewModel : ViewModelBase
     private string _lastName = string.Empty;
     private string _email = string.Empty;
     private DateTime _registrationDate;
+    private string _registrationTimeZoneId = string.Empty;
+    private DeviceType _registrationDeviceType = DeviceType.Unknown;
     private string _editFirstName = string.Empty;
     private string _editLastName = string.Empty;
     private string _editEmail = string.Empty;
@@ -277,6 +287,30 @@ public sealed class ProfileViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _registrationDate, value);
             this.RaisePropertyChanged(nameof(RegistrationDateText));
+            this.RaisePropertyChanged(nameof(RegistrationDateInOriginalTimeZoneText));
+            this.RaisePropertyChanged(nameof(ShowRegistrationDateInOriginalTimeZone));
+        }
+    }
+
+    public string RegistrationTimeZoneId
+    {
+        get => _registrationTimeZoneId;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _registrationTimeZoneId, value);
+            this.RaisePropertyChanged(nameof(RegistrationTimeZoneText));
+            this.RaisePropertyChanged(nameof(RegistrationDateInOriginalTimeZoneText));
+            this.RaisePropertyChanged(nameof(ShowRegistrationDateInOriginalTimeZone));
+        }
+    }
+
+    public DeviceType RegistrationDeviceType
+    {
+        get => _registrationDeviceType;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _registrationDeviceType, value);
+            this.RaisePropertyChanged(nameof(RegistrationDeviceTypeText));
         }
     }
 
@@ -624,7 +658,41 @@ public sealed class ProfileViewModel : ViewModelBase
 
     public string LocalSyncDeviceName => PendingLocalSyncDevice?.Name ?? string.Empty;
 
-    public string RegistrationDateText => FrontendDateTimeUtil.ToLocalFromBackendUtc(RegistrationDate).ToString("f");
+    public string RegistrationDateText
+    {
+        get
+        {
+            var localDate = FrontendDateTimeUtil.ToLocalFromBackendUtc(RegistrationDate);
+            return localDate == default ? string.Empty : $"{localDate:f} ({TimeZoneInfo.Local.Id})";
+        }
+    }
+
+    public bool ShowRegistrationDateInOriginalTimeZone =>
+        RegistrationDate != default
+        && !string.IsNullOrWhiteSpace(RegistrationTimeZoneId)
+        && !FrontendDateTimeUtil.IsCurrentTimeZone(RegistrationTimeZoneId, RegistrationDate);
+
+    public string RegistrationDateInOriginalTimeZoneText
+    {
+        get
+        {
+            if (!ShowRegistrationDateInOriginalTimeZone)
+                return string.Empty;
+
+            var originalDate = FrontendDateTimeUtil.ToTimeZoneFromBackendUtc(RegistrationDate, RegistrationTimeZoneId);
+            return $"{originalDate:f} ({RegistrationTimeZoneId})";
+        }
+    }
+
+    public string RegistrationTimeZoneText =>
+        FrontendDateTimeUtil.GetTimeZoneDisplayText(RegistrationTimeZoneId);
+
+    public string RegistrationDeviceTypeText => RegistrationDeviceType switch
+    {
+        DeviceType.WindowsPc => WindowsPcDeviceTypeLabel,
+        DeviceType.AndroidMobile => AndroidMobileDeviceTypeLabel,
+        _ => UnknownDeviceTypeLabel
+    };
 
     public ReactiveCommand<Unit, Unit> SaveProfileCommand { get; }
 
@@ -729,6 +797,12 @@ public sealed class ProfileViewModel : ViewModelBase
     public string EmailLabel => GetTranslation("Register_Email_Label");
 
     public string RegistrationDateLabel => GetTranslation("Profile_RegistrationDate");
+
+    public string RegistrationDateInOriginalTimeZoneLabel => GetTranslation("Profile_RegistrationDate_OriginalTimeZone");
+
+    public string RegistrationTimeZoneLabel => GetTranslation("Profile_RegistrationTimeZone");
+
+    public string RegistrationDeviceTypeLabel => GetTranslation("Profile_RegistrationDeviceType");
 
     public string SaveProfileLabel => GetTranslation("Common_Save");
 
@@ -877,6 +951,8 @@ public sealed class ProfileViewModel : ViewModelBase
     public string UnknownDeviceTypeLabel => GetTranslation("Profile_Device_Type_Unknown");
 
     public string DeviceLastLoginDateLabel => GetTranslation("Profile_LastLoginDate");
+
+    public string DevicePreviousLoginDateLabel => GetTranslation("Profile_PreviousLoginDate");
 
     public string DeviceLastSyncLabel => GetTranslation("Profile_Device_LastSync");
 
@@ -1068,6 +1144,8 @@ public sealed class ProfileViewModel : ViewModelBase
         LastName = profile.LastName;
         Email = profile.Email;
         RegistrationDate = profile.RegistrationDate;
+        RegistrationTimeZoneId = profile.RegistrationTimeZoneId;
+        RegistrationDeviceType = profile.RegistrationDeviceType;
         EditUsername = profile.Username;
         EditFirstName = profile.FirstName;
         EditLastName = profile.LastName;
@@ -1096,6 +1174,8 @@ public sealed class ProfileViewModel : ViewModelBase
         LastName = string.Empty;
         Email = string.Empty;
         RegistrationDate = DateTime.MinValue;
+        RegistrationTimeZoneId = string.Empty;
+        RegistrationDeviceType = DeviceType.Unknown;
         EditUsername = string.Empty;
         EditFirstName = string.Empty;
         EditLastName = string.Empty;
@@ -1381,6 +1461,7 @@ public sealed class ProfileViewModel : ViewModelBase
             DisconnectLabel = DisconnectDeviceLabel,
             DeviceNameLabel = DeviceNameLabel,
             DeviceLastLoginDateLabel = DeviceLastLoginDateLabel,
+            DevicePreviousLoginDateLabel = DevicePreviousLoginDateLabel,
             DeviceLastSyncLabel = DeviceLastSyncLabel,
             CurrentDeviceLinkedAtLabel = CurrentDeviceLinkedAtLabel,
             RemoteDeviceLinkedAtLabel = RemoteDeviceLinkedAtLabel,

@@ -115,6 +115,10 @@
             <TextBlock Text="{Binding SelectedDevice.DeviceLastLoginDateLabel}" Classes="subtleText" />
             <TextBlock Text="{Binding SelectedDevice.LastLoginDateText}" TextWrapping="Wrap" />
           </StackPanel>
+          <StackPanel Spacing="4" IsVisible="{Binding SelectedDevice.ShowPreviousLoginDate}">
+            <TextBlock Text="{Binding SelectedDevice.DevicePreviousLoginDateLabel}" Classes="subtleText" />
+            <TextBlock Text="{Binding SelectedDevice.PreviousLoginDateText}" TextWrapping="Wrap" />
+          </StackPanel>
           <StackPanel Spacing="4" IsVisible="{Binding SelectedDevice.ShowRemoteLastSync}">
             <TextBlock Text="{Binding DeviceLastSyncLabel}" Classes="subtleText" />
             <TextBlock Text="{Binding SelectedDevice.LastSyncText}" TextWrapping="Wrap" />

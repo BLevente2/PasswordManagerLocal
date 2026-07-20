@@ -88,6 +88,81 @@ public sealed class IntegrityProtectionTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Security")]
+    public void UserDeviceData_PreviousLoginDateIsIntegrityProtected()
+    {
+        using var device = CreateUserDeviceData();
+        device.GenerateIntegrityHash();
+        MSTestAssert.IsTrue(device.IsIntegrityValid());
+
+        device.PreviousLoginDate = device.PreviousLoginDate!.Value.AddMinutes(-1);
+
+        MSTestAssert.IsFalse(device.IsIntegrityValid());
+        ExpectThrows<InvalidDataIntegrityException>(device.VerifyIntegrity);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void UserDeviceData_LegacyHashWithoutPreviousLoginDateIsRejected()
+    {
+        using var device = CreateUserDeviceData();
+        device.PreviousLoginDate = null;
+        device.IntegrityHash = Hashing.SHA256Hash(hash =>
+        {
+            hash.Write(device.Id);
+            hash.WriteString(device.Name);
+            hash.Write(device.LinkedAt);
+            hash.Write(device.LastLoginDate);
+            hash.Write(device.LastUpdatedAt);
+            device.Version.WriteTo(hash);
+        });
+
+        MSTestAssert.IsFalse(device.IsIntegrityValid());
+        ExpectThrows<InvalidDataIntegrityException>(device.VerifyIntegrity);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void GeneralUserData_RegistrationMetadataIsIntegrityProtected()
+    {
+        using var timeZoneTampered = CreateGeneralUserData();
+        timeZoneTampered.GenerateIntegrityHash();
+        MSTestAssert.IsTrue(timeZoneTampered.IsIntegrityValid());
+
+        timeZoneTampered.RegistrationTimeZoneId = "America/New_York";
+        MSTestAssert.IsFalse(timeZoneTampered.IsIntegrityValid());
+
+        using var deviceTypeTampered = CreateGeneralUserData();
+        deviceTypeTampered.GenerateIntegrityHash();
+        deviceTypeTampered.RegistrationDeviceType = DeviceType.AndroidMobile;
+        MSTestAssert.IsFalse(deviceTypeTampered.IsIntegrityValid());
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
+    public void GeneralUserData_LegacyHashWithoutRegistrationMetadataIsRejected()
+    {
+        using var data = CreateGeneralUserData();
+        data.IntegrityHash = Hashing.SHA256Hash(hash =>
+        {
+            hash.WriteString(data.Username);
+            hash.WriteString(data.FirstName);
+            hash.WriteString(data.LastName);
+            hash.WriteString(data.Email);
+            hash.Write(data.RegistrationDate);
+            hash.Write(data.LastUpdatedAt);
+            data.Version.WriteTo(hash);
+        });
+
+        MSTestAssert.IsFalse(data.IsIntegrityValid());
+        ExpectThrows<InvalidDataIntegrityException>(data.VerifyIntegrity);
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Security")]
     public void LocalDeviceIdentity_PrivateKeyTamperingIsDetected()
     {
         var identity = new LocalDeviceIdentity
@@ -335,6 +410,42 @@ public sealed class IntegrityProtectionTests
             DeletedTags = [deletedTag]
         };
     }
+
+    private static GeneralUserData CreateGeneralUserData() => new()
+    {
+        Username = "integrity-user",
+        FirstName = "Integrity",
+        LastName = "User",
+        Email = "integrity@example.test",
+        RegistrationDate = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc),
+        RegistrationTimeZoneId = "Europe/Budapest",
+        RegistrationDeviceType = DeviceType.WindowsPc,
+        LastUpdatedAt = new DateTime(2026, 1, 2, 4, 5, 6, DateTimeKind.Utc),
+        Version = new SyncVersionStamp
+        {
+            PhysicalTimeUnixMilliseconds = 1_767_326_400_000,
+            LogicalCounter = 1,
+            OriginDeviceId = Guid.Parse("A8541601-352A-4671-9599-E56B4B9A6228"),
+            OriginInstanceId = Guid.Parse("146F1A7C-6A81-469A-90E4-AC045BB6A349")
+        }
+    };
+
+    private static UserDeviceData CreateUserDeviceData() => new()
+    {
+        Id = Guid.Parse("820A69AA-3BC7-42EA-A580-CB4689A84804"),
+        Name = "Integrity device",
+        LinkedAt = new DateTimeOffset(2026, 1, 1, 2, 3, 4, TimeSpan.Zero),
+        LastLoginDate = new DateTime(2026, 2, 2, 3, 4, 5, DateTimeKind.Utc),
+        PreviousLoginDate = new DateTime(2026, 2, 1, 3, 4, 5, DateTimeKind.Utc),
+        LastUpdatedAt = new DateTimeOffset(2026, 2, 2, 3, 4, 5, TimeSpan.Zero),
+        Version = new SyncVersionStamp
+        {
+            PhysicalTimeUnixMilliseconds = 1_770_000_000_000,
+            LogicalCounter = 1,
+            OriginDeviceId = Guid.Parse("9C2E0B89-0C41-43E0-B568-343E8237B058"),
+            OriginInstanceId = Guid.Parse("FA65C9AC-7043-4D5F-BBF0-1F37580B139F")
+        }
+    };
 
     private static UserData CreateUserData()
     {

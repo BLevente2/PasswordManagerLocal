@@ -87,8 +87,10 @@ public sealed class RememberMeServiceTests
         var currentDeviceResponse = (await devices.GetUserDevicesAsync(restoredToken)).Single(device => device.IsCurrentDevice);
 
         MSTestAssert.IsTrue(restoredLocalDevice.LastLoginDate > oldLoginDate);
+        MSTestAssert.AreEqual(oldLoginDate, restoredLocalDevice.PreviousLoginDate);
         MSTestAssert.IsNotNull(currentDeviceResponse.LastLoginDate);
         MSTestAssert.AreEqual(restoredLocalDevice.LastLoginDate, currentDeviceResponse.LastLoginDate.Value);
+        MSTestAssert.AreEqual(oldLoginDate, currentDeviceResponse.PreviousLoginDate);
     }
 
     [TestMethod]

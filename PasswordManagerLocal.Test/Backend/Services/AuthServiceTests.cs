@@ -65,6 +65,7 @@ public sealed class AuthServiceTests
         var cache = (IDataCachingService)host.Services.GetRequiredService(typeof(IDataCachingService));
         var keys = (IKeyVaultService)host.Services.GetRequiredService(typeof(IKeyVaultService));
         var tokens = (ITokenService)host.Services.GetRequiredService(typeof(ITokenService));
+        var identity = host.Services.GetRequiredService<IDeviceIdentityService>();
 
         var reg = host.CreateValidRegistrationRequest("alice");
         var token1 = await auth.RegisterAsync(reg);
@@ -75,6 +76,9 @@ public sealed class AuthServiceTests
         MSTestAssert.IsTrue(cache.TryGetUserDataBundle(token1, out var ud1));
         MSTestAssert.IsNotNull(ud1);
         MSTestAssert.AreEqual("alice", ud1.GeneralUserData.Username);
+        var registrationDevice = ud1.UserDevicesData.Devices.Single(device => device.Id == identity.LocalDeviceId);
+        var registrationLoginDate = registrationDevice.LastLoginDate;
+        MSTestAssert.IsNull(registrationDevice.PreviousLoginDate);
 
         var login = host.CreateValidLoginRequest("alice");
         var token2 = await auth.LoginAsync(login);
@@ -85,6 +89,10 @@ public sealed class AuthServiceTests
         MSTestAssert.IsTrue(cache.TryGetUserDataBundle(token2, out var ud2));
         MSTestAssert.IsNotNull(ud2);
         MSTestAssert.AreEqual("alice", ud2.GeneralUserData.Username);
+        var loginDevice = ud2.UserDevicesData.Devices.Single(device => device.Id == identity.LocalDeviceId);
+        MSTestAssert.IsNotNull(loginDevice.PreviousLoginDate);
+        MSTestAssert.AreEqual(registrationLoginDate, loginDevice.PreviousLoginDate.Value);
+        MSTestAssert.IsTrue(loginDevice.LastLoginDate >= registrationLoginDate);
 
         MSTestAssert.AreNotEqual(token1, token2);
     }

@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using PasswordManagerLocal.Frontend.ViewModels.Pages;
 
 namespace PasswordManagerLocal.Frontend.Views.Behaviors;
@@ -12,9 +14,10 @@ internal sealed class MultiSelectionListItemPointerHandler<TItem>
     private const int LongPressDelayMilliseconds = 650;
     private const double CancelDistance = 12;
 
-    private readonly Control _coordinateRoot;
+    private readonly Control _owner;
     private readonly Action<TItem> _beginSelection;
 
+    private TopLevel? _inputTopLevel;
     private CancellationTokenSource? _longPressDelay;
     private Border? _pressedItem;
     private IPointer? _trackedPointer;
@@ -22,10 +25,17 @@ internal sealed class MultiSelectionListItemPointerHandler<TItem>
     private Point _pressPosition;
     private bool _longPressActivated;
 
-    public MultiSelectionListItemPointerHandler(Control coordinateRoot, Action<TItem> beginSelection)
+    public MultiSelectionListItemPointerHandler(Control owner, Action<TItem> beginSelection)
     {
-        _coordinateRoot = coordinateRoot;
+        _owner = owner;
         _beginSelection = beginSelection;
+
+        if (OperatingSystem.IsAndroid())
+        {
+            _owner.AttachedToVisualTree += HandleAttachedToVisualTree;
+            _owner.DetachedFromVisualTree += HandleDetachedFromVisualTree;
+            AttachTopLevelInputHandlers();
+        }
     }
 
     public void HandlePointerPressed(Border item, PointerPressedEventArgs e)
@@ -56,7 +66,10 @@ internal sealed class MultiSelectionListItemPointerHandler<TItem>
 
         _pressedItem = item;
         _trackedPointer = e.Pointer;
-        _pressPosition = e.GetPosition(_coordinateRoot);
+
+        // The list content moves inside its ScrollViewer during touch panning. Measure
+        // against the stable top-level coordinate system so that movement remains visible.
+        _pressPosition = e.GetPosition(null);
 
         if (OperatingSystem.IsAndroid() && e.Pointer.Type is PointerType.Touch or PointerType.Pen)
         {
@@ -73,7 +86,7 @@ internal sealed class MultiSelectionListItemPointerHandler<TItem>
             return;
         }
 
-        var movement = e.GetPosition(_coordinateRoot) - _pressPosition;
+        var movement = e.GetPosition(null) - _pressPosition;
         if (Math.Abs(movement.X) <= CancelDistance && Math.Abs(movement.Y) <= CancelDistance)
         {
             return;
@@ -114,7 +127,7 @@ internal sealed class MultiSelectionListItemPointerHandler<TItem>
             return true;
         }
 
-        var movement = e.GetPosition(_coordinateRoot) - pressPosition;
+        var movement = e.GetPosition(null) - pressPosition;
         if (Math.Abs(movement.X) > CancelDistance || Math.Abs(movement.Y) > CancelDistance)
         {
             return true;
@@ -154,6 +167,65 @@ internal sealed class MultiSelectionListItemPointerHandler<TItem>
         ResetTrackedPress();
         _suppressedReleasePointer = null;
     }
+
+    private void HandleAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e) =>
+        AttachTopLevelInputHandlers();
+
+    private void HandleDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        DetachTopLevelInputHandlers();
+        CancelPointerTracking();
+    }
+
+    private void AttachTopLevelInputHandlers()
+    {
+        var topLevel = TopLevel.GetTopLevel(_owner);
+        if (ReferenceEquals(_inputTopLevel, topLevel))
+        {
+            return;
+        }
+
+        DetachTopLevelInputHandlers();
+
+        if (topLevel is null)
+        {
+            return;
+        }
+
+        _inputTopLevel = topLevel;
+
+        // ScrollViewer captures the pointer after recognizing a pan, so item-level
+        // handlers may no longer receive later move or release events. Observe both
+        // raw movement and recognized scrolling at the top level.
+        topLevel.AddHandler(
+            InputElement.PointerMovedEvent,
+            HandleTopLevelPointerMoved,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
+        topLevel.AddHandler(
+            Gestures.ScrollGestureEvent,
+            HandleTopLevelScrollGesture,
+            RoutingStrategies.Bubble,
+            handledEventsToo: true);
+    }
+
+    private void DetachTopLevelInputHandlers()
+    {
+        if (_inputTopLevel is null)
+        {
+            return;
+        }
+
+        _inputTopLevel.RemoveHandler(InputElement.PointerMovedEvent, HandleTopLevelPointerMoved);
+        _inputTopLevel.RemoveHandler(Gestures.ScrollGestureEvent, HandleTopLevelScrollGesture);
+        _inputTopLevel = null;
+    }
+
+    private void HandleTopLevelPointerMoved(object? sender, PointerEventArgs e) =>
+        HandlePointerMoved(e);
+
+    private void HandleTopLevelScrollGesture(object? sender, ScrollGestureEventArgs e) =>
+        CancelPointerTracking();
 
     private async Task ActivateLongPressAfterDelayAsync(
         Border item,

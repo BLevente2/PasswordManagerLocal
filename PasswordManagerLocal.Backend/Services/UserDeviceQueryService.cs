@@ -100,6 +100,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         LastSync = null,
         LastSeen = null,
         LastLoginDate = ToMeaningfulUtc(deviceData.LastLoginDate),
+        PreviousLoginDate = ToMeaningfulUtc(deviceData.PreviousLoginDate),
         IsTrusted = true,
         IsBlocked = false,
         InvalidSyncAttemptCount = 0,
@@ -125,6 +126,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         LastSync = ToMeaningfulUtc(device.LastSync),
         LastSeen = ToMeaningfulUtc(device.LastSeen),
         LastLoginDate = ToMeaningfulUtc(deviceData.LastLoginDate),
+        PreviousLoginDate = ToMeaningfulUtc(deviceData.PreviousLoginDate),
         IsTrusted = device.IsTrusted,
         IsBlocked = device.IsBlocked,
         BlockedReason = device.BlockedReason,
@@ -142,6 +144,9 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         value == default || value == UtcDateTimeUtil.MinDateTime
             ? null
             : UtcDateTimeUtil.ToUtc(value);
+
+    private DateTime? ToMeaningfulUtc(DateTime? value) =>
+        value.HasValue ? ToMeaningfulUtc(value.Value) : null;
 
     private bool IsRemoteDeviceOnline(bool localCanSync, UserDevice link, Device device) =>
         localCanSync &&

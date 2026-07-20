@@ -57,6 +57,32 @@
                   <TextBlock Text="{Binding RegistrationDateText}" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
+              <Border
+                  Classes="toolbarGroup"
+                  Margin="0,0,8,8"
+                  MinWidth="220"
+                  IsVisible="{Binding ShowRegistrationDateInOriginalTimeZone}">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding RegistrationDateInOriginalTimeZoneLabel}" Classes="subtleText" />
+                  <TextBlock Text="{Binding RegistrationDateInOriginalTimeZoneText}" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <Border
+                  Classes="toolbarGroup"
+                  Margin="0,0,8,8"
+                  MinWidth="220"
+                  IsVisible="{Binding ShowRegistrationDateInOriginalTimeZone}">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding RegistrationTimeZoneLabel}" Classes="subtleText" />
+                  <TextBlock Text="{Binding RegistrationTimeZoneText}" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <Border Classes="toolbarGroup" Margin="0,0,8,8" MinWidth="220">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding RegistrationDeviceTypeLabel}" Classes="subtleText" />
+                  <TextBlock Text="{Binding RegistrationDeviceTypeText}" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
             </WrapPanel>
           </StackPanel>
         </Border>

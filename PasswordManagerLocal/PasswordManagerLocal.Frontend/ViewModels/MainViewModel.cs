@@ -681,6 +681,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private void ShowDatabaseRecoveryDialog(DatabaseVersionNotSupportedException exception)
     {
+        SetBackendInitialized(false);
         _databaseVersionException = exception;
         _databaseRecoveryStage = DatabaseRecoveryStage.CompatibilityError;
         _isResettingDatabase = false;
@@ -706,6 +707,7 @@ public sealed class MainViewModel : ViewModelBase
         try
         {
             await BackendHost.ResetDatabaseAndReinitializeAsync();
+            SetBackendInitialized(true);
             _databaseVersionException = null;
             _databaseRecoveryStage = DatabaseRecoveryStage.None;
             ClearStatusMessage();

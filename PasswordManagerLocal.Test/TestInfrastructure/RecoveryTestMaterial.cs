@@ -61,6 +61,8 @@ internal sealed class RecoveryTestMaterial : IDisposable
                 LastName = "Fixture",
                 Email = "recovery@example.invalid",
                 RegistrationDate = DateTime.UnixEpoch,
+                RegistrationTimeZoneId = "UTC",
+                RegistrationDeviceType = DeviceType.WindowsPc,
                 LastUpdatedAt = DateTimeOffset.FromUnixTimeMilliseconds(generalVersion.PhysicalTimeUnixMilliseconds).UtcDateTime,
                 Version = generalVersion
             },
@@ -239,6 +241,7 @@ internal sealed class RecoveryTestMaterial : IDisposable
         Name = name,
         LinkedAt = DateTimeOffset.UnixEpoch,
         LastLoginDate = DateTimeOffset.FromUnixTimeMilliseconds(version.PhysicalTimeUnixMilliseconds).UtcDateTime,
+        PreviousLoginDate = null,
         LastUpdatedAt = DateTimeOffset.FromUnixTimeMilliseconds(version.PhysicalTimeUnixMilliseconds),
         Version = version
     };

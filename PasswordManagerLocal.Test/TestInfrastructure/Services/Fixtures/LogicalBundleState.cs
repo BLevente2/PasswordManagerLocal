@@ -71,6 +71,8 @@ internal sealed class LogicalBundleState : IDisposable
         general.LastName = General.LastName;
         general.Email = General.Email;
         general.RegistrationDate = General.RegistrationDate;
+        general.RegistrationTimeZoneId = General.RegistrationTimeZoneId;
+        general.RegistrationDeviceType = General.RegistrationDeviceType;
         general.GenerateIntegrityHash();
         return new LogicalBundleState(
             general,

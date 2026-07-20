@@ -1,6 +1,7 @@
+using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Security;
-using System.Security.Cryptography;
 using PasswordManagerLocal.Backend.Utils;
+using System.Security.Cryptography;
 
 namespace PasswordManagerLocal.Backend.Models.Encrypted;
 
@@ -13,6 +14,8 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public DateTime RegistrationDate { get; set; } = DateTime.UtcNow;
+    public string RegistrationTimeZoneId { get; set; } = string.Empty;
+    public DeviceType RegistrationDeviceType { get; set; } = DeviceType.Unknown;
     public DateTime LastUpdatedAt { get; set; } = DateTime.UtcNow;
     public SyncVersionStamp Version { get; set; } = new();
 
@@ -26,6 +29,8 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
         LastName = string.Empty;
         Email = string.Empty;
         RegistrationDate = UtcDateTimeUtil.MinDateTime;
+        RegistrationTimeZoneId = string.Empty;
+        RegistrationDeviceType = DeviceType.Unknown;
         LastUpdatedAt = UtcDateTimeUtil.MinDateTime;
         Version = new();
         CryptographicOperations.ZeroMemory(IntegrityHash);
@@ -41,6 +46,8 @@ public sealed class GeneralUserData : IntegrityCheckableBase, IDisposable
             hash.WriteString(LastName);
             hash.WriteString(Email);
             hash.Write(RegistrationDate);
+            hash.WriteString(RegistrationTimeZoneId);
+            hash.Write((byte)RegistrationDeviceType);
             hash.Write(LastUpdatedAt);
             Version.WriteTo(hash);
         });

@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Utils;
 
@@ -11,6 +12,8 @@ public sealed class UserProfileInfoResponse
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public DateTime RegistrationDate { get; set; }
+    public string RegistrationTimeZoneId { get; set; } = string.Empty;
+    public DeviceType RegistrationDeviceType { get; set; }
     public bool IsRememberMeEnabled { get; set; }
 
 
@@ -27,6 +30,8 @@ public sealed class UserProfileInfoResponse
             LastName = generalUserData.LastName,
             Email = generalUserData.Email,
             RegistrationDate = UtcDateTimeUtil.ToUtc(generalUserData.RegistrationDate),
+            RegistrationTimeZoneId = generalUserData.RegistrationTimeZoneId,
+            RegistrationDeviceType = generalUserData.RegistrationDeviceType,
             IsRememberMeEnabled = isRememberMeEnabled
         };
 }

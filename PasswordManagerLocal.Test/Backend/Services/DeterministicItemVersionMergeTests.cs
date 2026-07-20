@@ -52,13 +52,16 @@ public sealed class DeterministicItemVersionMergeTests
         var bVersion = Stamp(500, 0, DeviceB, InstanceB);
         using var a = General("A", DateTime.UnixEpoch.AddYears(2), aVersion);
         using var b = General("B", DateTime.UnixEpoch, bVersion);
+        b.RegistrationTimeZoneId = "Europe/Budapest";
+        b.RegistrationDeviceType = DeviceType.AndroidMobile;
+        b.GenerateIntegrityHash();
         var aHash = new byte[] { 1, 2, 3 };
         var aSalt = new byte[] { 4, 5, 6 };
         var bHash = new byte[] { 7, 8, 9 };
         var bSalt = new byte[] { 10, 11, 12 };
 
         using var forwardData = General("A", a.LastUpdatedAt, aVersion);
-        using var reverseData = General("B", b.LastUpdatedAt, bVersion);
+        using var reverseData = Clone(b);
         var forwardUser = new User { UId = userId, UsernameHash = aHash.ToArray(), UsernameSalt = aSalt.ToArray() };
         var reverseUser = new User { UId = userId, UsernameHash = bHash.ToArray(), UsernameSalt = bSalt.ToArray() };
         var aPayload = new UserSyncPayload { UId = userId, UsernameHash = aHash, UsernameSalt = aSalt };
@@ -71,6 +74,8 @@ public sealed class DeterministicItemVersionMergeTests
         CollectionAssert.AreEqual(forwardUser.UsernameHash, reverseUser.UsernameHash);
         CollectionAssert.AreEqual(forwardUser.UsernameSalt, reverseUser.UsernameSalt);
         MSTestAssert.AreEqual("B", forwardData.Username);
+        MSTestAssert.AreEqual("Europe/Budapest", forwardData.RegistrationTimeZoneId);
+        MSTestAssert.AreEqual(DeviceType.AndroidMobile, forwardData.RegistrationDeviceType);
     }
 
     [TestMethod]
@@ -320,6 +325,7 @@ public sealed class DeterministicItemVersionMergeTests
 
         MSTestAssert.AreEqual("C", left.Devices.Single().Name);
         MSTestAssert.AreEqual(3, left.Devices.Single().LastLoginDate.Day);
+        MSTestAssert.AreEqual(2, left.Devices.Single().PreviousLoginDate?.Day);
         CollectionAssert.AreEqual(left.CalculateIntegrityHash(), right.CalculateIntegrityHash());
         MSTestAssert.IsFalse(service.Merge(left, right));
     }
@@ -459,6 +465,8 @@ public sealed class DeterministicItemVersionMergeTests
             LastName = "User",
             Email = $"{username.ToLowerInvariant()}@example.test",
             RegistrationDate = DateTime.UnixEpoch,
+            RegistrationTimeZoneId = "UTC",
+            RegistrationDeviceType = DeviceType.WindowsPc,
             LastUpdatedAt = displayTime,
             Version = version
         };
@@ -558,6 +566,7 @@ public sealed class DeterministicItemVersionMergeTests
             Name = name,
             LinkedAt = DateTimeOffset.UnixEpoch,
             LastLoginDate = new DateTime(2026, 1, loginDay, 0, 0, 0, DateTimeKind.Utc),
+            PreviousLoginDate = new DateTime(2026, 1, Math.Max(1, loginDay - 1), 0, 0, 0, DateTimeKind.Utc),
             LastUpdatedAt = DateTimeOffset.UnixEpoch.AddDays(loginDay),
             Version = version
         };
@@ -602,6 +611,26 @@ public sealed class DeterministicItemVersionMergeTests
         var data = new UserDevicesData();
         if (device is not null) data.Devices.Add(device);
         if (deleted is not null) data.DeletedDevices.Add(deleted);
+        data.GenerateIntegrityHash();
+        return data;
+    }
+
+    internal static GeneralUserData Clone(GeneralUserData source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        var data = new GeneralUserData
+        {
+            Username = source.Username,
+            FirstName = source.FirstName,
+            LastName = source.LastName,
+            Email = source.Email,
+            RegistrationDate = source.RegistrationDate,
+            RegistrationTimeZoneId = source.RegistrationTimeZoneId,
+            RegistrationDeviceType = source.RegistrationDeviceType,
+            LastUpdatedAt = source.LastUpdatedAt,
+            Version = source.Version
+        };
         data.GenerateIntegrityHash();
         return data;
     }
@@ -685,6 +714,7 @@ public sealed class DeterministicItemVersionMergeTests
                 Name = item.Name,
                 LinkedAt = item.LinkedAt,
                 LastLoginDate = item.LastLoginDate,
+                PreviousLoginDate = item.PreviousLoginDate,
                 LastUpdatedAt = item.LastUpdatedAt,
                 Version = item.Version
             };

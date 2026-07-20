@@ -122,6 +122,7 @@ public sealed class UserDevicesDataMergeService : IUserDevicesDataMergeService
             Name = source.Name,
             LinkedAt = source.LinkedAt,
             LastLoginDate = source.LastLoginDate,
+            PreviousLoginDate = source.PreviousLoginDate,
             LastUpdatedAt = source.LastUpdatedAt,
             Version = source.Version
         };

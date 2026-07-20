@@ -161,6 +161,8 @@ public sealed class UserDataBundleVerificationServiceTests
                 Username = "verification-user",
                 Version = version,
                 RegistrationDate = DateTime.UtcNow,
+                RegistrationTimeZoneId = "UTC",
+                RegistrationDeviceType = DeviceType.WindowsPc,
                 LastUpdatedAt = DateTime.UtcNow
             },
             UserPasswordsData = new UserPasswordsData

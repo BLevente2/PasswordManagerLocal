@@ -11,6 +11,7 @@ public sealed class UserDeviceInfoResponse
     public DateTime? LastSync { get; set; }
     public DateTime? LastSeen { get; set; }
     public DateTime? LastLoginDate { get; set; }
+    public DateTime? PreviousLoginDate { get; set; }
     public bool IsTrusted { get; set; }
     public bool IsBlocked { get; set; }
     public string? BlockedReason { get; set; }

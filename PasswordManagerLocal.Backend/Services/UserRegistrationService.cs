@@ -119,6 +119,8 @@ public sealed class UserRegistrationService : IUserRegistrationService
             LastName = request.LastName,
             Email = request.Email,
             RegistrationDate = now,
+            RegistrationTimeZoneId = TimeZoneInfo.Local.Id,
+            RegistrationDeviceType = _identity.DeviceType,
             LastUpdatedAt = now,
             Version = _versionClock.Next()
         };
@@ -142,6 +144,7 @@ public sealed class UserRegistrationService : IUserRegistrationService
             Name = DeviceNameUtil.BuildDefaultDeviceName(_identity.LocalDeviceId),
             LinkedAt = linkedAt,
             LastLoginDate = now,
+            PreviousLoginDate = null,
             LastUpdatedAt = linkedAt,
             Version = version
         };

@@ -48,6 +48,8 @@ internal static class GeneralUserDataMergeUtil
         local.LastName = incoming.LastName;
         local.Email = incoming.Email;
         local.RegistrationDate = incoming.RegistrationDate;
+        local.RegistrationTimeZoneId = incoming.RegistrationTimeZoneId;
+        local.RegistrationDeviceType = incoming.RegistrationDeviceType;
         local.LastUpdatedAt = incoming.LastUpdatedAt;
         local.Version = incoming.Version;
 

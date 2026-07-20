@@ -20,6 +20,7 @@ public sealed class DeviceItemLocalization
     public required string DisconnectLabel { get; init; }
     public required string DeviceNameLabel { get; init; }
     public required string DeviceLastLoginDateLabel { get; init; }
+    public required string DevicePreviousLoginDateLabel { get; init; }
     public required string DeviceLastSyncLabel { get; init; }
     public required string CurrentDeviceLinkedAtLabel { get; init; }
     public required string RemoteDeviceLinkedAtLabel { get; init; }

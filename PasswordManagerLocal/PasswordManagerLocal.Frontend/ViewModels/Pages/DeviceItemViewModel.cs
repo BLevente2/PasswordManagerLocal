@@ -38,6 +38,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
     private string _disconnectLabel = string.Empty;
     private string _deviceNameLabel = string.Empty;
     private string _deviceLastLoginDateLabel = string.Empty;
+    private string _devicePreviousLoginDateLabel = string.Empty;
     private string _deviceLastSyncLabel = string.Empty;
     private string _deviceLinkedAtLabel = string.Empty;
     private string _deviceBlockedReasonLabel = string.Empty;
@@ -59,6 +60,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         EditableName = device.Name;
         LastSync = device.LastSync;
         LastLoginDate = device.LastLoginDate;
+        PreviousLoginDate = device.PreviousLoginDate;
         IsTrusted = device.IsTrusted;
         IsBlocked = device.IsBlocked;
         BlockedReason = device.BlockedReason;
@@ -96,6 +98,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
     public DateTime? LastSync { get; }
 
     public DateTime? LastLoginDate { get; }
+
+    public DateTime? PreviousLoginDate { get; }
 
     public bool IsTrusted { get; }
 
@@ -142,6 +146,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
     public bool HasLinkedAt => LinkedAt != default;
 
     public bool ShowLastLoginDate => LastLoginDate is not null;
+
+    public bool ShowPreviousLoginDate => PreviousLoginDate is not null;
 
     public bool ShowRemoteLastSync => IsRemoteDevice && LastSync is not null;
 
@@ -192,6 +198,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string DeviceLastLoginDateLabel => _deviceLastLoginDateLabel;
 
+    public string DevicePreviousLoginDateLabel => _devicePreviousLoginDateLabel;
+
     public string DeviceLastSyncLabel => _deviceLastSyncLabel;
 
     public string DeviceLinkedAtLabel => _deviceLinkedAtLabel;
@@ -214,6 +222,10 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string LastLoginDateText => LastLoginDate is { } lastLoginDate
         ? FrontendDateTimeUtil.ToLocalFromBackendUtc(lastLoginDate).ToString("g")
+        : string.Empty;
+
+    public string PreviousLoginDateText => PreviousLoginDate is { } previousLoginDate
+        ? FrontendDateTimeUtil.ToLocalFromBackendUtc(previousLoginDate).ToString("g")
         : string.Empty;
 
     public string LinkedAtText => FrontendDateTimeUtil.ToLocalFromBackendUtc(LinkedAt).ToString("g");
@@ -266,6 +278,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         _disconnectLabel = localization.DisconnectLabel;
         _deviceNameLabel = localization.DeviceNameLabel;
         _deviceLastLoginDateLabel = localization.DeviceLastLoginDateLabel;
+        _devicePreviousLoginDateLabel = localization.DevicePreviousLoginDateLabel;
         _deviceLastSyncLabel = localization.DeviceLastSyncLabel;
         _deviceLinkedAtLabel = IsCurrentDevice
             ? localization.CurrentDeviceLinkedAtLabel
@@ -293,6 +306,7 @@ public sealed class DeviceItemViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(DisconnectLabel));
         this.RaisePropertyChanged(nameof(DeviceNameLabel));
         this.RaisePropertyChanged(nameof(DeviceLastLoginDateLabel));
+        this.RaisePropertyChanged(nameof(DevicePreviousLoginDateLabel));
         this.RaisePropertyChanged(nameof(DeviceLastSyncLabel));
         this.RaisePropertyChanged(nameof(DeviceLinkedAtLabel));
         this.RaisePropertyChanged(nameof(DeviceBlockedReasonLabel));

@@ -90,11 +90,13 @@ public sealed class DeviceServiceTests
         MSTestAssert.IsNotNull(remoteResponse.LastSync);
         MSTestAssert.IsNotNull(remoteResponse.LastSeen);
         MSTestAssert.IsNull(remoteResponse.LastLoginDate);
+        MSTestAssert.IsNull(remoteResponse.PreviousLoginDate);
 
         var localResponse = result.Single(item => item.IsCurrentDevice);
         MSTestAssert.IsNull(localResponse.LastSync);
         MSTestAssert.IsNull(localResponse.LastSeen);
         MSTestAssert.IsNotNull(localResponse.LastLoginDate);
+        MSTestAssert.IsNull(localResponse.PreviousLoginDate);
         MSTestAssert.IsTrue(localResponse.IsOnline);
 
         var bundle = await users.GetLoadAndVerifyUserDataBundleAsync(token);

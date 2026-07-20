@@ -25,9 +25,15 @@ public static class UserDeviceLoginUtil
         }
 
         userDevicesData.DeletedDevices.RemoveAll(deleted => deleted.Id == localDeviceId);
+        device.PreviousLoginDate = IsMeaningfulLoginDate(device.LastLoginDate)
+            ? UtcDateTimeUtil.ToUtc(device.LastLoginDate)
+            : null;
         device.LastLoginDate = loginTime.UtcDateTime;
         device.LastUpdatedAt = loginTime;
         device.Version = loginVersion;
         device.GenerateIntegrityHash();
     }
+
+    private static bool IsMeaningfulLoginDate(DateTime value) =>
+        value != default && value != UtcDateTimeUtil.MinDateTime;
 }
