@@ -35,6 +35,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private readonly IDeviceEnrollmentSnapshotService _snapshotService;
     private readonly IDeviceEnrollmentSnapshotTransferService _snapshotTransferService;
     private readonly IDeviceEnrollmentSnapshotImporterService _snapshotImporter;
+    private readonly IInteractiveUserDataStateAccessor _interactiveState;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
     private CancellationTokenSource? _enrollmentExpirationCancellation;
@@ -49,7 +50,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         IDeviceEnrollmentRegistrationService registrationService,
         IDeviceEnrollmentSnapshotService snapshotService,
         IDeviceEnrollmentSnapshotTransferService snapshotTransferService,
-        IDeviceEnrollmentSnapshotImporterService snapshotImporter)
+        IDeviceEnrollmentSnapshotImporterService snapshotImporter,
+        IInteractiveUserDataStateAccessor interactiveState)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
@@ -61,6 +63,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         _snapshotService = snapshotService;
         _snapshotTransferService = snapshotTransferService;
         _snapshotImporter = snapshotImporter;
+        _interactiveState = interactiveState;
     }
 
     public async Task<DeviceEnrollmentCodeResponse> StartEnrollmentAsync(CancellationToken ct = default)
@@ -341,10 +344,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         using (var authorizationScope = _scopeFactory.CreateScope())
         {
             var users = authorizationScope.ServiceProvider.GetRequiredService<IUserLookupService>();
-            var keyVault = authorizationScope.ServiceProvider.GetRequiredService<IKeyVaultService>();
             userId = (await users.GetAndVerifyUserAsync(token, ct)).UId;
-            if (!keyVault.TryGetEncryptionKey(token, out mergeKey!))
-                throw new InvalidTokenException();
+            mergeKey = _interactiveState.GetEncryptionKeyFromToken(token);
         }
 
         Guid commitId = Guid.Empty;
@@ -476,7 +477,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
             using (var completionScope = _scopeFactory.CreateScope())
             {
-                completionScope.ServiceProvider.GetRequiredService<IDataCachingService>().InvalidateToken(token);
+                _interactiveState.InvalidateToken(token);
                 var devices = completionScope.ServiceProvider.GetRequiredService<IDeviceRepository>();
                 var syncIdentities = completionScope.ServiceProvider.GetRequiredService<ISyncDeviceIdentityService>();
                 var pendingSyncActivation = completionScope.ServiceProvider.GetRequiredService<IPendingSyncActivationService>();

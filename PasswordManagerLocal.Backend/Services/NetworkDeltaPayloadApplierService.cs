@@ -29,7 +29,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncAuthorizationService _authorization;
-    private readonly IAuthSessionService _auth;
+    private readonly IInteractiveSessionStateService _interactiveSessions;
     private readonly ISyncRelationshipReconciliationService _relationships;
     private readonly IUserMembershipAuthorizationRepository _membershipAuthorizations;
 
@@ -45,7 +45,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDeviceIdentityService identity,
         ISyncAuthorizationService authorization,
-        IAuthSessionService auth,
+        IInteractiveSessionStateService interactiveSessions,
         ISyncRelationshipReconciliationService relationships,
         IUserMembershipAuthorizationRepository membershipAuthorizations)
     {
@@ -60,7 +60,7 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         _syncDeviceIdentities = syncDeviceIdentities;
         _identity = identity;
         _authorization = authorization;
-        _auth = auth;
+        _interactiveSessions = interactiveSessions;
         _relationships = relationships;
         _membershipAuthorizations = membershipAuthorizations;
     }
@@ -305,7 +305,10 @@ public sealed class NetworkDeltaPayloadApplierService : INetworkDeltaPayloadAppl
         foreach (var deviceId in relatedDeviceIds)
             await RemovePendingSyncsForUserToDeviceAsync(user.UId, deviceId, ct);
 
-        _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
+        await _interactiveSessions.LogoutUserAsync(
+            user.UId,
+            AuthSessionInvalidationReason.ProfileRemoved,
+            CancellationToken.None);
         _users.Delete(user);
 
         foreach (var deviceId in relatedDeviceIds)

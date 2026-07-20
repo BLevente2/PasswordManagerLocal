@@ -17,7 +17,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
     private readonly IUserDeviceRepository _userDevices;
     private readonly IUserSyncSnapshotRepository _snapshots;
     private readonly IUserLifecycleCoordinator _lifecycle;
-    private readonly IAuthSessionService _auth;
+    private readonly IInteractiveSessionStateService _interactiveSessions;
     private readonly IUnitOfWork _uow;
     private readonly IUserMembershipAuthorizationService _membershipAuthorization;
     private readonly IUserMembershipAuthorizationRepository _authorizationRows;
@@ -40,7 +40,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         IUserDeviceRepository userDevices,
         IUserSyncSnapshotRepository snapshots,
         IUserLifecycleCoordinator lifecycle,
-        IAuthSessionService auth,
+        IInteractiveSessionStateService interactiveSessions,
         IUnitOfWork uow,
         IUserMembershipAuthorizationService membershipAuthorization,
         IUserMembershipAuthorizationRepository authorizationRows,
@@ -62,7 +62,7 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         _userDevices = userDevices;
         _snapshots = snapshots;
         _lifecycle = lifecycle;
-        _auth = auth;
+        _interactiveSessions = interactiveSessions;
         _uow = uow;
         _membershipAuthorization = membershipAuthorization;
         _authorizationRows = authorizationRows;
@@ -103,7 +103,10 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
                 {
                     // A verified barrier was committed with the StoredPending row. Invalidate all
                     // process-local access before cleanup so any retryable failure remains fail-closed.
-                    _auth.LogoutUser(envelope.UserId, AuthSessionInvalidationReason.ProfileRemoved);
+                    await _interactiveSessions.LogoutUserAsync(
+                        envelope.UserId,
+                        AuthSessionInvalidationReason.ProfileRemoved,
+                        CancellationToken.None);
                     if (_enrollment is not null)
                     {
                         try { await _enrollment.CancelEnrollmentAsync(CancellationToken.None); }
@@ -706,7 +709,10 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         _versionClock?.Observe([payload.GeneralUserDataVersion]);
 
         // Session and Remember Me effects happen only after canonical replacement commits.
-        _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfilePasswordChanged);
+        await _interactiveSessions.LogoutUserAsync(
+            user.UId,
+            AuthSessionInvalidationReason.ProfilePasswordChanged,
+            CancellationToken.None);
         return Receipt(envelope, UserControlOperationReceiptState.Applied);
     }
 
@@ -758,7 +764,10 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         await _uow.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
 
-        _auth.LogoutUser(envelope.UserId, AuthSessionInvalidationReason.ProfileRemoved);
+        await _interactiveSessions.LogoutUserAsync(
+            envelope.UserId,
+            AuthSessionInvalidationReason.ProfileRemoved,
+            CancellationToken.None);
         try
         {
             if (_enrollment is not null)
@@ -926,7 +935,10 @@ public sealed class UserControlOperationInboxService : IUserControlOperationInbo
         await transaction.CommitAsync(ct);
         if (removesLocalInstallation)
         {
-            _auth.LogoutUser(user.UId, AuthSessionInvalidationReason.ProfileRemoved);
+            await _interactiveSessions.LogoutUserAsync(
+                user.UId,
+                AuthSessionInvalidationReason.ProfileRemoved,
+                CancellationToken.None);
             await _syncRuntime.RefreshSyncEnabledAsync(CancellationToken.None);
         }
         return Receipt(envelope, UserControlOperationReceiptState.Applied);

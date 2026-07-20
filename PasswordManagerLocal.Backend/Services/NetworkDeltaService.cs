@@ -23,7 +23,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
     private readonly IUserSyncKeyResolverService _keyResolver;
     private readonly IUserRepository _users;
     private readonly IUserRevisionKnowledgeRepository _revisionKnowledge;
-    private readonly IAuthSessionService _auth;
+    private readonly IInteractiveSessionStateService _interactiveSessions;
     private readonly IUserControlOperationInboxService _controlOperationInbox;
     private readonly IDeviceIdentityService _identity;
     private readonly IUnitOfWork _uow;
@@ -42,7 +42,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         IUserSyncKeyResolverService keyResolver,
         IUserRepository users,
         IUserRevisionKnowledgeRepository revisionKnowledge,
-        IAuthSessionService auth,
+        IInteractiveSessionStateService interactiveSessions,
         IUserControlOperationInboxService controlOperationInbox,
         IUserTombstoneGarbageCollector? garbageCollector = null)
     {
@@ -58,7 +58,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
         _keyResolver = keyResolver;
         _users = users;
         _revisionKnowledge = revisionKnowledge;
-        _auth = auth;
+        _interactiveSessions = interactiveSessions;
         _controlOperationInbox = controlOperationInbox;
         _garbageCollector = garbageCollector;
     }
@@ -186,7 +186,7 @@ public sealed class NetworkDeltaService : INetworkDeltaService
 
         var refreshedUser = await users.GetByIdWithRelationsAsync(envelope.UserId, ct);
         if (refreshedUser is not null)
-            await _auth.RefreshSyncedUserSessionsAsync(refreshedUser, ct);
+            await _interactiveSessions.RefreshSyncedUserSessionsAsync(refreshedUser, ct);
 
         var mergedReceipt = receipt with
         {

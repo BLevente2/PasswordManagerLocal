@@ -12,17 +12,19 @@ namespace PasswordManagerLocal.Test.Frontend.Services;
 public sealed class DeferredEndpointsTests
 {
     [TestMethod]
-    public async Task EachOperation_RequestsCurrentEndpointsFromRuntime()
+    public async Task EachOperation_UsesTheActiveInteractiveSession()
     {
         using var host = new BackendTestHost();
         var runtime = new FakeBackendRuntime(host.Services.GetRequiredService<IEndpoints>());
-        await using var backendClient = new InProcessFrontendBackendClient(runtime);
+        var lifetimeCoordinator = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var backendClient = new InProcessFrontendBackendClient(runtime, lifetimeCoordinator);
+        await backendClient.ConnectAsync();
         var endpoints = new DeferredEndpoints(backendClient);
         var token = Guid.NewGuid();
 
         _ = await endpoints.GetAuthSessionStatusAsync(token);
         _ = await endpoints.GetAuthSessionStatusAsync(token);
 
-        Assert.AreEqual(2, runtime.GetEndpointsCalls);
+        Assert.AreEqual(1, runtime.OpenInteractiveSessionCalls);
     }
 }

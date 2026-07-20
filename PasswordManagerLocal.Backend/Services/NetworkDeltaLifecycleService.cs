@@ -29,7 +29,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
     private readonly IDeviceIdentityService _identity;
     private readonly ISyncAuthorizationService _authorization;
     private readonly ISyncRuntimeService _syncRuntime;
-    private readonly IAuthSessionService _auth;
+    private readonly IInteractiveSessionStateService _interactiveSessions;
     private readonly IUnitOfWork _uow;
     private readonly IUserControlOperationRepository? _controlOperations;
     private readonly IUserMembershipAuthorizationRepository? _membershipAuthorizations;
@@ -46,7 +46,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         IDeviceIdentityService identity,
         ISyncAuthorizationService authorization,
         ISyncRuntimeService syncRuntime,
-        IAuthSessionService auth,
+        IInteractiveSessionStateService interactiveSessions,
         IUnitOfWork uow,
         IUserControlOperationRepository? controlOperations = null,
         IUserMembershipAuthorizationRepository? membershipAuthorizations = null)
@@ -62,7 +62,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         _identity = identity;
         _authorization = authorization;
         _syncRuntime = syncRuntime;
-        _auth = auth;
+        _interactiveSessions = interactiveSessions;
         _uow = uow;
         _controlOperations = controlOperations;
         _membershipAuthorizations = membershipAuthorizations;
@@ -120,7 +120,7 @@ public sealed class NetworkDeltaLifecycleService : INetworkDeltaLifecycleService
         if (user is null)
             return;
 
-        await _auth.RefreshSyncedUserSessionsAsync(user, ct);
+        await _interactiveSessions.RefreshSyncedUserSessionsAsync(user, ct);
     }
 
 

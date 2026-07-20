@@ -25,6 +25,9 @@ public static class AndroidBackendRuntimeFactory
             static () => new AndroidKeyProtector(),
             () => new AndroidLocalDiscoveryNetworkLease(applicationContext));
 
-        return new BackendRuntimeComposition(runtime, storagePaths.RootDirectory);
+        return new BackendRuntimeComposition(
+            runtime,
+            new BackendRuntimeLifetimeCoordinator(runtime),
+            storagePaths.RootDirectory);
     }
 }

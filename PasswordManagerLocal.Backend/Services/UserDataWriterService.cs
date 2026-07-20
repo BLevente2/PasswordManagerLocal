@@ -18,9 +18,7 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class UserDataWriterService : IUserDataWriterService
 {
     private readonly IUserRepository _users;
-    private readonly IDataCachingService _cache;
-    private readonly IKeyVaultService _keys;
-    private readonly IUserSessionService _sessions;
+    private readonly IInteractiveUserDataStateAccessor _interactiveState;
     private readonly IUserLookupService _lookup;
     private readonly ISyncChangeQueueService _syncQueue;
     private readonly IUserDataBundleIntegrityService _integrity;
@@ -34,9 +32,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
 
     public UserDataWriterService(
         IUserRepository users,
-        IDataCachingService cache,
-        IKeyVaultService keys,
-        IUserSessionService sessions,
+        IInteractiveUserDataStateAccessor interactiveState,
         IUserLookupService lookup,
         ISyncChangeQueueService syncQueue,
         IUserDataBundleIntegrityService integrity,
@@ -49,9 +45,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         IUserCanonicalHealthService? canonicalHealth = null)
     {
         _users = users;
-        _cache = cache;
-        _keys = keys;
-        _sessions = sessions;
+        _interactiveState = interactiveState;
         _lookup = lookup;
         _syncQueue = syncQueue;
         _integrity = integrity;
@@ -152,7 +146,7 @@ public sealed class UserDataWriterService : IUserDataWriterService
         bool enqueueSync,
         CancellationToken ct = default)
     {
-        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        using var key = _interactiveState.GetEncryptionKeyFromToken(token);
         await UpdateUserDataAsync(userData, token, key, enqueueSync, ct);
     }
 
@@ -212,10 +206,10 @@ public sealed class UserDataWriterService : IUserDataWriterService
         CancellationToken ct = default)
     {
         var user = await _lookup.GetAndVerifyUserAsync(token, ct);
-        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        using var key = _interactiveState.GetEncryptionKeyFromToken(token);
         await UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, enqueueSync, ct);
-        _keys.SetUserBlobKeys(token, bundle.UserData);
-        _cache.SetUserDataBundle(token, bundle);
+        _interactiveState.SetUserBlobKeys(token, bundle.UserData);
+        _interactiveState.SetUserDataBundle(token, bundle);
     }
 
 

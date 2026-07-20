@@ -6,5 +6,6 @@ public enum BackendRuntimeFailureKind
     DatabaseCompatibility,
     PlatformKeyUnavailable,
     StorageUnavailable,
-    StartupFailure
+    StartupFailure,
+    ShutdownFailure
 }

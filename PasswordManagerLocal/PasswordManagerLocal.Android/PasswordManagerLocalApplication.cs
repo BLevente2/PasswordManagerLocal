@@ -16,7 +16,7 @@ public sealed class PasswordManagerLocalApplication : Application
     }
 
     public IBackendRuntime BackendRuntime { get; private set; } = null!;
-    public IFrontendBackendClient<IEndpoints> BackendClient { get; private set; } = null!;
+    public IBackendRuntimeLifetimeCoordinator LifetimeCoordinator { get; private set; } = null!;
     public IBackgroundSyncSettingsStore BackgroundSyncSettingsStore { get; private set; } = null!;
     public string ApplicationDataDirectory { get; private set; } = string.Empty;
 
@@ -26,9 +26,31 @@ public sealed class PasswordManagerLocalApplication : Application
 
         var composition = AndroidBackendRuntimeFactory.Create(this);
         BackendRuntime = composition.Runtime;
-        BackendClient = new InProcessFrontendBackendClient(composition.Runtime);
+        LifetimeCoordinator = composition.LifetimeCoordinator;
         BackgroundSyncSettingsStore = new FileBackgroundSyncSettingsStore(
             composition.ApplicationDataDirectory);
         ApplicationDataDirectory = composition.ApplicationDataDirectory;
+    }
+
+    public IFrontendBackendClient<IEndpoints> CreateBackendClient() =>
+        new InProcessFrontendBackendClient(BackendRuntime, LifetimeCoordinator);
+
+    public override void OnTerminate()
+    {
+        try
+        {
+            if (BackendRuntime is not null)
+            {
+                BackendRuntime
+                    .DisposeAsync()
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult();
+            }
+        }
+        finally
+        {
+            base.OnTerminate();
+        }
     }
 }

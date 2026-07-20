@@ -144,7 +144,7 @@ public sealed class AuthoritativeMembershipControlTests
         var membershipService = new UserMembershipAuthorizationService(database.UserMembershipAuthorizations, database.UserOriginRemovalCutoffs, target);
         var inbox = new UserControlOperationInboxService(
             database.UserControlOperations, database.UserControlStates, database.Users, database.Devices,
-            database.UserDevices, database.UserSyncSnapshots, new UserLifecycleCoordinator(), auth,
+            database.UserDevices, database.UserSyncSnapshots, new UserLifecycleCoordinator(), new FakeInteractiveSessionStateService(auth),
             database.UnitOfWork, membershipService, database.UserMembershipAuthorizations,
             database.LocalUserDevices, target, runtime);
 

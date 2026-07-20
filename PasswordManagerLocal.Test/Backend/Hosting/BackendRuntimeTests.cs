@@ -143,12 +143,13 @@ public sealed class BackendRuntimeTests
 
         Assert.AreEqual(BackendRuntimeState.Ready, runtime.Snapshot.State);
         Assert.AreSame(syncFailure, runtime.SyncSnapshot.Failure);
-        Assert.IsNotNull(await runtime.GetEndpointsAsync());
+        await using var session = await runtime.OpenInteractiveSessionAsync();
+        Assert.IsNotNull(session.Endpoints);
         await runtime.DisposeAsync();
     }
 
     [TestMethod]
-    public async Task GetEndpoints_ReturnsSingletonOnlyAfterReadiness()
+    public async Task InteractiveSession_OpensOnlyAfterReadinessAndIsExclusive()
     {
         using var directory = new TemporaryDirectory();
         var releaseInitialization = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -158,13 +159,150 @@ public sealed class BackendRuntimeTests
             new FakeSyncRuntimeService(),
             out _);
 
-        var endpointsTask = runtime.GetEndpointsAsync();
-        Assert.IsFalse(endpointsTask.IsCompleted);
+        var sessionTask = runtime.OpenInteractiveSessionAsync();
+        Assert.IsFalse(sessionTask.IsCompleted);
         releaseInitialization.SetResult();
 
-        var first = await endpointsTask;
-        var second = await runtime.GetEndpointsAsync();
-        Assert.AreSame(first, second);
+        await using var session = await sessionTask;
+        Assert.IsNotNull(session.Endpoints);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await runtime.OpenInteractiveSessionAsync());
+
+        await session.DisposeAsync();
+        await using var reopenedSession = await runtime.OpenInteractiveSessionAsync();
+        Assert.IsNotNull(reopenedSession.Endpoints);
+        await runtime.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task BackgroundStartupDoesNotResolveEndpointsOrActivateInteractiveState()
+    {
+        using var directory = new TemporaryDirectory();
+        var endpointResolutions = 0;
+        var sessionState = new FakeInteractiveSessionStateService(isActive: false);
+        var resetter = new FakeInteractiveSensitiveStateResetter();
+        var syncRuntime = new FakeSyncRuntimeService();
+        var options = new BackendRuntimeOptions(
+            new BackendStoragePaths(directory.Path),
+            static () => new TestKeyProtector(),
+            static () => new FakeLocalDiscoveryNetworkLease(),
+            (_, _) => CreateHost(
+                new DelegateInitializationService(_ => Task.CompletedTask),
+                syncRuntime,
+                () => endpointResolutions++,
+                resetter,
+                sessionState));
+        var runtime = new BackendRuntime(options);
+
+        await runtime.EnsureStartedAsync();
+
+        Assert.AreEqual(0, endpointResolutions);
+        Assert.IsFalse(sessionState.IsActive);
+
+        var session = await runtime.OpenInteractiveSessionAsync();
+        var endpoints = session.Endpoints;
+        Assert.AreEqual(1, endpointResolutions);
+        Assert.IsTrue(sessionState.IsActive);
+
+        await session.DisposeAsync();
+        Assert.IsFalse(sessionState.IsActive);
+        Assert.AreEqual(1, resetter.ResetCalls);
+        Assert.AreEqual(BackendRuntimeState.Ready, runtime.Snapshot.State);
+        Assert.AreEqual(0, syncRuntime.StopCalls);
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            async () => await endpoints.GetLocalDeviceInfoAsync());
+
+        await runtime.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task InteractiveEndpointFacadeIsResolvedForEachSession()
+    {
+        using var directory = new TemporaryDirectory();
+        var endpointResolutions = 0;
+        var options = new BackendRuntimeOptions(
+            new BackendStoragePaths(directory.Path),
+            static () => new TestKeyProtector(),
+            static () => new FakeLocalDiscoveryNetworkLease(),
+            (_, _) => CreateHost(
+                new DelegateInitializationService(_ => Task.CompletedTask),
+                new FakeSyncRuntimeService(),
+                () => endpointResolutions++));
+        var runtime = new BackendRuntime(options);
+
+        await runtime.EnsureStartedAsync();
+        await using (var firstSession = await runtime.OpenInteractiveSessionAsync())
+            Assert.IsNotNull(firstSession.Endpoints);
+
+        await using (var secondSession = await runtime.OpenInteractiveSessionAsync())
+            Assert.IsNotNull(secondSession.Endpoints);
+
+        Assert.AreEqual(2, endpointResolutions);
+        await runtime.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task BackgroundOnlyShutdownResetsInteractiveSensitiveStateWithoutResolvingEndpoints()
+    {
+        using var directory = new TemporaryDirectory();
+        var endpointResolutions = 0;
+        var resetter = new FakeInteractiveSensitiveStateResetter();
+        var sessionState = new FakeInteractiveSessionStateService(isActive: false);
+        var options = new BackendRuntimeOptions(
+            new BackendStoragePaths(directory.Path),
+            static () => new TestKeyProtector(),
+            static () => new FakeLocalDiscoveryNetworkLease(),
+            (_, _) => CreateHost(
+                new DelegateInitializationService(_ => Task.CompletedTask),
+                new FakeSyncRuntimeService(),
+                () => endpointResolutions++,
+                resetter,
+                sessionState));
+        var runtime = new BackendRuntime(options);
+
+        await runtime.EnsureStartedAsync();
+        await runtime.StopAsync();
+
+        Assert.AreEqual(0, endpointResolutions);
+        Assert.AreEqual(1, resetter.ResetCalls);
+        Assert.IsFalse(sessionState.IsActive);
+        Assert.AreEqual(BackendRuntimeState.Stopped, runtime.Snapshot.State);
+        await runtime.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task FailedInteractiveSessionCreationResetsPartialInteractiveState()
+    {
+        using var directory = new TemporaryDirectory();
+        var startFailure = new InvalidOperationException("interactive startup failed");
+        var interactiveHostedService = new FakeInteractiveBackendHostedService
+        {
+            StartFailure = startFailure
+        };
+        var sessionState = new FakeInteractiveSessionStateService(isActive: false);
+        var resetter = new FakeInteractiveSensitiveStateResetter();
+        var options = new BackendRuntimeOptions(
+            new BackendStoragePaths(directory.Path),
+            static () => new TestKeyProtector(),
+            static () => new FakeLocalDiscoveryNetworkLease(),
+            (_, _) => CreateHost(
+                new DelegateInitializationService(_ => Task.CompletedTask),
+                new FakeSyncRuntimeService(),
+                interactiveResetter: resetter,
+                interactiveSessionState: sessionState,
+                interactiveHostedService: interactiveHostedService));
+        var runtime = new BackendRuntime(options);
+
+        await runtime.EnsureStartedAsync();
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await runtime.OpenInteractiveSessionAsync());
+
+        Assert.AreSame(startFailure, thrown);
+        Assert.IsFalse(sessionState.IsActive);
+        Assert.AreEqual(1, resetter.ResetCalls);
+        Assert.AreEqual(1, interactiveHostedService.StartCalls);
+        Assert.AreEqual(1, interactiveHostedService.StopCalls);
+
         await runtime.DisposeAsync();
     }
 
@@ -243,6 +381,36 @@ public sealed class BackendRuntimeTests
         await runtime.EnsureStartedAsync();
 
         Assert.AreEqual(BackendRuntimeState.Ready, runtime.Snapshot.State);
+        await runtime.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task StopFailureLeavesRuntimeInTruthfulFailedState()
+    {
+        using var directory = new TemporaryDirectory();
+        var calls = new List<string>();
+        var hostedService = new FakeBackendHostedService(
+            "failing-stop",
+            calls,
+            throwOnStop: true);
+        var options = new BackendRuntimeOptions(
+            new BackendStoragePaths(directory.Path),
+            static () => new TestKeyProtector(),
+            static () => new FakeLocalDiscoveryNetworkLease(),
+            (_, _) => CreateHost(
+                new DelegateInitializationService(_ => Task.CompletedTask),
+                new FakeSyncRuntimeService(),
+                backendHostedService: hostedService));
+        var runtime = new BackendRuntime(options);
+
+        await runtime.EnsureStartedAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await runtime.StopAsync());
+
+        Assert.AreEqual(BackendRuntimeState.Failed, runtime.Snapshot.State);
+        Assert.AreEqual(BackendRuntimeFailureKind.ShutdownFailure, runtime.Snapshot.FailureKind);
+        CollectionAssert.Contains(calls, "stop:failing-stop");
+
         await runtime.DisposeAsync();
     }
 
@@ -340,12 +508,33 @@ public sealed class BackendRuntimeTests
 
     private static BackendServiceHost CreateHost(
         IBackendInitializationService initialization,
-        ISyncRuntimeService syncRuntime)
+        ISyncRuntimeService syncRuntime,
+        Action? endpointsResolved = null,
+        IInteractiveSensitiveStateResetter? interactiveResetter = null,
+        IInteractiveSessionStateService? interactiveSessionState = null,
+        IInteractiveBackendHostedService? interactiveHostedService = null,
+        IBackendHostedService? backendHostedService = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IBackendInitializationService>(initialization);
         services.AddSingleton<ISyncRuntimeService>(syncRuntime);
-        services.AddSingleton<IEndpoints, Endpoints>();
+        services.AddTransient<IEndpoints>(provider =>
+        {
+            endpointsResolved?.Invoke();
+            return new Endpoints(provider.GetRequiredService<IServiceScopeFactory>());
+        });
+        services.AddSingleton<IInteractiveSensitiveStateResetter>(
+            interactiveResetter ?? new FakeInteractiveSensitiveStateResetter());
+
+        services.AddSingleton<IInteractiveSessionStateService>(
+            interactiveSessionState ?? new FakeInteractiveSessionStateService(isActive: false));
+
+        if (interactiveHostedService is not null)
+            services.AddSingleton<IInteractiveBackendHostedService>(interactiveHostedService);
+
+        if (backendHostedService is not null)
+            services.AddSingleton<IBackendHostedService>(backendHostedService);
+
         return new BackendServiceHost(services.BuildServiceProvider());
     }
 

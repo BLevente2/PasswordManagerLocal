@@ -29,7 +29,7 @@ public sealed class MainViewModel : ViewModelBase
     private static readonly IBrush DarkHeaderSuccessBrush = Brush.Parse("#FF34D399");
 
     private readonly IEndpoints _endpoints;
-    private readonly IFrontendBackendClient _backendClient;
+    private readonly IBackendRuntimeClient _backendClient;
     private readonly IAuthSessionRegistry _authSessionRegistry;
     private readonly DeviceAppPreferencesService _deviceAppPreferences;
     private readonly object _initializationGate = new();
@@ -68,7 +68,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public MainViewModel(
         IEndpoints endpoints,
-        IFrontendBackendClient backendClient,
+        IBackendRuntimeClient backendClient,
         IBackgroundSyncSettingsStore backgroundSyncSettingsStore)
         : this(
             endpoints,
@@ -81,7 +81,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private MainViewModel(
         IEndpoints endpoints,
-        IFrontendBackendClient backendClient,
+        IBackendRuntimeClient backendClient,
         IAuthSessionRegistry authSessionRegistry,
         UiPreferencesService uiPreferences,
         DeviceAppPreferencesService deviceAppPreferences)

@@ -25,6 +25,9 @@ public static class WindowsBackendRuntimeFactory
             static () => new DpapiKeyProtector(),
             static () => new WindowsLocalDiscoveryNetworkLease());
 
-        return new BackendRuntimeComposition(runtime, storagePaths.RootDirectory);
+        return new BackendRuntimeComposition(
+            runtime,
+            new BackendRuntimeLifetimeCoordinator(runtime),
+            storagePaths.RootDirectory);
     }
 }

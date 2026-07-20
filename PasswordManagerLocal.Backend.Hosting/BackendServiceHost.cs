@@ -8,7 +8,9 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
     private readonly IServiceProvider _services;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly List<IBackendHostedService> _startedServices = [];
+    private readonly List<IInteractiveBackendHostedService> _startedInteractiveServices = [];
     private bool _started;
+    private bool _interactiveStarted;
     private bool _disposed;
 
     public BackendServiceHost(IServiceProvider services)
@@ -25,8 +27,7 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            if (_disposed)
-                throw new ObjectDisposedException(nameof(BackendServiceHost));
+            ThrowIfDisposed();
 
             if (_started)
                 return;
@@ -35,8 +36,8 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
             {
                 foreach (var hostedService in _services.GetServices<IBackendHostedService>())
                 {
-                    await hostedService.StartAsync(cancellationToken);
                     _startedServices.Add(hostedService);
+                    await hostedService.StartAsync(cancellationToken);
                 }
 
                 _started = true;
@@ -61,16 +62,104 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
         }
     }
 
+    public async Task StartInteractiveAsync(CancellationToken cancellationToken = default)
+    {
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+
+            if (!_started)
+                throw new InvalidOperationException("The backend core must be started before interactive services.");
+
+            if (_interactiveStarted)
+                return;
+
+            try
+            {
+                foreach (var hostedService in _services.GetServices<IInteractiveBackendHostedService>())
+                {
+                    _startedInteractiveServices.Add(hostedService);
+                    await hostedService.StartAsync(cancellationToken);
+                }
+
+                _interactiveStarted = true;
+            }
+            catch (Exception startException)
+            {
+                try
+                {
+                    await StopStartedInteractiveServicesAsync(CancellationToken.None);
+                }
+                catch (Exception stopException)
+                {
+                    throw new AggregateException(startException, stopException);
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+    }
+
+    public async Task StopInteractiveAsync(CancellationToken cancellationToken = default)
+    {
+        await _lifecycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_disposed || (!_interactiveStarted && _startedInteractiveServices.Count == 0))
+                return;
+
+            await StopStartedInteractiveServicesAsync(cancellationToken);
+            _interactiveStarted = false;
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            if (_disposed || (!_started && _startedServices.Count == 0))
+            if (_disposed ||
+                (!_started && _startedServices.Count == 0 &&
+                 !_interactiveStarted && _startedInteractiveServices.Count == 0))
+            {
                 return;
+            }
 
-            await StopStartedServicesAsync(cancellationToken);
+            Exception? failure = null;
+            try
+            {
+                await StopStartedInteractiveServicesAsync(cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            try
+            {
+                await StopStartedServicesAsync(cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null
+                    ? exception
+                    : new AggregateException(failure, exception);
+            }
+
+            _interactiveStarted = false;
             _started = false;
+
+            if (failure is not null)
+                throw failure;
         }
         finally
         {
@@ -96,13 +185,25 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 
             try
             {
-                await StopStartedServicesAsync(CancellationToken.None);
+                await StopStartedInteractiveServicesAsync(CancellationToken.None);
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                disposeException = ex;
+                disposeException = exception;
             }
 
+            try
+            {
+                await StopStartedServicesAsync(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                disposeException = disposeException is null
+                    ? exception
+                    : new AggregateException(disposeException, exception);
+            }
+
+            _interactiveStarted = false;
             _started = false;
             _disposed = true;
 
@@ -113,11 +214,11 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
                 else if (_services is IDisposable disposable)
                     disposable.Dispose();
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
                 disposeException = disposeException is null
-                    ? ex
-                    : new AggregateException(disposeException, ex);
+                    ? exception
+                    : new AggregateException(disposeException, exception);
             }
         }
         finally
@@ -131,6 +232,28 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
             throw disposeException;
     }
 
+    private async Task StopStartedInteractiveServicesAsync(CancellationToken cancellationToken)
+    {
+        Exception? firstException = null;
+
+        for (var index = _startedInteractiveServices.Count - 1; index >= 0; index--)
+        {
+            try
+            {
+                await _startedInteractiveServices[index].StopAsync(cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                firstException ??= exception;
+            }
+        }
+
+        _startedInteractiveServices.Clear();
+
+        if (firstException is not null)
+            throw firstException;
+    }
+
     private async Task StopStartedServicesAsync(CancellationToken cancellationToken)
     {
         Exception? firstException = null;
@@ -141,9 +264,9 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
             {
                 await _startedServices[index].StopAsync(cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                firstException ??= ex;
+                firstException ??= exception;
             }
         }
 
@@ -151,5 +274,11 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 
         if (firstException is not null)
             throw firstException;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(BackendServiceHost));
     }
 }

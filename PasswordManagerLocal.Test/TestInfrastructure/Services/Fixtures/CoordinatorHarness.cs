@@ -180,6 +180,7 @@ internal sealed class CoordinatorHarness : IDisposable
             database.UnitOfWork,
             lifecycle,
             database.DeletedUserBarriers,
+            new FakeInteractiveSessionStateService(),
             databaseHealth ?? new DatabaseHealthService(database.Db));
 
         return new CoordinatorHarness(

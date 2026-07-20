@@ -85,6 +85,8 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<IUserMembershipAuthorizationService, UserMembershipAuthorizationService>();
         sc.AddSingleton<IUserSyncKeyResolverService, UserSyncKeyResolverService>();
         sc.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
+        sc.AddSingleton<IInteractiveSessionStateService, InteractiveSessionStateService>();
+        sc.AddSingleton<IInteractiveUserDataStateAccessor, InteractiveUserDataStateAccessor>();
         sc.AddSingleton<FakeUserDataRecoveryCoordinator>();
         sc.AddSingleton<IUserDataRecoveryCoordinator>(sp => sp.GetRequiredService<FakeUserDataRecoveryCoordinator>());
         sc.AddSingleton<IUserControlOperationWriterService, FakeUserControlOperationWriterService>();
@@ -147,6 +149,10 @@ public sealed class BackendTestHost : IDisposable
             ValidateOnBuild = true,
             ValidateScopes = true
         });
+        _sp.GetRequiredService<IInteractiveSessionStateService>()
+            .ActivateAsync()
+            .GetAwaiter()
+            .GetResult();
     }
 
     public IServiceProvider Services => _sp;

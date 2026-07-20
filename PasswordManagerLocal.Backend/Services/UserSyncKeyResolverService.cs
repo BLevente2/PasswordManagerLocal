@@ -9,15 +9,16 @@ namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class UserSyncKeyResolverService : IUserSyncKeyResolverService
 {
-    private readonly ITokenService _tokens;
-    private readonly IKeyVaultService _keys;
+    private readonly IInteractiveSessionStateService _interactiveSessionState;
     private readonly IKeyProtector _protector;
 
-    public UserSyncKeyResolverService(ITokenService tokens, IKeyVaultService keys, IKeyProtector protector)
+    public UserSyncKeyResolverService(
+        IInteractiveSessionStateService interactiveSessionState,
+        IKeyProtector protector)
     {
-        _tokens = tokens;
-        _keys = keys;
-        _protector = protector;
+        _interactiveSessionState = interactiveSessionState
+            ?? throw new ArgumentNullException(nameof(interactiveSessionState));
+        _protector = protector ?? throw new ArgumentNullException(nameof(protector));
     }
 
     public bool TryResolve(User user, out EncryptionKey? key) =>
@@ -25,13 +26,10 @@ public sealed class UserSyncKeyResolverService : IUserSyncKeyResolverService
 
     public bool TryResolve(User user, out EncryptionKey? key, out UserSyncKeyConfidence confidence)
     {
-        foreach (var token in _tokens.ListTokensByUid(user.UId))
+        if (_interactiveSessionState.TryGetUserEncryptionKey(user.UId, out key) && key is not null)
         {
-            if (_keys.TryGetEncryptionKey(token, out key) && key is not null)
-            {
-                confidence = UserSyncKeyConfidence.AuthenticatedSession;
-                return true;
-            }
+            confidence = UserSyncKeyConfidence.AuthenticatedSession;
+            return true;
         }
 
         key = null;

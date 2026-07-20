@@ -32,6 +32,23 @@ public static class BackendServiceCollectionExtensions
         ILocalDiscoveryNetworkLease discoveryNetworkLease)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        services.AddPasswordManagerLocalBackendCore(
+            storagePaths,
+            keyProtector,
+            discoveryNetworkLease);
+        services.AddPasswordManagerLocalSynchronization();
+        services.AddPasswordManagerLocalInteractiveServices();
+        return services;
+    }
+
+    public static IServiceCollection AddPasswordManagerLocalBackendCore(
+        this IServiceCollection services,
+        BackendStoragePaths storagePaths,
+        IKeyProtector keyProtector,
+        ILocalDiscoveryNetworkLease discoveryNetworkLease)
+    {
+        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(storagePaths);
         ArgumentNullException.ThrowIfNull(keyProtector);
         ArgumentNullException.ThrowIfNull(discoveryNetworkLease);
@@ -40,7 +57,6 @@ public static class BackendServiceCollectionExtensions
         services.AddSingleton<IKeyProtector>(keyProtector);
         services.AddSingleton<ILocalDiscoveryNetworkLease>(discoveryNetworkLease);
         services.AddSingleton<IBackendInitializationService, BackendInitializationService>();
-
         services.AddSingleton<RelationshipIntegrityMaterializationInterceptor>();
 
         services.AddDbContextPool<AppDbContext>((sp, opts) =>
@@ -59,10 +75,7 @@ public static class BackendServiceCollectionExtensions
             opts.AddInterceptors(sp.GetRequiredService<RelationshipIntegrityMaterializationInterceptor>());
         });
 
-        services.AddSingleton<IEndpoints, Endpoints>();
-
         services.AddScoped<IUnitOfWork, AppUnitOfWork>();
-
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IDeviceRepository, DeviceRepository>();
         services.AddScoped<IUserDeviceRepository, UserDeviceRepository>();
@@ -85,59 +98,36 @@ public static class BackendServiceCollectionExtensions
         services.AddScoped<IUserCanonicalCheckpointRepository, UserCanonicalCheckpointRepository>();
         services.AddScoped<IUserSyncFaultRepository, UserSyncFaultRepository>();
 
-        services.AddScoped<IUserPasswordsService, UserPasswordsService>();
-        services.AddScoped<IUserCustomColorService, UserCustomColorService>();
-        services.AddScoped<IUserPasswordTagService, UserPasswordTagService>();
-        services.AddScoped<IPasswordService, PasswordService>();
-        services.AddScoped<ICustomUserColorService, CustomUserColorService>();
-        services.AddScoped<IPasswordTagService, PasswordTagService>();
-        services.AddScoped<IGroupService, GroupService>();
-        services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
         services.AddScoped<IUserDataBundleIntegrityService, UserDataBundleIntegrityService>();
         services.AddScoped<IUserDataBundleVerificationService, UserDataBundleVerificationService>();
         services.AddScoped<IUserSnapshotBatchVerificationService, UserSnapshotBatchVerificationService>();
         services.AddScoped<IUserSyncFaultService, UserSyncFaultService>();
         services.AddScoped<IUserCanonicalHealthService, UserCanonicalHealthService>();
         services.AddScoped<IDatabaseHealthService, DatabaseHealthService>();
-        services.AddScoped<IUserRecoverySessionService, UserRecoverySessionService>();
-        services.AddScoped<IUserRegistrationService, UserRegistrationService>();
-        services.AddScoped<IUserLoginService, UserLoginService>();
-        services.AddScoped<AuthSessionService>();
-        services.AddScoped<IAuthSessionService>(sp => sp.GetRequiredService<AuthSessionService>());
-        services.AddScoped<IAuthenticatedSessionIssuer>(sp => sp.GetRequiredService<AuthSessionService>());
-        services.AddScoped<ICredentialVerificationService, CredentialVerificationService>();
-        services.AddScoped<IMasterPasswordRotationService, MasterPasswordRotationService>();
-        services.AddScoped<IAuthService, AuthService>();
-        services.AddScoped<IUserSessionService, UserSessionService>();
-        services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
-        services.AddScoped<IUserLookupService, UserLookupService>();
-        services.AddScoped<IUserDataReaderService, UserDataReaderService>();
-        services.AddScoped<IUserDataPersistenceValidator, UserDataPersistenceValidator>();
-        services.AddScoped<IUserDataWriterService, UserDataWriterService>();
-        services.AddScoped<IUserAccountDeletionCleanupService, UserAccountDeletionCleanupService>();
-        services.AddScoped<IUserDeletionService, UserDeletionService>();
-        services.AddScoped<IUserService, UserService>();
-        services.AddScoped<IRememberMeService, RememberMeService>();
-        services.AddScoped<IUserProfileService, UserProfileService>();
-        services.AddScoped<LocalUserDeviceLinkManager>();
-        services.AddScoped<UserDeviceAccessor>();
-        services.AddScoped<UserDeviceMetadataEditor>();
-        services.AddScoped<ILocalDeviceSettingsService, LocalDeviceSettingsService>();
-        services.AddScoped<IUserDeviceQueryService, UserDeviceQueryService>();
-        services.AddScoped<IUserDeviceSettingsService, UserDeviceSettingsService>();
-        services.AddScoped<IUserDeviceDisconnectionService, UserDeviceDisconnectionService>();
-        services.AddScoped<IDeviceService, DeviceService>();
-        services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
 
-        services.AddSingleton<IKeyVaultService, KeyVaultService>();
         services.AddSingleton<IUserLifecycleCoordinator, UserLifecycleCoordinator>();
+        services.AddSingleton<IInteractiveSessionStateService, InteractiveSessionStateService>();
+        services.AddSingleton<IInteractiveUserDataStateAccessor, InteractiveUserDataStateAccessor>();
         services.AddSingleton(TimeProvider.System);
-        services.AddSingleton<ISyncVersionClockService, SyncVersionClockService>();
-        services.AddMemoryCache();
-        services.AddSingleton<SafeMemoryCache>();
-        services.AddSingleton<IDataCachingService, DataCachingService>();
-        services.AddSingleton<ITokenService, TokenService>();
 
+        services.AddSingleton<UserDataRecoveryScheduler>();
+        services.AddSingleton<IUserDataRecoveryScheduler>(sp => sp.GetRequiredService<UserDataRecoveryScheduler>());
+        services.AddSingleton<UserDataRecoveryHostedService>();
+        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<UserDataRecoveryHostedService>());
+        services.AddSingleton<LocalDeviceCleanupHostedService>();
+        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<LocalDeviceCleanupHostedService>());
+        services.AddSingleton<PendingUserControlOperationRecoveryHostedService>();
+        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<PendingUserControlOperationRecoveryHostedService>());
+
+        return services;
+    }
+
+    public static IServiceCollection AddPasswordManagerLocalSynchronization(
+        this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<ISyncVersionClockService, SyncVersionClockService>();
         services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
         services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
         services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
@@ -157,6 +147,12 @@ public static class BackendServiceCollectionExtensions
         services.AddSingleton<IDeviceEnrollmentSnapshotImporterService, DeviceEnrollmentSnapshotImporterService>();
         services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
 
+        services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
+        services.AddScoped<IUserLookupService, UserLookupService>();
+        services.AddScoped<IUserDataReaderService, UserDataReaderService>();
+        services.AddScoped<IUserDataPersistenceValidator, UserDataPersistenceValidator>();
+        services.AddScoped<IUserDataWriterService, UserDataWriterService>();
+        services.AddScoped<IUserAccountDeletionCleanupService, UserAccountDeletionCleanupService>();
         services.AddScoped<IUserPasswordsDataMergeService, UserPasswordsDataMergeService>();
         services.AddScoped<IUserDevicesDataMergeService, UserDevicesDataMergeService>();
         services.AddScoped<ISyncRelationshipReconciliationService, SyncRelationshipReconciliationService>();
@@ -181,6 +177,7 @@ public static class BackendServiceCollectionExtensions
         services.AddScoped<INetworkDeltaService, NetworkDeltaService>();
         services.AddScoped<IIncomingDeltaApplierService, IncomingDeltaApplierService>();
         services.AddScoped<ISyncAuthorizationService, SyncAuthorizationService>();
+        services.AddScoped<IDeviceSecurityService, DeviceSecurityService>();
         services.AddScoped<ILocalDeviceMatcherService, LocalDeviceMatcherService>();
         services.AddScoped<ISyncItemLifecycleService, SyncItemLifecycleService>();
         services.AddScoped<ISyncTargetResolverService, SyncTargetResolverService>();
@@ -191,28 +188,64 @@ public static class BackendServiceCollectionExtensions
         services.AddScoped<ISyncQueueService, SyncQueueService>();
         services.AddScoped<ISyncService, SyncService>();
 
-        services.AddSingleton<UserDataRecoveryScheduler>();
-        services.AddSingleton<IUserDataRecoveryScheduler>(sp => sp.GetRequiredService<UserDataRecoveryScheduler>());
-        services.AddSingleton<UserDataRecoveryHostedService>();
-        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<UserDataRecoveryHostedService>());
-
-        services.AddSingleton<ExpiredEntriesPurgeHostedService>();
-        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<ExpiredEntriesPurgeHostedService>());
-        services.AddSingleton<LocalDeviceCleanupHostedService>();
-        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<LocalDeviceCleanupHostedService>());
-        services.AddSingleton<PendingUserControlOperationRecoveryHostedService>();
-        services.AddSingleton<IBackendHostedService>(sp => sp.GetRequiredService<PendingUserControlOperationRecoveryHostedService>());
-
         services.AddSingleton<SyncPeerProtocolHandler>();
         services.AddSingleton<SyncDeviceIdentityWarmupHostedService>();
         services.AddSingleton<TcpSyncServerHostedService>();
         services.AddSingleton<SyncNetworkRefreshHostedService>();
-
         services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<SyncDeviceIdentityWarmupHostedService>());
         services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<TcpSyncServerHostedService>());
         services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<LocalDiscoveryHostedService>());
         services.AddSingleton<ISyncControlledHostedService>(sp => sp.GetRequiredService<SyncNetworkRefreshHostedService>());
 
+        return services;
+    }
+
+    public static IServiceCollection AddPasswordManagerLocalInteractiveServices(
+        this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddTransient<IEndpoints, Endpoints>();
+        services.AddScoped<IUserPasswordsService, UserPasswordsService>();
+        services.AddScoped<IUserCustomColorService, UserCustomColorService>();
+        services.AddScoped<IUserPasswordTagService, UserPasswordTagService>();
+        services.AddScoped<IPasswordService, PasswordService>();
+        services.AddScoped<ICustomUserColorService, CustomUserColorService>();
+        services.AddScoped<IPasswordTagService, PasswordTagService>();
+        services.AddScoped<IGroupService, GroupService>();
+        services.AddScoped<IGroupPasswordsService, GroupPasswordsService>();
+        services.AddScoped<IUserRecoverySessionService, UserRecoverySessionService>();
+        services.AddScoped<IUserRegistrationService, UserRegistrationService>();
+        services.AddScoped<IUserLoginService, UserLoginService>();
+        services.AddScoped<AuthSessionService>();
+        services.AddScoped<IAuthSessionService>(sp => sp.GetRequiredService<AuthSessionService>());
+        services.AddScoped<IAuthenticatedSessionIssuer>(sp => sp.GetRequiredService<AuthSessionService>());
+        services.AddScoped<ICredentialVerificationService, CredentialVerificationService>();
+        services.AddScoped<IMasterPasswordRotationService, MasterPasswordRotationService>();
+        services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IUserSessionService, UserSessionService>();
+        services.AddScoped<IUserDeletionService, UserDeletionService>();
+        services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IRememberMeService, RememberMeService>();
+        services.AddScoped<IUserProfileService, UserProfileService>();
+        services.AddScoped<LocalUserDeviceLinkManager>();
+        services.AddScoped<UserDeviceAccessor>();
+        services.AddScoped<UserDeviceMetadataEditor>();
+        services.AddScoped<ILocalDeviceSettingsService, LocalDeviceSettingsService>();
+        services.AddScoped<IUserDeviceQueryService, UserDeviceQueryService>();
+        services.AddScoped<IUserDeviceSettingsService, UserDeviceSettingsService>();
+        services.AddScoped<IUserDeviceDisconnectionService, UserDeviceDisconnectionService>();
+        services.AddScoped<IDeviceService, DeviceService>();
+
+        services.AddMemoryCache();
+        services.AddSingleton<SafeMemoryCache>();
+        services.AddSingleton<ITokenService, TokenService>();
+        services.AddSingleton<IKeyVaultService, KeyVaultService>();
+        services.AddSingleton<IDataCachingService, DataCachingService>();
+        services.AddSingleton<IInteractiveSensitiveStateResetter, InteractiveSensitiveStateResetter>();
+
+        services.AddSingleton<ExpiredEntriesPurgeHostedService>();
+        services.AddSingleton<IInteractiveBackendHostedService>(sp => sp.GetRequiredService<ExpiredEntriesPurgeHostedService>());
 
         return services;
     }

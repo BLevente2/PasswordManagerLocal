@@ -12,24 +12,18 @@ namespace PasswordManagerLocal.Backend.Services;
 /// </summary>
 public sealed class UserDataReaderService : IUserDataReaderService
 {
-    private readonly IDataCachingService _cache;
-    private readonly IKeyVaultService _keys;
-    private readonly IUserSessionService _sessions;
+    private readonly IInteractiveUserDataStateAccessor _interactiveState;
     private readonly IUserLookupService _users;
     private readonly IUserDataBundleIntegrityService _integrity;
     private readonly ISyncVersionClockService _versionClock;
 
     public UserDataReaderService(
-        IDataCachingService cache,
-        IKeyVaultService keys,
-        IUserSessionService sessions,
+        IInteractiveUserDataStateAccessor interactiveState,
         IUserLookupService users,
         IUserDataBundleIntegrityService integrity,
         ISyncVersionClockService versionClock)
     {
-        _cache = cache;
-        _keys = keys;
-        _sessions = sessions;
+        _interactiveState = interactiveState;
         _users = users;
         _integrity = integrity;
         _versionClock = versionClock;
@@ -52,7 +46,7 @@ public sealed class UserDataReaderService : IUserDataReaderService
 
     public async Task<UserData> GetAndVerifyUserDataAsync(User user, Guid token, CancellationToken ct = default)
     {
-        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        using var key = _interactiveState.GetEncryptionKeyFromToken(token);
         return await GetAndVerifyUserDataAsync(user, key, ct);
     }
 
@@ -101,15 +95,15 @@ public sealed class UserDataReaderService : IUserDataReaderService
 
     public async Task<UserDataBundle> GetAndVerifyUserDataBundleAsync(User user, Guid token, CancellationToken ct = default)
     {
-        using var key = _sessions.GetEncryptionKeyFromToken(token);
+        using var key = _interactiveState.GetEncryptionKeyFromToken(token);
         var bundle = await GetAndVerifyUserDataBundleAsync(user, key, ct);
-        _keys.SetUserBlobKeys(token, bundle.UserData);
+        _interactiveState.SetUserBlobKeys(token, bundle.UserData);
         return bundle;
     }
 
     public bool TryGetAndVerifyUserDataFromCache(Guid token, out UserData? userData)
     {
-        if (_cache.TryGetUserData(token, out var foundUserData) && foundUserData is not null)
+        if (_interactiveState.TryGetUserData(token, out var foundUserData) && foundUserData is not null)
         {
             _integrity.VerifyUserData(foundUserData);
             userData = foundUserData;
@@ -122,7 +116,7 @@ public sealed class UserDataReaderService : IUserDataReaderService
 
     public bool TryGetAndVerifyUserDataBundleFromCache(Guid token, out UserDataBundle? bundle)
     {
-        if (_cache.TryGetUserDataBundle(token, out var foundBundle) && foundBundle is not null)
+        if (_interactiveState.TryGetUserDataBundle(token, out var foundBundle) && foundBundle is not null)
         {
             _integrity.VerifyUntrustedBundle(foundBundle);
             _versionClock.Observe(SyncVersionStampTraversal.Enumerate(foundBundle));
@@ -148,7 +142,7 @@ public sealed class UserDataReaderService : IUserDataReaderService
         user ??= await _users.GetAndVerifyUserAsync(token, ct);
 
         var bundle = await GetAndVerifyUserDataBundleAsync(user, token, ct);
-        _cache.SetUserDataBundle(token, bundle);
+        _interactiveState.SetUserDataBundle(token, bundle);
         return bundle;
     }
 

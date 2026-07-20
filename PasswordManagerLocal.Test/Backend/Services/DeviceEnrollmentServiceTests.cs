@@ -60,7 +60,8 @@ public sealed class DeviceEnrollmentServiceTests
             new DeviceEnrollmentRegistrationService(identity, endpointRegistry, networkAddresses, localLinks),
             snapshotService,
             new DeviceEnrollmentSnapshotTransferService(identity, transport, snapshotService),
-            new DeviceEnrollmentSnapshotImporterService(identity, localLinks));
+            new DeviceEnrollmentSnapshotImporterService(identity, localLinks),
+            new FakeInteractiveUserDataStateAccessor());
         return new EnrollmentServiceSetup(service, provider, runtime);
     }
 

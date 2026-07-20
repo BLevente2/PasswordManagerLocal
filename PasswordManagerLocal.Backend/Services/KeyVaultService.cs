@@ -12,6 +12,7 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class KeyVaultService : IKeyVaultService
 {
     private readonly ConcurrentDictionary<Guid, KeyVaultEntry> _map = new();
+    private readonly object _gate = new();
 
     public void SetUserKey(Guid token, EncryptionKey key, DateTimeOffset? expiresAt = null)
     {
@@ -22,28 +23,19 @@ public sealed class KeyVaultService : IKeyVaultService
         try
         {
             var exp = UtcDateTimeUtil.ToUtc(expiresAt ?? DateTimeOffset.UtcNow.Add(LoginTokenExpirationTime));
+            var replacement = new KeyVaultEntry(EncryptionKey.FromRaw(raw), exp);
 
-            while (true)
+            lock (_gate)
             {
                 if (_map.TryGetValue(token, out var old))
                 {
-                    var replacement = new KeyVaultEntry(EncryptionKey.FromRaw(raw), exp);
                     CopyBlobKeys(old, replacement);
-                    if (_map.TryUpdate(token, replacement, old))
-                    {
-                        old.Dispose();
-                        return;
-                    }
-
-                    replacement.Dispose();
-                    continue;
+                    _map[token] = replacement;
+                    old.Dispose();
+                    return;
                 }
 
-                var entry = new KeyVaultEntry(EncryptionKey.FromRaw(raw), exp);
-                if (_map.TryAdd(token, entry))
-                    return;
-
-                entry.Dispose();
+                _map[token] = replacement;
             }
         }
         finally
@@ -57,12 +49,22 @@ public sealed class KeyVaultService : IKeyVaultService
         if (token == Guid.Empty)
             return;
 
-        if (!_map.TryGetValue(token, out var entry) || entry.ExpiresAt <= DateTimeOffset.UtcNow)
-            return;
+        lock (_gate)
+        {
+            if (!_map.TryGetValue(token, out var entry))
+                return;
 
-        ReplaceBlobKey(ref entry.GeneralUserDataKey, userData.GeneralUserDataKey);
-        ReplaceBlobKey(ref entry.UserPasswordsDataKey, userData.UserPasswordsDataKey);
-        ReplaceBlobKey(ref entry.UserDevicesDataKey, userData.UserDevicesDataKey);
+            if (entry.ExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                _map.TryRemove(token, out _);
+                entry.Dispose();
+                return;
+            }
+
+            ReplaceBlobKey(ref entry.GeneralUserDataKey, userData.GeneralUserDataKey);
+            ReplaceBlobKey(ref entry.UserPasswordsDataKey, userData.UserPasswordsDataKey);
+            ReplaceBlobKey(ref entry.UserDevicesDataKey, userData.UserDevicesDataKey);
+        }
     }
 
     public bool RotateUserKey(Guid token, EncryptionKey newKey, DateTimeOffset? newExpiresAt = null)
@@ -70,25 +72,22 @@ public sealed class KeyVaultService : IKeyVaultService
         if (token == Guid.Empty)
             return false;
 
-        if (!_map.TryGetValue(token, out var entry))
-            return false;
-
         var raw = newKey.ExportCopy();
         try
         {
-            var owned = EncryptionKey.FromRaw(raw);
-            var exp = UtcDateTimeUtil.ToUtc(newExpiresAt ?? entry.ExpiresAt);
-            var replacement = new KeyVaultEntry(owned, exp);
-            CopyBlobKeys(entry, replacement);
-
-            if (_map.TryUpdate(token, replacement, entry))
+            lock (_gate)
             {
+                if (!_map.TryGetValue(token, out var entry))
+                    return false;
+
+                var replacement = new KeyVaultEntry(
+                    EncryptionKey.FromRaw(raw),
+                    UtcDateTimeUtil.ToUtc(newExpiresAt ?? entry.ExpiresAt));
+                CopyBlobKeys(entry, replacement);
+                _map[token] = replacement;
                 entry.Dispose();
                 return true;
             }
-
-            replacement.Dispose();
-            return false;
         }
         finally
         {
@@ -101,7 +100,8 @@ public sealed class KeyVaultService : IKeyVaultService
         if (token == Guid.Empty)
             return false;
 
-        return _map.TryGetValue(token, out var e) && e.ExpiresAt > DateTimeOffset.UtcNow;
+        lock (_gate)
+            return _map.TryGetValue(token, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow;
     }
 
     public bool TryGetEncryptionKey(Guid token, out EncryptionKey key) =>
@@ -116,6 +116,50 @@ public sealed class KeyVaultService : IKeyVaultService
     public bool TryGetUserDevicesDataKey(Guid token, out EncryptionKey key) =>
         TryGetKey(token, entry => entry.UserDevicesDataKey, out key);
 
+    public void InvalidateToken(Guid token)
+    {
+        if (token == Guid.Empty)
+            return;
+
+        lock (_gate)
+        {
+            if (_map.TryRemove(token, out var entry))
+                entry.Dispose();
+        }
+    }
+
+    public int PurgeExpired()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var count = 0;
+
+        lock (_gate)
+        {
+            foreach (var pair in _map.ToArray())
+            {
+                if (pair.Value.ExpiresAt > now || !_map.TryRemove(pair.Key, out var entry))
+                    continue;
+
+                entry.Dispose();
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    public void ClearAll()
+    {
+        lock (_gate)
+        {
+            var entries = _map.Values.ToArray();
+            _map.Clear();
+
+            foreach (var entry in entries)
+                entry.Dispose();
+        }
+    }
+
     private bool TryGetKey(Guid token, Func<KeyVaultEntry, EncryptionKey?> selector, out EncryptionKey key)
     {
         key = default!;
@@ -123,55 +167,33 @@ public sealed class KeyVaultService : IKeyVaultService
         if (token == Guid.Empty)
             return false;
 
-        if (!_map.TryGetValue(token, out var e))
-            return false;
-
-        if (e.ExpiresAt <= DateTimeOffset.UtcNow)
+        lock (_gate)
         {
-            InvalidateToken(token);
-            return false;
-        }
+            if (!_map.TryGetValue(token, out var entry))
+                return false;
 
-        var source = selector(e);
-        if (source is null)
-            return false;
-
-        var raw = source.ExportCopy();
-        try
-        {
-            key = EncryptionKey.FromRaw(raw);
-            return true;
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(raw);
-        }
-    }
-
-    public void InvalidateToken(Guid token)
-    {
-        if (token == Guid.Empty)
-            return;
-
-        if (_map.TryRemove(token, out var e))
-            e.Dispose();
-    }
-
-    public int PurgeExpired()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var n = 0;
-
-        foreach (var kv in _map)
-        {
-            if (kv.Value.ExpiresAt <= now && _map.TryRemove(kv.Key, out var e))
+            if (entry.ExpiresAt <= DateTimeOffset.UtcNow)
             {
-                e.Dispose();
-                n++;
+                _map.TryRemove(token, out _);
+                entry.Dispose();
+                return false;
+            }
+
+            var source = selector(entry);
+            if (source is null)
+                return false;
+
+            var raw = source.ExportCopy();
+            try
+            {
+                key = EncryptionKey.FromRaw(raw);
+                return true;
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(raw);
             }
         }
-
-        return n;
     }
 
     private void ReplaceBlobKey(ref EncryptionKey? target, byte[] raw)

@@ -8,12 +8,13 @@ namespace PasswordManagerLocal.Test.Fakes;
 public sealed class FakeBackendRuntime : IBackendRuntime
 {
     private readonly IEndpoints _endpoints;
+    private bool _interactiveSessionActive;
 
     public FakeBackendRuntime(IEndpoints endpoints)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
         Snapshot = new BackendRuntimeSnapshot(
-            BackendRuntimeState.Ready,
+            BackendRuntimeState.NotStarted,
             BackendRuntimeFailureKind.None,
             null,
             DateTimeOffset.UtcNow);
@@ -21,8 +22,15 @@ public sealed class FakeBackendRuntime : IBackendRuntime
 
     public BackendRuntimeSnapshot Snapshot { get; private set; }
     public SyncRuntimeSnapshot SyncSnapshot { get; private set; } = new(SyncRuntimeState.Disabled, null);
-    public int GetEndpointsCalls { get; private set; }
+    public int EnsureStartedCalls { get; private set; }
+    public int WaitUntilReadyCalls { get; private set; }
+    public int OpenInteractiveSessionCalls { get; private set; }
     public int ResetCalls { get; private set; }
+    public int StopCalls { get; private set; }
+    public int ClosedInteractiveSessionCalls { get; private set; }
+    public Exception? StartupFailure { get; set; }
+    public Exception? InteractiveSessionFailure { get; set; }
+    public Action? AfterStart { get; set; }
 
     public event EventHandler<BackendRuntimeStateChangedEventArgs>? StateChanged;
     public event EventHandler<SyncRuntimeStateChangedEventArgs>? SyncStateChanged;
@@ -30,32 +38,63 @@ public sealed class FakeBackendRuntime : IBackendRuntime
     public Task EnsureStartedAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        EnsureStartedCalls++;
+
+        if (StartupFailure is not null)
+            throw StartupFailure;
+
+        SetSnapshot(new BackendRuntimeSnapshot(
+            BackendRuntimeState.Ready,
+            BackendRuntimeFailureKind.None,
+            null,
+            DateTimeOffset.UtcNow));
+        AfterStart?.Invoke();
         return Task.CompletedTask;
     }
 
-    public Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
+    public async Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.CompletedTask;
+        WaitUntilReadyCalls++;
+        await EnsureStartedAsync(cancellationToken);
     }
 
-    public Task<IEndpoints> GetEndpointsAsync(CancellationToken cancellationToken = default)
+    public async Task<IInteractiveBackendSession> OpenInteractiveSessionAsync(
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        GetEndpointsCalls++;
-        return Task.FromResult(_endpoints);
+        await WaitUntilReadyAsync(cancellationToken);
+
+        if (_interactiveSessionActive)
+            throw new InvalidOperationException("An interactive session is already active.");
+
+        OpenInteractiveSessionCalls++;
+        if (InteractiveSessionFailure is not null)
+            throw InteractiveSessionFailure;
+
+        _interactiveSessionActive = true;
+        return new FakeInteractiveBackendSession(_endpoints, () =>
+        {
+            _interactiveSessionActive = false;
+            ClosedInteractiveSessionCalls++;
+        });
     }
 
     public Task ResetDatabaseAndRestartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ResetCalls++;
+        SetSnapshot(new BackendRuntimeSnapshot(
+            BackendRuntimeState.Ready,
+            BackendRuntimeFailureKind.None,
+            null,
+            DateTimeOffset.UtcNow));
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        StopCalls++;
         SetSnapshot(new BackendRuntimeSnapshot(
             BackendRuntimeState.Stopped,
             BackendRuntimeFailureKind.None,

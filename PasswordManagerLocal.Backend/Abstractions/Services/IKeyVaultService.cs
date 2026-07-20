@@ -15,4 +15,5 @@ public interface IKeyVaultService
     bool TryGetUserDevicesDataKey(Guid token, out EncryptionKey key);
     void InvalidateToken(Guid token);
     int PurgeExpired();
+    void ClearAll();
 }

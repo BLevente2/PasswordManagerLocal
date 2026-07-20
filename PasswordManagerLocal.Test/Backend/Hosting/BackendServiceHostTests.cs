@@ -44,7 +44,7 @@ public sealed class BackendServiceHostTests
         await ExpectThrowsAsync<InvalidOperationException>(() => host.StartAsync());
 
         CollectionAssert.AreEqual(
-            new[] { "start:started", "start:failing", "stop:started" },
+            new[] { "start:started", "start:failing", "stop:failing", "stop:started" },
             calls);
     }
 

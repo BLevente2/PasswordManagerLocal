@@ -79,6 +79,7 @@ public sealed class NetworkDeltaServiceTests
         var authorization = new FakeSyncAuthorizationService();
         var runtime = new FakeSyncRuntimeService();
         var auth = new FakeAuthService();
+        var interactiveSessions = new FakeInteractiveSessionStateService(auth);
         var unitOfWork = new FakeUnitOfWork();
 
         var membership = new FakeUserMembershipAuthorizationService();
@@ -99,7 +100,7 @@ public sealed class NetworkDeltaServiceTests
             syncDeviceIdentities,
             identity,
             authorization,
-            auth,
+            interactiveSessions,
             relationships,
             membershipRepository);
         var lifecycle = new NetworkDeltaLifecycleService(
@@ -114,7 +115,7 @@ public sealed class NetworkDeltaServiceTests
             identity,
             authorization,
             runtime,
-            auth,
+            interactiveSessions,
             unitOfWork);
 
         return new NetworkDeltaService(
@@ -130,7 +131,7 @@ public sealed class NetworkDeltaServiceTests
             new FakeUserSyncKeyResolverService(),
             users,
             new FakeUserRevisionKnowledgeRepository(),
-            auth,
+            interactiveSessions,
             new FakeUserControlOperationInboxService());
     }
 

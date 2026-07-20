@@ -158,7 +158,6 @@ public sealed class UserTombstoneGarbageCollectorIntegrationTests
             services.GetRequiredService<ISyncQueueWriterService>(),
             services.GetRequiredService<IPendingSyncActivationService>(),
             services.GetRequiredService<IUserLifecycleCoordinator>(),
-            services.GetRequiredService<ITokenService>(),
-            services.GetRequiredService<IDataCachingService>(),
+            services.GetRequiredService<IInteractiveSessionStateService>(),
             services.GetRequiredService<IUnitOfWork>());
 }

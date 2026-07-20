@@ -41,7 +41,7 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IDeletedUserBarrierRepository _deletionBarriers;
     private readonly IDatabaseHealthService? _databaseHealth;
-    private readonly IUserRecoverySessionService? _sessions;
+    private readonly IInteractiveSessionStateService _interactiveSessions;
     private readonly IUserTombstoneGarbageCollector? _garbageCollector;
     private readonly TimeProvider _timeProvider;
 
@@ -64,8 +64,8 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         IUnitOfWork uow,
         IUserLifecycleCoordinator lifecycle,
         IDeletedUserBarrierRepository deletionBarriers,
+        IInteractiveSessionStateService interactiveSessions,
         IDatabaseHealthService? databaseHealth = null,
-        IUserRecoverySessionService? sessions = null,
         IUserTombstoneGarbageCollector? garbageCollector = null,
         TimeProvider? timeProvider = null)
     {
@@ -87,8 +87,8 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
         _uow = uow;
         _lifecycle = lifecycle;
         _deletionBarriers = deletionBarriers;
+        _interactiveSessions = interactiveSessions;
         _databaseHealth = databaseHealth;
-        _sessions = sessions;
         _garbageCollector = garbageCollector;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
@@ -695,16 +695,15 @@ public sealed class UserDataRecoveryCoordinator : IUserDataRecoveryCoordinator
 
     private async Task RunPostCommitWorkAsync(User user, EncryptionKey key)
     {
-        if (_sessions is not null)
+        try
         {
-            try
-            {
-                await _sessions.RefreshOrInvalidateAsync(user, CancellationToken.None);
-            }
-            catch
-            {
-                // Durable recovery is complete; session handling fails closed inside the service.
-            }
+            await _interactiveSessions.RefreshOrInvalidateUserSessionsAsync(
+                user,
+                CancellationToken.None);
+        }
+        catch
+        {
+            // Durable recovery is complete; session handling fails closed inside the service.
         }
 
         if (_garbageCollector is not null)

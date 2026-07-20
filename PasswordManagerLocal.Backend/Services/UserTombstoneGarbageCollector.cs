@@ -35,8 +35,7 @@ public sealed class UserTombstoneGarbageCollector : IUserTombstoneGarbageCollect
     private readonly ISyncQueueWriterService _queueWriter;
     private readonly IPendingSyncActivationService _activation;
     private readonly IUserLifecycleCoordinator _lifecycle;
-    private readonly ITokenService _tokens;
-    private readonly IDataCachingService _cache;
+    private readonly IInteractiveSessionStateService _interactiveSessions;
     private readonly IUnitOfWork _uow;
 
     public UserTombstoneGarbageCollector(
@@ -54,8 +53,7 @@ public sealed class UserTombstoneGarbageCollector : IUserTombstoneGarbageCollect
         ISyncQueueWriterService queueWriter,
         IPendingSyncActivationService activation,
         IUserLifecycleCoordinator lifecycle,
-        ITokenService tokens,
-        IDataCachingService cache,
+        IInteractiveSessionStateService interactiveSessions,
         IUnitOfWork uow)
     {
         _users = users;
@@ -72,8 +70,7 @@ public sealed class UserTombstoneGarbageCollector : IUserTombstoneGarbageCollect
         _queueWriter = queueWriter;
         _activation = activation;
         _lifecycle = lifecycle;
-        _tokens = tokens;
-        _cache = cache;
+        _interactiveSessions = interactiveSessions;
         _uow = uow;
     }
 
@@ -290,8 +287,9 @@ public sealed class UserTombstoneGarbageCollector : IUserTombstoneGarbageCollect
 
             try
             {
-                foreach (var token in _tokens.ListTokensByUid(userId))
-                    _cache.InvalidateToken(token);
+                await _interactiveSessions.InvalidateUserCacheAsync(
+                    userId,
+                    CancellationToken.None);
             }
             catch
             {

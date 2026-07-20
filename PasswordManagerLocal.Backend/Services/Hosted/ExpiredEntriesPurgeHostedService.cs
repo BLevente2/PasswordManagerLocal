@@ -3,7 +3,7 @@ using static PasswordManagerLocal.Backend.Constants.EntryExpirationConstants;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
-public sealed class ExpiredEntriesPurgeHostedService : IBackendHostedService
+public sealed class ExpiredEntriesPurgeHostedService : IInteractiveBackendHostedService
 {
     private readonly ITokenService _tokens;
     private readonly IKeyVaultService _keys;

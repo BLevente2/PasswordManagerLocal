@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Backend.Abstractions;
 using System.Diagnostics;
 using Android.App;
 using Android.Content;
@@ -31,14 +32,16 @@ public class MainActivity : AvaloniaMainActivity
     private bool _isHandlingBackRequest;
     private long _lastAcceptedBackRequestTimestamp;
     private AlertDialog? _backConfirmationDialog;
+    private IFrontendBackendClient<IEndpoints>? _backendClient;
 
 
     protected override AppBuilder CreateAppBuilder()
     {
         var application = Application as PasswordManagerLocalApplication
             ?? throw new InvalidOperationException("The process-level application composition root is unavailable.");
+        _backendClient ??= application.CreateBackendClient();
         var frontendContext = new FrontendApplicationContext(
-            application.BackendClient,
+            _backendClient,
             application.BackgroundSyncSettingsStore,
             application.ApplicationDataDirectory);
 
@@ -70,12 +73,12 @@ public class MainActivity : AvaloniaMainActivity
     {
         base.OnResume();
 
-        if (Application is PasswordManagerLocalApplication application)
-            _ = ResumeBackendAsync(application.BackendClient);
+        if (_backendClient is not null)
+            _ = ResumeBackendAsync(_backendClient);
     }
 
 
-    private static async Task ResumeBackendAsync(IFrontendBackendClient backendClient)
+    private static async Task ResumeBackendAsync(IBackendRuntimeClient backendClient)
     {
         if (backendClient.Snapshot.State == BackendRuntimeState.WaitingForDeviceUnlock)
         {
@@ -126,7 +129,23 @@ public class MainActivity : AvaloniaMainActivity
         CompleteEnrollmentQrScan(null);
         EnrollmentQrCodeCameraScannerService.SetPlatformScanner(null);
         SoftwareKeyboardService.SetPlatformHideAction(null);
-        base.OnDestroy();
+
+        var backendClient = Interlocked.Exchange(ref _backendClient, null);
+        try
+        {
+            if (backendClient is not null)
+            {
+                backendClient
+                    .DisposeAsync()
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult();
+            }
+        }
+        finally
+        {
+            base.OnDestroy();
+        }
     }
 
 

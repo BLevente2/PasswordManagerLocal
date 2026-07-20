@@ -172,6 +172,12 @@ public sealed class TokenService : ITokenService
         return removed;
     }
 
+    public void RevokeAll()
+    {
+        _storage.Clear();
+        _invalidations.Clear();
+    }
+
     private Guid GenerateToken()
     {
         Span<byte> bytes = stackalloc byte[16];
@@ -179,4 +185,4 @@ public sealed class TokenService : ITokenService
         return new Guid(bytes);
     }
 
-    }
+}

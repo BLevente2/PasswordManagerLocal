@@ -11,18 +11,18 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class UserLookupService : IUserLookupService
 {
     private readonly IUserRepository _users;
-    private readonly IUserSessionService _sessions;
+    private readonly IInteractiveUserDataStateAccessor _interactiveState;
     private readonly IDeletedUserBarrierRepository? _deletionBarriers;
     private readonly IUserLoginIdentityProjectionService _loginIdentities;
 
     public UserLookupService(
         IUserRepository users,
-        IUserSessionService sessions,
+        IInteractiveUserDataStateAccessor interactiveState,
         IUserLoginIdentityProjectionService loginIdentities,
         IDeletedUserBarrierRepository? deletionBarriers = null)
     {
         _users = users;
-        _sessions = sessions;
+        _interactiveState = interactiveState;
         _loginIdentities = loginIdentities;
         _deletionBarriers = deletionBarriers;
     }
@@ -45,7 +45,7 @@ public sealed class UserLookupService : IUserLookupService
     }
 
     public Task<User> GetAndVerifyUserAsync(Guid token, CancellationToken ct = default) =>
-        GetAndVerifyUserByUidAsync(_sessions.GetUidFromToken(token), ct);
+        GetAndVerifyUserByUidAsync(_interactiveState.GetUserIdFromToken(token), ct);
 
     public Task<UserLoginIdentityMatchResult> ResolveUsernameAsync(byte[] username, CancellationToken ct = default) =>
         _loginIdentities.FindByUsernameAsync(username, ct);

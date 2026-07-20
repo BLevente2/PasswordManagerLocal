@@ -14,4 +14,5 @@ public interface ITokenService
     bool Revoke(Guid token, AuthSessionInvalidationReason reason);
     bool TryGetInvalidationReason(Guid token, out AuthSessionInvalidationReason reason);
     int PurgeExpired();
+    void RevokeAll();
 }

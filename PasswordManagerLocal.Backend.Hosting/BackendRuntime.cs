@@ -18,6 +18,7 @@ internal sealed class BackendRuntime : IBackendRuntime
     private readonly BackendStorageCleaner _storageCleaner;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+    private readonly SemaphoreSlim _interactiveSessionLock = new(1, 1);
     private BackendRuntimeSnapshot _snapshot = new(
         BackendRuntimeState.NotStarted,
         BackendRuntimeFailureKind.None,
@@ -26,6 +27,7 @@ internal sealed class BackendRuntime : IBackendRuntime
     private SyncRuntimeSnapshot _syncSnapshot = new(SyncRuntimeState.Disabled, null);
     private BackendServiceHost? _host;
     private ISyncRuntimeService? _syncRuntime;
+    private InteractiveBackendSession? _interactiveSession;
     private Task? _startupTask;
     private Task? _stopTask;
     private long _hostGeneration;
@@ -116,16 +118,55 @@ internal sealed class BackendRuntime : IBackendRuntime
             throw snapshot.Failure ?? new InvalidOperationException("The backend runtime is not ready.");
     }
 
-    public async Task<IEndpoints> GetEndpointsAsync(CancellationToken cancellationToken = default)
+    public async Task<IInteractiveBackendSession> OpenInteractiveSessionAsync(
+        CancellationToken cancellationToken = default)
     {
         await WaitUntilReadyAsync(cancellationToken);
+        await _interactiveSessionLock.WaitAsync(cancellationToken);
 
-        lock (_gate)
+        try
         {
-            if (_host is null || _snapshot.State != BackendRuntimeState.Ready)
-                throw new InvalidOperationException("The backend runtime is not ready.");
+            BackendServiceHost host;
+            lock (_gate)
+            {
+                ThrowIfDisposedLocked();
 
-            return _host.Services.GetRequiredService<IEndpoints>();
+                if (_interactiveSession is not null)
+                    throw new InvalidOperationException("An interactive backend session is already active.");
+
+                host = _host is not null && _snapshot.State == BackendRuntimeState.Ready
+                    ? _host
+                    : throw new InvalidOperationException("The backend runtime is not ready.");
+            }
+
+            try
+            {
+                await host.StartInteractiveAsync(cancellationToken);
+                var endpoints = host.Services.GetRequiredService<IEndpoints>();
+                await host.Services
+                    .GetRequiredService<IInteractiveSessionStateService>()
+                    .ActivateAsync(cancellationToken);
+                var session = new InteractiveBackendSession(endpoints, CloseInteractiveSessionAsync);
+                _interactiveSession = session;
+                return session;
+            }
+            catch (Exception startException)
+            {
+                try
+                {
+                    await StopInteractiveStateAsync(host, CancellationToken.None);
+                }
+                catch (Exception cleanupException)
+                {
+                    throw new AggregateException(startException, cleanupException);
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            _interactiveSessionLock.Release();
         }
     }
 
@@ -234,6 +275,94 @@ internal sealed class BackendRuntime : IBackendRuntime
             _disposed = true;
 
         GC.SuppressFinalize(this);
+    }
+
+    private async ValueTask CloseInteractiveSessionAsync(InteractiveBackendSession session)
+    {
+        await _interactiveSessionLock.WaitAsync(CancellationToken.None);
+        try
+        {
+            if (!ReferenceEquals(_interactiveSession, session))
+                return;
+
+            BackendServiceHost? host;
+            lock (_gate)
+                host = _host;
+
+            if (host is not null)
+                await StopInteractiveStateAsync(host, CancellationToken.None);
+
+            _interactiveSession = null;
+        }
+        finally
+        {
+            _interactiveSessionLock.Release();
+        }
+    }
+
+    private async Task CloseInteractiveStateForShutdownAsync(BackendServiceHost? host)
+    {
+        await _interactiveSessionLock.WaitAsync(CancellationToken.None);
+        try
+        {
+            var session = _interactiveSession;
+            _interactiveSession = null;
+
+            if (session is not null)
+                await session.InvalidateAsync();
+
+            if (host is not null)
+                await StopInteractiveStateAsync(host, CancellationToken.None);
+        }
+        finally
+        {
+            _interactiveSessionLock.Release();
+        }
+    }
+
+    private static async Task StopInteractiveStateAsync(
+        BackendServiceHost host,
+        CancellationToken cancellationToken)
+    {
+        Exception? failure = null;
+
+        try
+        {
+            await host.Services
+                .GetRequiredService<IInteractiveSessionStateService>()
+                .DeactivateAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        try
+        {
+            await host.StopInteractiveAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            failure = failure is null
+                ? exception
+                : new AggregateException(failure, exception);
+        }
+
+        try
+        {
+            await host.Services
+                .GetRequiredService<IInteractiveSensitiveStateResetter>()
+                .ResetAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            failure = failure is null
+                ? exception
+                : new AggregateException(failure, exception);
+        }
+
+        if (failure is not null)
+            throw failure;
     }
 
     private async Task RunStartupAsync(TaskCompletionSource completion, bool resetStorageFirst)
@@ -456,10 +585,15 @@ internal sealed class BackendRuntime : IBackendRuntime
                 _host = null;
                 _syncRuntime = null;
                 syncStateChange = SetSyncSnapshotLocked(new SyncRuntimeSnapshot(SyncRuntimeState.Disabled, null));
-                stateChange = TransitionLocked(
-                    BackendRuntimeState.Stopped,
-                    BackendRuntimeFailureKind.None,
-                    null);
+                stateChange = failure is null
+                    ? TransitionLocked(
+                        BackendRuntimeState.Stopped,
+                        BackendRuntimeFailureKind.None,
+                        null)
+                    : TransitionLocked(
+                        BackendRuntimeState.Failed,
+                        BackendRuntimeFailureKind.ShutdownFailure,
+                        failure);
                 _stopTask = null;
             }
         }
@@ -495,6 +629,15 @@ internal sealed class BackendRuntime : IBackendRuntime
         }
 
         Exception? failure = null;
+        try
+        {
+            await CloseInteractiveStateForShutdownAsync(host);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
         if (syncRuntime is not null)
         {
             try
@@ -503,7 +646,9 @@ internal sealed class BackendRuntime : IBackendRuntime
             }
             catch (Exception exception)
             {
-                failure = exception;
+                failure = failure is null
+                    ? exception
+                    : new AggregateException(failure, exception);
             }
         }
 
