@@ -1,0 +1,29 @@
+using PasswordManagerLocal.Windows.Ipc.Contracts;
+using System.Text.Json.Serialization;
+
+namespace PasswordManagerLocal.Windows.Ipc.Serialization;
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    WriteIndented = false,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(IpcRequestEnvelope))]
+[JsonSerializable(typeof(IpcResponseEnvelope))]
+[JsonSerializable(typeof(IpcHandshakeRequest))]
+[JsonSerializable(typeof(IpcHandshakeResponse))]
+[JsonSerializable(typeof(IpcError))]
+[JsonSerializable(typeof(IpcFailureDto))]
+[JsonSerializable(typeof(AgentStatusDto))]
+[JsonSerializable(typeof(BackendRuntimeStatusDto))]
+[JsonSerializable(typeof(InteractiveSessionStatusDto))]
+[JsonSerializable(typeof(SynchronizationStatusDto))]
+[JsonSerializable(typeof(BackgroundSyncSettingsDto))]
+[JsonSerializable(typeof(PingResponseDto))]
+[JsonSerializable(typeof(UiConnectionRegistrationResponseDto))]
+[JsonSerializable(typeof(UiActivationRequestDto))]
+[JsonSerializable(typeof(UiOpenRequestDto))]
+[JsonSerializable(typeof(AgentExitRequestDto))]
+[JsonSerializable(typeof(RequestAcceptedDto))]
+public partial class WindowsIpcJsonContext : JsonSerializerContext
+{
+}
