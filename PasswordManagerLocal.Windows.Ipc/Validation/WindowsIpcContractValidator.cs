@@ -180,9 +180,9 @@ public sealed class WindowsIpcContractValidator
             throw new IpcPayloadException("The IPC error restart requirement is invalid.");
         }
 
-        if ((error.ErrorCode is IpcErrorCode.ClientRequestLimitReached or
-                IpcErrorCode.ServerBusy or
-                IpcErrorCode.TooManyRequests) &&
+        if ((error.ErrorCode is IpcErrorCode.ServerBusy or
+                IpcErrorCode.TooManyRequests or
+                IpcErrorCode.TooManyConnections) &&
             (error.ErrorCategory != IpcErrorCategory.Availability ||
                 !error.IsRetryable ||
                 error.RequiresProcessRestart))
@@ -240,16 +240,19 @@ public sealed class WindowsIpcContractValidator
             throw new IpcPayloadException("The IPC agent start timestamp is inconsistent with its state.");
         }
 
-        if ((status.AgentState is AgentState.Running or AgentState.Stopping) &&
+        if (status.AgentState == AgentState.Running &&
             status.StartedAtUtc is null)
         {
             throw new IpcPayloadException("The IPC running agent has no start timestamp.");
         }
 
-        if (status.IsBackendRunning &&
+        if (status.IsBackendRunning && !status.BackendOwnedByAgent)
+            throw new IpcPayloadException("The IPC backend-running flag requires agent ownership.");
+
+        if (status.BackendOwnedByAgent &&
             (status.AgentState is not AgentState.Running and not AgentState.Stopping))
         {
-            throw new IpcPayloadException("The IPC backend-running flag is inconsistent with the agent state.");
+            throw new IpcPayloadException("The IPC backend-ownership flag is inconsistent with the agent state.");
         }
 
         if (status.IsUiConnected &&
@@ -258,8 +261,14 @@ public sealed class WindowsIpcContractValidator
             throw new IpcPayloadException("The IPC UI-connected flag is inconsistent with the agent state.");
         }
 
-        if ((status.AgentState == AgentState.Failed) != (status.LastFailure is not null))
+        if (status.AgentState == AgentState.Failed && status.LastFailure is null)
+            throw new IpcPayloadException("The IPC failed agent has no failure details.");
+
+        if (status.LastFailure is not null &&
+            status.AgentState is not AgentState.Failed and not AgentState.Stopping)
+        {
             throw new IpcPayloadException("The IPC agent failure is inconsistent with its state.");
+        }
 
         if (status.LastFailure is not null)
             Validate(status.LastFailure);

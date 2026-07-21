@@ -1,0 +1,32 @@
+using PasswordManagerLocal.Windows.Agent.Tray;
+
+namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
+
+internal sealed class FakeTrayIconAdapter : ITrayIconAdapter
+{
+    public event EventHandler<TrayIconMouseEventArgs>? MouseClicked;
+    public event EventHandler? OpenCommandSelected;
+    public event EventHandler? ExitCommandSelected;
+
+    public int InitializeCount { get; private set; }
+    public int HideAndDisposeCount { get; private set; }
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        InitializeCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task HideAndDisposeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        HideAndDisposeCount++;
+        return Task.CompletedTask;
+    }
+
+    public void RaiseMouse(TrayIconMouseButton button, int clicks = 1) =>
+        MouseClicked?.Invoke(this, new TrayIconMouseEventArgs(button, clicks));
+    public void RaiseOpenCommand() => OpenCommandSelected?.Invoke(this, EventArgs.Empty);
+    public void RaiseExitCommand() => ExitCommandSelected?.Invoke(this, EventArgs.Empty);
+}

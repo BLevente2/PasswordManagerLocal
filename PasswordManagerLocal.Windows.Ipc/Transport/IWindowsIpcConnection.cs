@@ -9,4 +9,9 @@ public interface IWindowsIpcConnection : IAsyncDisposable
 
     ValueTask<IpcFrame?> ReadFrameAsync(CancellationToken cancellationToken = default);
     ValueTask WriteFrameAsync(IpcFrame frame, CancellationToken cancellationToken = default);
+    ValueTask<IpcFrameWriteResult> TryWriteFrameAsync(
+        IpcFrame frame,
+        Func<bool> tryBeginWrite,
+        CancellationToken queuedCancellationToken,
+        CancellationToken shutdownCancellationToken);
 }

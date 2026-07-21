@@ -8,5 +8,6 @@ public enum BackendRuntimeStatusState
     WaitingForDeviceUnlock = 3,
     Failed = 4,
     Stopping = 5,
-    Stopped = 6
+    Stopped = 6,
+    Unavailable = 7
 }

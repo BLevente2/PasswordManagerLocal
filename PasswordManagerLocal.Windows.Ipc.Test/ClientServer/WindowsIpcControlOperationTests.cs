@@ -74,10 +74,11 @@ public sealed class WindowsIpcControlOperationTests
                         new AgentStatusDto(
                             AgentState.Failed,
                             IsUiConnected: false,
+                            BackendOwnedByAgent: false,
                             IsBackendRunning: false,
                             IsBackgroundSyncEnabled: true,
                             RequiresProcessRestart: true,
-                            failure,
+                            LastFailure: failure,
                             StartedAtUtc: null),
                         WindowsIpcJsonContext.Default.AgentStatusDto));
                 })

@@ -8,7 +8,7 @@ using System.Collections.Concurrent;
 
 namespace PasswordManagerLocal.Windows.Ipc.Server;
 
-public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
+public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
 {
     private const int StopKindNone = 0;
     private const int StopKindRequested = 1;
@@ -55,7 +55,8 @@ public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
         _contractValidator = contractValidator ?? new WindowsIpcContractValidator();
         _observers = observers?.ToArray()
             ?? Array.Empty<IWindowsIpcConnectionLifecycleObserver>();
-        if (options.AcceptedClientRoles.Contains(IpcPeerRole.Ui) &&
+        if (options.ManagesUiRegistration &&
+            options.AcceptedClientRoles.Contains(IpcPeerRole.Ui) &&
             uiConnectionCoordinator is null)
         {
             throw new ArgumentNullException(
@@ -494,7 +495,11 @@ public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
             }
 
             registered = true;
-            execution.Task = ProcessRequestAsync(connectionContext, request, execution);
+            execution.Task = ProcessRequestAsync(
+                connectionContext,
+                request,
+                execution,
+                connectionCancellationToken);
         }
         catch
         {
@@ -519,7 +524,8 @@ public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
     private async Task ProcessRequestAsync(
         IpcConnectionContext connectionContext,
         IpcRequestEnvelope request,
-        ServerIpcRequestExecution execution)
+        ServerIpcRequestExecution execution,
+        CancellationToken connectionCancellationToken)
     {
         try
         {
@@ -533,7 +539,7 @@ public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
                 execution.CancellationSource.Token);
 
             if (Volatile.Read(ref _connectionEnding) == 0)
-                await SendResponseAsync(response, CancellationToken.None);
+                await SendResponseAsync(response, connectionCancellationToken);
         }
         catch (OperationCanceledException) when (execution.CancellationSource.IsCancellationRequested)
         {

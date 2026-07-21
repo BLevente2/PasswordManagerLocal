@@ -10,15 +10,28 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Contracts;
 public sealed class SynchronizationStatusContractTests
 {
     [TestMethod]
-    public void EveryBackendRuntimeStateHasExactlyOneTransportState()
+    public void EveryBackendRuntimeStateHasMatchingTransportStateAndUnavailableIsTransportOnly()
     {
         var backendStates = Enum.GetNames<SyncRuntimeState>();
         var transportStates = Enum.GetNames<SynchronizationStatusState>();
 
-        CollectionAssert.AreEqual(backendStates, transportStates);
-        Assert.AreEqual(
-            Enum.GetValues<SyncRuntimeState>().Length,
-            Enum.GetValues<SynchronizationStatusState>().Length);
+        foreach (var backendState in backendStates)
+        {
+            Assert.IsTrue(transportStates.Contains(
+                backendState,
+                StringComparer.Ordinal));
+        }
+
+        CollectionAssert.AreEquivalent(
+            new[] { nameof(SynchronizationStatusState.Unavailable) },
+            transportStates.Except(backendStates).ToArray());
+
+        foreach (var backendState in Enum.GetValues<SyncRuntimeState>())
+        {
+            var transportState = Enum.Parse<SynchronizationStatusState>(
+                backendState.ToString());
+            Assert.AreEqual((int)backendState, (int)transportState);
+        }
     }
 
     [TestMethod]

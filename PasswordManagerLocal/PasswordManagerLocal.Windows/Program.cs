@@ -4,7 +4,13 @@ using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Backend.Windows;
 using PasswordManagerLocal.Frontend;
 using PasswordManagerLocal.Frontend.Services;
-using System;
+using PasswordManagerLocal.Windows.Activation;
+using PasswordManagerLocal.Windows.AgentConnection;
+using PasswordManagerLocal.Windows.Ipc.Client;
+using PasswordManagerLocal.Windows.Ipc.Coordination;
+using PasswordManagerLocal.Windows.Ipc.Protocol;
+using PasswordManagerLocal.Windows.Notifications;
+using PasswordManagerLocal.Windows.SingleInstance;
 
 namespace PasswordManagerLocal.Windows;
 
@@ -13,6 +19,25 @@ internal sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        var applicationDataDirectory = new WindowsApplicationDataPathProvider()
+            .GetApplicationDataDirectory();
+        var names = new WindowsInstanceNameProvider(
+            "PasswordManagerLocal",
+            applicationDataDirectory,
+            new WindowsUserIdentityProvider()).GetNames();
+        using var uiProcessLock = new FileProcessInstanceLock(names.UiLockFilePath);
+        var singleInstance = new WindowsUiSingleInstanceController(
+            uiProcessLock,
+            new WindowsUiActivationClient(
+                names.UiActivationPipeName,
+                IpcPeerRole.Ui));
+        var instanceRole = singleInstance
+            .EnterAsync()
+            .GetAwaiter()
+            .GetResult();
+        if (instanceRole != WindowsUiInstanceRole.Primary)
+            return;
+
         ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
         FirewallPermissionService.SetPlatformFirewallPermissionManager(new WindowsFirewallPermissionManager());
 
@@ -26,9 +51,19 @@ internal sealed class Program
             backendClient,
             backgroundSyncSettingsStore,
             composition.ApplicationDataDirectory);
+        var activationServer = new WindowsUiActivationServer(
+            names.UiActivationPipeName,
+            new AvaloniaWindowActivationBridge());
+        var agentConnection = new WindowsAgentControlConnection(
+            names.ControlPipeName,
+            new WindowsAgentLauncher(AppContext.BaseDirectory));
 
         try
         {
+            activationServer.StartAsync().GetAwaiter().GetResult();
+            var agentConnected = agentConnection.ConnectAsync().GetAwaiter().GetResult();
+            if (!agentConnected)
+                new WindowsStartupNotification().ShowAgentUnavailable();
             BuildAvaloniaApp(frontendContext)
                 .StartWithClassicDesktopLifetime(args);
         }
@@ -36,19 +71,25 @@ internal sealed class Program
         {
             try
             {
-                backendClient
-                    .DisposeAsync()
-                    .AsTask()
-                    .GetAwaiter()
-                    .GetResult();
+                agentConnection.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
             finally
             {
-                composition.Runtime
-                    .DisposeAsync()
-                    .AsTask()
-                    .GetAwaiter()
-                    .GetResult();
+                try
+                {
+                    activationServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    try
+                    {
+                        backendClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    }
+                    finally
+                    {
+                        composition.Runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    }
+                }
             }
         }
     }

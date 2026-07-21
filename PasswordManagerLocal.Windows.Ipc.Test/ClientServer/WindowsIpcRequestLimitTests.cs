@@ -14,7 +14,7 @@ public sealed class WindowsIpcRequestLimitTests
 {
     [TestMethod]
     [Timeout(10_000)]
-    public async Task ClientRejectsAtLimitAndReturnsCapacityAfterSuccess()
+    public async Task ClientWaitsAtLimitAndReturnsCapacityAfterSuccess()
     {
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -37,21 +37,15 @@ public sealed class WindowsIpcRequestLimitTests
         var first = session.Client.SendAsync(IpcOperationId.Ping);
         await firstStarted.Task;
 
-        var limitFailure = await Assert.ThrowsAsync<IpcClientRequestLimitReachedException>(
-            async () => await session.Client.SendAsync(IpcOperationId.Ping));
-        Assert.AreEqual(1, limitFailure.MaximumPendingRequests);
-        Assert.AreEqual(IpcErrorCode.ClientRequestLimitReached, limitFailure.ErrorCode);
-        Assert.AreEqual(IpcErrorCategory.Availability, limitFailure.ErrorCategory);
-        Assert.IsTrue(limitFailure.CorrelationId > 0);
-        Assert.IsTrue(limitFailure.IsRetryable);
-        Assert.IsFalse(limitFailure.RequiresProcessRestart);
-        Assert.AreEqual("The IPC client has reached its pending-request limit.", limitFailure.SafeMessage);
+        var second = session.Client.SendAsync(IpcOperationId.Ping);
+        await Task.Yield();
+        Assert.IsFalse(second.IsCompleted);
         Assert.AreEqual(1, session.Client.PendingRequestCount);
 
         releaseFirst.TrySetResult();
         Assert.IsTrue((await first).IsSuccess);
+        Assert.IsTrue((await second).IsSuccess);
         Assert.AreEqual(0, session.Client.PendingRequestCount);
-        Assert.IsTrue((await session.Client.SendAsync(IpcOperationId.Ping)).IsSuccess);
     }
 
     [TestMethod]

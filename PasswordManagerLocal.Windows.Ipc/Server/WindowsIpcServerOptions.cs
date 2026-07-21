@@ -11,7 +11,8 @@ public sealed class WindowsIpcServerOptions
         IpcPeerRole serverRole,
         IEnumerable<IpcPeerRole> acceptedClientRoles,
         IpcCapabilities capabilities,
-        int maximumActiveRequestsPerConnection = DefaultMaximumActiveRequestsPerConnection)
+        int maximumActiveRequestsPerConnection = DefaultMaximumActiveRequestsPerConnection,
+        bool managesUiRegistration = true)
     {
         if (!Enum.IsDefined(serverRole) || serverRole == IpcPeerRole.TestClient)
             throw new ArgumentOutOfRangeException(nameof(serverRole));
@@ -35,12 +36,14 @@ public sealed class WindowsIpcServerOptions
         AcceptedClientRoles = roles;
         Capabilities = capabilities;
         MaximumActiveRequestsPerConnection = maximumActiveRequestsPerConnection;
+        ManagesUiRegistration = managesUiRegistration;
     }
 
     public IpcPeerRole ServerRole { get; }
     public IReadOnlySet<IpcPeerRole> AcceptedClientRoles { get; }
     public IpcCapabilities Capabilities { get; }
     public int MaximumActiveRequestsPerConnection { get; }
+    public bool ManagesUiRegistration { get; }
 
     private static bool HasUnknownCapabilities(IpcCapabilities capabilities)
     {

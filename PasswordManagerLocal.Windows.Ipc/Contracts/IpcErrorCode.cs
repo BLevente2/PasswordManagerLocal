@@ -16,10 +16,19 @@ public enum IpcErrorCode
     UiAlreadyRegistered = 12,
     RequestRejected = 13,
     InternalFailure = 14,
-    ClientRequestLimitReached = 15,
     ServerBusy = 16,
     TooManyRequests = 17,
     RequestPayloadTooLarge = 18,
     ResponsePayloadTooLarge = 19,
-    SerializedEnvelopeTooLarge = 20
+    SerializedEnvelopeTooLarge = 20,
+    AgentStopping = 21,
+    UiNotRegistered = 22,
+    UiActivationUnavailable = 23,
+    UiActivationRejected = 24,
+    UiExecutableNotFound = 25,
+    UiLaunchFailed = 26,
+    UnauthorizedOperation = 27,
+    TooManyConnections = 28,
+    AgentUnavailable = 29,
+    UiActivationFailed = 30
 }

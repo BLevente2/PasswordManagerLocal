@@ -6,5 +6,6 @@ public enum SynchronizationStatusState
     Starting = 1,
     Running = 2,
     Stopping = 3,
-    Degraded = 4
+    Degraded = 4,
+    Unavailable = 5
 }

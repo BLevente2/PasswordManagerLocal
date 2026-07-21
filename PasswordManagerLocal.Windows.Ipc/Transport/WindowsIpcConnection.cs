@@ -37,6 +37,77 @@ public sealed class WindowsIpcConnection : IWindowsIpcConnection
         try
         {
             ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
+            await WriteFrameUnderLockAsync(frame, cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async ValueTask<IpcFrameWriteResult> TryWriteFrameAsync(
+        IpcFrame frame,
+        Func<bool> tryBeginWrite,
+        CancellationToken queuedCancellationToken,
+        CancellationToken shutdownCancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(tryBeginWrite);
+        ThrowIfDisposed();
+        using var admissionSource = CancellationTokenSource.CreateLinkedTokenSource(
+            queuedCancellationToken,
+            shutdownCancellationToken);
+        try
+        {
+            await _writeLock.WaitAsync(admissionSource.Token);
+        }
+        catch (OperationCanceledException)
+            when (shutdownCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+            when (queuedCancellationToken.IsCancellationRequested)
+        {
+            return IpcFrameWriteResult.SkippedBeforeTransmission;
+        }
+
+        try
+        {
+            ThrowIfDisposed();
+            shutdownCancellationToken.ThrowIfCancellationRequested();
+            if (!tryBeginWrite())
+                return IpcFrameWriteResult.SkippedBeforeTransmission;
+
+            await WriteFrameUnderLockAsync(frame, shutdownCancellationToken);
+            return IpcFrameWriteResult.Written;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposeGate)
+        {
+            if (_disposeTask is null)
+            {
+                Volatile.Write(ref _disposeStarted, 1);
+                _disposeTask = DisposeCoreAsync();
+            }
+
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async ValueTask WriteFrameUnderLockAsync(
+        IpcFrame frame,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
             await _frameCodec.WriteAsync(_stream, frame, cancellationToken);
             await _stream.FlushAsync(cancellationToken);
         }
@@ -56,24 +127,6 @@ public sealed class WindowsIpcConnection : IWindowsIpcConnection
                 throw;
 
             throw new AggregateException(exception, disposalFailure);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
-    }
-
-    public ValueTask DisposeAsync()
-    {
-        lock (_disposeGate)
-        {
-            if (_disposeTask is null)
-            {
-                Volatile.Write(ref _disposeStarted, 1);
-                _disposeTask = DisposeCoreAsync();
-            }
-
-            return new ValueTask(_disposeTask);
         }
     }
 

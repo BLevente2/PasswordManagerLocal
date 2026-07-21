@@ -8,6 +8,7 @@ internal sealed class DelegateWindowsIpcConnection : IWindowsIpcConnection
     private readonly Func<CancellationToken, ValueTask<IpcFrame?>> _read;
     private readonly Func<IpcFrame, CancellationToken, ValueTask> _write;
     private readonly Func<ValueTask> _dispose;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private int _disposeStarted;
 
     public DelegateWindowsIpcConnection(
@@ -27,10 +28,61 @@ internal sealed class DelegateWindowsIpcConnection : IWindowsIpcConnection
     public ValueTask<IpcFrame?> ReadFrameAsync(CancellationToken cancellationToken = default) =>
         _read(cancellationToken);
 
-    public ValueTask WriteFrameAsync(
+    public async ValueTask WriteFrameAsync(
         IpcFrame frame,
-        CancellationToken cancellationToken = default) =>
-        _write(frame, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _write(frame, cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async ValueTask<IpcFrameWriteResult> TryWriteFrameAsync(
+        IpcFrame frame,
+        Func<bool> tryBeginWrite,
+        CancellationToken queuedCancellationToken,
+        CancellationToken shutdownCancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(tryBeginWrite);
+        using var admissionSource = CancellationTokenSource.CreateLinkedTokenSource(
+            queuedCancellationToken,
+            shutdownCancellationToken);
+        try
+        {
+            await _writeLock.WaitAsync(admissionSource.Token);
+        }
+        catch (OperationCanceledException)
+            when (shutdownCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+            when (queuedCancellationToken.IsCancellationRequested)
+        {
+            return IpcFrameWriteResult.SkippedBeforeTransmission;
+        }
+
+        try
+        {
+            shutdownCancellationToken.ThrowIfCancellationRequested();
+            if (!tryBeginWrite())
+                return IpcFrameWriteResult.SkippedBeforeTransmission;
+
+            await _write(frame, shutdownCancellationToken);
+            return IpcFrameWriteResult.Written;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
 
     public ValueTask DisposeAsync()
     {

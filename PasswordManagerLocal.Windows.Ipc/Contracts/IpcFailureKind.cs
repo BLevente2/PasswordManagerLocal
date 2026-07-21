@@ -8,5 +8,8 @@ public enum IpcFailureKind
     Synchronization = 3,
     Storage = 4,
     PlatformKey = 5,
-    Protocol = 6
+    Protocol = 6,
+    AgentShell = 7,
+    UiActivation = 8,
+    UiLaunch = 9
 }

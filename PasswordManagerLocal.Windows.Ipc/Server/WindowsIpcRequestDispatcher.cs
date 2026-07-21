@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Ipc.Authorization;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Validation;
@@ -8,10 +9,12 @@ public sealed class WindowsIpcRequestDispatcher
 {
     private readonly IReadOnlyDictionary<Protocol.IpcOperationId, IWindowsIpcRequestHandler> _handlers;
     private readonly WindowsIpcContractValidator _contractValidator;
+    private readonly IWindowsIpcOperationAuthorizer? _authorizer;
 
     public WindowsIpcRequestDispatcher(
         IEnumerable<IWindowsIpcRequestHandler> handlers,
-        WindowsIpcContractValidator? contractValidator = null)
+        WindowsIpcContractValidator? contractValidator = null,
+        IWindowsIpcOperationAuthorizer? authorizer = null)
     {
         ArgumentNullException.ThrowIfNull(handlers);
         var registered = new Dictionary<Protocol.IpcOperationId, IWindowsIpcRequestHandler>();
@@ -29,6 +32,7 @@ public sealed class WindowsIpcRequestDispatcher
 
         _handlers = registered;
         _contractValidator = contractValidator ?? new WindowsIpcContractValidator();
+        _authorizer = authorizer;
     }
 
     public async Task<IpcResponseEnvelope> DispatchAsync(
@@ -45,6 +49,20 @@ public sealed class WindowsIpcRequestDispatcher
                 IpcErrorCategory.Validation,
                 "The requested IPC operation is not supported.",
                 isRetryable: false);
+        }
+
+        if (_authorizer is not null)
+        {
+            var decision = _authorizer.Authorize(context);
+            if (!decision.IsAuthorized)
+            {
+                return Failure(
+                    context.Request.CorrelationId,
+                    decision.ErrorCode,
+                    decision.ErrorCategory,
+                    decision.SafeMessage,
+                    decision.IsRetryable);
+            }
         }
 
         try

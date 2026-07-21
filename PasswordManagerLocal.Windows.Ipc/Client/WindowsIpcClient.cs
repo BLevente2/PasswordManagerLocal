@@ -15,10 +15,14 @@ public sealed class WindowsIpcClient : IAsyncDisposable
     private readonly WindowsIpcSerializer _serializer;
     private readonly WindowsIpcClientOptions _options;
     private readonly WindowsIpcContractValidator _contractValidator;
+    private readonly Func<IpcRequestEnvelope, byte[]> _serializeRequestEnvelope;
+    private readonly Func<long, PendingIpcRequest, bool> _allowPendingRequestRegistration;
     private readonly SemaphoreSlim _handshakeLock = new(1, 1);
     private readonly SemaphoreSlim _pendingRequestCapacity;
     private readonly CancellationTokenSource _shutdownSource = new();
+    private readonly CancellationToken _shutdownToken;
     private readonly ConcurrentDictionary<long, PendingIpcRequest> _pendingRequests = new();
+    private readonly ConcurrentDictionary<Task, byte> _backgroundWrites = new();
     private readonly object _pendingRegistrationGate = new();
     private readonly object _connectionDisposalGate = new();
     private readonly object _disposeGate = new();
@@ -37,11 +41,34 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         WindowsIpcSerializer serializer,
         WindowsIpcClientOptions options,
         WindowsIpcContractValidator? contractValidator = null)
+        : this(
+            connection,
+            serializer,
+            options,
+            contractValidator,
+            requestEnvelopeSerializer: null,
+            pendingRequestRegistrationGuard: null)
+    {
+    }
+
+    internal WindowsIpcClient(
+        IWindowsIpcConnection connection,
+        WindowsIpcSerializer serializer,
+        WindowsIpcClientOptions options,
+        WindowsIpcContractValidator? contractValidator,
+        Func<IpcRequestEnvelope, byte[]>? requestEnvelopeSerializer,
+        Func<long, PendingIpcRequest, bool>? pendingRequestRegistrationGuard)
     {
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _contractValidator = contractValidator ?? new WindowsIpcContractValidator();
+        _shutdownToken = _shutdownSource.Token;
+        _serializeRequestEnvelope = requestEnvelopeSerializer
+            ?? (request => _serializer.Serialize(
+                request,
+                WindowsIpcJsonContext.Default.IpcRequestEnvelope));
+        _allowPendingRequestRegistration = pendingRequestRegistrationGuard ?? ((_, _) => true);
         _pendingRequestCapacity = new SemaphoreSlim(
             options.MaximumPendingRequests,
             options.MaximumPendingRequests);
@@ -75,7 +102,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         ThrowIfDisposed();
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
-            _shutdownSource.Token);
+            _shutdownToken);
         await _handshakeLock.WaitAsync(linkedSource.Token);
         try
         {
@@ -160,19 +187,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         var correlationId = GetNextCorrelationId();
         var request = new IpcRequestEnvelope(correlationId, operationId, payload);
         _contractValidator.Validate(request);
-        var serialized = _serializer.Serialize(
-            request,
-            WindowsIpcJsonContext.Default.IpcRequestEnvelope);
-        _contractValidator.ValidateSerializedRequestEnvelope(
-            correlationId,
-            serialized);
-
-        if (!_pendingRequestCapacity.Wait(0))
-        {
-            throw new IpcClientRequestLimitReachedException(
-                correlationId,
-                _options.MaximumPendingRequests);
-        }
+        await WaitForPendingRequestCapacityAsync(cancellationToken);
 
         var pending = new PendingIpcRequest(
             correlationId,
@@ -180,34 +195,68 @@ public sealed class WindowsIpcClient : IAsyncDisposable
             ReleasePendingRequest);
         try
         {
-            lock (_pendingRegistrationGate)
+            byte[]? serialized = null;
+            if (cancellationToken.IsCancellationRequested)
             {
-                ThrowIfDisposed();
-                if (!IsHandshakeComplete)
-                    throw new IpcConnectionClosedException("The IPC connection is not available.");
-                if (!_pendingRequests.TryAdd(correlationId, pending))
-                    throw new InvalidOperationException("The IPC correlation ID is already pending.");
+                pending.RequestCallerCancellation();
             }
-        }
-        catch
-        {
-            _pendingRequestCapacity.Release();
-            throw;
-        }
-
-        pending.RegisterCallerCancellation(
-            () => CancelPendingRequest(pending));
-        try
-        {
-            if (pending.TryBeginSending())
+            else
             {
                 try
                 {
-                    await _connection.WriteFrameAsync(
-                        CreateFrame(IpcMessageKind.Request, correlationId, serialized),
-                        _shutdownSource.Token);
-                    if (pending.CommitSent())
-                        _ = SendCancellationBestEffortAsync(pending.CorrelationId);
+                    ThrowIfDisposed();
+                    if (!IsHandshakeComplete)
+                    {
+                        throw new IpcConnectionClosedException(
+                            "The IPC connection is not available.");
+                    }
+
+                    serialized = _serializeRequestEnvelope(request);
+                    _contractValidator.ValidateSerializedRequestEnvelope(
+                        correlationId,
+                        serialized);
+                }
+                catch (Exception exception)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        pending.RequestCallerCancellation();
+                    else
+                        pending.TrySetException(exception);
+                }
+            }
+
+            if (serialized is not null &&
+                pending.SubmissionState != IpcRequestSubmissionState.Completed)
+            {
+                pending.RegisterCallerCancellation(
+                    () => CancelPendingRequest(pending));
+
+                var registered = false;
+                try
+                {
+                    lock (_pendingRegistrationGate)
+                    {
+                        ThrowIfDisposed();
+                        if (!IsHandshakeComplete)
+                        {
+                            throw new IpcConnectionClosedException(
+                                "The IPC connection is not available.");
+                        }
+
+                        registered = pending.TryRegisterPending(
+                            () =>
+                                _allowPendingRequestRegistration(correlationId, pending) &&
+                                _pendingRequests.TryAdd(correlationId, pending));
+                        if (registered && pending.TryQueue())
+                        {
+                            TrackBackgroundWrite(SubmitRequestAsync(
+                                pending,
+                                CreateFrame(
+                                    IpcMessageKind.Request,
+                                    correlationId,
+                                    serialized)));
+                        }
+                    }
                 }
                 catch (Exception exception)
                 {
@@ -243,14 +292,14 @@ public sealed class WindowsIpcClient : IAsyncDisposable
 
     private async Task DisposeCoreAsync()
     {
+        lock (_pendingRegistrationGate)
+        {
+        }
+
         var cancellationFailure = CaptureCancellationFailure(_shutdownSource);
         if (cancellationFailure is not null)
             RecordCleanupFailure(cancellationFailure);
         var connectionDisposalTask = CaptureConnectionDisposalFailureAsync();
-
-        lock (_pendingRegistrationGate)
-        {
-        }
 
         FailAllPending(new IpcConnectionClosedException("The IPC client was disposed."));
 
@@ -260,6 +309,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         if (_readLoopTask is not null)
             await _readLoopTask;
 
+        await AwaitBackgroundWritesAsync();
         var disposalFailure = await connectionDisposalTask;
         if (disposalFailure is not null)
             RecordCleanupFailure(disposalFailure);
@@ -279,7 +329,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         {
             while (true)
             {
-                var frame = await _connection.ReadFrameAsync(_shutdownSource.Token);
+                var frame = await _connection.ReadFrameAsync(_shutdownToken);
                 if (frame is null)
                 {
                     failure = new IpcConnectionClosedException("The IPC connection was closed.");
@@ -327,6 +377,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         var disposalFailure = await connectionDisposalTask;
         if (disposalFailure is not null)
             RecordCleanupFailure(disposalFailure);
+        await AwaitBackgroundWritesAsync();
 
         var terminalFailure = CombineFailures(failure, cancellationFailure);
         terminalFailure = CombineFailures(terminalFailure, disposalFailure);
@@ -337,7 +388,37 @@ public sealed class WindowsIpcClient : IAsyncDisposable
     private void CancelPendingRequest(PendingIpcRequest pending)
     {
         if (pending.RequestCallerCancellation())
-            _ = SendCancellationBestEffortAsync(pending.CorrelationId);
+            TrackBackgroundWrite(SendCancellationBestEffortAsync(pending.CorrelationId));
+    }
+
+    private async Task SubmitRequestAsync(
+        PendingIpcRequest pending,
+        IpcFrame frame)
+    {
+        try
+        {
+            var writeResult = await _connection.TryWriteFrameAsync(
+                frame,
+                pending.TryBeginSending,
+                pending.QueuedCancellationToken,
+                _shutdownToken);
+            if (writeResult == IpcFrameWriteResult.Written && pending.CommitSent())
+            {
+                TrackBackgroundWrite(
+                    SendCancellationBestEffortAsync(pending.CorrelationId));
+            }
+        }
+        catch (OperationCanceledException exception)
+            when (_shutdownSource.IsCancellationRequested)
+        {
+            pending.TrySetException(new IpcConnectionClosedException(
+                "The IPC request write was interrupted by client shutdown.",
+                exception));
+        }
+        catch (Exception exception)
+        {
+            pending.TrySetException(exception);
+        }
     }
 
     private async Task SendCancellationBestEffortAsync(long correlationId)
@@ -348,11 +429,63 @@ public sealed class WindowsIpcClient : IAsyncDisposable
             {
                 await _connection.WriteFrameAsync(
                     CreateFrame(IpcMessageKind.RequestCancellation, correlationId, Array.Empty<byte>()),
-                    _shutdownSource.Token);
+                    _shutdownToken);
             }
         }
         catch
         {
+        }
+    }
+
+    private async Task WaitForPendingRequestCapacityAsync(
+        CancellationToken callerCancellationToken)
+    {
+        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
+            callerCancellationToken,
+            _shutdownToken);
+        try
+        {
+            await _pendingRequestCapacity.WaitAsync(linkedSource.Token);
+        }
+        catch (OperationCanceledException)
+            when (callerCancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(callerCancellationToken);
+        }
+        catch (OperationCanceledException exception)
+            when (_shutdownSource.IsCancellationRequested)
+        {
+            throw new IpcConnectionClosedException(
+                "The IPC client stopped while waiting for request capacity.",
+                exception);
+        }
+    }
+
+    private void TrackBackgroundWrite(Task task)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        if (!_backgroundWrites.TryAdd(task, 0))
+            return;
+
+        _ = task.ContinueWith(
+            completedTask => _backgroundWrites.TryRemove(completedTask, out _),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private async Task AwaitBackgroundWritesAsync()
+    {
+        while (_backgroundWrites.Count > 0)
+        {
+            var tasks = _backgroundWrites.Keys.ToArray();
+            if (tasks.Length == 0)
+            {
+                await Task.Yield();
+                continue;
+            }
+
+            await Task.WhenAll(tasks);
         }
     }
 

@@ -8,6 +8,8 @@ internal sealed class PendingIpcRequest
         TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Action<PendingIpcRequest> _releaseOwnership;
     private readonly CancellationToken _callerCancellationToken;
+    private readonly CancellationTokenSource _queuedCancellationSource = new();
+    private readonly CancellationToken _queuedCancellationToken;
     private readonly object _stateGate = new();
     private CancellationTokenRegistration _cancellationRegistration;
     private IpcRequestSubmissionState _submissionState = IpcRequestSubmissionState.Created;
@@ -27,12 +29,14 @@ internal sealed class PendingIpcRequest
 
         CorrelationId = correlationId;
         _callerCancellationToken = callerCancellationToken;
+        _queuedCancellationToken = _queuedCancellationSource.Token;
         _releaseOwnership = releaseOwnership
             ?? throw new ArgumentNullException(nameof(releaseOwnership));
     }
 
     public long CorrelationId { get; }
     public Task<IpcResponseEnvelope> Task => _completion.Task;
+    public CancellationToken QueuedCancellationToken => _queuedCancellationToken;
 
     public IpcRequestSubmissionState SubmissionState
     {
@@ -94,11 +98,39 @@ internal sealed class PendingIpcRequest
         registration.Dispose();
     }
 
-    public bool TryBeginSending()
+    public bool TryRegisterPending(Func<bool> tryRegister)
+    {
+        ArgumentNullException.ThrowIfNull(tryRegister);
+        lock (_stateGate)
+        {
+            if (_submissionState == IpcRequestSubmissionState.Completed)
+                return false;
+            if (_submissionState != IpcRequestSubmissionState.Created)
+                throw new InvalidOperationException("The IPC request cannot be registered in its current state.");
+            if (!tryRegister())
+                throw new InvalidOperationException("The IPC correlation ID is already pending.");
+
+            return true;
+        }
+    }
+
+    public bool TryQueue()
     {
         lock (_stateGate)
         {
             if (_submissionState != IpcRequestSubmissionState.Created)
+                return false;
+
+            _submissionState = IpcRequestSubmissionState.Queued;
+            return true;
+        }
+    }
+
+    public bool TryBeginSending()
+    {
+        lock (_stateGate)
+        {
+            if (_submissionState != IpcRequestSubmissionState.Queued)
                 return false;
 
             _submissionState = IpcRequestSubmissionState.Sending;
@@ -144,6 +176,7 @@ internal sealed class PendingIpcRequest
     public bool RequestCallerCancellation()
     {
         var completeAsCancelled = false;
+        var cancelQueuedWrite = false;
         var sendRemoteCancellation = false;
         lock (_stateGate)
         {
@@ -153,8 +186,10 @@ internal sealed class PendingIpcRequest
             switch (_submissionState)
             {
                 case IpcRequestSubmissionState.Created:
+                case IpcRequestSubmissionState.Queued:
                     _submissionState = IpcRequestSubmissionState.Completed;
                     completeAsCancelled = true;
+                    cancelQueuedWrite = true;
                     break;
                 case IpcRequestSubmissionState.Sending:
                     if (_deferredResponse is null)
@@ -170,6 +205,8 @@ internal sealed class PendingIpcRequest
             }
         }
 
+        if (cancelQueuedWrite)
+            _queuedCancellationSource.Cancel();
         if (completeAsCancelled)
             Complete(() => _completion.TrySetCanceled(_callerCancellationToken));
 
@@ -183,6 +220,7 @@ internal sealed class PendingIpcRequest
         lock (_stateGate)
         {
             if (_submissionState is IpcRequestSubmissionState.Created or
+                IpcRequestSubmissionState.Queued or
                 IpcRequestSubmissionState.Completed)
             {
                 return false;
@@ -236,6 +274,7 @@ internal sealed class PendingIpcRequest
             return;
 
         _releaseOwnership(this);
+        _queuedCancellationSource.Dispose();
         complete();
     }
 }

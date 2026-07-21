@@ -8,6 +8,7 @@ internal sealed class InMemoryIpcConnection : IWindowsIpcConnection
 {
     private readonly ChannelReader<IpcFrame> _incoming;
     private readonly ChannelWriter<IpcFrame> _outgoing;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private int _disposeStarted;
     private int _disposeCallCount;
 
@@ -41,14 +42,62 @@ internal sealed class InMemoryIpcConnection : IWindowsIpcConnection
         }
     }
 
-    public ValueTask WriteFrameAsync(
+    public async ValueTask WriteFrameAsync(
         IpcFrame frame,
         CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _disposeStarted) != 0)
-            throw new ObjectDisposedException(nameof(InMemoryIpcConnection));
+        await _writeLock.WaitAsync(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            await _outgoing.WriteAsync(frame, cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
 
-        return _outgoing.WriteAsync(frame, cancellationToken);
+    public async ValueTask<IpcFrameWriteResult> TryWriteFrameAsync(
+        IpcFrame frame,
+        Func<bool> tryBeginWrite,
+        CancellationToken queuedCancellationToken,
+        CancellationToken shutdownCancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(tryBeginWrite);
+        using var admissionSource = CancellationTokenSource.CreateLinkedTokenSource(
+            queuedCancellationToken,
+            shutdownCancellationToken);
+        try
+        {
+            await _writeLock.WaitAsync(admissionSource.Token);
+        }
+        catch (OperationCanceledException)
+            when (shutdownCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+            when (queuedCancellationToken.IsCancellationRequested)
+        {
+            return IpcFrameWriteResult.SkippedBeforeTransmission;
+        }
+
+        try
+        {
+            shutdownCancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            if (!tryBeginWrite())
+                return IpcFrameWriteResult.SkippedBeforeTransmission;
+
+            await _outgoing.WriteAsync(frame, shutdownCancellationToken);
+            return IpcFrameWriteResult.Written;
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
     }
 
     public ValueTask DisposeAsync()
@@ -69,5 +118,11 @@ internal sealed class InMemoryIpcConnection : IWindowsIpcConnection
         ArgumentNullException.ThrowIfNull(exception);
         Interlocked.Exchange(ref _disposeStarted, 1);
         _outgoing.TryComplete(exception);
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposeStarted) != 0)
+            throw new ObjectDisposedException(nameof(InMemoryIpcConnection));
     }
 }

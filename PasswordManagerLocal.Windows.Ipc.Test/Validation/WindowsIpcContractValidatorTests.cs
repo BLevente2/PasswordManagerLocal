@@ -23,6 +23,7 @@ public sealed class WindowsIpcContractValidatorTests
             false,
             false,
             false,
+            false,
             null,
             null));
         AssertInvalid(new BackendRuntimeStatusDto(
@@ -57,11 +58,13 @@ public sealed class WindowsIpcContractValidatorTests
             false,
             false,
             false,
+            false,
             null,
             DateTimeOffset.UtcNow));
         AssertInvalid(new AgentStatusDto(
             AgentState.Running,
             false,
+            true,
             true,
             true,
             false,
@@ -129,6 +132,7 @@ public sealed class WindowsIpcContractValidatorTests
             true,
             true,
             false,
+            false,
             Failure(IpcFailureKind.Runtime),
             DateTimeOffset.UtcNow));
         AssertInvalid(new BackendRuntimeStatusDto(
@@ -174,6 +178,7 @@ public sealed class WindowsIpcContractValidatorTests
             true,
             true,
             true,
+            true,
             null,
             DateTimeOffset.UtcNow));
     }
@@ -212,7 +217,6 @@ public sealed class WindowsIpcContractValidatorTests
     {
         foreach (var errorCode in new[]
         {
-            IpcErrorCode.ClientRequestLimitReached,
             IpcErrorCode.ServerBusy,
             IpcErrorCode.TooManyRequests
         })
@@ -273,6 +277,7 @@ public sealed class WindowsIpcContractValidatorTests
             true,
             true,
             true,
+            true,
             false,
             null,
             DateTimeOffset.UtcNow));
@@ -304,6 +309,7 @@ public sealed class WindowsIpcContractValidatorTests
             (context, _) => Task.FromResult(context.Success(
                 new AgentStatusDto(
                     (AgentState)999,
+                    false,
                     false,
                     false,
                     false,

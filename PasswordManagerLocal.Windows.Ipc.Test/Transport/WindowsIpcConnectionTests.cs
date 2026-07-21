@@ -40,6 +40,44 @@ public sealed class WindowsIpcConnectionTests
     }
 
     [TestMethod]
+    public async Task AdmissionRunsInsideWriteSlotAndSkippedFrameWritesNothing()
+    {
+        await using var stream = new FirstWriteGateStream();
+        var codec = new IpcFrameCodec();
+        await using var connection = new WindowsIpcConnection(stream, codec);
+        var firstFrame = CreateFrame(12, new byte[] { 7 });
+        var skippedFrame = CreateFrame(13, new byte[] { 8 });
+        var firstWrite = connection.WriteFrameAsync(firstFrame).AsTask();
+        await stream.FirstWriteStarted;
+        var admissionCalled = false;
+
+        var skippedWrite = connection.TryWriteFrameAsync(
+            skippedFrame,
+            () =>
+            {
+                admissionCalled = true;
+                return false;
+            },
+            CancellationToken.None,
+            CancellationToken.None).AsTask();
+        await Task.Yield();
+        Assert.IsFalse(admissionCalled);
+
+        stream.ReleaseFirstWrite();
+        await firstWrite;
+        Assert.AreEqual(
+            IpcFrameWriteResult.SkippedBeforeTransmission,
+            await skippedWrite);
+        Assert.IsTrue(admissionCalled);
+
+        await using var captured = new MemoryStream(stream.GetBytes());
+        var restored = await codec.ReadAsync(captured);
+        Assert.IsNotNull(restored);
+        Assert.AreEqual(firstFrame.Header.CorrelationId, restored.Header.CorrelationId);
+        Assert.IsNull(await codec.ReadAsync(captured));
+    }
+
+    [TestMethod]
     public async Task CancelledPartialWriteClosesConnection()
     {
         await using var stream = new BlockingWriteStream();

@@ -3,7 +3,7 @@ using System.IO.Pipes;
 
 namespace PasswordManagerLocal.Windows.Ipc.Transport;
 
-public sealed class WindowsNamedPipeServer
+public sealed class WindowsNamedPipeServer : IWindowsIpcConnectionListener
 {
     private const int PipeBufferSize = 64 * 1024;
 

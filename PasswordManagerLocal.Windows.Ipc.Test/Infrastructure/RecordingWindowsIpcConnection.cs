@@ -24,8 +24,11 @@ internal sealed class RecordingWindowsIpcConnection : IWindowsIpcConnection
     private TaskCompletionSource _readCallsChanged = NewSignal();
     private TaskCompletionSource _startedWritesChanged = NewSignal();
     private TaskCompletionSource _completedWritesChanged = NewSignal();
+    private TaskCompletionSource _admissionAttemptsChanged = NewSignal();
     private CancellationToken _lastRequestWriteToken;
     private int _readCount;
+    private int _admissionAttemptCount;
+    private int _skippedWriteCount;
     private int _disposeStarted;
 
     public RecordingWindowsIpcConnection(
@@ -48,6 +51,8 @@ internal sealed class RecordingWindowsIpcConnection : IWindowsIpcConnection
     public bool BlockRequestWriteReturns { get; set; }
     public bool FailRequestWrites { get; set; }
     public bool FailCancellationWrites { get; set; }
+    public int AdmissionAttemptCount => Volatile.Read(ref _admissionAttemptCount);
+    public int SkippedWriteCount => Volatile.Read(ref _skippedWriteCount);
 
     public CancellationToken LastRequestWriteToken
     {
@@ -94,19 +99,53 @@ internal sealed class RecordingWindowsIpcConnection : IWindowsIpcConnection
         try
         {
             ThrowIfDisposed();
-            RecordStarted(frame, cancellationToken);
-            if (frame.Header.MessageKind == IpcMessageKind.Request && BlockRequestWrites)
-                await _releaseRequestWrites.Task.WaitAsync(cancellationToken);
-            if (frame.Header.MessageKind == IpcMessageKind.RequestCancellation && BlockCancellationWrites)
-                await _releaseCancellationWrites.Task.WaitAsync(cancellationToken);
-            if (frame.Header.MessageKind == IpcMessageKind.Request && FailRequestWrites)
-                throw new IOException("Request write failed.");
-            if (frame.Header.MessageKind == IpcMessageKind.RequestCancellation && FailCancellationWrites)
-                throw new IOException("Cancellation write failed.");
+            cancellationToken.ThrowIfCancellationRequested();
+            await WriteFrameUnderLockAsync(frame, cancellationToken);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
 
-            RecordCompleted(frame);
-            if (frame.Header.MessageKind == IpcMessageKind.Request && BlockRequestWriteReturns)
-                await _releaseRequestWriteReturns.Task.WaitAsync(cancellationToken);
+    public async ValueTask<IpcFrameWriteResult> TryWriteFrameAsync(
+        IpcFrame frame,
+        Func<bool> tryBeginWrite,
+        CancellationToken queuedCancellationToken,
+        CancellationToken shutdownCancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(tryBeginWrite);
+        ThrowIfDisposed();
+        using var admissionSource = CancellationTokenSource.CreateLinkedTokenSource(
+            queuedCancellationToken,
+            shutdownCancellationToken);
+        try
+        {
+            await _writeLock.WaitAsync(admissionSource.Token);
+        }
+        catch (OperationCanceledException)
+            when (shutdownCancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+            when (queuedCancellationToken.IsCancellationRequested)
+        {
+            RecordAdmissionAttempt(admitted: false);
+            return IpcFrameWriteResult.SkippedBeforeTransmission;
+        }
+
+        try
+        {
+            ThrowIfDisposed();
+            shutdownCancellationToken.ThrowIfCancellationRequested();
+            var admitted = tryBeginWrite();
+            RecordAdmissionAttempt(admitted);
+            if (!admitted)
+                return IpcFrameWriteResult.SkippedBeforeTransmission;
+
+            await WriteFrameUnderLockAsync(frame, shutdownCancellationToken);
+            return IpcFrameWriteResult.Written;
         }
         finally
         {
@@ -209,12 +248,50 @@ internal sealed class RecordingWindowsIpcConnection : IWindowsIpcConnection
         }
     }
 
+    public async Task WaitForAdmissionAttemptsAsync(
+        int count,
+        CancellationToken cancellationToken = default)
+    {
+        while (true)
+        {
+            Task waitTask;
+            lock (_writesGate)
+            {
+                if (_admissionAttemptCount >= count)
+                    return;
+
+                waitTask = _admissionAttemptsChanged.Task;
+            }
+
+            await waitTask.WaitAsync(cancellationToken);
+        }
+    }
+
     public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) == 0)
             _readFrames.Writer.TryComplete();
 
         return ValueTask.CompletedTask;
+    }
+
+    private async ValueTask WriteFrameUnderLockAsync(
+        IpcFrame frame,
+        CancellationToken cancellationToken)
+    {
+        RecordStarted(frame, cancellationToken);
+        if (frame.Header.MessageKind == IpcMessageKind.Request && BlockRequestWrites)
+            await _releaseRequestWrites.Task.WaitAsync(cancellationToken);
+        if (frame.Header.MessageKind == IpcMessageKind.RequestCancellation && BlockCancellationWrites)
+            await _releaseCancellationWrites.Task.WaitAsync(cancellationToken);
+        if (frame.Header.MessageKind == IpcMessageKind.Request && FailRequestWrites)
+            throw new IOException("Request write failed.");
+        if (frame.Header.MessageKind == IpcMessageKind.RequestCancellation && FailCancellationWrites)
+            throw new IOException("Cancellation write failed.");
+
+        RecordCompleted(frame);
+        if (frame.Header.MessageKind == IpcMessageKind.Request && BlockRequestWriteReturns)
+            await _releaseRequestWriteReturns.Task.WaitAsync(cancellationToken);
     }
 
     private async ValueTask<IpcFrame?> ReadQueuedFrameAsync(CancellationToken cancellationToken)
@@ -242,6 +319,21 @@ internal sealed class RecordingWindowsIpcConnection : IWindowsIpcConnection
 
         signal.TrySetResult();
         return readCount;
+    }
+
+    private void RecordAdmissionAttempt(bool admitted)
+    {
+        TaskCompletionSource signal;
+        lock (_writesGate)
+        {
+            _admissionAttemptCount++;
+            if (!admitted)
+                _skippedWriteCount++;
+            signal = _admissionAttemptsChanged;
+            _admissionAttemptsChanged = NewSignal();
+        }
+
+        signal.TrySetResult();
     }
 
     private void RecordStarted(IpcFrame frame, CancellationToken cancellationToken)

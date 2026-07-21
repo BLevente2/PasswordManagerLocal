@@ -304,6 +304,9 @@
       "passwordmanagerlocal.runtime.abstractions": {
         "type": "Project"
       },
+      "passwordmanagerlocal.windows.ipc": {
+        "type": "Project"
+      },
       "Avalonia.Controls.ColorPicker": {
         "type": "CentralTransitive",
         "requested": "[11.3.18, )",
