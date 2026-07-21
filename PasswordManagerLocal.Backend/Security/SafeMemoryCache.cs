@@ -78,7 +78,8 @@ public sealed class SafeMemoryCache
         }
         finally
         {
-            _inflight.TryRemove(key, out _);
+            ((ICollection<KeyValuePair<string, Lazy<Task<object?>>>>)_inflight)
+                .Remove(new KeyValuePair<string, Lazy<Task<object?>>>(key, lazy));
         }
     }
 

@@ -9,6 +9,7 @@ public interface IInteractiveSessionStateService
 
     Task ActivateAsync(CancellationToken cancellationToken = default);
     Task DeactivateAsync(CancellationToken cancellationToken = default);
+    IDisposable EnterOperation();
     T ExecuteRequired<T>(Func<T> operation);
     bool TryGetUserEncryptionKey(Guid userId, out EncryptionKey? key);
     Task LogoutUserAsync(

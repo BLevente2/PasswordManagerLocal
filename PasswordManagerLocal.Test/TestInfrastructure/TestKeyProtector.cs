@@ -4,6 +4,8 @@ namespace PasswordManagerLocal.Test.TestInfrastructure;
 
 public sealed class TestKeyProtector : IKeyProtector
 {
+    public byte[]? LastUnprotectedBuffer { get; private set; }
+
     public byte[] Protect(ReadOnlySpan<byte> plaintext)
     {
         var result = new byte[plaintext.Length + 1];
@@ -25,6 +27,7 @@ public sealed class TestKeyProtector : IKeyProtector
         for (int i = 0; i < result.Length; i++)
             result[i] = (byte)(protectedBlob[i + 1] ^ 0x5A);
 
+        LastUnprotectedBuffer = result;
         return result;
     }
 }

@@ -105,6 +105,23 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
         }
     }
 
+    public async Task RecoverRuntimeAsync(CancellationToken cancellationToken = default)
+    {
+        await _transitionLock.WaitAsync(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _runtime.StopAsync(CancellationToken.None);
+
+            if (GetTotalLeaseCount() > 0)
+                await _runtime.EnsureStartedAsync(CancellationToken.None);
+        }
+        finally
+        {
+            _transitionLock.Release();
+        }
+    }
+
     internal async ValueTask ReleaseAsync(BackendLifetimeReason reason)
     {
         await _transitionLock.WaitAsync(CancellationToken.None);

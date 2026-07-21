@@ -55,16 +55,30 @@ public sealed class InProcessFrontendBackendClient : IFrontendBackendClient<IEnd
             }
             catch (Exception connectionException)
             {
+                Exception failure = connectionException;
+
+                if (_backendRuntime.InteractiveSessionSnapshot.RequiresRecovery)
+                {
+                    try
+                    {
+                        await _lifetimeCoordinator.RecoverRuntimeAsync(CancellationToken.None);
+                    }
+                    catch (Exception recoveryException)
+                    {
+                        failure = new AggregateException(failure, recoveryException);
+                    }
+                }
+
                 try
                 {
                     await lease.DisposeAsync();
                 }
                 catch (Exception cleanupException)
                 {
-                    throw new AggregateException(connectionException, cleanupException);
+                    failure = new AggregateException(failure, cleanupException);
                 }
 
-                throw;
+                throw failure;
             }
         }
         finally
@@ -110,16 +124,30 @@ public sealed class InProcessFrontendBackendClient : IFrontendBackendClient<IEnd
             }
             catch (Exception connectionException)
             {
+                Exception failure = connectionException;
+
+                if (_backendRuntime.InteractiveSessionSnapshot.RequiresRecovery)
+                {
+                    try
+                    {
+                        await _lifetimeCoordinator.RecoverRuntimeAsync(CancellationToken.None);
+                    }
+                    catch (Exception recoveryException)
+                    {
+                        failure = new AggregateException(failure, recoveryException);
+                    }
+                }
+
                 try
                 {
                     await lease.DisposeAsync();
                 }
                 catch (Exception cleanupException)
                 {
-                    throw new AggregateException(connectionException, cleanupException);
+                    failure = new AggregateException(failure, cleanupException);
                 }
 
-                throw;
+                throw failure;
             }
         }
         finally
@@ -196,6 +224,15 @@ public sealed class InProcessFrontendBackendClient : IFrontendBackendClient<IEnd
             catch (Exception exception)
             {
                 failure = exception;
+
+                try
+                {
+                    await _lifetimeCoordinator.RecoverRuntimeAsync(CancellationToken.None);
+                }
+                catch (Exception recoveryException)
+                {
+                    failure = new AggregateException(failure, recoveryException);
+                }
             }
         }
 

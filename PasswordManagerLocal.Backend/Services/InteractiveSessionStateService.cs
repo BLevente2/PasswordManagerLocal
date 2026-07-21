@@ -9,6 +9,7 @@ public sealed class InteractiveSessionStateService : IInteractiveSessionStateSer
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly object _stateLock = new();
+    private readonly AsyncLocal<InteractiveSessionOperationLease?> _currentOperation = new();
     private TaskCompletionSource? _operationsDrained;
     private int _activeOperations;
     private bool _active;
@@ -64,24 +65,38 @@ public sealed class InteractiveSessionStateService : IInteractiveSessionStateSer
             : operationsDrained.WaitAsync(cancellationToken);
     }
 
+    public IDisposable EnterOperation()
+    {
+        lock (_stateLock)
+        {
+            if (!_active)
+            {
+                throw new InvalidOperationException(
+                    "Interactive user-data state is unavailable without an active interactive session.");
+            }
+
+            var lease = new InteractiveSessionOperationLease(this, _currentOperation.Value);
+            _activeOperations++;
+            _currentOperation.Value = lease;
+            return lease;
+        }
+    }
+
     public T ExecuteRequired<T>(Func<T> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        BeginRequiredOperation();
-        try
-        {
+        if (HasAdmittedOperation())
             return operation();
-        }
-        finally
-        {
-            EndOperation();
-        }
+
+        using var lease = EnterOperation();
+        return operation();
     }
 
     public bool TryGetUserEncryptionKey(Guid userId, out EncryptionKey? key)
     {
         key = null;
-        if (!TryBeginOperation())
+        IDisposable? lease = null;
+        if (!HasAdmittedOperation() && !TryEnterOperation(out lease))
             return false;
 
         try
@@ -100,7 +115,7 @@ public sealed class InteractiveSessionStateService : IInteractiveSessionStateSer
         }
         finally
         {
-            EndOperation();
+            lease?.Dispose();
         }
     }
 
@@ -155,56 +170,16 @@ public sealed class InteractiveSessionStateService : IInteractiveSessionStateSer
             },
             cancellationToken);
 
-    private async Task ExecuteIfActiveAsync(
-        Func<IServiceProvider, CancellationToken, Task> operation,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!TryBeginOperation())
-            return;
-
-        try
-        {
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            await operation(scope.ServiceProvider, cancellationToken);
-        }
-        finally
-        {
-            EndOperation();
-        }
-    }
-
-    private bool TryBeginOperation()
-    {
-        lock (_stateLock)
-        {
-            if (!_active)
-                return false;
-
-            _activeOperations++;
-            return true;
-        }
-    }
-
-    private void BeginRequiredOperation()
-    {
-        lock (_stateLock)
-        {
-            if (!_active)
-            {
-                throw new InvalidOperationException(
-                    "Interactive user-data state is unavailable without an active interactive session.");
-            }
-
-            _activeOperations++;
-        }
-    }
-
-    private void EndOperation()
+    internal void CompleteOperation(
+        InteractiveSessionOperationLease operation,
+        InteractiveSessionOperationLease? previous)
     {
         TaskCompletionSource? operationsDrained = null;
         lock (_stateLock)
         {
+            if (ReferenceEquals(_currentOperation.Value, operation))
+                _currentOperation.Value = previous;
+
             _activeOperations--;
             if (!_active && _activeOperations == 0)
             {
@@ -215,4 +190,45 @@ public sealed class InteractiveSessionStateService : IInteractiveSessionStateSer
 
         operationsDrained?.TrySetResult();
     }
+
+    private async Task ExecuteIfActiveAsync(
+        Func<IServiceProvider, CancellationToken, Task> operation,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        IDisposable? lease = null;
+        if (!HasAdmittedOperation() && !TryEnterOperation(out lease))
+            return;
+
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            await operation(scope.ServiceProvider, cancellationToken);
+        }
+        finally
+        {
+            lease?.Dispose();
+        }
+    }
+
+    private bool TryEnterOperation(out IDisposable? lease)
+    {
+        lock (_stateLock)
+        {
+            if (!_active)
+            {
+                lease = null;
+                return false;
+            }
+
+            var operation = new InteractiveSessionOperationLease(this, _currentOperation.Value);
+            _activeOperations++;
+            _currentOperation.Value = operation;
+            lease = operation;
+            return true;
+        }
+    }
+
+    private bool HasAdmittedOperation() =>
+        _currentOperation.Value is { IsActive: true };
 }

@@ -47,6 +47,17 @@ public sealed class FakeInteractiveSessionStateService : IInteractiveSessionStat
         return Task.CompletedTask;
     }
 
+    public IDisposable EnterOperation()
+    {
+        if (!IsActive)
+        {
+            throw new InvalidOperationException(
+                "Interactive user-data state is unavailable without an active interactive session.");
+        }
+
+        return new CancellationTokenSource();
+    }
+
     public T ExecuteRequired<T>(Func<T> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);

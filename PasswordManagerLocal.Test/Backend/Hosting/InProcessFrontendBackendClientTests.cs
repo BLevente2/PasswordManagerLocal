@@ -49,6 +49,39 @@ public sealed class InProcessFrontendBackendClientTests
     }
 
     [TestMethod]
+    public async Task CleanupFailureRecoversRuntimeAndPreservesBackgroundOwnership()
+    {
+        using var host = new BackendTestHost();
+        var cleanupFailure = new InvalidOperationException("interactive cleanup failed");
+        var runtime = new FakeBackendRuntime(host.Services.GetRequiredService<IEndpoints>())
+        {
+            InteractiveSessionDisposeFailure = cleanupFailure
+        };
+        var coordinator = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var backgroundLease = await coordinator.AcquireAsync(
+            BackendLifetimeReason.BackgroundSync);
+        var client = new InProcessFrontendBackendClient(runtime, coordinator);
+        await client.ConnectAsync();
+        var ensureStartedCallsBeforeRecovery = runtime.EnsureStartedCalls;
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await client.DisposeAsync());
+
+        Assert.AreSame(cleanupFailure, thrown);
+        Assert.AreEqual(1, runtime.StopCalls);
+        Assert.AreEqual(
+            ensureStartedCallsBeforeRecovery + 1,
+            runtime.EnsureStartedCalls);
+        Assert.AreEqual(BackendLifetimeReason.BackgroundSync, coordinator.ActiveReasons);
+        Assert.AreEqual(
+            InteractiveSessionLifecycleState.None,
+            runtime.InteractiveSessionSnapshot.State);
+
+        await client.DisposeAsync();
+        Assert.AreEqual(1, runtime.StopCalls);
+    }
+
+    [TestMethod]
     public async Task ReadinessAndDatabaseResetAreForwardedAndReconnectInteractiveSession()
     {
         using var host = new BackendTestHost();

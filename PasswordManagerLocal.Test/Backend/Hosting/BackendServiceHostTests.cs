@@ -48,6 +48,32 @@ public sealed class BackendServiceHostTests
             calls);
     }
 
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Unit")]
+    public async Task StopContinuesAcrossServicesAndAggregatesFailures()
+    {
+        var calls = new List<string>();
+        var services = new ServiceCollection();
+        services.AddSingleton<IBackendHostedService>(
+            new FakeBackendHostedService("first", calls, throwOnStop: true));
+        services.AddSingleton<IBackendHostedService>(
+            new FakeBackendHostedService("second", calls, throwOnStop: true));
+        var host = new BackendServiceHost(services.BuildServiceProvider());
+        await host.StartAsync();
+
+        var failure = await Assert.ThrowsAsync<AggregateException>(
+            async () => await host.StopAsync());
+
+        Assert.AreEqual(2, failure.Flatten().InnerExceptions.Count);
+        CollectionAssert.AreEqual(
+            new[] { "start:first", "start:second", "stop:second", "stop:first" },
+            calls);
+        await Assert.ThrowsAsync<AggregateException>(
+            async () => await host.DisposeAsync());
+    }
+
     private static async Task ExpectThrowsAsync<TException>(Func<Task> action) where TException : Exception
     {
         try

@@ -24,12 +24,17 @@ internal sealed class BackendRuntime : IBackendRuntime
         BackendRuntimeFailureKind.None,
         null,
         DateTimeOffset.UtcNow);
+    private InteractiveSessionLifecycleSnapshot _interactiveSessionSnapshot = new(
+        InteractiveSessionLifecycleState.None,
+        null,
+        DateTimeOffset.UtcNow);
     private SyncRuntimeSnapshot _syncSnapshot = new(SyncRuntimeState.Disabled, null);
     private BackendServiceHost? _host;
     private ISyncRuntimeService? _syncRuntime;
     private InteractiveBackendSession? _interactiveSession;
     private Task? _startupTask;
     private Task? _stopTask;
+    private Exception? _restartBlockedFailure;
     private long _hostGeneration;
     private bool _disposeRequested;
     private bool _disposed;
@@ -46,6 +51,15 @@ internal sealed class BackendRuntime : IBackendRuntime
         {
             lock (_gate)
                 return _snapshot;
+        }
+    }
+
+    public InteractiveSessionLifecycleSnapshot InteractiveSessionSnapshot
+    {
+        get
+        {
+            lock (_gate)
+                return _interactiveSessionSnapshot;
         }
     }
 
@@ -73,6 +87,7 @@ internal sealed class BackendRuntime : IBackendRuntime
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
+                ThrowIfRestartBlockedLocked();
 
                 if (_snapshot.State == BackendRuntimeState.Ready)
                     return;
@@ -121,53 +136,118 @@ internal sealed class BackendRuntime : IBackendRuntime
     public async Task<IInteractiveBackendSession> OpenInteractiveSessionAsync(
         CancellationToken cancellationToken = default)
     {
+        lock (_gate)
+            EnsureInteractiveSessionCanOpenLocked();
+
         await WaitUntilReadyAsync(cancellationToken);
         await _interactiveSessionLock.WaitAsync(cancellationToken);
+
+        Exception? openingFailure = null;
+        Exception? cleanupFailure = null;
+        BackendRuntimeStateChangedEventArgs? stateChange = null;
+        InteractiveBackendSession? openedSession = null;
 
         try
         {
             BackendServiceHost host;
+            IInteractiveSessionStateService sessionState;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
-
-                if (_interactiveSession is not null)
-                    throw new InvalidOperationException("An interactive backend session is already active.");
+                EnsureInteractiveSessionCanOpenLocked();
 
                 host = _host is not null && _snapshot.State == BackendRuntimeState.Ready
                     ? _host
                     : throw new InvalidOperationException("The backend runtime is not ready.");
+                sessionState = host.Services.GetRequiredService<IInteractiveSessionStateService>();
+                SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.Opening, null);
             }
 
             try
             {
                 await host.StartInteractiveAsync(cancellationToken);
                 var endpoints = host.Services.GetRequiredService<IEndpoints>();
-                await host.Services
-                    .GetRequiredService<IInteractiveSessionStateService>()
-                    .ActivateAsync(cancellationToken);
-                var session = new InteractiveBackendSession(endpoints, CloseInteractiveSessionAsync);
-                _interactiveSession = session;
-                return session;
+                await sessionState.ActivateAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                openedSession = new InteractiveBackendSession(
+                    endpoints,
+                    sessionState,
+                    CloseInteractiveSessionAsync);
+
+                lock (_gate)
+                {
+                    ThrowIfDisposedLocked();
+                    if (_snapshot.State != BackendRuntimeState.Ready ||
+                        !ReferenceEquals(_host, host))
+                    {
+                        throw new InvalidOperationException(
+                            "The backend runtime stopped while the interactive session was opening.");
+                    }
+
+                    _interactiveSession = openedSession;
+                    SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.Active, null);
+                }
             }
-            catch (Exception startException)
+            catch (Exception exception)
             {
+                openingFailure = exception;
                 try
                 {
-                    await StopInteractiveStateAsync(host, CancellationToken.None);
+                    await StopInteractiveStateAsync(host, null, CancellationToken.None);
                 }
-                catch (Exception cleanupException)
+                catch (Exception exceptionDuringCleanup)
                 {
-                    throw new AggregateException(startException, cleanupException);
+                    cleanupFailure = exceptionDuringCleanup;
                 }
 
-                throw;
+                lock (_gate)
+                {
+                    _interactiveSession = null;
+                    if (cleanupFailure is null)
+                    {
+                        SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.None, null);
+                    }
+                    else
+                    {
+                        var openingCleanupFailure = new AggregateException(openingFailure, cleanupFailure);
+                        SetInteractiveSessionSnapshotLocked(
+                            InteractiveSessionLifecycleState.CleanupFailed,
+                            openingCleanupFailure);
+                        stateChange = TransitionLocked(
+                            BackendRuntimeState.Failed,
+                            BackendRuntimeFailureKind.InteractiveCleanupFailure,
+                            openingCleanupFailure);
+                    }
+                }
             }
         }
         finally
         {
             _interactiveSessionLock.Release();
         }
+
+        Publish(stateChange);
+
+        if (openingFailure is null)
+            return openedSession!;
+
+        Exception failure = cleanupFailure is null
+            ? openingFailure
+            : new AggregateException(openingFailure, cleanupFailure);
+
+        if (cleanupFailure is not null)
+        {
+            try
+            {
+                await StopAsync(CancellationToken.None);
+            }
+            catch (Exception stopFailure)
+            {
+                failure = new AggregateException(failure, stopFailure);
+            }
+        }
+
+        throw failure;
     }
 
     public Task ResetDatabaseAndRestartAsync(CancellationToken cancellationToken = default)
@@ -215,6 +295,15 @@ internal sealed class BackendRuntime : IBackendRuntime
             {
                 if (_disposed)
                     return;
+
+                if (_restartBlockedFailure is not null &&
+                    _startupTask is null &&
+                    _stopTask is null)
+                {
+                    throw new InvalidOperationException(
+                        "The backend runtime cannot be restarted or stopped cleanly on this instance after an unsafe shutdown failure. Runtime recreation is required.",
+                        _restartBlockedFailure);
+                }
 
                 startupToWait = _startupTask;
                 if (startupToWait is not null)
@@ -279,25 +368,82 @@ internal sealed class BackendRuntime : IBackendRuntime
 
     private async ValueTask CloseInteractiveSessionAsync(InteractiveBackendSession session)
     {
+        Exception? cleanupFailure = null;
+        BackendRuntimeStateChangedEventArgs? stateChange = null;
+
         await _interactiveSessionLock.WaitAsync(CancellationToken.None);
         try
         {
-            if (!ReferenceEquals(_interactiveSession, session))
-                return;
-
             BackendServiceHost? host;
             lock (_gate)
+            {
+                if (!ReferenceEquals(_interactiveSession, session))
+                    return;
+
                 host = _host;
+            }
 
-            if (host is not null)
-                await StopInteractiveStateAsync(host, CancellationToken.None);
+            void MarkClosing() => MarkInteractiveSessionClosing(session);
 
-            _interactiveSession = null;
+            try
+            {
+                if (host is null)
+                {
+                    await session.BeginCloseAsync(MarkClosing);
+                }
+                else
+                {
+                    await StopInteractiveStateAsync(
+                        host,
+                        session,
+                        CancellationToken.None,
+                        MarkClosing);
+                }
+            }
+            catch (Exception exception)
+            {
+                cleanupFailure = exception;
+            }
+
+            lock (_gate)
+            {
+                if (cleanupFailure is null)
+                {
+                    SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.None, null);
+                }
+                else
+                {
+                    SetInteractiveSessionSnapshotLocked(
+                        InteractiveSessionLifecycleState.CleanupFailed,
+                        cleanupFailure);
+                    stateChange = TransitionLocked(
+                        BackendRuntimeState.Failed,
+                        BackendRuntimeFailureKind.InteractiveCleanupFailure,
+                        cleanupFailure);
+                }
+            }
         }
         finally
         {
             _interactiveSessionLock.Release();
         }
+
+        Publish(stateChange);
+
+        if (cleanupFailure is null)
+            return;
+
+        Exception failure = cleanupFailure;
+        try
+        {
+            await StopAsync(CancellationToken.None);
+        }
+        catch (Exception stopFailure)
+        {
+            failure = new AggregateException(failure, stopFailure);
+        }
+
+        throw failure;
     }
 
     private async Task CloseInteractiveStateForShutdownAsync(BackendServiceHost? host)
@@ -305,14 +451,71 @@ internal sealed class BackendRuntime : IBackendRuntime
         await _interactiveSessionLock.WaitAsync(CancellationToken.None);
         try
         {
-            var session = _interactiveSession;
-            _interactiveSession = null;
+            InteractiveBackendSession? session;
+            Exception? previousCleanupFailure = null;
+            var preserveCleanupFailure = false;
+            lock (_gate)
+            {
+                session = _interactiveSession;
+                preserveCleanupFailure =
+                    _interactiveSessionSnapshot.State == InteractiveSessionLifecycleState.CleanupFailed;
+                previousCleanupFailure = preserveCleanupFailure
+                    ? _interactiveSessionSnapshot.Failure
+                    : null;
+                if (session is null &&
+                    !preserveCleanupFailure &&
+                    _interactiveSessionSnapshot.State != InteractiveSessionLifecycleState.None)
+                {
+                    SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.Closing, null);
+                }
+            }
 
-            if (session is not null)
-                await session.InvalidateAsync();
+            void MarkClosing()
+            {
+                if (session is not null)
+                    MarkInteractiveSessionClosing(session);
+            }
 
-            if (host is not null)
-                await StopInteractiveStateAsync(host, CancellationToken.None);
+            Exception? failure = null;
+            try
+            {
+                if (host is not null)
+                {
+                    await StopInteractiveStateAsync(
+                        host,
+                        session,
+                        CancellationToken.None,
+                        session is null ? null : MarkClosing);
+                }
+                else if (session is not null)
+                {
+                    await session.BeginCloseAsync(MarkClosing);
+                }
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+
+            lock (_gate)
+            {
+                if (failure is not null)
+                {
+                    var combinedFailure = previousCleanupFailure is null
+                        ? failure
+                        : new AggregateException(previousCleanupFailure, failure);
+                    SetInteractiveSessionSnapshotLocked(
+                        InteractiveSessionLifecycleState.CleanupFailed,
+                        combinedFailure);
+                }
+                else if (!preserveCleanupFailure)
+                {
+                    SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.None, null);
+                }
+            }
+
+            if (failure is not null)
+                throw failure;
         }
         finally
         {
@@ -322,20 +525,44 @@ internal sealed class BackendRuntime : IBackendRuntime
 
     private static async Task StopInteractiveStateAsync(
         BackendServiceHost host,
-        CancellationToken cancellationToken)
+        InteractiveBackendSession? session,
+        CancellationToken cancellationToken,
+        Action? closingStarted = null)
     {
-        Exception? failure = null;
+        var failures = new List<Exception>();
+        Task? sessionDrain = null;
+        Task? stateDrain = null;
 
-        try
+        if (session is not null)
         {
-            await host.Services
-                .GetRequiredService<IInteractiveSessionStateService>()
-                .DeactivateAsync(CancellationToken.None);
+            try
+            {
+                sessionDrain = session.BeginCloseAsync(closingStarted);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
         }
-        catch (Exception exception)
+        else
         {
-            failure = exception;
+            try
+            {
+                stateDrain = host.Services
+                    .GetRequiredService<IInteractiveSessionStateService>()
+                    .DeactivateAsync(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+            }
         }
+
+        if (sessionDrain is not null)
+            await CaptureTaskFailuresAsync(sessionDrain, failures);
+
+        if (stateDrain is not null)
+            await CaptureTaskFailuresAsync(stateDrain, failures);
 
         try
         {
@@ -343,9 +570,7 @@ internal sealed class BackendRuntime : IBackendRuntime
         }
         catch (Exception exception)
         {
-            failure = failure is null
-                ? exception
-                : new AggregateException(failure, exception);
+            failures.Add(exception);
         }
 
         try
@@ -356,13 +581,31 @@ internal sealed class BackendRuntime : IBackendRuntime
         }
         catch (Exception exception)
         {
-            failure = failure is null
-                ? exception
-                : new AggregateException(failure, exception);
+            failures.Add(exception);
         }
 
-        if (failure is not null)
-            throw failure;
+        if (failures.Count == 1)
+            throw failures[0];
+        if (failures.Count > 1)
+            throw new AggregateException(failures);
+    }
+
+    private static async Task CaptureTaskFailuresAsync(
+        Task task,
+        ICollection<Exception> failures)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception exception)
+        {
+            if (task.Exception is { } aggregate)
+                foreach (var inner in aggregate.Flatten().InnerExceptions)
+                    failures.Add(inner);
+            else
+                failures.Add(exception);
+        }
     }
 
     private async Task RunStartupAsync(TaskCompletionSource completion, bool resetStorageFirst)
@@ -391,9 +634,11 @@ internal sealed class BackendRuntime : IBackendRuntime
             {
                 _host = newHost;
                 _syncRuntime = newSyncRuntime;
+                _restartBlockedFailure = null;
                 newSyncRuntime.StateChanged += HandleSyncStateChanged;
                 generation = ++_hostGeneration;
                 syncStateChange = SetSyncSnapshotLocked(newSyncRuntime.Snapshot);
+                SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.None, null);
                 finalStateChange = TransitionLocked(
                     BackendRuntimeState.Ready,
                     BackendRuntimeFailureKind.None,
@@ -628,14 +873,15 @@ internal sealed class BackendRuntime : IBackendRuntime
             _hostGeneration++;
         }
 
-        Exception? failure = null;
+        var failures = new List<Exception>();
+        Exception? unsafeRestartFailure = null;
         try
         {
             await CloseInteractiveStateForShutdownAsync(host);
         }
         catch (Exception exception)
         {
-            failure = exception;
+            failures.Add(exception);
         }
 
         if (syncRuntime is not null)
@@ -646,9 +892,8 @@ internal sealed class BackendRuntime : IBackendRuntime
             }
             catch (Exception exception)
             {
-                failure = failure is null
-                    ? exception
-                    : new AggregateException(failure, exception);
+                failures.Add(exception);
+                unsafeRestartFailure = exception;
             }
         }
 
@@ -660,14 +905,23 @@ internal sealed class BackendRuntime : IBackendRuntime
             }
             catch (Exception exception)
             {
-                failure = failure is null
+                failures.Add(exception);
+                unsafeRestartFailure = unsafeRestartFailure is null
                     ? exception
-                    : new AggregateException(failure, exception);
+                    : new AggregateException(unsafeRestartFailure, exception);
             }
         }
 
-        if (failure is not null)
-            throw failure;
+        if (unsafeRestartFailure is not null)
+        {
+            lock (_gate)
+                _restartBlockedFailure ??= unsafeRestartFailure;
+        }
+
+        if (failures.Count == 1)
+            throw failures[0];
+        if (failures.Count > 1)
+            throw new AggregateException(failures);
     }
 
     private void HandleSyncStateChanged(object? sender, SyncRuntimeStateChangedEventArgs args)
@@ -705,6 +959,52 @@ internal sealed class BackendRuntime : IBackendRuntime
         return new BackendRuntimeStateChangedEventArgs(previous, _snapshot);
     }
 
+    private void MarkInteractiveSessionClosing(InteractiveBackendSession session)
+    {
+        lock (_gate)
+        {
+            if (ReferenceEquals(_interactiveSession, session))
+                _interactiveSession = null;
+
+            if (_interactiveSessionSnapshot.State != InteractiveSessionLifecycleState.CleanupFailed)
+                SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.Closing, null);
+        }
+    }
+
+    private void EnsureInteractiveSessionCanOpenLocked()
+    {
+        switch (_interactiveSessionSnapshot.State)
+        {
+            case InteractiveSessionLifecycleState.None:
+                if (_interactiveSession is not null)
+                    throw new InvalidOperationException("The interactive session registration is inconsistent.");
+                return;
+            case InteractiveSessionLifecycleState.CleanupFailed:
+                throw new InvalidOperationException(
+                    "Interactive session cleanup failed. A full backend runtime recovery is required before another session can open.",
+                    _interactiveSessionSnapshot.Failure);
+            default:
+                throw new InvalidOperationException(
+                    $"An interactive backend session cannot open while the lifecycle state is {_interactiveSessionSnapshot.State}.");
+        }
+    }
+
+    private void SetInteractiveSessionSnapshotLocked(
+        InteractiveSessionLifecycleState state,
+        Exception? failure)
+    {
+        if (_interactiveSessionSnapshot.State == state &&
+            ReferenceEquals(_interactiveSessionSnapshot.Failure, failure))
+        {
+            return;
+        }
+
+        _interactiveSessionSnapshot = new InteractiveSessionLifecycleSnapshot(
+            state,
+            failure,
+            DateTimeOffset.UtcNow);
+    }
+
     private SyncRuntimeStateChangedEventArgs? SetSyncSnapshotLocked(SyncRuntimeSnapshot snapshot)
     {
         if (_syncSnapshot == snapshot)
@@ -738,6 +1038,16 @@ internal sealed class BackendRuntime : IBackendRuntime
             exception = aggregate.InnerExceptions[0];
 
         return exception;
+    }
+
+    private void ThrowIfRestartBlockedLocked()
+    {
+        if (_restartBlockedFailure is not null)
+        {
+            throw new InvalidOperationException(
+                "The backend runtime cannot restart safely on this instance after an incomplete shutdown. Runtime recreation is required.",
+                _restartBlockedFailure);
+        }
     }
 
     private void ThrowIfDisposedLocked()

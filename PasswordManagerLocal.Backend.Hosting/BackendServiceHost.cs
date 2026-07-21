@@ -234,46 +234,50 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 
     private async Task StopStartedInteractiveServicesAsync(CancellationToken cancellationToken)
     {
-        Exception? firstException = null;
+        var failures = new List<Exception>();
 
         for (var index = _startedInteractiveServices.Count - 1; index >= 0; index--)
         {
             try
             {
                 await _startedInteractiveServices[index].StopAsync(cancellationToken);
+                _startedInteractiveServices.RemoveAt(index);
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                failures.Add(exception);
             }
         }
 
-        _startedInteractiveServices.Clear();
-
-        if (firstException is not null)
-            throw firstException;
+        ThrowStopFailures(failures);
     }
 
     private async Task StopStartedServicesAsync(CancellationToken cancellationToken)
     {
-        Exception? firstException = null;
+        var failures = new List<Exception>();
 
         for (var index = _startedServices.Count - 1; index >= 0; index--)
         {
             try
             {
                 await _startedServices[index].StopAsync(cancellationToken);
+                _startedServices.RemoveAt(index);
             }
             catch (Exception exception)
             {
-                firstException ??= exception;
+                failures.Add(exception);
             }
         }
 
-        _startedServices.Clear();
+        ThrowStopFailures(failures);
+    }
 
-        if (firstException is not null)
-            throw firstException;
+    private static void ThrowStopFailures(IReadOnlyList<Exception> failures)
+    {
+        if (failures.Count == 1)
+            throw failures[0];
+        if (failures.Count > 1)
+            throw new AggregateException(failures);
     }
 
     private void ThrowIfDisposed()

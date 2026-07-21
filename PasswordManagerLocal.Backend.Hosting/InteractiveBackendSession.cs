@@ -1,10 +1,12 @@
 using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Backend.Abstractions.Services;
 
 namespace PasswordManagerLocal.Backend.Hosting;
 
 internal sealed class InteractiveBackendSession : IInteractiveBackendSession
 {
     private readonly Func<InteractiveBackendSession, ValueTask> _release;
+    private readonly IInteractiveSessionStateService _sessionState;
     private readonly object _operationLock = new();
     private readonly TaskCompletionSource _disposeCompletion = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
@@ -17,9 +19,11 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
 
     public InteractiveBackendSession(
         IEndpoints endpoints,
+        IInteractiveSessionStateService sessionState,
         Func<InteractiveBackendSession, ValueTask> release)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
+        _sessionState = sessionState ?? throw new ArgumentNullException(nameof(sessionState));
         _release = release ?? throw new ArgumentNullException(nameof(release));
         _sessionEndpoints = new SessionBoundEndpoints(this);
     }
@@ -41,32 +45,79 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
     internal async Task ExecuteAsync(Func<IEndpoints, Task> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        var endpoints = BeginOperation();
+        var (endpoints, stateLease) = BeginOperation();
         try
         {
             await operation(endpoints);
         }
         finally
         {
-            EndOperation();
+            try
+            {
+                stateLease.Dispose();
+            }
+            finally
+            {
+                EndOperation();
+            }
         }
     }
 
     internal async Task<T> ExecuteAsync<T>(Func<IEndpoints, Task<T>> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        var endpoints = BeginOperation();
+        var (endpoints, stateLease) = BeginOperation();
         try
         {
             return await operation(endpoints);
         }
         finally
         {
-            EndOperation();
+            try
+            {
+                stateLease.Dispose();
+            }
+            finally
+            {
+                EndOperation();
+            }
         }
     }
 
-    internal Task InvalidateAsync() => BeginCloseAsync();
+    internal Task BeginCloseAsync(Action? closingStarted = null)
+    {
+        Task operationDrain;
+        Task stateDrain;
+
+        lock (_operationLock)
+        {
+            _closing = true;
+            try
+            {
+                stateDrain = _sessionState.DeactivateAsync(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                stateDrain = Task.FromException(exception);
+            }
+
+            closingStarted?.Invoke();
+
+            if (_activeOperations == 0)
+            {
+                _endpoints = null;
+                operationDrain = Task.CompletedTask;
+            }
+            else
+            {
+                _operationsDrained ??= new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                operationDrain = _operationsDrained.Task;
+            }
+        }
+
+        return Task.WhenAll(operationDrain, stateDrain);
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -78,7 +129,6 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
 
         try
         {
-            await BeginCloseAsync();
             await _release(this);
             _disposeCompletion.TrySetResult();
             GC.SuppressFinalize(this);
@@ -90,15 +140,16 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
         }
     }
 
-    private IEndpoints BeginOperation()
+    private (IEndpoints Endpoints, IDisposable StateLease) BeginOperation()
     {
         lock (_operationLock)
         {
             if (_closing || _endpoints is null)
                 throw new ObjectDisposedException(nameof(InteractiveBackendSession));
 
+            var stateLease = _sessionState.EnterOperation();
             _activeOperations++;
-            return _endpoints;
+            return (_endpoints, stateLease);
         }
     }
 
@@ -117,22 +168,5 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
         }
 
         operationsDrained?.TrySetResult();
-    }
-
-    private Task BeginCloseAsync()
-    {
-        lock (_operationLock)
-        {
-            _closing = true;
-            if (_activeOperations == 0)
-            {
-                _endpoints = null;
-                return Task.CompletedTask;
-            }
-
-            _operationsDrained ??= new TaskCompletionSource(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            return _operationsDrained.Task;
-        }
     }
 }

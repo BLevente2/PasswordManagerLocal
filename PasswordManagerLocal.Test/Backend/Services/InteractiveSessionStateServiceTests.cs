@@ -89,6 +89,51 @@ public sealed class InteractiveSessionStateServiceTests
     }
 
     [TestMethod]
+    public async Task AdmittedOperationRetainsAccessAfterDeactivationStarts()
+    {
+        var services = new ServiceCollection();
+        await using var provider = services.BuildServiceProvider();
+        var state = new InteractiveSessionStateService(
+            provider.GetRequiredService<IServiceScopeFactory>());
+        await state.ActivateAsync();
+        var lease = state.EnterOperation();
+
+        var deactivation = state.DeactivateAsync();
+
+        Assert.IsFalse(state.IsActive);
+        Assert.IsFalse(deactivation.IsCompleted);
+        Assert.IsTrue(state.ExecuteRequired(() => true));
+        Assert.Throws<InvalidOperationException>(() => state.EnterOperation());
+
+        lease.Dispose();
+        await deactivation;
+    }
+
+
+    [TestMethod]
+    public async Task CapturedOperationContextCannotAuthorizeWorkAfterItsLeaseCompletes()
+    {
+        var services = new ServiceCollection();
+        await using var provider = services.BuildServiceProvider();
+        var state = new InteractiveSessionStateService(
+            provider.GetRequiredService<IServiceScopeFactory>());
+        await state.ActivateAsync();
+        var releaseCapturedWork = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var lease = state.EnterOperation();
+        var capturedWork = Task.Run(async () =>
+        {
+            await releaseCapturedWork.Task;
+            Assert.Throws<InvalidOperationException>(() => state.ExecuteRequired(() => true));
+        });
+
+        lease.Dispose();
+        await state.DeactivateAsync();
+        releaseCapturedWork.TrySetResult();
+        await capturedWork;
+    }
+
+    [TestMethod]
     public async Task ActiveStateResolvesInteractiveServicesAndDeactivationReturnsToNoOp()
     {
         var tokenServiceResolutions = 0;

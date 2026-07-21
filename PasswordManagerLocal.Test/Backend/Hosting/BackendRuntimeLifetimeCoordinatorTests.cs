@@ -92,6 +92,62 @@ public sealed class BackendRuntimeLifetimeCoordinatorTests
     }
 
     [TestMethod]
+    public async Task RecoveryRestartsRuntimeWithoutChangingActiveReasons()
+    {
+        using var host = new BackendTestHost();
+        var runtime = new FakeBackendRuntime(host.Services.GetRequiredService<IEndpoints>());
+        var coordinator = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var background = await coordinator.AcquireAsync(
+            BackendLifetimeReason.BackgroundSync);
+
+        await coordinator.RecoverRuntimeAsync();
+
+        Assert.AreEqual(1, runtime.StopCalls);
+        Assert.AreEqual(2, runtime.EnsureStartedCalls);
+        Assert.AreEqual(BackendLifetimeReason.BackgroundSync, coordinator.ActiveReasons);
+    }
+
+
+    [TestMethod]
+    public async Task RecoveryFailurePreservesActiveReasonsAndDoesNotClaimRestart()
+    {
+        using var host = new BackendTestHost();
+        var failure = new InvalidOperationException("stop failed");
+        var runtime = new FakeBackendRuntime(host.Services.GetRequiredService<IEndpoints>())
+        {
+            StopFailure = failure
+        };
+        var coordinator = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var background = await coordinator.AcquireAsync(
+            BackendLifetimeReason.BackgroundSync);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await coordinator.RecoverRuntimeAsync());
+
+        Assert.AreSame(failure, thrown);
+        Assert.AreEqual(1, runtime.EnsureStartedCalls);
+        Assert.AreEqual(1, runtime.StopCalls);
+        Assert.AreEqual(BackendLifetimeReason.BackgroundSync, coordinator.ActiveReasons);
+        runtime.StopFailure = null;
+    }
+
+    [TestMethod]
+    public async Task DatabaseResetIsRejectedWhileAnyRuntimeLeaseIsActive()
+    {
+        using var host = new BackendTestHost();
+        var runtime = new FakeBackendRuntime(host.Services.GetRequiredService<IEndpoints>());
+        var coordinator = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var background = await coordinator.AcquireAsync(
+            BackendLifetimeReason.BackgroundSync);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await coordinator.ResetDatabaseAndAcquireAsync(BackendLifetimeReason.InteractiveUi));
+
+        Assert.AreEqual(0, runtime.ResetCalls);
+        Assert.AreEqual(BackendLifetimeReason.BackgroundSync, coordinator.ActiveReasons);
+    }
+
+    [TestMethod]
     public async Task ConcurrentAcquisitionAndReleaseAreSerialized()
     {
         using var host = new BackendTestHost();

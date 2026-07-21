@@ -6,6 +6,7 @@ namespace PasswordManagerLocal.Backend.Hosting;
 public interface IBackendRuntime : IAsyncDisposable
 {
     BackendRuntimeSnapshot Snapshot { get; }
+    InteractiveSessionLifecycleSnapshot InteractiveSessionSnapshot { get; }
     SyncRuntimeSnapshot SyncSnapshot { get; }
 
     event EventHandler<BackendRuntimeStateChangedEventArgs>? StateChanged;

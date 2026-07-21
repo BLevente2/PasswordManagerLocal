@@ -7,5 +7,6 @@ public enum BackendRuntimeFailureKind
     PlatformKeyUnavailable,
     StorageUnavailable,
     StartupFailure,
+    InteractiveCleanupFailure,
     ShutdownFailure
 }

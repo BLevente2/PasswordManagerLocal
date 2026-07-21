@@ -12,4 +12,5 @@ public interface IBackendRuntimeLifetimeCoordinator
     Task<IBackendRuntimeLease> ResetDatabaseAndAcquireAsync(
         BackendLifetimeReason reason,
         CancellationToken cancellationToken = default);
+    Task RecoverRuntimeAsync(CancellationToken cancellationToken = default);
 }
