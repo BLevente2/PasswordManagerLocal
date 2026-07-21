@@ -59,6 +59,16 @@ public sealed class WindowsIpcRequestDispatcher
             {
                 _contractValidator.Validate(response);
             }
+            catch (IpcPayloadLimitExceededException exception)
+                when (exception.ErrorCode == IpcErrorCode.ResponsePayloadTooLarge)
+            {
+                return Failure(
+                    context.Request.CorrelationId,
+                    exception.ErrorCode,
+                    exception.ErrorCategory,
+                    exception.SafeMessage,
+                    exception.IsRetryable);
+            }
             catch (IpcPayloadException)
             {
                 return InvalidHandlerResponse(context.Request.CorrelationId);
@@ -74,6 +84,16 @@ public sealed class WindowsIpcRequestDispatcher
                 IpcErrorCategory.Cancellation,
                 "The IPC request was cancelled.",
                 isRetryable: true);
+        }
+        catch (IpcPayloadLimitExceededException exception)
+            when (exception.ErrorCode == IpcErrorCode.ResponsePayloadTooLarge)
+        {
+            return Failure(
+                context.Request.CorrelationId,
+                exception.ErrorCode,
+                exception.ErrorCategory,
+                exception.SafeMessage,
+                exception.IsRetryable);
         }
         catch (IpcPayloadException)
         {

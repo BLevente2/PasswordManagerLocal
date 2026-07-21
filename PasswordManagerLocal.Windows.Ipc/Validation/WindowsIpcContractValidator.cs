@@ -100,11 +100,15 @@ public sealed class WindowsIpcContractValidator
     public void Validate(IpcRequestEnvelope request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.CorrelationId <= 0 ||
-            !Enum.IsDefined(request.OperationId) ||
-            request.Payload?.Length > WindowsIpcProtocol.MaximumPayloadSize)
-        {
+        if (request.CorrelationId <= 0 || !Enum.IsDefined(request.OperationId))
             throw new IpcPayloadException("The IPC request envelope is semantically invalid.");
+
+        if (request.Payload?.Length > IpcContractLimits.MaximumInnerPayloadSize)
+        {
+            throw new IpcPayloadLimitExceededException(
+                IpcErrorCode.RequestPayloadTooLarge,
+                "The IPC request payload exceeds the permitted size.",
+                request.CorrelationId);
         }
     }
 
@@ -112,11 +116,18 @@ public sealed class WindowsIpcContractValidator
     {
         ArgumentNullException.ThrowIfNull(response);
         if (response.CorrelationId <= 0 ||
-            response.Result?.Length > WindowsIpcProtocol.MaximumPayloadSize ||
             response.IsSuccess == (response.Error is not null) ||
             (!response.IsSuccess && response.Result is not null))
         {
             throw new IpcPayloadException("The IPC response envelope is semantically invalid.");
+        }
+
+        if (response.Result?.Length > IpcContractLimits.MaximumInnerPayloadSize)
+        {
+            throw new IpcPayloadLimitExceededException(
+                IpcErrorCode.ResponsePayloadTooLarge,
+                "The IPC response result exceeds the permitted size.",
+                response.CorrelationId);
         }
 
         if (response.Error is not null)
@@ -125,6 +136,26 @@ public sealed class WindowsIpcContractValidator
             if (response.Error.CorrelationId != response.CorrelationId)
                 throw new IpcPayloadException("The IPC response error correlation ID is invalid.");
         }
+    }
+
+    public void ValidateSerializedRequestEnvelope(
+        long correlationId,
+        ReadOnlySpan<byte> serializedEnvelope)
+    {
+        ValidateSerializedEnvelope(
+            correlationId,
+            serializedEnvelope,
+            "The serialized IPC request envelope exceeds the permitted frame size.");
+    }
+
+    public void ValidateSerializedResponseEnvelope(
+        long correlationId,
+        ReadOnlySpan<byte> serializedEnvelope)
+    {
+        ValidateSerializedEnvelope(
+            correlationId,
+            serializedEnvelope,
+            "The serialized IPC response envelope exceeds the permitted frame size.");
     }
 
     public void Validate(IpcError error)
@@ -163,6 +194,16 @@ public sealed class WindowsIpcContractValidator
             error.ErrorCategory != IpcErrorCategory.Cancellation)
         {
             throw new IpcPayloadException("The IPC cancellation error category is invalid.");
+        }
+
+        if ((error.ErrorCode is IpcErrorCode.RequestPayloadTooLarge or
+                IpcErrorCode.ResponsePayloadTooLarge or
+                IpcErrorCode.SerializedEnvelopeTooLarge) &&
+            (error.ErrorCategory != IpcErrorCategory.Validation ||
+                error.IsRetryable ||
+                error.RequiresProcessRestart))
+        {
+            throw new IpcPayloadException("The IPC payload-limit error metadata is invalid.");
         }
     }
 
@@ -343,6 +384,23 @@ public sealed class WindowsIpcContractValidator
         ArgumentNullException.ThrowIfNull(request);
         if (!Enum.IsDefined(request.Reason))
             throw new IpcPayloadException("The IPC agent exit reason is invalid.");
+    }
+
+    private void ValidateSerializedEnvelope(
+        long correlationId,
+        ReadOnlySpan<byte> serializedEnvelope,
+        string safeMessage)
+    {
+        if (correlationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(correlationId));
+
+        if (serializedEnvelope.Length > WindowsIpcProtocol.MaximumPayloadSize)
+        {
+            throw new IpcPayloadLimitExceededException(
+                IpcErrorCode.SerializedEnvelopeTooLarge,
+                safeMessage,
+                correlationId);
+        }
     }
 
     private static IpcFailureKind MapFailureKind(BackendRuntimeFailureStatusKind failureKind) =>

@@ -256,8 +256,36 @@ public sealed class WindowsIpcRequestLimitTests
     }
 
     [TestMethod]
-    public void InvalidRequestLimitsAreRejected()
+    public void ClientRequestLimitBoundariesAreEnforced()
     {
+        var minimum = new WindowsIpcClientOptions(
+            IpcPeerRole.Ui,
+            IpcPeerRole.Agent,
+            IpcCapabilities.Control,
+            Environment.ProcessId,
+            Guid.NewGuid(),
+            maximumPendingRequests: 1);
+        var maximum = new WindowsIpcClientOptions(
+            IpcPeerRole.Ui,
+            IpcPeerRole.Agent,
+            IpcCapabilities.Control,
+            Environment.ProcessId,
+            Guid.NewGuid(),
+            WindowsIpcClientOptions.MaximumConfigurablePendingRequests);
+        var defaults = new WindowsIpcClientOptions(
+            IpcPeerRole.Ui,
+            IpcPeerRole.Agent,
+            IpcCapabilities.Control,
+            Environment.ProcessId,
+            Guid.NewGuid());
+
+        Assert.AreEqual(1, minimum.MaximumPendingRequests);
+        Assert.AreEqual(
+            WindowsIpcClientOptions.MaximumConfigurablePendingRequests,
+            maximum.MaximumPendingRequests);
+        Assert.AreEqual(
+            WindowsIpcClientOptions.DefaultMaximumPendingRequests,
+            defaults.MaximumPendingRequests);
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
             new WindowsIpcClientOptions(
                 IpcPeerRole.Ui,
@@ -267,11 +295,66 @@ public sealed class WindowsIpcRequestLimitTests
                 Guid.NewGuid(),
                 maximumPendingRequests: 0));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            new WindowsIpcClientOptions(
+                IpcPeerRole.Ui,
+                IpcPeerRole.Agent,
+                IpcCapabilities.Control,
+                Environment.ProcessId,
+                Guid.NewGuid(),
+                maximumPendingRequests: -1));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            new WindowsIpcClientOptions(
+                IpcPeerRole.Ui,
+                IpcPeerRole.Agent,
+                IpcCapabilities.Control,
+                Environment.ProcessId,
+                Guid.NewGuid(),
+                WindowsIpcClientOptions.MaximumConfigurablePendingRequests + 1));
+    }
+
+    [TestMethod]
+    public void ServerRequestLimitBoundariesAreEnforced()
+    {
+        var minimum = new WindowsIpcServerOptions(
+            IpcPeerRole.Agent,
+            new[] { IpcPeerRole.Ui },
+            IpcCapabilities.Control,
+            maximumActiveRequestsPerConnection: 1);
+        var maximum = new WindowsIpcServerOptions(
+            IpcPeerRole.Agent,
+            new[] { IpcPeerRole.Ui },
+            IpcCapabilities.Control,
+            WindowsIpcServerOptions.MaximumConfigurableActiveRequestsPerConnection);
+        var defaults = new WindowsIpcServerOptions(
+            IpcPeerRole.Agent,
+            new[] { IpcPeerRole.Ui },
+            IpcCapabilities.Control);
+
+        Assert.AreEqual(1, minimum.MaximumActiveRequestsPerConnection);
+        Assert.AreEqual(
+            WindowsIpcServerOptions.MaximumConfigurableActiveRequestsPerConnection,
+            maximum.MaximumActiveRequestsPerConnection);
+        Assert.AreEqual(
+            WindowsIpcServerOptions.DefaultMaximumActiveRequestsPerConnection,
+            defaults.MaximumActiveRequestsPerConnection);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
             new WindowsIpcServerOptions(
                 IpcPeerRole.Agent,
                 new[] { IpcPeerRole.Ui },
                 IpcCapabilities.Control,
                 maximumActiveRequestsPerConnection: 0));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            new WindowsIpcServerOptions(
+                IpcPeerRole.Agent,
+                new[] { IpcPeerRole.Ui },
+                IpcCapabilities.Control,
+                maximumActiveRequestsPerConnection: -1));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            new WindowsIpcServerOptions(
+                IpcPeerRole.Agent,
+                new[] { IpcPeerRole.Ui },
+                IpcCapabilities.Control,
+                WindowsIpcServerOptions.MaximumConfigurableActiveRequestsPerConnection + 1));
     }
 
     private static IpcFrame CreateHandshakeResponse(WindowsIpcSerializer serializer)

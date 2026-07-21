@@ -403,6 +403,19 @@ public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
                 WindowsIpcJsonContext.Default.IpcRequestEnvelope);
             ValidateRequest(frame.Header, request);
         }
+        catch (IpcPayloadLimitExceededException exception)
+            when (exception.ErrorCode == IpcErrorCode.RequestPayloadTooLarge)
+        {
+            await SendResponseAsync(
+                Failure(
+                    frame.Header.CorrelationId,
+                    exception.ErrorCode,
+                    exception.ErrorCategory,
+                    exception.SafeMessage,
+                    exception.IsRetryable),
+                connectionCancellationToken);
+            return;
+        }
         catch (IpcPayloadException)
         {
             await SendResponseAsync(
@@ -682,21 +695,69 @@ public sealed class WindowsIpcServerConnectionSession : IAsyncDisposable
         IpcResponseEnvelope response,
         CancellationToken cancellationToken)
     {
-        _contractValidator.Validate(response);
+        var transportResponse = CreateTransportResponse(response);
         var payload = _serializer.Serialize(
-            response,
+            transportResponse,
             WindowsIpcJsonContext.Default.IpcResponseEnvelope);
+        try
+        {
+            _contractValidator.ValidateSerializedResponseEnvelope(
+                transportResponse.CorrelationId,
+                payload);
+        }
+        catch (IpcPayloadLimitExceededException)
+        {
+            transportResponse = PayloadLimitFailure(
+                response.CorrelationId,
+                IpcErrorCode.SerializedEnvelopeTooLarge,
+                "The serialized IPC response envelope exceeds the permitted frame size.");
+            payload = _serializer.Serialize(
+                transportResponse,
+                WindowsIpcJsonContext.Default.IpcResponseEnvelope);
+            _contractValidator.ValidateSerializedResponseEnvelope(
+                transportResponse.CorrelationId,
+                payload);
+        }
+
         await _connection.WriteFrameAsync(
             new IpcFrame(
                 new IpcFrameHeader(
                     WindowsIpcProtocol.CurrentVersion,
                     IpcMessageKind.Response,
                     IpcFrameFlags.None,
-                    response.CorrelationId,
+                    transportResponse.CorrelationId,
                     payload.Length),
                 payload),
             cancellationToken);
     }
+
+    private IpcResponseEnvelope CreateTransportResponse(IpcResponseEnvelope response)
+    {
+        try
+        {
+            _contractValidator.Validate(response);
+            return response;
+        }
+        catch (IpcPayloadLimitExceededException exception)
+            when (exception.ErrorCode == IpcErrorCode.ResponsePayloadTooLarge)
+        {
+            return PayloadLimitFailure(
+                response.CorrelationId,
+                exception.ErrorCode,
+                exception.SafeMessage);
+        }
+    }
+
+    private static IpcResponseEnvelope PayloadLimitFailure(
+        long correlationId,
+        IpcErrorCode errorCode,
+        string safeMessage) =>
+        Failure(
+            correlationId,
+            errorCode,
+            IpcErrorCategory.Validation,
+            safeMessage,
+            isRetryable: false);
 
     private async Task<Exception?> NotifyAsync(
         IpcConnectionLifecycleNotification notification,

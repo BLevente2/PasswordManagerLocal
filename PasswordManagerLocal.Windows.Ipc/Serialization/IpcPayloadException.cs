@@ -1,6 +1,6 @@
 namespace PasswordManagerLocal.Windows.Ipc.Serialization;
 
-public sealed class IpcPayloadException : Exception
+public class IpcPayloadException : Exception
 {
     public IpcPayloadException(string message)
         : base(message)

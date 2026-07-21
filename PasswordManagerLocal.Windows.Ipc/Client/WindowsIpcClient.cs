@@ -163,6 +163,9 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         var serialized = _serializer.Serialize(
             request,
             WindowsIpcJsonContext.Default.IpcRequestEnvelope);
+        _contractValidator.ValidateSerializedRequestEnvelope(
+            correlationId,
+            serialized);
 
         if (!_pendingRequestCapacity.Wait(0))
         {
@@ -172,10 +175,9 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         }
 
         var pending = new PendingIpcRequest(
-            () =>
-            {
-                _pendingRequestCapacity.Release();
-            });
+            correlationId,
+            cancellationToken,
+            ReleasePendingRequest);
         try
         {
             lock (_pendingRegistrationGate)
@@ -193,29 +195,36 @@ public sealed class WindowsIpcClient : IAsyncDisposable
             throw;
         }
 
-        using var cancellationRegistration = cancellationToken.Register(
-            () => CancelPendingRequest(correlationId, pending, cancellationToken));
-
-        if (!pending.IsCompleted)
+        pending.RegisterCallerCancellation(
+            () => CancelPendingRequest(pending));
+        try
         {
-            try
+            if (pending.TryBeginSending())
             {
-                await _connection.WriteFrameAsync(
-                    CreateFrame(IpcMessageKind.Request, correlationId, serialized),
-                    CancellationToken.None);
+                try
+                {
+                    await _connection.WriteFrameAsync(
+                        CreateFrame(IpcMessageKind.Request, correlationId, serialized),
+                        _shutdownSource.Token);
+                    if (pending.CommitSent())
+                        _ = SendCancellationBestEffortAsync(pending.CorrelationId);
+                }
+                catch (Exception exception)
+                {
+                    pending.TrySetException(exception);
+                }
             }
-            catch (Exception exception)
-            {
-                if (TryRemovePending(correlationId, pending, out var removed))
-                    removed.TrySetException(exception);
-            }
+
+            var response = await pending.Task;
+            if (!response.IsSuccess)
+                throw new IpcRemoteException(response.Error!);
+
+            return response;
         }
-
-        var response = await pending.Task;
-        if (!response.IsSuccess)
-            throw new IpcRemoteException(response.Error!);
-
-        return response;
+        finally
+        {
+            pending.DisposeCancellationRegistration();
+        }
     }
 
     public ValueTask DisposeAsync()
@@ -289,7 +298,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
                     frame.Payload,
                     WindowsIpcJsonContext.Default.IpcResponseEnvelope);
                 ValidateResponse(frame.Header, response);
-                if (_pendingRequests.TryRemove(response.CorrelationId, out var pending))
+                if (_pendingRequests.TryGetValue(response.CorrelationId, out var pending))
                     pending.TrySetResult(response);
             }
         }
@@ -309,28 +318,26 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         {
         }
 
-        var connectionDisposalTask = CaptureConnectionDisposalFailureAsync();
         FailAllPending(failure);
+        var cancellationFailure = CaptureCancellationFailure(_shutdownSource);
+        if (cancellationFailure is not null)
+            RecordCleanupFailure(cancellationFailure);
+        var connectionDisposalTask = CaptureConnectionDisposalFailureAsync();
 
         var disposalFailure = await connectionDisposalTask;
         if (disposalFailure is not null)
             RecordCleanupFailure(disposalFailure);
 
-        var terminalFailure = CombineFailures(failure, disposalFailure);
+        var terminalFailure = CombineFailures(failure, cancellationFailure);
+        terminalFailure = CombineFailures(terminalFailure, disposalFailure);
         if (Volatile.Read(ref _disposeStarted) == 0)
             RecordTerminationFailure(terminalFailure);
     }
 
-    private void CancelPendingRequest(
-        long correlationId,
-        PendingIpcRequest pending,
-        CancellationToken cancellationToken)
+    private void CancelPendingRequest(PendingIpcRequest pending)
     {
-        if (!TryRemovePending(correlationId, pending, out var removed))
-            return;
-
-        removed.TrySetCanceled(cancellationToken);
-        _ = SendCancellationBestEffortAsync(correlationId);
+        if (pending.RequestCallerCancellation())
+            _ = SendCancellationBestEffortAsync(pending.CorrelationId);
     }
 
     private async Task SendCancellationBestEffortAsync(long correlationId)
@@ -341,7 +348,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
             {
                 await _connection.WriteFrameAsync(
                     CreateFrame(IpcMessageKind.RequestCancellation, correlationId, Array.Empty<byte>()),
-                    CancellationToken.None);
+                    _shutdownSource.Token);
             }
         }
         catch
@@ -349,29 +356,19 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         }
     }
 
-    private bool TryRemovePending(
-        long correlationId,
-        PendingIpcRequest expected,
-        out PendingIpcRequest removed)
+    private void ReleasePendingRequest(PendingIpcRequest expected)
     {
-        var pair = new KeyValuePair<long, PendingIpcRequest>(correlationId, expected);
-        if (((ICollection<KeyValuePair<long, PendingIpcRequest>>)_pendingRequests).Remove(pair))
-        {
-            removed = expected;
-            return true;
-        }
-
-        removed = null!;
-        return false;
+        var pair = new KeyValuePair<long, PendingIpcRequest>(
+            expected.CorrelationId,
+            expected);
+        ((ICollection<KeyValuePair<long, PendingIpcRequest>>)_pendingRequests).Remove(pair);
+        _pendingRequestCapacity.Release();
     }
 
     private void FailAllPending(Exception exception)
     {
-        foreach (var pair in _pendingRequests.ToArray())
-        {
-            if (_pendingRequests.TryRemove(pair.Key, out var pending))
-                pending.TrySetException(exception);
-        }
+        foreach (var pending in _pendingRequests.Values.ToArray())
+            pending.TrySetException(exception);
     }
 
     private Task DisposeConnectionOnceAsync()

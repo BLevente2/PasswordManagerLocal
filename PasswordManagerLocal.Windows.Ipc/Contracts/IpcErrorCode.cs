@@ -18,5 +18,8 @@ public enum IpcErrorCode
     InternalFailure = 14,
     ClientRequestLimitReached = 15,
     ServerBusy = 16,
-    TooManyRequests = 17
+    TooManyRequests = 17,
+    RequestPayloadTooLarge = 18,
+    ResponsePayloadTooLarge = 19,
+    SerializedEnvelopeTooLarge = 20
 }

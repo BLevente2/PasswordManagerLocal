@@ -5,6 +5,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Server;
 public sealed class WindowsIpcServerOptions
 {
     public const int DefaultMaximumActiveRequestsPerConnection = 64;
+    public const int MaximumConfigurableActiveRequestsPerConnection = 1024;
 
     public WindowsIpcServerOptions(
         IpcPeerRole serverRole,
@@ -16,8 +17,14 @@ public sealed class WindowsIpcServerOptions
             throw new ArgumentOutOfRangeException(nameof(serverRole));
         if (capabilities == IpcCapabilities.None || HasUnknownCapabilities(capabilities))
             throw new ArgumentOutOfRangeException(nameof(capabilities));
-        if (maximumActiveRequestsPerConnection <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maximumActiveRequestsPerConnection));
+        if (maximumActiveRequestsPerConnection <= 0 ||
+            maximumActiveRequestsPerConnection > MaximumConfigurableActiveRequestsPerConnection)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumActiveRequestsPerConnection),
+                maximumActiveRequestsPerConnection,
+                $"The IPC active-request limit must be between 1 and {MaximumConfigurableActiveRequestsPerConnection}.");
+        }
 
         ArgumentNullException.ThrowIfNull(acceptedClientRoles);
         var roles = acceptedClientRoles.ToHashSet();

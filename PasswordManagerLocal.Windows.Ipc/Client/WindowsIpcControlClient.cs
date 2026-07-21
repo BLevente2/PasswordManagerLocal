@@ -132,6 +132,7 @@ public sealed class WindowsIpcControlClient
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _contractValidator.ValidateForTransport(request);
         var payload = _serializer.Serialize(request, requestTypeInfo);
         var response = await _client.SendAsync(operationId, payload, cancellationToken);

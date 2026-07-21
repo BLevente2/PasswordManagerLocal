@@ -52,10 +52,14 @@ public sealed class IpcRequestContext
         return result;
     }
 
-    public IpcResponseEnvelope Success<T>(T result, JsonTypeInfo<T> typeInfo) =>
-        IpcResponseEnvelope.Success(
+    public IpcResponseEnvelope Success<T>(T result, JsonTypeInfo<T> typeInfo)
+    {
+        var response = IpcResponseEnvelope.Success(
             Request.CorrelationId,
             _serializer.Serialize(result, typeInfo));
+        _contractValidator.Validate(response);
+        return response;
+    }
 
     public IpcResponseEnvelope Success() =>
         IpcResponseEnvelope.Success(Request.CorrelationId);

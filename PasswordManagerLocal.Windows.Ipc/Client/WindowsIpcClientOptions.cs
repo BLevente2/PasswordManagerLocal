@@ -5,6 +5,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Client;
 public sealed class WindowsIpcClientOptions
 {
     public const int DefaultMaximumPendingRequests = 64;
+    public const int MaximumConfigurablePendingRequests = 1024;
 
     public WindowsIpcClientOptions(
         IpcPeerRole clientRole,
@@ -24,8 +25,14 @@ public sealed class WindowsIpcClientOptions
             throw new ArgumentOutOfRangeException(nameof(processId));
         if (sessionId == Guid.Empty)
             throw new ArgumentException("The IPC session ID cannot be empty.", nameof(sessionId));
-        if (maximumPendingRequests <= 0)
-            throw new ArgumentOutOfRangeException(nameof(maximumPendingRequests));
+        if (maximumPendingRequests <= 0 ||
+            maximumPendingRequests > MaximumConfigurablePendingRequests)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(maximumPendingRequests),
+                maximumPendingRequests,
+                $"The IPC pending-request limit must be between 1 and {MaximumConfigurablePendingRequests}.");
+        }
 
         ClientRole = clientRole;
         ExpectedServerRole = expectedServerRole;
