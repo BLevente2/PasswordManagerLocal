@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
+using PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;
 using System.Text.Json.Serialization;
 
@@ -11,6 +12,11 @@ namespace PasswordManagerLocal.Windows.EndpointRpc.Serialization;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(EndpointRpcError))]
+[JsonSerializable(typeof(EndpointLargeResultDescriptor))]
+[JsonSerializable(typeof(GetEndpointLargeResultChunkRequest))]
+[JsonSerializable(typeof(GetEndpointLargeResultChunkResponse))]
+[JsonSerializable(typeof(ReleaseEndpointLargeResultRequest))]
+[JsonSerializable(typeof(ReleaseEndpointLargeResultResponse))]
 [JsonSerializable(typeof(RegisterEndpointRequest))]
 [JsonSerializable(typeof(LoginEndpointRequest))]
 [JsonSerializable(typeof(RenewAuthSessionEndpointRequest))]

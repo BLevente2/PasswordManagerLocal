@@ -18,7 +18,7 @@ public sealed class EndpointRpcInMemoryEndToEndTests
         var serializer = new EndpointRpcSerializer();
         var validator = new EndpointRpcContractValidator();
         var codec = new EndpointRpcMessageCodec(serializer);
-        var dispatcher = new EndpointRpcDispatcher(
+        await using var dispatcher = new EndpointRpcDispatcher(
             new FixedEndpointRpcEndpointAdapter(endpoints),
             serializer,
             validator,

@@ -50,7 +50,42 @@ public sealed class EndpointOperationParityTests
             Assert.IsTrue(descriptor.MaximumRequestPayloadSize <= EndpointRpcLimits.MaximumRequestPayloadSize);
             Assert.IsTrue(descriptor.MaximumResponsePayloadSize > 0);
             Assert.IsTrue(descriptor.MaximumResponsePayloadSize <= EndpointRpcLimits.MaximumResponsePayloadSize);
+            Assert.IsTrue(descriptor.MaximumLogicalResponsePayloadSize >= descriptor.MaximumResponsePayloadSize);
+            Assert.IsTrue(descriptor.MaximumLogicalResponsePayloadSize <= EndpointRpcLimits.MaximumLargeResultTotalBytes);
             Assert.IsTrue(Enum.IsDefined(descriptor.CancellationClassification));
         }
     }
+    [TestMethod]
+    public void OnlySavedPasswordsUsesTheBoundedLargeResponseProtocol()
+    {
+        var largeDescriptors = EndpointOperationManifest.All
+            .Where(descriptor => descriptor.SupportsLargeResponse)
+            .ToArray();
+
+        Assert.HasCount(1, largeDescriptors);
+        Assert.AreEqual(EndpointOperationId.GetSavedPasswords, largeDescriptors[0].OperationId);
+        Assert.AreEqual(
+            EndpointRpcLimits.MaximumLargeResultTotalBytes,
+            largeDescriptors[0].MaximumLogicalResponsePayloadSize);
+        Assert.IsTrue(EndpointOperationManifest.All
+            .Where(descriptor => descriptor.OperationId != EndpointOperationId.GetSavedPasswords)
+            .All(descriptor => !descriptor.SupportsLargeResponse));
+    }
+
+    [TestMethod]
+    public void InternalLargeTransferContractsUseSourceGeneratedMetadata()
+    {
+        var internalTypes = new[]
+        {
+            typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.EndpointLargeResultDescriptor),
+            typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.GetEndpointLargeResultChunkRequest),
+            typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.GetEndpointLargeResultChunkResponse),
+            typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultRequest),
+            typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultResponse)
+        };
+
+        foreach (var type in internalTypes)
+            Assert.IsNotNull(EndpointRpcJsonContext.Default.GetTypeInfo(type), type.FullName);
+    }
+
 }

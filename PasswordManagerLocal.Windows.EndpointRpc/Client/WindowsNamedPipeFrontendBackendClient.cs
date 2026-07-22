@@ -53,6 +53,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
                 return;
 
             var staleTransport = _transport;
+            var staleProxy = _proxy;
             var staleObserverTask = _connectionObserverTask;
             _transport = null;
             _proxy = null;
@@ -64,6 +65,8 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             {
                 if (staleTransport is not null)
                     await staleTransport.DisposeAsync();
+                if (staleProxy is not null)
+                    await staleProxy.DisposeAsync();
                 if (staleObserverTask is not null)
                     await staleObserverTask;
 
@@ -157,6 +160,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             _disposed = true;
             ChangeState(BackendRuntimeState.Stopping, BackendRuntimeFailureKind.None, null);
             var transport = _transport;
+            var proxy = _proxy;
             _transport = null;
             _proxy = null;
             observerTask = _connectionObserverTask;
@@ -171,6 +175,17 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
                 catch (Exception exception)
                 {
                     failure = exception;
+                }
+            }
+            if (proxy is not null)
+            {
+                try
+                {
+                    await proxy.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    failure = failure is null ? exception : new AggregateException(failure, exception);
                 }
             }
         }

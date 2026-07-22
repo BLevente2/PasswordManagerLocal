@@ -19,7 +19,7 @@ public sealed class EndpointRpcCancellationAndLifecycleTests
     public async Task CriticalAdmittedOperationIsNotCancelledByTransportDisconnectToken()
     {
         var endpoints = new BlockingLogoutEndpoints();
-        var dispatcher = new EndpointRpcDispatcher(
+        await using var dispatcher = new EndpointRpcDispatcher(
             new FixedEndpointRpcEndpointAdapter(endpoints),
             new EndpointRpcSerializer(),
             new EndpointRpcContractValidator(),

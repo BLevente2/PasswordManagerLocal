@@ -39,6 +39,16 @@ public sealed class EndpointRpcSerializationTests
                 EndpointRpcJsonContext.Default.GetSavedPasswordsEndpointRequest));
     }
 
+    [TestMethod]
+    public void LargeTransferContractsRoundTripWithSourceGeneratedMetadata()
+    {
+        RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.EndpointLargeResultDescriptor));
+        RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.GetEndpointLargeResultChunkRequest));
+        RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.GetEndpointLargeResultChunkResponse));
+        RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultRequest));
+        RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultResponse));
+    }
+
     private static void RoundTrip(Type type)
     {
         var metadata = EndpointRpcJsonContext.Default.GetTypeInfo(type);

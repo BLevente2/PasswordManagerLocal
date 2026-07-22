@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Windows.EndpointRpc.Authorization;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
+using PasswordManagerLocal.Windows.EndpointRpc.Server.LargeTransfer;
 using PasswordManagerLocal.Windows.EndpointRpc.Validation;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
@@ -14,6 +15,8 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
     public const int MaximumActiveEndpointRequests = 32;
 
     private readonly WindowsIpcServerConnectionSessionFactory _innerFactory;
+    private readonly EndpointLargeResultTransferStore _largeResultTransferStore;
+    private int _disposed;
 
     public EndpointRpcServerSessionFactory(
         IEndpointRpcEndpointAdapter endpointAdapter,
@@ -25,15 +28,21 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
         var serializer = new EndpointRpcSerializer();
         var validator = new EndpointRpcContractValidator();
         var codec = new EndpointRpcMessageCodec(serializer);
+        var errorMapper = new EndpointRpcBackendErrorMapper();
+        _largeResultTransferStore = new EndpointLargeResultTransferStore();
         var dispatcher = new EndpointRpcDispatcher(
             endpointAdapter,
             serializer,
             validator,
-            new EndpointRpcBackendErrorMapper());
+            errorMapper,
+            _largeResultTransferStore);
         var requestHandler = new EndpointRpcWindowsIpcRequestHandler(
             dispatcher,
             codec,
-            validator);
+            validator,
+            serializer,
+            _largeResultTransferStore,
+            errorMapper);
         var ipcDispatcher = new WindowsIpcRequestDispatcher(
             [requestHandler],
             new WindowsIpcContractValidator(),
@@ -50,12 +59,27 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
             new WindowsIpcSerializer(),
             ipcDispatcher,
             options,
-            observers: [connectionAuthorizer],
+            observers: [connectionAuthorizer, _largeResultTransferStore],
             uiCoordinator: null,
             contractValidator: new WindowsIpcContractValidator(),
             handshakeAuthorizer: connectionAuthorizer);
     }
 
-    public IEndpointRpcServerSession Create(IWindowsIpcConnection connection) =>
-        new EndpointRpcServerSession(_innerFactory.Create(connection));
+    public IEndpointRpcServerSession Create(IWindowsIpcConnection connection)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(EndpointRpcServerSessionFactory));
+        return new EndpointRpcServerSession(_innerFactory.Create(connection));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        await _largeResultTransferStore.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
+
+    IWindowsIpcServerSession IWindowsIpcServerSessionFactory.Create(
+        IWindowsIpcConnection connection) => Create(connection);
 }

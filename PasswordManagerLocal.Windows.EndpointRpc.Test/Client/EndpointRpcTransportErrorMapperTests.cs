@@ -71,6 +71,26 @@ public sealed class EndpointRpcTransportErrorMapperTests
     }
 
     [TestMethod]
+    public void GenericPostHandlerFailuresAreMarkedAsTransmissionUncertainForMutations()
+    {
+        var postHandlerFailures = new[]
+        {
+            IpcErrorCode.HandlerFailed,
+            IpcErrorCode.InvalidEnvelope,
+            IpcErrorCode.InvalidPayload,
+            IpcErrorCode.RequestCancelled,
+            IpcErrorCode.InternalFailure,
+            IpcErrorCode.ResponsePayloadTooLarge,
+            IpcErrorCode.SerializedEnvelopeTooLarge
+        };
+
+        Assert.IsTrue(postHandlerFailures.All(WindowsEndpointRpcTransport.IsPostHandlerFailure));
+        Assert.IsFalse(WindowsEndpointRpcTransport.IsPostHandlerFailure(IpcErrorCode.UnauthorizedOperation));
+        Assert.IsFalse(WindowsEndpointRpcTransport.IsPostHandlerFailure(IpcErrorCode.RequestPayloadTooLarge));
+        Assert.IsFalse(WindowsEndpointRpcTransport.IsPostHandlerFailure(IpcErrorCode.TooManyRequests));
+    }
+
+    [TestMethod]
     public void OversizedResponseMapsToEndpointResponseLimitError()
     {
         var source = new IpcError(

@@ -179,64 +179,57 @@ public sealed class WindowsIpcClient : IAsyncDisposable
         byte[]? payload = null,
         CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
-        if (!IsHandshakeComplete)
-            throw new InvalidOperationException("The IPC handshake has not completed.");
-        if (!Enum.IsDefined(operationId))
-            throw new ArgumentOutOfRangeException(nameof(operationId));
-
-        cancellationToken.ThrowIfCancellationRequested();
-        var correlationId = GetNextCorrelationId();
-        var request = new IpcRequestEnvelope(correlationId, operationId, payload);
-        _contractValidator.Validate(request);
-        await WaitForPendingRequestCapacityAsync(cancellationToken);
-
-        var pending = new PendingIpcRequest(
-            correlationId,
-            cancellationToken,
-            ReleasePendingRequest);
         try
         {
-            byte[]? serialized = null;
-            if (cancellationToken.IsCancellationRequested)
-            {
-                pending.RequestCallerCancellation();
-            }
-            else
-            {
-                try
-                {
-                    ThrowIfDisposed();
-                    if (!IsHandshakeComplete)
-                    {
-                        throw new IpcConnectionClosedException(
-                            "The IPC connection is not available.");
-                    }
+            var result = await SendWithTransmissionStateAsync(
+                operationId,
+                payload,
+                cancellationToken);
+            return result.Response;
+        }
+        catch (IpcRequestTransmissionException exception)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(exception.InnerException ?? exception)
+                .Throw();
+            throw;
+        }
+    }
 
-                    serialized = _serializeRequestEnvelope(request);
-                    _contractValidator.ValidateSerializedRequestEnvelope(
-                        correlationId,
-                        serialized);
+    public async Task<IpcTransmissionAwareResponse> SendWithTransmissionStateAsync(
+        IpcOperationId operationId,
+        byte[]? payload = null,
+        CancellationToken cancellationToken = default)
+    {
+        long correlationId = 0;
+        try
+        {
+            ThrowIfDisposed();
+            if (!IsHandshakeComplete)
+                throw new InvalidOperationException("The IPC handshake has not completed.");
+            if (!Enum.IsDefined(operationId))
+                throw new ArgumentOutOfRangeException(nameof(operationId));
+
+            correlationId = GetNextCorrelationId();
+            cancellationToken.ThrowIfCancellationRequested();
+            var request = new IpcRequestEnvelope(correlationId, operationId, payload);
+            _contractValidator.Validate(request);
+            await WaitForPendingRequestCapacityAsync(cancellationToken);
+
+            var pending = new PendingIpcRequest(
+                correlationId,
+                cancellationToken,
+                ReleasePendingRequest);
+            try
+            {
+                byte[]? serialized = null;
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    pending.RequestCallerCancellation();
                 }
-                catch (Exception exception)
+                else
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                        pending.RequestCallerCancellation();
-                    else
-                        pending.TrySetException(exception);
-                }
-            }
-
-            if (serialized is not null &&
-                pending.SubmissionState != IpcRequestSubmissionState.Completed)
-            {
-                pending.RegisterCallerCancellation(
-                    () => CancelPendingRequest(pending));
-
-                var registered = false;
-                try
-                {
-                    lock (_pendingRegistrationGate)
+                    try
                     {
                         ThrowIfDisposed();
                         if (!IsHandshakeComplete)
@@ -245,36 +238,99 @@ public sealed class WindowsIpcClient : IAsyncDisposable
                                 "The IPC connection is not available.");
                         }
 
-                        registered = pending.TryRegisterPending(
-                            () =>
-                                _allowPendingRequestRegistration(correlationId, pending) &&
-                                _pendingRequests.TryAdd(correlationId, pending));
-                        if (registered && pending.TryQueue())
-                        {
-                            TrackBackgroundWrite(SubmitRequestAsync(
-                                pending,
-                                CreateFrame(
-                                    IpcMessageKind.Request,
-                                    correlationId,
-                                    serialized)));
-                        }
+                        serialized = _serializeRequestEnvelope(request);
+                        _contractValidator.ValidateSerializedRequestEnvelope(
+                            correlationId,
+                            serialized);
+                    }
+                    catch (Exception exception)
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                            pending.RequestCallerCancellation();
+                        else
+                            pending.TrySetException(exception);
                     }
                 }
-                catch (Exception exception)
+
+                if (serialized is not null &&
+                    pending.SubmissionState != IpcRequestSubmissionState.Completed)
                 {
-                    pending.TrySetException(exception);
+                    pending.RegisterCallerCancellation(
+                        () => CancelPendingRequest(pending));
+
+                    try
+                    {
+                        lock (_pendingRegistrationGate)
+                        {
+                            ThrowIfDisposed();
+                            if (!IsHandshakeComplete)
+                            {
+                                throw new IpcConnectionClosedException(
+                                    "The IPC connection is not available.");
+                            }
+
+                            var registered = pending.TryRegisterPending(
+                                () =>
+                                    _allowPendingRequestRegistration(correlationId, pending) &&
+                                    _pendingRequests.TryAdd(correlationId, pending));
+                            if (registered && pending.TryQueue())
+                            {
+                                TrackBackgroundWrite(SubmitRequestAsync(
+                                    pending,
+                                    CreateFrame(
+                                        IpcMessageKind.Request,
+                                        correlationId,
+                                        serialized)));
+                            }
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        pending.TrySetException(exception);
+                    }
                 }
+
+                IpcResponseEnvelope response;
+                try
+                {
+                    response = await pending.Task;
+                }
+                catch (Exception exception)
+                    when (exception is not IpcRemoteException)
+                {
+                    throw new IpcRequestTransmissionException(
+                        correlationId,
+                        pending.TransmissionState,
+                        exception);
+                }
+
+                if (!response.IsSuccess)
+                    throw new IpcRemoteException(response.Error!);
+
+                return new IpcTransmissionAwareResponse(
+                    correlationId,
+                    IpcRequestTransmissionState.Sent,
+                    response);
             }
-
-            var response = await pending.Task;
-            if (!response.IsSuccess)
-                throw new IpcRemoteException(response.Error!);
-
-            return response;
+            finally
+            {
+                pending.DisposeCancellationRegistration();
+            }
         }
-        finally
+        catch (IpcRequestTransmissionException)
         {
-            pending.DisposeCancellationRegistration();
+            throw;
+        }
+        catch (IpcRemoteException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new IpcRequestTransmissionException(
+                correlationId,
+                IpcRequestTransmissionState.DefinitelyNotSent,
+                exception);
         }
     }
 

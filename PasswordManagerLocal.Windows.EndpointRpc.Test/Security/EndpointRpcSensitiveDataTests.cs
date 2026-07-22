@@ -67,7 +67,7 @@ public sealed class EndpointRpcSensitiveDataTests
         var serializer = new EndpointRpcSerializer();
         var validator = new EndpointRpcContractValidator();
         var codec = new EndpointRpcMessageCodec(serializer);
-        var dispatcher = new EndpointRpcDispatcher(
+        await using var dispatcher = new EndpointRpcDispatcher(
             new FixedEndpointRpcEndpointAdapter(new ThrowingRecordingEndpoints()),
             serializer,
             validator,
@@ -97,7 +97,7 @@ public sealed class EndpointRpcSensitiveDataTests
         var endpoints = new SensitivePasswordEndpoints();
         var serializer = new EndpointRpcSerializer();
         var validator = new EndpointRpcContractValidator();
-        var dispatcher = new EndpointRpcDispatcher(
+        await using var dispatcher = new EndpointRpcDispatcher(
             new FixedEndpointRpcEndpointAdapter(endpoints),
             serializer,
             validator,
@@ -137,7 +137,7 @@ public sealed class EndpointRpcSensitiveDataTests
             EndpointRpcLimits.MaximumSensitiveBinaryFieldSize + 1).ToArray();
         var endpoints = new SensitivePasswordEndpoints(sensitiveBuffer);
         var serializer = new EndpointRpcSerializer();
-        var dispatcher = new EndpointRpcDispatcher(
+        await using var dispatcher = new EndpointRpcDispatcher(
             new FixedEndpointRpcEndpointAdapter(endpoints),
             serializer,
             new EndpointRpcContractValidator(),

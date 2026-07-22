@@ -13,6 +13,7 @@ internal sealed class PendingIpcRequest
     private readonly object _stateGate = new();
     private CancellationTokenRegistration _cancellationRegistration;
     private IpcRequestSubmissionState _submissionState = IpcRequestSubmissionState.Created;
+    private IpcRequestTransmissionState _transmissionState = IpcRequestTransmissionState.DefinitelyNotSent;
     private bool _hasCancellationRegistration;
     private bool _deferredCallerCancellation;
     private IpcResponseEnvelope? _deferredResponse;
@@ -37,6 +38,15 @@ internal sealed class PendingIpcRequest
     public long CorrelationId { get; }
     public Task<IpcResponseEnvelope> Task => _completion.Task;
     public CancellationToken QueuedCancellationToken => _queuedCancellationToken;
+
+    public IpcRequestTransmissionState TransmissionState
+    {
+        get
+        {
+            lock (_stateGate)
+                return _transmissionState;
+        }
+    }
 
     public IpcRequestSubmissionState SubmissionState
     {
@@ -134,6 +144,7 @@ internal sealed class PendingIpcRequest
                 return false;
 
             _submissionState = IpcRequestSubmissionState.Sending;
+            _transmissionState = IpcRequestTransmissionState.TransmissionUnknown;
             return true;
         }
     }
@@ -151,6 +162,7 @@ internal sealed class PendingIpcRequest
                 throw new InvalidOperationException("The IPC request is not being sent.");
 
             _submissionState = IpcRequestSubmissionState.Sent;
+            _transmissionState = IpcRequestTransmissionState.Sent;
             if (_deferredCallerCancellation)
             {
                 _submissionState = IpcRequestSubmissionState.Completed;

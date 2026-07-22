@@ -12,14 +12,27 @@ public sealed class ControllableEndpointRpcTransport : IEndpointRpcTransport
     public bool IsDisposed => _disposed;
     public Task Completion => _completion.Task;
 
-    public Task<byte[]> SendAsync(
+    public Task<EndpointRpcTransportResponse> SendAsync(
         EndpointOperationId operationId,
         byte[] requestPayload,
         EndpointOperationCancellationClassification cancellationClassification,
         CancellationToken cancellationToken = default) =>
         IsConnected
-            ? Task.FromResult(Array.Empty<byte>())
-            : Task.FromException<byte[]>(new EndpointRpcDisconnectedException());
+            ? Task.FromResult(EndpointRpcTransportResponse.Inline(Array.Empty<byte>()))
+            : Task.FromException<EndpointRpcTransportResponse>(
+                new EndpointRpcTransportException(
+                    1,
+                    EndpointRpcTransmissionState.DefinitelyNotSent,
+                    new EndpointRpcDisconnectedException()));
+
+    public Task<byte[]> GetLargeResultChunkAsync(
+        byte[] requestPayload,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<byte[]>(new NotSupportedException());
+
+    public Task ReleaseLargeResultAsync(
+        byte[] requestPayload,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public void Disconnect(Exception? exception = null)
     {

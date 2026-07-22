@@ -10,4 +10,7 @@ public sealed record EndpointRequestContext(
     IpcPeerRole PeerRole,
     int PeerProcessId,
     Guid PeerSessionId,
-    CancellationToken CancellationToken);
+    CancellationToken CancellationToken)
+{
+    internal EndpointInvocationTracker Invocation { get; init; } = new();
+}

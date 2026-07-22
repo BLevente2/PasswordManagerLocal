@@ -1,6 +1,7 @@
+using PasswordManagerLocal.Windows.Ipc.Server;
+
 namespace PasswordManagerLocal.Windows.EndpointRpc.Server;
 
-public interface IEndpointRpcServerSession : IAsyncDisposable
+public interface IEndpointRpcServerSession : IWindowsIpcServerSession
 {
-    Task RunAsync(CancellationToken cancellationToken = default);
 }

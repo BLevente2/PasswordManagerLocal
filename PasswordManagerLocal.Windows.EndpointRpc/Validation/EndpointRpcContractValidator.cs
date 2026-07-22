@@ -253,8 +253,8 @@ public sealed class EndpointRpcContractValidator
         EndpointRpcErrorCode.Conflict => errorCategory == EndpointRpcErrorCategory.Conflict,
         EndpointRpcErrorCode.InteractiveSessionUnavailable or EndpointRpcErrorCode.RuntimeUnavailable or
             EndpointRpcErrorCode.Disconnected => errorCategory == EndpointRpcErrorCategory.Availability,
-        EndpointRpcErrorCode.OperationCancelled or EndpointRpcErrorCode.OperationOutcomeUnknown =>
-            errorCategory == EndpointRpcErrorCategory.Cancellation,
+        EndpointRpcErrorCode.OperationCancelled => errorCategory == EndpointRpcErrorCategory.Cancellation,
+        EndpointRpcErrorCode.OperationOutcomeUnknown => errorCategory == EndpointRpcErrorCategory.Internal,
         EndpointRpcErrorCode.BackendFailure => errorCategory == EndpointRpcErrorCategory.Internal,
         _ => false
     };

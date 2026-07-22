@@ -100,7 +100,7 @@ public sealed class NamedPipeEndpointsProxyMappingTests
 
 
     [TestMethod]
-    public async Task SideEffectingRemoteDisconnectReportsUnknownOutcomeWithoutReplay()
+    public async Task StructuredRemoteDisconnectRemainsConclusiveWithoutReplay()
     {
         var sends = 0;
         var transport = new RecordingEndpointRpcTransport((_, _, _) =>
@@ -121,13 +121,13 @@ public sealed class NamedPipeEndpointsProxyMappingTests
             new EndpointRpcSerializer(),
             new EndpointRpcContractValidator());
 
-        await Assert.ThrowsExactlyAsync<EndpointOperationOutcomeUnknownException>(() =>
+        await Assert.ThrowsExactlyAsync<EndpointRpcDisconnectedException>(() =>
             proxy.LogoutAsync(EndpointRpcTestData.Token));
         Assert.AreEqual(1, sends);
     }
 
     [TestMethod]
-    public async Task SideEffectingOversizedRemoteResponseReportsUnknownOutcomeWithoutReplay()
+    public async Task StructuredRemotePayloadFailureRemainsConclusiveWithoutReplay()
     {
         var sends = 0;
         var transport = new RecordingEndpointRpcTransport((_, _, _) =>
@@ -148,7 +148,7 @@ public sealed class NamedPipeEndpointsProxyMappingTests
             new EndpointRpcSerializer(),
             new EndpointRpcContractValidator());
 
-        await Assert.ThrowsExactlyAsync<EndpointOperationOutcomeUnknownException>(() =>
+        await Assert.ThrowsExactlyAsync<EndpointRpcRemoteException>(() =>
             proxy.LogoutAsync(EndpointRpcTestData.Token));
         Assert.AreEqual(1, sends);
     }

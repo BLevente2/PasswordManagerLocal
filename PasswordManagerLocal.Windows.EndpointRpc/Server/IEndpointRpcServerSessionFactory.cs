@@ -1,8 +1,9 @@
+using PasswordManagerLocal.Windows.Ipc.Server;
 using PasswordManagerLocal.Windows.Ipc.Transport;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Server;
 
-public interface IEndpointRpcServerSessionFactory
+public interface IEndpointRpcServerSessionFactory : IWindowsIpcServerSessionFactory, IAsyncDisposable
 {
-    IEndpointRpcServerSession Create(IWindowsIpcConnection connection);
+    new IEndpointRpcServerSession Create(IWindowsIpcConnection connection);
 }

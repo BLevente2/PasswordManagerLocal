@@ -19,7 +19,7 @@ public sealed class EndpointRpcDispatcherMappingTests
     public async Task EveryOperationInvokesExactlyItsMappedEndpointMethod()
     {
         var endpoints = new ThrowingRecordingEndpoints();
-        var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
+        await using var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
         long correlationId = 10;
 
         foreach (var descriptor in EndpointOperationManifest.All)
@@ -52,11 +52,13 @@ public sealed class EndpointRpcDispatcherMappingTests
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
-        await CreateDispatcher(criticalAdapter).DispatchAsync(
+        await using var criticalDispatcher = CreateDispatcher(criticalAdapter);
+        await using var readOnlyDispatcher = CreateDispatcher(readOnlyAdapter);
+        await criticalDispatcher.DispatchAsync(
             CreateContext(criticalDescriptor.OperationId, 21),
             SerializeRequest(criticalDescriptor),
             cancellationSource.Token);
-        await CreateDispatcher(readOnlyAdapter).DispatchAsync(
+        await readOnlyDispatcher.DispatchAsync(
             CreateContext(readOnlyDescriptor.OperationId, 22),
             SerializeRequest(readOnlyDescriptor),
             cancellationSource.Token);
@@ -69,7 +71,7 @@ public sealed class EndpointRpcDispatcherMappingTests
     public async Task InvalidRequestNeverInvokesEndpoints()
     {
         var endpoints = new ThrowingRecordingEndpoints();
-        var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
+        await using var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
         var payload = JsonSerializer.SerializeToUtf8Bytes(
             new PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests.GetSavedPasswordsEndpointRequest(),
             EndpointRpcJsonContext.Default.GetSavedPasswordsEndpointRequest);
@@ -88,7 +90,7 @@ public sealed class EndpointRpcDispatcherMappingTests
     public async Task WrongRequestTypeAndUnknownOperationAreRejected()
     {
         var endpoints = new ThrowingRecordingEndpoints();
-        var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
+        await using var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
         var loginPayload = SerializeRequest(EndpointOperationManifest.Get(EndpointOperationId.Login));
 
         var wrongType = await dispatcher.DispatchAsync(
@@ -109,8 +111,8 @@ public sealed class EndpointRpcDispatcherMappingTests
     public async Task KnownAndUnknownBackendFailuresMapWithoutRawMessages()
     {
         const string secret = "database-path-and-secret-token";
-        var known = CreateDispatcher(new ExceptionEndpointAdapter(new UnauthorizedAccessException(secret)));
-        var unknown = CreateDispatcher(new ExceptionEndpointAdapter(new Exception(secret)));
+        await using var known = CreateDispatcher(new ExceptionEndpointAdapter(new UnauthorizedAccessException(secret)));
+        await using var unknown = CreateDispatcher(new ExceptionEndpointAdapter(new Exception(secret)));
         var descriptor = EndpointOperationManifest.Get(EndpointOperationId.GetLocalDeviceInfo);
         var payload = SerializeRequest(descriptor);
 
@@ -128,7 +130,7 @@ public sealed class EndpointRpcDispatcherMappingTests
     public async Task OperationSpecificRequestLimitRejectsBeforeEndpointInvocation()
     {
         var endpoints = new ThrowingRecordingEndpoints();
-        var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
+        await using var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(endpoints));
         var descriptor = EndpointOperationManifest.Get(EndpointOperationId.GetLocalDeviceInfo);
         var payload = new byte[descriptor.MaximumRequestPayloadSize + 1];
 
@@ -146,7 +148,7 @@ public sealed class EndpointRpcDispatcherMappingTests
     public async Task LoginAuthenticationFailureUsesNonEnumeratingSafeError()
     {
         const string secret = "unknown-user-and-password";
-        var dispatcher = CreateDispatcher(new ExceptionEndpointAdapter(
+        await using var dispatcher = CreateDispatcher(new ExceptionEndpointAdapter(
             new PasswordManagerLocal.Backend.Exceptions.UserNotFoundException(secret)));
         var descriptor = EndpointOperationManifest.Get(EndpointOperationId.Login);
         var payload = SerializeRequest(descriptor);
@@ -163,21 +165,60 @@ public sealed class EndpointRpcDispatcherMappingTests
 
 
     [TestMethod]
-    public async Task OversizedValidResponseBecomesStructuredSafeError()
+    public async Task ValidResponseAboveInlineLimitCreatesBoundedLargeTransfer()
     {
-        var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(
+        await using var dispatcher = CreateDispatcher(new FixedEndpointRpcEndpointAdapter(
             new OversizedSavedPasswordsEndpoints()));
         var descriptor = EndpointOperationManifest.Get(EndpointOperationId.GetSavedPasswords);
         var payload = SerializeRequest(descriptor);
+        var context = CreateContext(descriptor.OperationId, 29);
 
         var result = await dispatcher.DispatchAsync(
-            CreateContext(descriptor.OperationId, 29),
+            context,
             payload,
             CancellationToken.None);
 
-        Assert.IsFalse(result.IsSuccess);
+        Assert.IsTrue(result.IsSuccess);
+        Assert.IsTrue(result.IsLargeResult);
+        Assert.IsNotNull(result.LargeResult);
+        Assert.IsTrue(result.LargeResult.DeclaredTotalLength > descriptor.MaximumResponsePayloadSize);
+        Assert.IsTrue(result.LargeResult.DeclaredTotalLength <= descriptor.MaximumLogicalResponsePayloadSize);
+        Assert.IsTrue(result.LargeResult.DeclaredChunkCount <= EndpointRpcLimits.MaximumLargeResultChunkCount);
+        Assert.AreEqual(1, dispatcher.LargeResultTransferStore.Count);
+        Assert.IsTrue(dispatcher.LargeResultTransferStore.Release(
+            context.ConnectionId,
+            context.PeerSessionId,
+            new PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultRequest
+            {
+                TransferId = result.LargeResult.TransferId,
+                OriginalCorrelationId = result.LargeResult.OriginalCorrelationId
+            }));
+    }
+
+    [TestMethod]
+    public async Task ImpossibleReadOnlyResultAboveLargeTransferLimitIsConclusive()
+    {
+        var serializer = new EndpointRpcSerializer(
+            serializationObserver: null,
+            serializedPayloadOverride: type =>
+                type == typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses.GetSavedPasswordsEndpointResponse)
+                    ? new byte[EndpointRpcLimits.MaximumLargeResultTotalBytes + 1]
+                    : null);
+        await using var dispatcher = new EndpointRpcDispatcher(
+            new FixedEndpointRpcEndpointAdapter(new SuccessfulRecordingEndpoints()),
+            serializer,
+            new EndpointRpcContractValidator(),
+            new EndpointRpcBackendErrorMapper());
+        var descriptor = EndpointOperationManifest.Get(EndpointOperationId.GetSavedPasswords);
+
+        var result = await dispatcher.DispatchAsync(
+            CreateContext(descriptor.OperationId, 31),
+            SerializeRequest(descriptor),
+            CancellationToken.None);
+
         Assert.AreEqual(EndpointRpcErrorCode.ResponsePayloadTooLarge, result.Error!.ErrorCode);
-        Assert.IsFalse(result.Error.SafeMessage.Contains("€", StringComparison.Ordinal));
+        Assert.AreNotEqual(EndpointRpcErrorCode.OperationOutcomeUnknown, result.Error.ErrorCode);
+        Assert.AreEqual(0, dispatcher.LargeResultTransferStore.Count);
     }
 
 

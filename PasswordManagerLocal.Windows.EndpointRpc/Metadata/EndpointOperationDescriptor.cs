@@ -12,4 +12,11 @@ public sealed record EndpointOperationDescriptor(
     bool IsIdempotent,
     bool HandlesSensitiveData,
     int MaximumRequestPayloadSize,
-    int MaximumResponsePayloadSize);
+    int MaximumResponsePayloadSize,
+    int MaximumLargeResponsePayloadSize = 0)
+{
+    public bool SupportsLargeResponse => MaximumLargeResponsePayloadSize > 0;
+    public int MaximumLogicalResponsePayloadSize => SupportsLargeResponse
+        ? MaximumLargeResponsePayloadSize
+        : MaximumResponsePayloadSize;
+}

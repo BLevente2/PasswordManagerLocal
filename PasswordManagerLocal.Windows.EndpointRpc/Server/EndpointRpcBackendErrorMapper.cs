@@ -61,6 +61,46 @@ public sealed class EndpointRpcBackendErrorMapper
     }
 
 
+
+    public bool IsConclusiveMutationFailure(
+        Exception exception,
+        EndpointRequestContext context)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        ArgumentNullException.ThrowIfNull(context);
+
+        return exception switch
+        {
+            InvalidInputException => true,
+            UserNotFoundException or UsernameChangedDuringLoginException
+                when context.OperationId == EndpointOperationId.Login => true,
+            UnauthorizedAccessException when context.OperationId == EndpointOperationId.Login => true,
+            InvalidTokenException => true,
+            UserNotFoundException or PasswordNotFoundException or PasswordTagNotFoundException or
+                CustomUserColorNotFoundException => true,
+            DuplicatePasswordNameException or DuplicatePasswordTagNameException or
+                DuplicateCustomUserColorNameException or DuplicateCustomUserColorCodeException => true,
+            LimitReachedException => true,
+            DeviceEnrollmentException enrollmentException => enrollmentException.ErrorCode is
+                DeviceEnrollmentErrorCode.NewDeviceNotFound or
+                DeviceEnrollmentErrorCode.DeviceIdentityConflict,
+            _ => false
+        };
+    }
+
+    public EndpointRpcError CreateOutcomeUnknown(EndpointRequestContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return new EndpointRpcError(
+            EndpointRpcErrorCode.OperationOutcomeUnknown,
+            EndpointRpcErrorCategory.Internal,
+            "The endpoint operation may have executed, but its outcome could not be confirmed.",
+            context.CorrelationId,
+            DateTimeOffset.UtcNow,
+            IsRetryable: false,
+            RequiresProcessRestart: false);
+    }
+
     private static (EndpointRpcErrorCode Code, EndpointRpcErrorCategory Category, string Message, bool Retryable, bool RequiresRestart) MapDeviceEnrollmentError(
         DeviceEnrollmentErrorCode errorCode) => errorCode switch
     {

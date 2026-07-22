@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
+using PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 using PasswordManagerLocal.Windows.EndpointRpc.Test.Infrastructure;
@@ -166,6 +167,29 @@ public sealed class EndpointRpcValidationTests
     }
 
     [TestMethod]
+    public void OperationOutcomeUnknownRequiresInternalCategory()
+    {
+        _validator.Validate(new EndpointRpcError(
+            EndpointRpcErrorCode.OperationOutcomeUnknown,
+            EndpointRpcErrorCategory.Internal,
+            "The endpoint operation may have executed, but its outcome could not be confirmed.",
+            1,
+            DateTimeOffset.UtcNow,
+            false,
+            false));
+
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.Validate(new EndpointRpcError(
+                EndpointRpcErrorCode.OperationOutcomeUnknown,
+                EndpointRpcErrorCategory.Cancellation,
+                "The endpoint operation may have executed, but its outcome could not be confirmed.",
+                1,
+                DateTimeOffset.UtcNow,
+                false,
+                false)));
+    }
+
+    [TestMethod]
     public void InvalidFieldCombinationAndOverlongStringAreRejected()
     {
         Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
@@ -185,4 +209,36 @@ public sealed class EndpointRpcValidationTests
                     Code = new string('A', EndpointRpcLimits.MaximumEnrollmentCodeLength + 1)
                 }));
     }
+    [TestMethod]
+    public void LargeTransferDescriptorAndChunkBoundsAreValidated()
+    {
+        var validator = new EndpointLargeResultContractValidator();
+        var descriptor = new EndpointLargeResultDescriptor
+        {
+            TransferId = Guid.NewGuid(),
+            OriginalCorrelationId = 10,
+            DeclaredTotalLength = EndpointRpcLimits.MaximumLargeResultTotalBytes,
+            DeclaredChunkCount = EndpointRpcLimits.MaximumLargeResultChunkCount,
+            ChunkSize = EndpointRpcLimits.MaximumLargeResultChunkBytes,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(1)
+        };
+        validator.Validate(descriptor);
+
+        descriptor.DeclaredTotalLength++;
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() => validator.Validate(descriptor));
+        descriptor.DeclaredTotalLength = EndpointRpcLimits.MaximumLargeResultTotalBytes;
+
+        var response = new GetEndpointLargeResultChunkResponse
+        {
+            TransferId = descriptor.TransferId,
+            OriginalCorrelationId = descriptor.OriginalCorrelationId,
+            ChunkIndex = 0,
+            IsFinal = false,
+            DeclaredTotalLength = descriptor.DeclaredTotalLength,
+            DeclaredChunkCount = descriptor.DeclaredChunkCount,
+            ChunkPayload = new byte[EndpointRpcLimits.MaximumLargeResultChunkBytes + 1]
+        };
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() => validator.Validate(response));
+    }
+
 }

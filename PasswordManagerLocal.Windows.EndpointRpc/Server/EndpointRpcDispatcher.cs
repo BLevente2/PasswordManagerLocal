@@ -3,29 +3,71 @@ using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;
 using PasswordManagerLocal.Windows.EndpointRpc.Metadata;
 using PasswordManagerLocal.Windows.EndpointRpc.Security;
+using PasswordManagerLocal.Windows.EndpointRpc.Server.LargeTransfer;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 using PasswordManagerLocal.Windows.EndpointRpc.Validation;
 using System.Text.Json.Serialization.Metadata;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Server;
 
-public sealed class EndpointRpcDispatcher
+public sealed class EndpointRpcDispatcher : IAsyncDisposable
 {
     private readonly IEndpointRpcEndpointAdapter _endpointAdapter;
     private readonly EndpointRpcSerializer _serializer;
     private readonly EndpointRpcContractValidator _validator;
     private readonly EndpointRpcBackendErrorMapper _errorMapper;
+    private readonly EndpointLargeResultTransferStore _largeResultTransferStore;
+    private readonly bool _ownsLargeResultTransferStore;
+    private int _disposed;
+
+    internal EndpointLargeResultTransferStore LargeResultTransferStore => _largeResultTransferStore;
 
     public EndpointRpcDispatcher(
         IEndpointRpcEndpointAdapter endpointAdapter,
         EndpointRpcSerializer serializer,
         EndpointRpcContractValidator validator,
         EndpointRpcBackendErrorMapper errorMapper)
+        : this(
+            endpointAdapter,
+            serializer,
+            validator,
+            errorMapper,
+            new EndpointLargeResultTransferStore(),
+            ownsLargeResultTransferStore: true)
+    {
+    }
+
+    internal EndpointRpcDispatcher(
+        IEndpointRpcEndpointAdapter endpointAdapter,
+        EndpointRpcSerializer serializer,
+        EndpointRpcContractValidator validator,
+        EndpointRpcBackendErrorMapper errorMapper,
+        EndpointLargeResultTransferStore largeResultTransferStore)
+        : this(
+            endpointAdapter,
+            serializer,
+            validator,
+            errorMapper,
+            largeResultTransferStore,
+            ownsLargeResultTransferStore: false)
+    {
+    }
+
+    private EndpointRpcDispatcher(
+        IEndpointRpcEndpointAdapter endpointAdapter,
+        EndpointRpcSerializer serializer,
+        EndpointRpcContractValidator validator,
+        EndpointRpcBackendErrorMapper errorMapper,
+        EndpointLargeResultTransferStore largeResultTransferStore,
+        bool ownsLargeResultTransferStore)
     {
         _endpointAdapter = endpointAdapter ?? throw new ArgumentNullException(nameof(endpointAdapter));
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
         _validator = validator ?? throw new ArgumentNullException(nameof(validator));
         _errorMapper = errorMapper ?? throw new ArgumentNullException(nameof(errorMapper));
+        _largeResultTransferStore = largeResultTransferStore
+            ?? throw new ArgumentNullException(nameof(largeResultTransferStore));
+        _ownsLargeResultTransferStore = ownsLargeResultTransferStore;
     }
 
     public async Task<EndpointRpcDispatchResult> DispatchAsync(
@@ -111,14 +153,26 @@ public sealed class EndpointRpcDispatcher
         }
         catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
         {
-            return Failure(context, EndpointRpcErrorCode.OperationCancelled, EndpointRpcErrorCategory.Cancellation, "The endpoint operation was cancelled.", true);
+            return ShouldReturnOutcomeUnknown(descriptor, context, exception: null)
+                ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
+                : Failure(context, EndpointRpcErrorCode.OperationCancelled, EndpointRpcErrorCategory.Cancellation, "The endpoint operation was cancelled.", true);
+        }
+        catch (EndpointLargeResultCapacityException)
+        {
+            return ShouldReturnOutcomeUnknown(descriptor, context, exception: null)
+                ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
+                : Failure(context, EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The endpoint large-result transfer capacity is unavailable.", true);
         }
         catch (EndpointRpcPayloadException)
         {
-            return Failure(context, EndpointRpcErrorCode.ValidationFailed, EndpointRpcErrorCategory.Validation, "The endpoint RPC payload is invalid.");
+            return ShouldReturnOutcomeUnknown(descriptor, context, exception: null)
+                ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
+                : Failure(context, EndpointRpcErrorCode.ValidationFailed, EndpointRpcErrorCategory.Validation, "The endpoint RPC payload is invalid.");
         }
         catch (Exception exception)
         {
+            if (ShouldReturnOutcomeUnknown(descriptor, context, exception))
+                return EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context));
             return EndpointRpcDispatchResult.Failure(_errorMapper.Map(exception, context));
         }
     }
@@ -135,7 +189,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.RegisterAsync(request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new RegisterEndpointResponse { Token = result };
             return SerializeResponse(
                 context,
@@ -160,7 +216,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.LoginAsync(request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new LoginEndpointResponse { Token = result };
             return SerializeResponse(
                 context,
@@ -185,7 +243,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.RenewAuthSessionAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new RenewAuthSessionEndpointResponse { RenewedToken = result };
             return SerializeResponse(
                 context,
@@ -210,7 +270,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.LogoutAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new LogoutEndpointResponse();
             return SerializeResponse(
                 context,
@@ -235,7 +297,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetAuthSessionStatusAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetAuthSessionStatusEndpointResponse { Status = result };
             return SerializeResponse(
                 context,
@@ -260,7 +324,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.ChangeMasterPasswordAsync(request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new ChangeMasterPasswordEndpointResponse();
             return SerializeResponse(
                 context,
@@ -285,7 +351,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetUserProfileInfoAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetUserProfileInfoEndpointResponse { Profile = result };
             return SerializeResponse(
                 context,
@@ -310,7 +378,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.DeleteUserAccountAsync(request.Token, request.Password, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new DeleteUserAccountEndpointResponse();
             return SerializeResponse(
                 context,
@@ -335,7 +405,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.ChangeUsernameAsync(request.Token, request.NewUsername, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new ChangeUsernameEndpointResponse();
             return SerializeResponse(
                 context,
@@ -360,7 +432,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.UpdateUserProfileInfoAsync(request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new UpdateUserProfileInfoEndpointResponse();
             return SerializeResponse(
                 context,
@@ -385,7 +459,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetLocalDeviceInfoAsync(operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetLocalDeviceInfoEndpointResponse { Device = result };
             return SerializeResponse(
                 context,
@@ -410,7 +486,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetLocalUserSyncOnAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetLocalUserSyncOnEndpointResponse { IsSyncOn = result };
             return SerializeResponse(
                 context,
@@ -435,7 +513,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.SetLocalUserSyncOnAsync(request.Token, request.IsSyncOn, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new SetLocalUserSyncOnEndpointResponse();
             return SerializeResponse(
                 context,
@@ -460,7 +540,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.SetLocalDeviceNameAsync(request.Token, request.Name, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new SetLocalDeviceNameEndpointResponse();
             return SerializeResponse(
                 context,
@@ -485,7 +567,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetUserDevicesAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetUserDevicesEndpointResponse { Devices = result };
             return SerializeResponse(
                 context,
@@ -510,7 +594,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.SetUserDeviceNameAsync(request.Token, request.DeviceId, request.Name, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new SetUserDeviceNameEndpointResponse();
             return SerializeResponse(
                 context,
@@ -535,7 +621,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.SetUserDeviceSyncOnAsync(request.Token, request.DeviceId, request.IsSyncOn, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new SetUserDeviceSyncOnEndpointResponse();
             return SerializeResponse(
                 context,
@@ -560,7 +648,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.UnblockUserDeviceAsync(request.Token, request.DeviceId, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new UnblockUserDeviceEndpointResponse();
             return SerializeResponse(
                 context,
@@ -585,7 +675,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.DisconnectUserDeviceAsync(request.Token, request.DeviceId, request.MasterPassword, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new DisconnectUserDeviceEndpointResponse { Result = result };
             return SerializeResponse(
                 context,
@@ -610,7 +702,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.StartDeviceEnrollmentAsync(operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new StartDeviceEnrollmentEndpointResponse { Enrollment = result };
             return SerializeResponse(
                 context,
@@ -635,7 +729,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetDeviceEnrollmentStatusAsync(operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetDeviceEnrollmentStatusEndpointResponse { Status = result };
             return SerializeResponse(
                 context,
@@ -660,7 +756,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.CancelDeviceEnrollmentAsync(operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new CancelDeviceEnrollmentEndpointResponse();
             return SerializeResponse(
                 context,
@@ -685,7 +783,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.AddDeviceByCodeAsync(request.Token, request.Code, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new AddDeviceByCodeEndpointResponse();
             return SerializeResponse(
                 context,
@@ -710,7 +810,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.RestoreRememberedSessionsAsync(operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new RestoreRememberedSessionsEndpointResponse { Tokens = result };
             return SerializeResponse(
                 context,
@@ -735,7 +837,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.InitializeRememberMeSessionAsync(request.UserId, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new InitializeRememberMeSessionEndpointResponse { Token = result };
             return SerializeResponse(
                 context,
@@ -760,7 +864,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.SetRememberMeAsync(request.Token, request.RememberMe, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new SetRememberMeEndpointResponse();
             return SerializeResponse(
                 context,
@@ -785,7 +891,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetSavedPasswordsAsync(request.Token, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetSavedPasswordsEndpointResponse { Passwords = result };
             return SerializeResponse(
                 context,
@@ -810,7 +918,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.AddNewPasswordAsync(request.Token, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new AddNewPasswordEndpointResponse();
             return SerializeResponse(
                 context,
@@ -835,7 +945,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.RemovePasswordsAsync(request.Token, request.PasswordIds, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new RemovePasswordsEndpointResponse();
             return SerializeResponse(
                 context,
@@ -860,7 +972,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             var result = await endpoints.GetUnsecurePasswordAsync(request.Token, request.PasswordId, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new GetUnsecurePasswordEndpointResponse { Password = result };
             return SerializeResponse(
                 context,
@@ -885,7 +999,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.UpdatePasswordAsync(request.Token, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new UpdatePasswordEndpointResponse();
             return SerializeResponse(
                 context,
@@ -910,7 +1026,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.ExportPasswordsToUserAsync(request.SourceToken, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new ExportPasswordsToUserEndpointResponse();
             return SerializeResponse(
                 context,
@@ -935,7 +1053,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.AddCustomUserColorsAsync(request.Token, request.Requests, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new AddCustomUserColorsEndpointResponse();
             return SerializeResponse(
                 context,
@@ -960,7 +1080,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.DeleteCustomUserColorsAsync(request.Token, request.CustomUserColorIds, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new DeleteCustomUserColorsEndpointResponse();
             return SerializeResponse(
                 context,
@@ -985,7 +1107,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.ExportCustomUserColorsToUserAsync(request.SourceToken, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new ExportCustomUserColorsToUserEndpointResponse();
             return SerializeResponse(
                 context,
@@ -1010,7 +1134,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.UpdateCustomUserColorAsync(request.Token, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new UpdateCustomUserColorEndpointResponse();
             return SerializeResponse(
                 context,
@@ -1035,7 +1161,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.AddPasswordTagAsync(request.Token, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new AddPasswordTagEndpointResponse();
             return SerializeResponse(
                 context,
@@ -1060,7 +1188,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.DeletePasswordTagAsync(request.Token, request.PasswordTagId, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new DeletePasswordTagEndpointResponse();
             return SerializeResponse(
                 context,
@@ -1085,7 +1215,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.ExportPasswordTagsToUserAsync(request.SourceToken, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new ExportPasswordTagsToUserEndpointResponse();
             return SerializeResponse(
                 context,
@@ -1110,7 +1242,9 @@ public sealed class EndpointRpcDispatcher
         try
         {
             var endpoints = _endpointAdapter.GetEndpoints(context);
+            context.Invocation.MarkInvoking();
             await endpoints.UpdatePasswordTagAsync(request.Token, request.Request, operationToken);
+            context.Invocation.MarkInvocationCompleted();
             var response = new UpdatePasswordTagEndpointResponse();
             return SerializeResponse(
                 context,
@@ -1121,6 +1255,15 @@ public sealed class EndpointRpcDispatcher
         {
             EndpointSensitiveData.ClearRequest(context.OperationId, request);
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        if (_ownsLargeResultTransferStore)
+            await _largeResultTransferStore.DisposeAsync();
+        GC.SuppressFinalize(this);
     }
 
     private TRequest DeserializeRequest<TRequest>(
@@ -1152,23 +1295,67 @@ public sealed class EndpointRpcDispatcher
         try
         {
             _validator.ValidateResponse(context.OperationId, response);
+            context.Invocation.MarkResponseValidated();
             payload = _serializer.Serialize(response, typeInfo);
-            if (payload.Length > EndpointOperationManifest.Get(context.OperationId).MaximumResponsePayloadSize)
+            context.Invocation.MarkResponseSerialized();
+            var descriptor = EndpointOperationManifest.Get(context.OperationId);
+            if (payload.Length > descriptor.MaximumLogicalResponsePayloadSize)
             {
                 EndpointSensitiveData.Clear(payload);
-                return Failure(
-                    context,
-                    EndpointRpcErrorCode.ResponsePayloadTooLarge,
-                    EndpointRpcErrorCategory.Validation,
-                    "The endpoint RPC response payload exceeds the permitted size.");
+                payload = null;
+                return descriptor.MutatesState
+                    ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
+                    : Failure(
+                        context,
+                        EndpointRpcErrorCode.ResponsePayloadTooLarge,
+                        EndpointRpcErrorCategory.Validation,
+                        "The endpoint RPC response payload exceeds the permitted size.");
             }
 
-            return EndpointRpcDispatchResult.Success(payload);
+            if (payload.Length > descriptor.MaximumResponsePayloadSize)
+            {
+                if (!descriptor.SupportsLargeResponse)
+                {
+                    EndpointSensitiveData.Clear(payload);
+                    payload = null;
+                    return descriptor.MutatesState
+                        ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
+                        : Failure(
+                            context,
+                            EndpointRpcErrorCode.ResponsePayloadTooLarge,
+                            EndpointRpcErrorCategory.Validation,
+                            "The endpoint RPC response payload exceeds the permitted size.");
+                }
+
+                var largeResult = _largeResultTransferStore.Create(context, payload);
+                payload = null;
+                return EndpointRpcDispatchResult.Large(largeResult);
+            }
+
+            var inlinePayload = payload;
+            payload = null;
+            return EndpointRpcDispatchResult.Success(inlinePayload);
         }
         finally
         {
+            EndpointSensitiveData.Clear(payload);
             EndpointSensitiveData.ClearResponse(context.OperationId, response);
         }
+    }
+
+    private bool ShouldReturnOutcomeUnknown(
+        EndpointOperationDescriptor descriptor,
+        EndpointRequestContext context,
+        Exception? exception)
+    {
+        if (!descriptor.MutatesState ||
+            context.Invocation.Stage < EndpointInvocationStage.Invoking)
+        {
+            return false;
+        }
+
+        return exception is null ||
+            !_errorMapper.IsConclusiveMutationFailure(exception, context);
     }
 
     private static EndpointRpcDispatchResult Failure(

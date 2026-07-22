@@ -13,6 +13,8 @@ namespace PasswordManagerLocal.Windows.EndpointRpc.Test.Infrastructure;
 
 public sealed class InMemoryEndpointRpcTransport : IEndpointRpcTransport
 {
+    private static readonly Guid ConnectionId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid SessionId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private readonly EndpointRpcWindowsIpcRequestHandler _handler;
     private readonly EndpointRpcMessageCodec _codec;
     private long _correlationId = 1;
@@ -28,25 +30,66 @@ public sealed class InMemoryEndpointRpcTransport : IEndpointRpcTransport
 
     public bool IsConnected => !_disposed;
     public Task Completion { get; } = Task.Delay(Timeout.InfiniteTimeSpan);
+    public int PublicRequestCount { get; private set; }
+    public int ChunkRequestCount { get; private set; }
+    public int ReleaseRequestCount { get; private set; }
 
-    public async Task<byte[]> SendAsync(
+    public Task<EndpointRpcTransportResponse> SendAsync(
         EndpointOperationId operationId,
         byte[] requestPayload,
         EndpointOperationCancellationClassification cancellationClassification,
         CancellationToken cancellationToken = default)
     {
+        PublicRequestCount++;
+        return SendEncodedAsync(
+            _codec.EncodeRequest(operationId, requestPayload),
+            cancellationToken);
+    }
+
+    public async Task<byte[]> GetLargeResultChunkAsync(
+        byte[] requestPayload,
+        CancellationToken cancellationToken = default)
+    {
+        ChunkRequestCount++;
+        var response = await SendEncodedAsync(
+            _codec.EncodeLargeResultChunkRequest(requestPayload),
+            cancellationToken);
+        return response.InlinePayload
+            ?? throw new InvalidOperationException("The in-memory chunk response was not inline.");
+    }
+
+    public async Task ReleaseLargeResultAsync(
+        byte[] requestPayload,
+        CancellationToken cancellationToken = default)
+    {
+        ReleaseRequestCount++;
+        var response = await SendEncodedAsync(
+            _codec.EncodeLargeResultReleaseRequest(requestPayload),
+            cancellationToken);
+        EndpointSensitiveData.Clear(response.InlinePayload);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        return ValueTask.CompletedTask;
+    }
+
+    private async Task<EndpointRpcTransportResponse> SendEncodedAsync(
+        byte[] encodedRequest,
+        CancellationToken cancellationToken)
+    {
         if (_disposed)
             throw new EndpointRpcDisconnectedException();
 
-        var correlationId = Interlocked.Increment(ref _correlationId);
-        var encodedRequest = _codec.EncodeRequest(operationId, requestPayload);
         try
         {
+            var correlationId = Interlocked.Increment(ref _correlationId);
             var connection = new IpcConnectionContext(
-                Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                ConnectionId,
                 IpcPeerRole.Ui,
                 1234,
-                Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                SessionId,
                 IpcCapabilities.EndpointRpc);
             var envelope = new IpcRequestEnvelope(
                 correlationId,
@@ -65,11 +108,5 @@ public sealed class InMemoryEndpointRpcTransport : IEndpointRpcTransport
         {
             EndpointSensitiveData.Clear(encodedRequest);
         }
-    }
-
-    public ValueTask DisposeAsync()
-    {
-        _disposed = true;
-        return ValueTask.CompletedTask;
     }
 }
