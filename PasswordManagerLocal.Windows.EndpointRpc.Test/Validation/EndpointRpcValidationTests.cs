@@ -1,0 +1,188 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
+using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
+using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;
+using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
+using PasswordManagerLocal.Windows.EndpointRpc.Test.Infrastructure;
+using PasswordManagerLocal.Windows.EndpointRpc.Validation;
+
+namespace PasswordManagerLocal.Windows.EndpointRpc.Test.Validation;
+
+[TestClass]
+public sealed class EndpointRpcValidationTests
+{
+    private readonly EndpointRpcContractValidator _validator = new();
+
+    [TestMethod]
+    public void MissingIdentifierIsRejectedBeforeDispatch()
+    {
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.GetSavedPasswords,
+                new GetSavedPasswordsEndpointRequest()));
+    }
+
+    [TestMethod]
+    public void OversizedSensitiveBinaryValueIsRejectedWithoutEchoingIt()
+    {
+        var secret = Enumerable.Repeat((byte)0x53, EndpointRpcLimits.MaximumSensitiveBinaryFieldSize + 1).ToArray();
+        var exception = Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.DeleteUserAccount,
+                new DeleteUserAccountEndpointRequest
+                {
+                    Token = EndpointRpcTestData.Token,
+                    Password = secret
+                }));
+        Assert.IsFalse(exception.Message.Contains(Convert.ToBase64String(secret), StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void OversizedAndDuplicateCollectionsAreRejected()
+    {
+        var oversized = Enumerable.Range(0, EndpointRpcLimits.MaximumCollectionItems + 1)
+            .Select(_ => Guid.NewGuid())
+            .ToArray();
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.RemovePasswords,
+                new RemovePasswordsEndpointRequest
+                {
+                    Token = EndpointRpcTestData.Token,
+                    PasswordIds = oversized
+                }));
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.RemovePasswords,
+                new RemovePasswordsEndpointRequest
+                {
+                    Token = EndpointRpcTestData.Token,
+                    PasswordIds = [EndpointRpcTestData.ItemId, EndpointRpcTestData.ItemId]
+                }));
+    }
+
+    [TestMethod]
+    public void UndefinedEnumAndNonUtcTimestampAreRejected()
+    {
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateResponse(
+                EndpointOperationId.GetAuthSessionStatus,
+                new GetAuthSessionStatusEndpointResponse
+                {
+                    Status = new AuthSessionStatusResponse
+                    {
+                        InvalidationReason = (AuthSessionInvalidationReason)int.MaxValue
+                    }
+                }));
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateResponse(
+                EndpointOperationId.GetLocalDeviceInfo,
+                new GetLocalDeviceInfoEndpointResponse
+                {
+                    Device = new LocalDeviceInfoResponse
+                    {
+                        DeviceId = EndpointRpcTestData.ItemId,
+                        TlsCertFingerprint = "fingerprint",
+                        DeviceType = DeviceType.WindowsPc,
+                        CreatedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.FromHours(1))
+                    }
+                }));
+    }
+
+
+    [TestMethod]
+    public void MalformedNestedContractsAreRejectedAsPayloadErrors()
+    {
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.Login,
+                new LoginEndpointRequest { Request = null! }));
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateResponse(
+                EndpointOperationId.GetSavedPasswords,
+                new GetSavedPasswordsEndpointResponse
+                {
+                    Passwords = new SavedPasswordsResponse
+                    {
+                        Passwords =
+                        [
+                            new PasswordInfoResponse
+                            {
+                                Id = EndpointRpcTestData.ItemId,
+                                Name = null!,
+                                Description = string.Empty,
+                                Color = "#FF14B8A6",
+                                CreatedAt = DateTime.UtcNow,
+                                LastUpdatedAt = DateTime.UtcNow
+                            }
+                        ]
+                    }
+                }));
+    }
+
+    [TestMethod]
+    public void DuplicateResponseIdentifiersAreRejected()
+    {
+        var duplicate = new UserDeviceInfoResponse
+        {
+            DeviceId = EndpointRpcTestData.ItemId,
+            Name = "Desktop",
+            DeviceType = DeviceType.WindowsPc,
+            TlsCertFingerprint = "fingerprint",
+            LinkedAt = DateTimeOffset.UtcNow
+        };
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateResponse(
+                EndpointOperationId.GetUserDevices,
+                new GetUserDevicesEndpointResponse
+                {
+                    Devices = [duplicate, duplicate]
+                }));
+    }
+
+    [TestMethod]
+    public void ErrorCodeCategoryMismatchAndInvalidRestartFlagAreRejected()
+    {
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.Validate(new EndpointRpcError(
+                EndpointRpcErrorCode.AuthenticationFailed,
+                EndpointRpcErrorCategory.Internal,
+                "Authentication failed.",
+                1,
+                DateTimeOffset.UtcNow,
+                false,
+                false)));
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.Validate(new EndpointRpcError(
+                EndpointRpcErrorCode.BackendFailure,
+                EndpointRpcErrorCategory.Internal,
+                "The endpoint operation failed.",
+                1,
+                DateTimeOffset.UtcNow,
+                false,
+                true)));
+    }
+
+    [TestMethod]
+    public void InvalidFieldCombinationAndOverlongStringAreRejected()
+    {
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.UpdatePassword,
+                new UpdatePasswordEndpointRequest
+                {
+                    Token = EndpointRpcTestData.Token,
+                    Request = new() { Id = EndpointRpcTestData.ItemId }
+                }));
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+            _validator.ValidateRequest(
+                EndpointOperationId.AddDeviceByCode,
+                new AddDeviceByCodeEndpointRequest
+                {
+                    Token = EndpointRpcTestData.Token,
+                    Code = new string('A', EndpointRpcLimits.MaximumEnrollmentCodeLength + 1)
+                }));
+    }
+}

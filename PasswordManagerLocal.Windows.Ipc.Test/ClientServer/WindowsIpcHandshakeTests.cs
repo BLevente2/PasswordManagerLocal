@@ -70,6 +70,56 @@ public sealed class WindowsIpcHandshakeTests
         await serverTask;
     }
 
+
+
+    [TestMethod]
+    public async Task CapabilityNotSupportedByServerIsRejectedWithStructuredError()
+    {
+        var pair = new InMemoryIpcConnectionPair();
+        var serializer = new WindowsIpcSerializer();
+        var serverTask = CreateServer(pair, serializer).RunAsync();
+
+        await SendHandshakeAsync(
+            pair,
+            serializer,
+            new IpcHandshakeRequest(
+                WindowsIpcProtocol.CurrentVersion,
+                IpcPeerRole.TestClient,
+                Environment.ProcessId,
+                Guid.NewGuid(),
+                IpcCapabilities.EndpointRpc),
+            1);
+        var response = await ReadHandshakeResponseAsync(pair, serializer);
+
+        Assert.IsFalse(response.Accepted);
+        Assert.AreEqual(IpcErrorCode.UnsupportedCapability, response.Error?.ErrorCode);
+        Assert.IsNull(await pair.Client.ReadFrameAsync());
+        await serverTask;
+    }
+
+    [TestMethod]
+    public async Task MissingRequiredClientCapabilityIsRejectedWithStructuredError()
+    {
+        var pair = new InMemoryIpcConnectionPair();
+        var serializer = new WindowsIpcSerializer();
+        var serverTask = CreateServer(
+            pair,
+            serializer,
+            requiredClientCapabilities: IpcCapabilities.EndpointRpc).RunAsync();
+
+        await SendHandshakeAsync(
+            pair,
+            serializer,
+            CreateHandshakeRequest(IpcPeerRole.TestClient),
+            1);
+        var response = await ReadHandshakeResponseAsync(pair, serializer);
+
+        Assert.IsFalse(response.Accepted);
+        Assert.AreEqual(IpcErrorCode.UnsupportedCapability, response.Error?.ErrorCode);
+        Assert.IsNull(await pair.Client.ReadFrameAsync());
+        await serverTask;
+    }
+
     [TestMethod]
     public async Task OrdinaryRequestBeforeHandshakeIsRejected()
     {
@@ -118,7 +168,8 @@ public sealed class WindowsIpcHandshakeTests
     private static WindowsIpcServerConnectionSession CreateServer(
         InMemoryIpcConnectionPair pair,
         WindowsIpcSerializer serializer,
-        IEnumerable<IpcPeerRole>? acceptedClientRoles = null)
+        IEnumerable<IpcPeerRole>? acceptedClientRoles = null,
+        IpcCapabilities requiredClientCapabilities = IpcCapabilities.None)
     {
         var roles = (acceptedClientRoles ?? new[] { IpcPeerRole.TestClient }).ToArray();
         return new WindowsIpcServerConnectionSession(
@@ -129,7 +180,8 @@ public sealed class WindowsIpcHandshakeTests
             new WindowsIpcServerOptions(
                 IpcPeerRole.Agent,
                 roles,
-                IpcCapabilities.Control),
+                IpcCapabilities.Control,
+                requiredClientCapabilities: requiredClientCapabilities),
             uiConnectionCoordinator: roles.Contains(IpcPeerRole.Ui)
                 ? new SingleUiConnectionCoordinator()
                 : null);

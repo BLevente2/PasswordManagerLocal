@@ -21,6 +21,7 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
     private readonly WindowsIpcContractValidator _contractValidator;
     private readonly IReadOnlyList<IWindowsIpcConnectionLifecycleObserver> _observers;
     private readonly IUiConnectionCoordinator? _uiConnectionCoordinator;
+    private readonly IWindowsIpcHandshakeAuthorizer? _handshakeAuthorizer;
     private readonly SemaphoreSlim _activeRequestCapacity;
     private readonly CancellationTokenSource _shutdownSource = new();
     private readonly ConcurrentDictionary<long, ServerIpcRequestExecution> _activeRequests = new();
@@ -46,7 +47,8 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
         WindowsIpcServerOptions options,
         IEnumerable<IWindowsIpcConnectionLifecycleObserver>? observers = null,
         IUiConnectionCoordinator? uiConnectionCoordinator = null,
-        WindowsIpcContractValidator? contractValidator = null)
+        WindowsIpcContractValidator? contractValidator = null,
+        IWindowsIpcHandshakeAuthorizer? handshakeAuthorizer = null)
     {
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
@@ -65,6 +67,7 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
         }
 
         _uiConnectionCoordinator = uiConnectionCoordinator;
+        _handshakeAuthorizer = handshakeAuthorizer;
         _activeRequestCapacity = new SemaphoreSlim(
             options.MaximumActiveRequestsPerConnection,
             options.MaximumActiveRequestsPerConnection);
@@ -374,6 +377,49 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
             return null;
         }
 
+        if ((request.Capabilities & ~_options.Capabilities) != 0)
+        {
+            await SendHandshakeRejectionAsync(
+                frame.Header.CorrelationId,
+                IpcErrorCode.UnsupportedCapability,
+                "The IPC server does not support a requested capability.",
+                cancellationToken);
+            return null;
+        }
+
+        if ((request.Capabilities & _options.RequiredClientCapabilities) !=
+            _options.RequiredClientCapabilities)
+        {
+            await SendHandshakeRejectionAsync(
+                frame.Header.CorrelationId,
+                IpcErrorCode.UnsupportedCapability,
+                "The IPC client does not support a required capability.",
+                cancellationToken);
+            return null;
+        }
+
+        var connectionContext = new IpcConnectionContext(
+            _connection.ConnectionId,
+            request.ClientRole,
+            request.ProcessId,
+            request.SessionId,
+            request.Capabilities);
+
+        if (_handshakeAuthorizer is not null)
+        {
+            var decision = _handshakeAuthorizer.Authorize(connectionContext);
+            if (!decision.IsAuthorized)
+            {
+                await SendHandshakeRejectionAsync(
+                    frame.Header.CorrelationId,
+                    decision.ErrorCode,
+                    decision.SafeMessage,
+                    cancellationToken,
+                    decision.IsRetryable);
+                return null;
+            }
+        }
+
         var response = new IpcHandshakeResponse(
             Accepted: true,
             WindowsIpcProtocol.CurrentVersion,
@@ -383,12 +429,7 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
             Error: null);
         await SendHandshakeResponseAsync(frame.Header.CorrelationId, response, cancellationToken);
 
-        return new IpcConnectionContext(
-            _connection.ConnectionId,
-            request.ClientRole,
-            request.ProcessId,
-            request.SessionId,
-            request.Capabilities);
+        return connectionContext;
     }
 
     private async Task StartRequestAsync(
@@ -653,7 +694,8 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
         long correlationId,
         IpcErrorCode errorCode,
         string safeMessage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool isRetryable = false)
     {
         var error = new IpcError(
             errorCode,
@@ -661,7 +703,7 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
             safeMessage,
             correlationId,
             DateTimeOffset.UtcNow,
-            IsRetryable: false,
+            IsRetryable: isRetryable,
             RequiresProcessRestart: false);
         var response = new IpcHandshakeResponse(
             Accepted: false,

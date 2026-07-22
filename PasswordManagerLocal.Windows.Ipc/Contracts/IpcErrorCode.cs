@@ -16,6 +16,7 @@ public enum IpcErrorCode
     UiAlreadyRegistered = 12,
     RequestRejected = 13,
     InternalFailure = 14,
+    UnsupportedCapability = 15,
     ServerBusy = 16,
     TooManyRequests = 17,
     RequestPayloadTooLarge = 18,

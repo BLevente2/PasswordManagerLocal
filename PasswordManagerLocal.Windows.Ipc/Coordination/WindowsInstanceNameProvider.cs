@@ -46,6 +46,7 @@ public sealed class WindowsInstanceNameProvider
             Path.Combine(lockDirectory, $"agent.{suffix}.lock"),
             Path.Combine(lockDirectory, $"ui.{suffix}.lock"),
             $"PasswordManagerLocal.Control.{suffix}",
-            $"PasswordManagerLocal.UiActivation.{suffix}");
+            $"PasswordManagerLocal.UiActivation.{suffix}",
+            $"PasswordManagerLocal.Endpoints.{suffix}");
     }
 }

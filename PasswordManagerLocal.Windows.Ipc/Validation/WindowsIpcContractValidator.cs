@@ -444,7 +444,8 @@ public sealed class WindowsIpcContractValidator
         const IpcCapabilities known =
             IpcCapabilities.Control |
             IpcCapabilities.UiActivation |
-            IpcCapabilities.Status;
+            IpcCapabilities.Status |
+            IpcCapabilities.EndpointRpc;
         return (capabilities & ~known) != 0;
     }
 }

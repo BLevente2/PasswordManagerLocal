@@ -23,18 +23,23 @@ public sealed partial class WindowsInstanceNameProviderTests
         Assert.AreEqual(first, second);
         Assert.AreNotEqual(first.AgentLockFilePath, first.UiLockFilePath);
         Assert.AreNotEqual(first.ControlPipeName, first.UiActivationPipeName);
+        Assert.AreNotEqual(first.ControlPipeName, first.EndpointPipeName);
+        Assert.AreNotEqual(first.UiActivationPipeName, first.EndpointPipeName);
         Assert.AreNotEqual(first.AgentLockFilePath, first.ControlPipeName);
         Assert.AreNotEqual(first.UiLockFilePath, first.UiActivationPipeName);
         StringAssert.StartsWith(first.AgentLockFilePath, Path.Combine(applicationData, "instance-locks"));
         StringAssert.StartsWith(first.UiLockFilePath, Path.Combine(applicationData, "instance-locks"));
         StringAssert.StartsWith(first.ControlPipeName, "PasswordManagerLocal.Control.");
         StringAssert.StartsWith(first.UiActivationPipeName, "PasswordManagerLocal.UiActivation.");
+        StringAssert.StartsWith(first.EndpointPipeName, "PasswordManagerLocal.Endpoints.");
         Assert.IsTrue(SafeLockFileName().IsMatch(Path.GetFileName(first.AgentLockFilePath)));
         Assert.IsTrue(SafeLockFileName().IsMatch(Path.GetFileName(first.UiLockFilePath)));
         Assert.IsTrue(SafeControlPipeName().IsMatch(first.ControlPipeName));
         Assert.IsTrue(SafeActivationPipeName().IsMatch(first.UiActivationPipeName));
+        Assert.IsTrue(SafeEndpointPipeName().IsMatch(first.EndpointPipeName));
         Assert.IsFalse(first.AgentLockFilePath.Contains("unsafe", StringComparison.OrdinalIgnoreCase));
         Assert.IsFalse(first.UiActivationPipeName.Contains('@'));
+        Assert.IsFalse(first.EndpointPipeName.Contains('@'));
         Assert.IsTrue(Path.IsPathFullyQualified(first.AgentLockFilePath));
         Assert.IsTrue(Path.IsPathFullyQualified(first.UiLockFilePath));
         Assert.IsFalse(first.AgentLockFilePath.StartsWith("Local\\", StringComparison.OrdinalIgnoreCase));
@@ -58,6 +63,7 @@ public sealed partial class WindowsInstanceNameProviderTests
         Assert.AreNotEqual(first.UiLockFilePath, second.UiLockFilePath);
         Assert.AreNotEqual(first.ControlPipeName, second.ControlPipeName);
         Assert.AreNotEqual(first.UiActivationPipeName, second.UiActivationPipeName);
+        Assert.AreNotEqual(first.EndpointPipeName, second.EndpointPipeName);
     }
 
     [TestMethod]
@@ -81,4 +87,7 @@ public sealed partial class WindowsInstanceNameProviderTests
 
     [GeneratedRegex("^PasswordManagerLocal\\.UiActivation\\.[a-f0-9]{32}$")]
     private static partial Regex SafeActivationPipeName();
+
+    [GeneratedRegex("^PasswordManagerLocal\\.Endpoints\\.[a-f0-9]{32}$")]
+    private static partial Regex SafeEndpointPipeName();
 }

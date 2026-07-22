@@ -12,12 +12,18 @@ public sealed class WindowsIpcServerOptions
         IEnumerable<IpcPeerRole> acceptedClientRoles,
         IpcCapabilities capabilities,
         int maximumActiveRequestsPerConnection = DefaultMaximumActiveRequestsPerConnection,
-        bool managesUiRegistration = true)
+        bool managesUiRegistration = true,
+        IpcCapabilities requiredClientCapabilities = IpcCapabilities.None)
     {
         if (!Enum.IsDefined(serverRole) || serverRole == IpcPeerRole.TestClient)
             throw new ArgumentOutOfRangeException(nameof(serverRole));
         if (capabilities == IpcCapabilities.None || HasUnknownCapabilities(capabilities))
             throw new ArgumentOutOfRangeException(nameof(capabilities));
+        if (requiredClientCapabilities != IpcCapabilities.None &&
+            HasUnknownCapabilities(requiredClientCapabilities))
+        {
+            throw new ArgumentOutOfRangeException(nameof(requiredClientCapabilities));
+        }
         if (maximumActiveRequestsPerConnection <= 0 ||
             maximumActiveRequestsPerConnection > MaximumConfigurableActiveRequestsPerConnection)
         {
@@ -37,6 +43,7 @@ public sealed class WindowsIpcServerOptions
         Capabilities = capabilities;
         MaximumActiveRequestsPerConnection = maximumActiveRequestsPerConnection;
         ManagesUiRegistration = managesUiRegistration;
+        RequiredClientCapabilities = requiredClientCapabilities;
     }
 
     public IpcPeerRole ServerRole { get; }
@@ -44,13 +51,15 @@ public sealed class WindowsIpcServerOptions
     public IpcCapabilities Capabilities { get; }
     public int MaximumActiveRequestsPerConnection { get; }
     public bool ManagesUiRegistration { get; }
+    public IpcCapabilities RequiredClientCapabilities { get; }
 
     private static bool HasUnknownCapabilities(IpcCapabilities capabilities)
     {
         const IpcCapabilities known =
             IpcCapabilities.Control |
             IpcCapabilities.UiActivation |
-            IpcCapabilities.Status;
+            IpcCapabilities.Status |
+            IpcCapabilities.EndpointRpc;
         return (capabilities & ~known) != 0;
     }
 }

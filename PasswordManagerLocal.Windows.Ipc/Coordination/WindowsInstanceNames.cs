@@ -4,4 +4,5 @@ public sealed record WindowsInstanceNames(
     string AgentLockFilePath,
     string UiLockFilePath,
     string ControlPipeName,
-    string UiActivationPipeName);
+    string UiActivationPipeName,
+    string EndpointPipeName);

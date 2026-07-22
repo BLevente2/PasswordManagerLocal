@@ -101,6 +101,26 @@ public sealed class WindowsIpcClientLifecycleHardeningTests
         Assert.IsNull(client.ServerConnectionId);
     }
 
+
+    [TestMethod]
+    public async Task MissingRequiredServerCapabilityRejectsHandshakeWithoutFallback()
+    {
+        var serializer = new WindowsIpcSerializer();
+        var response = CreateHandshakeResponse(serializer, Guid.NewGuid());
+        var connection = new DelegateWindowsIpcConnection(
+            _ => ValueTask.FromResult<IpcFrame?>(response),
+            (_, _) => ValueTask.CompletedTask,
+            () => ValueTask.CompletedTask);
+        var client = CreateClient(
+            connection,
+            serializer,
+            IpcCapabilities.EndpointRpc);
+
+        await Assert.ThrowsExactlyAsync<IpcProtocolException>(() => client.HandshakeAsync());
+        Assert.IsFalse(client.IsHandshakeComplete);
+        Assert.IsFalse(client.IsConnected);
+    }
+
     [TestMethod]
     [Timeout(10_000)]
     public async Task OriginalHandshakeFailureIsPreservedWhenConnectionDisposalAlsoFails()
@@ -174,7 +194,8 @@ public sealed class WindowsIpcClientLifecycleHardeningTests
 
     private static WindowsIpcClient CreateClient(
         IWindowsIpcConnection connection,
-        WindowsIpcSerializer? serializer = null) =>
+        WindowsIpcSerializer? serializer = null,
+        IpcCapabilities requiredServerCapabilities = IpcCapabilities.None) =>
         new(
             connection,
             serializer ?? new WindowsIpcSerializer(),
@@ -183,7 +204,8 @@ public sealed class WindowsIpcClientLifecycleHardeningTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control | IpcCapabilities.Status,
                 Environment.ProcessId,
-                Guid.NewGuid()));
+                Guid.NewGuid(),
+                requiredServerCapabilities: requiredServerCapabilities));
 
     private static IpcFrame CreateHandshakeResponse(
         WindowsIpcSerializer serializer,

@@ -13,7 +13,8 @@ public sealed class WindowsIpcClientOptions
         IpcCapabilities capabilities,
         int processId,
         Guid sessionId,
-        int maximumPendingRequests = DefaultMaximumPendingRequests)
+        int maximumPendingRequests = DefaultMaximumPendingRequests,
+        IpcCapabilities requiredServerCapabilities = IpcCapabilities.None)
     {
         if (!Enum.IsDefined(clientRole))
             throw new ArgumentOutOfRangeException(nameof(clientRole));
@@ -25,6 +26,11 @@ public sealed class WindowsIpcClientOptions
             throw new ArgumentOutOfRangeException(nameof(processId));
         if (sessionId == Guid.Empty)
             throw new ArgumentException("The IPC session ID cannot be empty.", nameof(sessionId));
+        if (requiredServerCapabilities != IpcCapabilities.None &&
+            HasUnknownCapabilities(requiredServerCapabilities))
+        {
+            throw new ArgumentOutOfRangeException(nameof(requiredServerCapabilities));
+        }
         if (maximumPendingRequests <= 0 ||
             maximumPendingRequests > MaximumConfigurablePendingRequests)
         {
@@ -40,6 +46,7 @@ public sealed class WindowsIpcClientOptions
         ProcessId = processId;
         SessionId = sessionId;
         MaximumPendingRequests = maximumPendingRequests;
+        RequiredServerCapabilities = requiredServerCapabilities;
     }
 
     public IpcPeerRole ClientRole { get; }
@@ -48,13 +55,15 @@ public sealed class WindowsIpcClientOptions
     public int ProcessId { get; }
     public Guid SessionId { get; }
     public int MaximumPendingRequests { get; }
+    public IpcCapabilities RequiredServerCapabilities { get; }
 
     private static bool HasUnknownCapabilities(IpcCapabilities capabilities)
     {
         const IpcCapabilities known =
             IpcCapabilities.Control |
             IpcCapabilities.UiActivation |
-            IpcCapabilities.Status;
+            IpcCapabilities.Status |
+            IpcCapabilities.EndpointRpc;
         return (capabilities & ~known) != 0;
     }
 }
