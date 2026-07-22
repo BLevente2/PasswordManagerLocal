@@ -85,9 +85,40 @@ public sealed class FakeSyncTransportClientService : ISyncTransportClientService
         return Task.FromResult(RequestedControlOperationDeltas);
     }
 
-    public Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(string host, int port, string serverFingerprintHex, GetDeviceEnrollmentInfoRequest request, CancellationToken ct = default) =>
-        throw new NotSupportedException();
+    public GetDeviceEnrollmentInfoReply? EnrollmentInfoReply { get; set; }
+    public Exception? EnrollmentInfoException { get; set; }
+    public int EnrollmentInfoCalls { get; private set; }
+    public CompleteDeviceEnrollmentReply? EnrollmentCompletionReply { get; set; }
+    public Exception? EnrollmentCompletionException { get; set; }
+    public int EnrollmentCompletionCalls { get; private set; }
 
-    public Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(string host, int port, string serverFingerprintHex, IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks, CancellationToken ct = default) =>
-        throw new NotSupportedException();
+    public Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        GetDeviceEnrollmentInfoRequest request,
+        CancellationToken ct = default)
+    {
+        EnrollmentInfoCalls++;
+        if (EnrollmentInfoException is not null)
+            return Task.FromException<GetDeviceEnrollmentInfoReply>(EnrollmentInfoException);
+        return EnrollmentInfoReply is null
+            ? Task.FromException<GetDeviceEnrollmentInfoReply>(new NotSupportedException())
+            : Task.FromResult(EnrollmentInfoReply);
+    }
+
+    public Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks,
+        CancellationToken ct = default)
+    {
+        EnrollmentCompletionCalls++;
+        if (EnrollmentCompletionException is not null)
+            return Task.FromException<CompleteDeviceEnrollmentReply>(EnrollmentCompletionException);
+        return EnrollmentCompletionReply is null
+            ? Task.FromException<CompleteDeviceEnrollmentReply>(new NotSupportedException())
+            : Task.FromResult(EnrollmentCompletionReply);
+    }
 }

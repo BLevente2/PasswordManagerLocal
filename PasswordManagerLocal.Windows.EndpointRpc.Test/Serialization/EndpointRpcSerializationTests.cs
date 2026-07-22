@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Metadata;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 using System.Text.Json;
@@ -47,6 +48,37 @@ public sealed class EndpointRpcSerializationTests
         RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.GetEndpointLargeResultChunkResponse));
         RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultRequest));
         RoundTrip(typeof(PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer.ReleaseEndpointLargeResultResponse));
+    }
+
+
+    [TestMethod]
+    public void PartialCommitErrorRoundTripsWithSafeRecoveryMetadata()
+    {
+        var serializer = new EndpointRpcSerializer();
+        var error = new EndpointRpcError(
+            EndpointRpcErrorCode.OperationPartiallyCommitted,
+            EndpointRpcErrorCategory.Recovery,
+            "The device addition was committed, but enrollment recovery is required.",
+            1,
+            DateTimeOffset.UtcNow,
+            IsRetryable: false,
+            RequiresProcessRestart: true,
+            EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
+            new EndpointRecoveryMetadata(
+                EndpointRecoveryKind.DeviceEnrollment,
+                Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                RecoveryAvailable: true,
+                TransferPending: true,
+                RequiresSignedRemovalToUndo: true));
+
+        var payload = serializer.Serialize(error, EndpointRpcJsonContext.Default.EndpointRpcError);
+        var roundTrip = serializer.Deserialize(payload, EndpointRpcJsonContext.Default.EndpointRpcError);
+
+        Assert.AreEqual(error, roundTrip);
+        Assert.IsNotNull(EndpointRpcJsonContext.Default.GetTypeInfo(typeof(EndpointRecoveryMetadata)));
+        Array.Clear(payload);
     }
 
     private static void RoundTrip(Type type)

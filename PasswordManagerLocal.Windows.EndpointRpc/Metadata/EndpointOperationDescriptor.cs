@@ -8,13 +8,18 @@ public sealed record EndpointOperationDescriptor(
     Type RequestType,
     Type ResponseType,
     EndpointOperationCancellationClassification CancellationClassification,
-    bool MutatesState,
-    bool IsIdempotent,
+    EndpointMutationCommitModel CommitModel,
+    EndpointMutationReplaySafety ReplaySafety,
+    EndpointOperationId? AuthoritativeReadBackOperationId,
+    EndpointMutationRecoveryAction RecoveryAction,
     bool HandlesSensitiveData,
     int MaximumRequestPayloadSize,
     int MaximumResponsePayloadSize,
     int MaximumLargeResponsePayloadSize = 0)
 {
+    public bool MutatesState => CommitModel != EndpointMutationCommitModel.NoDurableMutation;
+    public bool CanPartiallyCommit => CommitModel is EndpointMutationCommitModel.CommitThenFollowUp or
+        EndpointMutationCommitModel.MultiStageRecoverableCommit;
     public bool SupportsLargeResponse => MaximumLargeResponsePayloadSize > 0;
     public int MaximumLogicalResponsePayloadSize => SupportsLargeResponse
         ? MaximumLargeResponsePayloadSize

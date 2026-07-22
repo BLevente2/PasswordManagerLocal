@@ -81,5 +81,7 @@ internal static class EndpointRpcTransportErrorMapper
             error.CorrelationId,
             error.OccurredAtUtc,
             error.IsRetryable,
-            error.RequiresProcessRestart && errorCode == EndpointRpcErrorCode.RuntimeUnavailable);
+            error.RequiresProcessRestart && errorCode == EndpointRpcErrorCode.RuntimeUnavailable,
+            EndpointMutationOutcome.NotApplicable,
+            Recovery: null);
 }

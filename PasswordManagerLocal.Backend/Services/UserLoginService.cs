@@ -163,12 +163,21 @@ public sealed class UserLoginService : IUserLoginService
                 _rememberMe.SetRememberMe(user, request.RememberMe, key);
                 await _userDataWriter.UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, true, ct);
 
-                var finalResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
-                if (finalResolution.State != UserLoginIdentityMatchState.Matched ||
-                    finalResolution.UserId != expectedUserId)
-                    throw new UsernameChangedDuringLoginException();
+                try
+                {
+                    var finalResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
+                    if (finalResolution.State != UserLoginIdentityMatchState.Matched ||
+                        finalResolution.UserId != expectedUserId)
+                        throw new UsernameChangedDuringLoginException();
 
-                return _sessionIssuer.IssueAuthenticatedSession(user.UId, key, bundle);
+                    return _sessionIssuer.IssueAuthenticatedSession(user.UId, key, bundle);
+                }
+                catch (Exception ex)
+                {
+                    throw new MutationPartiallyCommittedException(
+                        "The login state was committed, but the authenticated session could not be completed.",
+                        innerException: ex);
+                }
             }
             catch
             {

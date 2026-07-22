@@ -16,5 +16,7 @@ public enum EndpointRpcErrorCode
     ResponsePayloadTooLarge = 12,
     BackendFailure = 13,
     UnknownOperation = 14,
-    Disconnected = 15
+    Disconnected = 15,
+    EndpointCorrelationMismatch = 16,
+    OperationPartiallyCommitted = 17
 }

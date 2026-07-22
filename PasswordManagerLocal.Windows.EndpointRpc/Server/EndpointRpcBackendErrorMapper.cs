@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
+using PasswordManagerLocal.Windows.EndpointRpc.Metadata;
 using System.Security.Cryptography;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Server;
@@ -11,6 +12,9 @@ public sealed class EndpointRpcBackendErrorMapper
     {
         ArgumentNullException.ThrowIfNull(exception);
         ArgumentNullException.ThrowIfNull(context);
+
+        if (exception is MutationPartiallyCommittedException partialCommitException)
+            return MapPartialCommit(partialCommitException, context);
 
         var metadata = exception switch
         {
@@ -50,26 +54,29 @@ public sealed class EndpointRpcBackendErrorMapper
             _ => Error(EndpointRpcErrorCode.BackendFailure, EndpointRpcErrorCategory.Internal, "The endpoint operation failed.")
         };
 
-        return new EndpointRpcError(
-            metadata.Code,
-            metadata.Category,
-            metadata.Message,
-            context.CorrelationId,
-            DateTimeOffset.UtcNow,
-            metadata.Retryable,
-            metadata.RequiresRestart);
+        return CreateError(
+            metadata,
+            context,
+            GetConclusiveMutationOutcome(context.OperationId),
+            recovery: null);
     }
 
-
-
-    public bool IsConclusiveMutationFailure(
+    public bool TryMapKnownMutationFailure(
         Exception exception,
-        EndpointRequestContext context)
+        EndpointRequestContext context,
+        out EndpointRpcError error)
     {
         ArgumentNullException.ThrowIfNull(exception);
         ArgumentNullException.ThrowIfNull(context);
 
-        return exception switch
+        if (exception is MutationPartiallyCommittedException partialCommitException &&
+            EndpointOperationManifest.Get(context.OperationId).CanPartiallyCommit)
+        {
+            error = MapPartialCommit(partialCommitException, context);
+            return true;
+        }
+
+        var isConclusive = exception switch
         {
             InvalidInputException => true,
             UserNotFoundException or UsernameChangedDuringLoginException
@@ -81,14 +88,24 @@ public sealed class EndpointRpcBackendErrorMapper
             DuplicatePasswordNameException or DuplicatePasswordTagNameException or
                 DuplicateCustomUserColorNameException or DuplicateCustomUserColorCodeException => true,
             LimitReachedException => true,
-            DeviceEnrollmentException enrollmentException => enrollmentException.ErrorCode is
-                DeviceEnrollmentErrorCode.NewDeviceNotFound or
-                DeviceEnrollmentErrorCode.DeviceIdentityConflict,
+            DeviceEnrollmentException enrollmentException when context.OperationId == EndpointOperationId.AddDeviceByCode =>
+                enrollmentException.IsKnownNotCommitted,
             _ => false
         };
+
+        if (isConclusive)
+        {
+            error = Map(exception, context);
+            return true;
+        }
+
+        error = null!;
+        return false;
     }
 
-    public EndpointRpcError CreateOutcomeUnknown(EndpointRequestContext context)
+    public EndpointRpcError CreateOutcomeUnknown(
+        EndpointRequestContext context,
+        bool requiresProcessRestart = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         return new EndpointRpcError(
@@ -98,12 +115,98 @@ public sealed class EndpointRpcBackendErrorMapper
             context.CorrelationId,
             DateTimeOffset.UtcNow,
             IsRetryable: false,
-            RequiresProcessRestart: false);
+            RequiresProcessRestart: requiresProcessRestart,
+            EndpointMutationOutcome.OutcomeUnknown,
+            Recovery: null);
     }
+
+    public bool RequiresProcessRestart(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception switch
+        {
+            MutationPartiallyCommittedException partialCommitException =>
+                partialCommitException.RequiresProcessRestart,
+            DatabaseVersionNotSupportedException => true,
+            DeviceEnrollmentException enrollmentException =>
+                enrollmentException.ErrorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion ||
+                (enrollmentException.InnerException is not null &&
+                    RequiresProcessRestart(enrollmentException.InnerException)),
+            AggregateException aggregateException =>
+                aggregateException.InnerExceptions.Any(RequiresProcessRestart),
+            { InnerException: not null } => RequiresProcessRestart(exception.InnerException!),
+            _ => false
+        };
+    }
+
+    private EndpointRpcError MapPartialCommit(
+        MutationPartiallyCommittedException exception,
+        EndpointRequestContext context)
+    {
+        var descriptor = EndpointOperationManifest.Get(context.OperationId);
+        if (!descriptor.CanPartiallyCommit)
+            return CreateOutcomeUnknown(context, exception.RequiresProcessRestart);
+
+        EndpointRecoveryMetadata? recovery = null;
+        var safeMessage = "The endpoint operation committed authoritative state, but required follow-up work did not complete.";
+        if (context.OperationId == EndpointOperationId.AddDeviceByCode)
+        {
+            if (exception is not DeviceEnrollmentPartiallyCommittedException enrollmentException)
+                return CreateOutcomeUnknown(context, exception.RequiresProcessRestart);
+
+            recovery = new EndpointRecoveryMetadata(
+                EndpointRecoveryKind.DeviceEnrollment,
+                enrollmentException.TargetDeviceId,
+                enrollmentException.TargetOriginInstanceId,
+                enrollmentException.EnrollmentCommitId,
+                enrollmentException.RecoveryAvailable,
+                enrollmentException.TransferPending,
+                enrollmentException.RequiresSignedRemovalToUndo);
+            safeMessage = "The device addition was committed, but enrollment recovery is required.";
+        }
+        else if (exception is DeviceEnrollmentPartiallyCommittedException)
+        {
+            return CreateOutcomeUnknown(context, exception.RequiresProcessRestart);
+        }
+
+        return new EndpointRpcError(
+            EndpointRpcErrorCode.OperationPartiallyCommitted,
+            EndpointRpcErrorCategory.Recovery,
+            safeMessage,
+            context.CorrelationId,
+            DateTimeOffset.UtcNow,
+            IsRetryable: false,
+            RequiresProcessRestart: exception.RequiresProcessRestart,
+            EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
+            recovery);
+    }
+
+    private static EndpointMutationOutcome GetConclusiveMutationOutcome(EndpointOperationId operationId) =>
+        EndpointOperationManifest.Get(operationId).MutatesState
+            ? EndpointMutationOutcome.NotCommitted
+            : EndpointMutationOutcome.NotApplicable;
+
+    private static EndpointRpcError CreateError(
+        (EndpointRpcErrorCode Code, EndpointRpcErrorCategory Category, string Message, bool Retryable, bool RequiresRestart) metadata,
+        EndpointRequestContext context,
+        EndpointMutationOutcome mutationOutcome,
+        EndpointRecoveryMetadata? recovery) =>
+        new(
+            metadata.Code,
+            metadata.Category,
+            metadata.Message,
+            context.CorrelationId,
+            DateTimeOffset.UtcNow,
+            metadata.Retryable,
+            metadata.RequiresRestart,
+            mutationOutcome,
+            recovery);
 
     private static (EndpointRpcErrorCode Code, EndpointRpcErrorCategory Category, string Message, bool Retryable, bool RequiresRestart) MapDeviceEnrollmentError(
         DeviceEnrollmentErrorCode errorCode) => errorCode switch
     {
+        DeviceEnrollmentErrorCode.Unknown =>
+            Error(EndpointRpcErrorCode.BackendFailure, EndpointRpcErrorCategory.Internal, "The backend could not safely complete the enrollment operation."),
         DeviceEnrollmentErrorCode.NewDeviceNotFound =>
             Error(EndpointRpcErrorCode.NotFound, EndpointRpcErrorCategory.NotFound, "The requested endpoint resource was not found."),
         DeviceEnrollmentErrorCode.DeviceIdentityConflict =>

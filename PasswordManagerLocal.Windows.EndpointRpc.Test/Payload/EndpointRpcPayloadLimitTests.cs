@@ -66,7 +66,7 @@ public sealed class EndpointRpcPayloadLimitTests
         var message = new byte[EndpointRpcLimits.MaximumErrorPayloadSize + 2];
         message[0] = 0;
 
-        Assert.ThrowsExactly<EndpointRpcPayloadException>(() => codec.DecodeResponse(message));
+        Assert.ThrowsExactly<EndpointRpcPayloadException>(() => codec.DecodeResponse(message, 1));
     }
 
     [TestMethod]

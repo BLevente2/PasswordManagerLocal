@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -130,7 +131,16 @@ public sealed class UserDeletionService : IUserDeletionService
 
         // These process-local effects intentionally happen only after the durable transaction. A
         // runtime wake-up failure cannot roll back deletion evidence; anti-entropy will retry it.
-        _auth.LogoutUser(userId, AuthSessionInvalidationReason.ProfileRemoved);
+        Exception? postCommitFailure = null;
+        try
+        {
+            _auth.LogoutUser(userId, AuthSessionInvalidationReason.ProfileRemoved);
+        }
+        catch (Exception ex)
+        {
+            postCommitFailure = ex;
+        }
+
         try
         {
             if (_enrollment is not null)
@@ -140,6 +150,13 @@ public sealed class UserDeletionService : IUserDeletionService
         catch
         {
             // Durable control-operation inventory remains retryable after restart/next refresh.
+        }
+
+        if (postCommitFailure is not null)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The account deletion was committed, but the local authenticated session could not be cleared.",
+                innerException: postCommitFailure);
         }
     }
 }

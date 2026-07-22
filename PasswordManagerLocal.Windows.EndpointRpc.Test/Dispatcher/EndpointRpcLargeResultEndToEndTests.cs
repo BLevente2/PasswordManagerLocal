@@ -74,7 +74,7 @@ public sealed class EndpointRpcLargeResultEndToEndTests
                 EndpointOperationId.GetSavedPasswords,
                 publicRequestPayload)),
             CancellationToken.None);
-        var descriptor = codec.DecodeResponse(publicResponse.Result!).LargeResult!;
+        var descriptor = codec.DecodeResponse(publicResponse.Result!, 201).LargeResult!;
         Assert.AreEqual(1, dispatcher.LargeResultTransferStore.Count);
 
         var malformedChunkPayload = serializer.Serialize(
@@ -90,7 +90,7 @@ public sealed class EndpointRpcLargeResultEndToEndTests
             CancellationToken.None);
 
         var exception = Assert.ThrowsExactly<EndpointRpcRemoteException>(() =>
-            codec.DecodeResponse(malformedResponse.Result!));
+            codec.DecodeResponse(malformedResponse.Result!, 202));
         Assert.AreEqual(EndpointRpcErrorCode.ValidationFailed, exception.Error.ErrorCode);
         Assert.AreEqual(0, dispatcher.LargeResultTransferStore.Count);
         Array.Clear(publicRequestPayload);

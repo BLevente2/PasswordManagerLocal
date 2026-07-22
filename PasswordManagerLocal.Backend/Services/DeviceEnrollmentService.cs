@@ -350,6 +350,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         Guid commitId = Guid.Empty;
         Guid additionOperationId = Guid.Empty;
+        var authoritativeCommitAttempted = false;
+        var authoritativeCommitCompleted = false;
+        var transferCompleted = false;
         try
         {
             using (mergeKey)
@@ -387,11 +390,26 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                         var commit = await commits.GetRecoverableAsync(userId, endpoint.DeviceId, endpoint.OriginInstanceId, lifecycleToken);
                         if (commit is not null)
                         {
-                            ValidateRecoverableEnrollmentCommit(commit, endpoint);
+                            try
+                            {
+                                ValidateRecoverableEnrollmentCommit(commit, endpoint);
+                            }
+                            catch (DeviceEnrollmentException ex)
+                            {
+                                throw CreatePartialCommitException(commit, ex.ErrorCode, ex.Message, commit.Status != DeviceEnrollmentCommitStatus.Transferred, ex);
+                            }
+
                             var existingOperation = await controlOperations.GetByIdAsync(commit.AdditionOperationId, lifecycleToken);
                             if (existingOperation is null || existingOperation.OperationType != UserControlOperationType.DeviceAddition || existingOperation.Status != UserControlOperationStatus.Applied ||
                                 !Hashing.Verify(existingOperation.OperationHash, commit.AdditionOperationHash))
-                                throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.NewDeviceRejected, "The recoverable enrollment addition operation is missing or inconsistent.");
+                            {
+                                throw CreatePartialCommitException(
+                                    commit,
+                                    DeviceEnrollmentErrorCode.NewDeviceRejected,
+                                    "The recoverable enrollment addition operation is missing or inconsistent.",
+                                    commit.Status != DeviceEnrollmentCommitStatus.Transferred);
+                            }
+
                             commit.Status = DeviceEnrollmentCommitStatus.PendingTransfer;
                             commit.LastAttemptAtUtc = DateTimeOffset.UtcNow;
                             commit.LastError = null;
@@ -428,7 +446,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                         }
 
                         await unitOfWork.SaveChangesAsync(lifecycleToken);
+                        authoritativeCommitAttempted = true;
                         await transaction.CommitAsync(lifecycleToken);
+                        authoritativeCommitCompleted = true;
                         commitId = commit.CommitId;
                         additionOperationId = commit.AdditionOperationId;
                     }
@@ -471,9 +491,17 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             // The authoritative addition is committed before this network transfer. Failure is recoverable
             // and must never roll the membership epoch backward or create a second same-base transition.
             var result = await _snapshotTransferService.SendAsync(endpoint, parsed.SessionId, parsed.Secret, proof, snapshot, ct);
+            transferCompleted = result.Ok;
             await UpdateEnrollmentCommitAfterTransferAsync(commitId, result.Ok, result.Error, ct);
             if (!result.Ok)
-                throw new DeviceEnrollmentException(result.ErrorCode, result.Error ?? "The new device rejected the enrollment request. The signed addition remains committed and may be retried with the same target installation.");
+            {
+                throw CreatePartialCommitException(
+                    commitId,
+                    endpoint,
+                    result.ErrorCode,
+                    result.Error ?? "The new device rejected the enrollment request.",
+                    transferPending: true);
+            }
 
             using (var completionScope = _scopeFactory.CreateScope())
             {
@@ -495,19 +523,109 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 try { await pendingSyncActivation.ActivatePendingAsync(CancellationToken.None); } catch { }
             }
         }
-        catch (DeviceEnrollmentException)
+        catch (DeviceEnrollmentPartiallyCommittedException)
         {
-            // Do not remove a committed authoritative identity on transfer failure. The durable commit
-            // is intentionally retained for an exact-identity retry or a later signed removal.
             throw;
+        }
+        catch (DeviceEnrollmentException ex)
+        {
+            if (!authoritativeCommitCompleted)
+                throw;
+
+            await TryRecordEnrollmentTransferFailureAsync(commitId, transferCompleted, ex.Message);
+            throw CreatePartialCommitException(
+                commitId,
+                endpoint,
+                ex.ErrorCode,
+                ex.Message,
+                transferPending: !transferCompleted,
+                ex);
         }
         catch (Exception ex)
         {
-            if (commitId != Guid.Empty)
-                await UpdateEnrollmentCommitAfterTransferAsync(commitId, false, ex.Message, CancellationToken.None);
-            throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.Unknown, ex.Message, ex);
+            if (!authoritativeCommitCompleted)
+            {
+                throw new DeviceEnrollmentException(
+                    DeviceEnrollmentErrorCode.Unknown,
+                    ex.Message,
+                    isKnownNotCommitted: !authoritativeCommitAttempted,
+                    innerException: ex);
+            }
+
+            await TryRecordEnrollmentTransferFailureAsync(commitId, transferCompleted, ex.Message);
+            throw CreatePartialCommitException(
+                commitId,
+                endpoint,
+                DeviceEnrollmentErrorCode.Unknown,
+                ex.Message,
+                transferPending: !transferCompleted,
+                ex);
         }
     }
+
+
+    private async Task TryRecordEnrollmentTransferFailureAsync(
+        Guid commitId,
+        bool transferCompleted,
+        string? error)
+    {
+        try
+        {
+            await UpdateEnrollmentCommitAfterTransferAsync(commitId, transferCompleted, error, CancellationToken.None);
+        }
+        catch
+        {
+        }
+    }
+
+    private DeviceEnrollmentPartiallyCommittedException CreatePartialCommitException(
+        DeviceEnrollmentCommit commit,
+        DeviceEnrollmentErrorCode errorCode,
+        string message,
+        bool transferPending,
+        Exception? innerException = null) =>
+        new(
+            errorCode,
+            message,
+            commit.CommitId,
+            commit.TargetDeviceId,
+            commit.TargetOriginInstanceId,
+            recoveryAvailable: true,
+            transferPending,
+            requiresSignedRemovalToUndo: true,
+            requiresProcessRestart: errorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion || RequiresProcessRestart(innerException),
+            innerException);
+
+    private DeviceEnrollmentPartiallyCommittedException CreatePartialCommitException(
+        Guid commitId,
+        EnrollmentEndpoint endpoint,
+        DeviceEnrollmentErrorCode errorCode,
+        string message,
+        bool transferPending,
+        Exception? innerException = null) =>
+        new(
+            errorCode,
+            message,
+            commitId,
+            endpoint.DeviceId,
+            endpoint.OriginInstanceId,
+            recoveryAvailable: true,
+            transferPending,
+            requiresSignedRemovalToUndo: true,
+            requiresProcessRestart: errorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion || RequiresProcessRestart(innerException),
+            innerException);
+
+    private bool RequiresProcessRestart(Exception? exception) => exception switch
+    {
+        null => false,
+        DatabaseVersionNotSupportedException => true,
+        DeviceEnrollmentException enrollmentException =>
+            enrollmentException.ErrorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion ||
+            RequiresProcessRestart(enrollmentException.InnerException),
+        AggregateException aggregateException => aggregateException.InnerExceptions.Any(RequiresProcessRestart),
+        { InnerException: not null } => RequiresProcessRestart(exception.InnerException),
+        _ => false
+    };
 
     private void ValidateRecoverableEnrollmentCommit(DeviceEnrollmentCommit commit, EnrollmentEndpoint endpoint)
     {

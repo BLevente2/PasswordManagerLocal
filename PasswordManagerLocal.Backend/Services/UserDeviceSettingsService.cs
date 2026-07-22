@@ -76,10 +76,19 @@ public sealed class UserDeviceSettingsService : IUserDeviceSettingsService
         _userDevices.Update(userDevice);
         await EnqueueUserDeviceChangeAsync(userDevice, SyncChangeType.Updated, ct);
 
-        if (isSyncOn)
-            await _userSyncCatchUp.EnqueueAsync(user.UId, deviceId, ct);
-        else
-            await RemoveCachedDeviceIfNoPendingAsync(userDevice, ct);
+        try
+        {
+            if (isSyncOn)
+                await _userSyncCatchUp.EnqueueAsync(user.UId, deviceId, ct);
+            else
+                await RemoveCachedDeviceIfNoPendingAsync(userDevice, ct);
+        }
+        catch (Exception ex)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The remote-device synchronization setting was committed, but follow-up synchronization work did not complete.",
+                innerException: ex);
+        }
     }
 
     public async Task UnblockUserDeviceAsync(Guid token, Guid deviceId, CancellationToken ct = default)

@@ -6,6 +6,7 @@ using PasswordManagerLocal.Backend.Validation;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;
+using PasswordManagerLocal.Windows.EndpointRpc.Metadata;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Validation;
@@ -228,16 +229,76 @@ public sealed class EndpointRpcContractValidator
         ArgumentNullException.ThrowIfNull(error);
         if (!Enum.IsDefined(error.ErrorCode) ||
             !Enum.IsDefined(error.ErrorCategory) ||
+            !Enum.IsDefined(error.MutationOutcome) ||
             error.CorrelationId <= 0 ||
             string.IsNullOrWhiteSpace(error.SafeMessage) ||
             error.SafeMessage.Length > EndpointRpcLimits.MaximumSafeErrorMessageLength ||
             error.OccurredAtUtc.Offset != TimeSpan.Zero ||
             !HasExpectedErrorCategory(error.ErrorCode, error.ErrorCategory) ||
-            (error.RequiresProcessRestart && error.ErrorCode != EndpointRpcErrorCode.RuntimeUnavailable))
+            !HasValidMutationOutcome(error) ||
+            (error.RequiresProcessRestart &&
+                error.ErrorCode is not EndpointRpcErrorCode.RuntimeUnavailable and
+                    not EndpointRpcErrorCode.OperationOutcomeUnknown and
+                    not EndpointRpcErrorCode.OperationPartiallyCommitted))
         {
             throw new EndpointRpcPayloadException("The endpoint RPC error is semantically invalid.");
         }
     }
+
+    public void Validate(EndpointOperationId operationId, EndpointRpcError error)
+    {
+        Validate(error);
+        var descriptor = EndpointOperationManifest.Get(operationId);
+        var valid = descriptor.MutatesState
+            ? HasValidMutationOutcomeForMutation(operationId, descriptor, error)
+            : error.MutationOutcome == EndpointMutationOutcome.NotApplicable && error.Recovery is null;
+
+        if (!valid)
+            throw new EndpointRpcPayloadException("The endpoint RPC error does not match the operation mutation policy.");
+    }
+
+    private static bool HasValidMutationOutcome(EndpointRpcError error) => error.ErrorCode switch
+    {
+        EndpointRpcErrorCode.OperationPartiallyCommitted =>
+            error.MutationOutcome == EndpointMutationOutcome.PartiallyCommittedRecoveryRequired &&
+            !error.IsRetryable &&
+            (error.Recovery is null || ValidRecovery(error.Recovery)),
+        EndpointRpcErrorCode.OperationOutcomeUnknown =>
+            error.MutationOutcome == EndpointMutationOutcome.OutcomeUnknown &&
+            !error.IsRetryable &&
+            error.Recovery is null,
+        _ =>
+            error.MutationOutcome is EndpointMutationOutcome.NotApplicable or EndpointMutationOutcome.NotCommitted &&
+            error.Recovery is null
+    };
+
+    private static bool HasValidMutationOutcomeForMutation(
+        EndpointOperationId operationId,
+        EndpointOperationDescriptor descriptor,
+        EndpointRpcError error)
+    {
+        if (error.ErrorCode == EndpointRpcErrorCode.OperationPartiallyCommitted)
+        {
+            if (!descriptor.CanPartiallyCommit)
+                return false;
+
+            return operationId == EndpointOperationId.AddDeviceByCode
+                ? ValidRecovery(error.Recovery) && error.Recovery!.RecoveryKind == EndpointRecoveryKind.DeviceEnrollment
+                : error.Recovery is null;
+        }
+
+        if (error.ErrorCode == EndpointRpcErrorCode.OperationOutcomeUnknown)
+            return error.MutationOutcome == EndpointMutationOutcome.OutcomeUnknown;
+
+        return error.MutationOutcome == EndpointMutationOutcome.NotCommitted && error.Recovery is null;
+    }
+
+    private static bool ValidRecovery(EndpointRecoveryMetadata? recovery) =>
+        recovery is not null &&
+        Enum.IsDefined(recovery.RecoveryKind) &&
+        recovery.TargetDeviceId != Guid.Empty &&
+        recovery.TargetOriginInstanceId != Guid.Empty &&
+        recovery.EnrollmentCommitId != Guid.Empty;
 
 
     private static bool HasExpectedErrorCategory(
@@ -254,8 +315,11 @@ public sealed class EndpointRpcContractValidator
         EndpointRpcErrorCode.InteractiveSessionUnavailable or EndpointRpcErrorCode.RuntimeUnavailable or
             EndpointRpcErrorCode.Disconnected => errorCategory == EndpointRpcErrorCategory.Availability,
         EndpointRpcErrorCode.OperationCancelled => errorCategory == EndpointRpcErrorCategory.Cancellation,
-        EndpointRpcErrorCode.OperationOutcomeUnknown => errorCategory == EndpointRpcErrorCategory.Internal,
-        EndpointRpcErrorCode.BackendFailure => errorCategory == EndpointRpcErrorCategory.Internal,
+        EndpointRpcErrorCode.OperationPartiallyCommitted => errorCategory == EndpointRpcErrorCategory.Recovery,
+        EndpointRpcErrorCode.OperationOutcomeUnknown or
+            EndpointRpcErrorCode.BackendFailure or
+            EndpointRpcErrorCode.EndpointCorrelationMismatch =>
+                errorCategory == EndpointRpcErrorCategory.Internal,
         _ => false
     };
 

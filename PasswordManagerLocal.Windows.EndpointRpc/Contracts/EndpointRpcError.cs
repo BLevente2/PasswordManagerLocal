@@ -7,4 +7,6 @@ public sealed record EndpointRpcError(
     long CorrelationId,
     DateTimeOffset OccurredAtUtc,
     bool IsRetryable,
-    bool RequiresProcessRestart);
+    bool RequiresProcessRestart,
+    EndpointMutationOutcome MutationOutcome,
+    EndpointRecoveryMetadata? Recovery);

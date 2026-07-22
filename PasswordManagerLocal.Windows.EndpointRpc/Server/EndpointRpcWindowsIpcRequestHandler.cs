@@ -134,7 +134,7 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
         {
             try
             {
-                _validator.Validate(result.Error!);
+                _validator.Validate(operationId, result.Error!);
                 encoded = _messageCodec.EncodeFailure(result.Error!);
             }
             catch
@@ -147,7 +147,9 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
                 }
 
                 encoded = _messageCodec.EncodeFailure(
-                    _errorMapper.CreateOutcomeUnknown(endpointContext));
+                    _errorMapper.CreateOutcomeUnknown(
+                        endpointContext,
+                        result.Error!.RequiresProcessRestart));
             }
         }
         else
@@ -305,5 +307,7 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
             correlationId,
             DateTimeOffset.UtcNow,
             IsRetryable: false,
-            RequiresProcessRestart: false);
+            RequiresProcessRestart: false,
+            EndpointMutationOutcome.NotApplicable,
+            Recovery: null);
 }

@@ -100,8 +100,12 @@ public sealed class EndpointRpcMessageCodec
         }
     }
 
-    public EndpointRpcTransportResponse DecodeResponse(ReadOnlySpan<byte> message)
+    public EndpointRpcTransportResponse DecodeResponse(
+        ReadOnlySpan<byte> message,
+        long expectedCorrelationId)
     {
+        if (expectedCorrelationId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(expectedCorrelationId));
         if (message.Length < ResponseHeaderSize ||
             message.Length - ResponseHeaderSize > EndpointRpcLimits.MaximumResponsePayloadSize)
         {
@@ -120,6 +124,7 @@ public sealed class EndpointRpcMessageCodec
                 payload,
                 EndpointRpcJsonContext.Default.EndpointLargeResultDescriptor);
             _largeResultValidator.Validate(descriptor);
+            ValidateCorrelation(expectedCorrelationId, descriptor.OriginalCorrelationId);
             return EndpointRpcTransportResponse.Large(descriptor);
         }
         if (payload.Length > EndpointRpcLimits.MaximumErrorPayloadSize)
@@ -127,7 +132,14 @@ public sealed class EndpointRpcMessageCodec
 
         var error = _serializer.Deserialize(payload, EndpointRpcJsonContext.Default.EndpointRpcError);
         _validator.Validate(error);
+        ValidateCorrelation(expectedCorrelationId, error.CorrelationId);
         throw new Client.EndpointRpcRemoteException(error);
+    }
+
+    private static void ValidateCorrelation(long expectedCorrelationId, long nestedCorrelationId)
+    {
+        if (nestedCorrelationId != expectedCorrelationId)
+            throw new Client.EndpointRpcCorrelationMismatchException();
     }
 
     private static byte[] EncodeRequestCore(

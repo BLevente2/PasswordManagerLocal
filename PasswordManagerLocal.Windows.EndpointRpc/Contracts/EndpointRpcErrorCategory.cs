@@ -9,5 +9,6 @@ public enum EndpointRpcErrorCategory
     Conflict = 5,
     Availability = 6,
     Cancellation = 7,
-    Internal = 8
+    Internal = 8,
+    Recovery = 9
 }

@@ -115,13 +115,26 @@ public sealed class UserPasswordsService : IUserPasswordsService
         if (!request.DeleteOriginal)
             return;
 
-        _passwordService.RemovePasswords(request.PasswordIds!, sourceBundle.UserPasswordsData);
-        await _writer.UpdateUserDataBundleAsync(
-            sourceBundle,
-            sourceToken,
-            UserDataBlobKind.Passwords,
-            true,
-            ct);
+        try
+        {
+            _passwordService.RemovePasswords(request.PasswordIds!, sourceBundle.UserPasswordsData);
+            await _writer.UpdateUserDataBundleAsync(
+                sourceBundle,
+                sourceToken,
+                UserDataBlobKind.Passwords,
+                true,
+                ct);
+        }
+        catch (MutationPartiallyCommittedException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The password export was committed to the target profile, but source cleanup did not complete.",
+                innerException: ex);
+        }
     }
 
 }

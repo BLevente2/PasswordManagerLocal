@@ -89,7 +89,9 @@ public sealed class EndpointRpcTransmissionMappingTests
             1,
             DateTimeOffset.UtcNow,
             false,
-            false);
+            false,
+            EndpointMutationOutcome.NotCommitted,
+            Recovery: null);
         var transport = new RecordingEndpointRpcTransport((_, _, _) =>
             Task.FromException<byte[]>(new EndpointRpcRemoteException(error)));
         await using var proxy = CreateProxy(transport);
@@ -98,6 +100,34 @@ public sealed class EndpointRpcTransmissionMappingTests
             proxy.SetLocalUserSyncOnAsync(EndpointRpcTestData.Token, true));
         Assert.AreEqual(EndpointRpcErrorCode.Conflict, exception.Error.ErrorCode);
         Assert.HasCount(1, transport.Operations);
+    }
+
+    [TestMethod]
+    public async Task OutcomeUnknownExceptionExposesIndependentRestartRequirement()
+    {
+        foreach (var requiresProcessRestart in new[] { false, true })
+        {
+            var error = new EndpointRpcError(
+                EndpointRpcErrorCode.OperationOutcomeUnknown,
+                EndpointRpcErrorCategory.Internal,
+                "The endpoint operation may have executed, but its outcome could not be confirmed.",
+                1,
+                DateTimeOffset.UtcNow,
+                false,
+                requiresProcessRestart,
+                EndpointMutationOutcome.OutcomeUnknown,
+                Recovery: null);
+            var transport = new RecordingEndpointRpcTransport((_, _, _) =>
+                Task.FromException<byte[]>(new EndpointRpcRemoteException(error)));
+            await using var proxy = CreateProxy(transport);
+
+            var exception = await Assert.ThrowsExactlyAsync<EndpointOperationOutcomeUnknownException>(() =>
+                proxy.LogoutAsync(EndpointRpcTestData.Token));
+
+            Assert.AreEqual(requiresProcessRestart, exception.RequiresProcessRestart);
+            Assert.AreSame(error, exception.Error);
+            Assert.AreEqual(EndpointOperationId.Logout, exception.OperationId);
+        }
     }
 
     [TestMethod]
@@ -120,7 +150,9 @@ public sealed class EndpointRpcTransmissionMappingTests
 
     private static IReadOnlyList<EndpointOperationId> MutationRepresentatives() =>
     [
+        EndpointOperationId.ChangeUsername,
         EndpointOperationId.SetLocalUserSyncOn,
+        EndpointOperationId.AddDeviceByCode,
         EndpointOperationId.StartDeviceEnrollment,
         EndpointOperationId.Logout
     ];
@@ -129,8 +161,12 @@ public sealed class EndpointRpcTransmissionMappingTests
         NamedPipeEndpointsProxy proxy,
         EndpointOperationId operationId) => operationId switch
     {
+        EndpointOperationId.ChangeUsername =>
+            proxy.ChangeUsernameAsync(EndpointRpcTestData.Token, "ValidUser2"),
         EndpointOperationId.SetLocalUserSyncOn =>
             proxy.SetLocalUserSyncOnAsync(EndpointRpcTestData.Token, true),
+        EndpointOperationId.AddDeviceByCode =>
+            proxy.AddDeviceByCodeAsync(EndpointRpcTestData.Token, "ABCD2345"),
         EndpointOperationId.StartDeviceEnrollment =>
             proxy.StartDeviceEnrollmentAsync(),
         EndpointOperationId.Logout =>

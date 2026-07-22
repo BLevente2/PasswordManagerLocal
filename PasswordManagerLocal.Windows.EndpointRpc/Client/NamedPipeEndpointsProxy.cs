@@ -584,7 +584,7 @@ public sealed class NamedPipeEndpointsProxy : IEndpoints, IAsyncDisposable
             if (descriptor.MutatesState &&
                 exception.TransmissionState != EndpointRpcTransmissionState.DefinitelyNotSent)
             {
-                throw new EndpointOperationOutcomeUnknownException(operationId, exception);
+                throw CreateOutcomeUnknownException(operationId, exception);
             }
 
             Rethrow(exception.InnerException ?? exception);
@@ -592,12 +592,24 @@ public sealed class NamedPipeEndpointsProxy : IEndpoints, IAsyncDisposable
         }
         catch (EndpointRpcRemoteException exception)
         {
+            try
+            {
+                _validator.Validate(operationId, exception.Error);
+            }
+            catch (Exception validationException) when (descriptor.MutatesState)
+            {
+                throw new EndpointOperationOutcomeUnknownException(
+                    operationId,
+                    requiresProcessRestart: false,
+                    validationException);
+            }
+
             throw MapRemoteFailure(operationId, exception);
         }
         catch (Exception exception)
             when (descriptor.MutatesState && conclusiveSuccessResponseReceived)
         {
-            throw new EndpointOperationOutcomeUnknownException(operationId, exception);
+            throw CreateOutcomeUnknownException(operationId, exception);
         }
         finally
         {
@@ -825,14 +837,40 @@ public sealed class NamedPipeEndpointsProxy : IEndpoints, IAsyncDisposable
     {
         return exception.Error.ErrorCode switch
         {
+            EndpointRpcErrorCode.OperationPartiallyCommitted =>
+                new EndpointOperationPartiallyCommittedException(
+                    operationId,
+                    exception.Error.Recovery!,
+                    exception.Error.RequiresProcessRestart,
+                    exception),
             EndpointRpcErrorCode.OperationOutcomeUnknown =>
-                new EndpointOperationOutcomeUnknownException(operationId, exception),
+                new EndpointOperationOutcomeUnknownException(
+                    operationId,
+                    exception.Error.RequiresProcessRestart,
+                    exception),
             EndpointRpcErrorCode.OperationCancelled =>
                 new OperationCanceledException(exception.Error.SafeMessage, exception),
             EndpointRpcErrorCode.Disconnected =>
                 new EndpointRpcDisconnectedException(exception),
             _ => exception
         };
+    }
+
+    private static EndpointOperationOutcomeUnknownException CreateOutcomeUnknownException(
+        EndpointOperationId operationId,
+        Exception exception)
+    {
+        var remoteError = exception switch
+        {
+            EndpointRpcRemoteException remoteException => remoteException.Error,
+            EndpointRpcTransportException { InnerException: EndpointRpcRemoteException remoteException } =>
+                remoteException.Error,
+            _ => null
+        };
+        return new EndpointOperationOutcomeUnknownException(
+            operationId,
+            remoteError?.RequiresProcessRestart ?? false,
+            exception);
     }
 
     private static void Rethrow(Exception exception)

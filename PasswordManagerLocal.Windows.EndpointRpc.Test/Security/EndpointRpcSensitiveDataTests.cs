@@ -34,7 +34,9 @@ public sealed class EndpointRpcSensitiveDataTests
                     1,
                     DateTimeOffset.UtcNow,
                     false,
-                    false)));
+                    false,
+                    EndpointMutationOutcome.NotCommitted,
+                    Recovery: null)));
         });
         var proxy = new NamedPipeEndpointsProxy(
             transport,
@@ -166,6 +168,41 @@ public sealed class EndpointRpcSensitiveDataTests
         Assert.AreEqual(EndpointRpcErrorCode.ValidationFailed, result.Error!.ErrorCode);
         Assert.IsTrue(sensitiveBuffer.All(value => value == 0));
         Array.Clear(request);
+    }
+
+
+    [TestMethod]
+    public void PartialCommitRecoveryMetadataContainsOnlySafeIdentifiersAndFlags()
+    {
+        var serializer = new EndpointRpcSerializer();
+        var error = new EndpointRpcError(
+            EndpointRpcErrorCode.OperationPartiallyCommitted,
+            EndpointRpcErrorCategory.Recovery,
+            "The device addition was committed, but enrollment recovery is required.",
+            1,
+            DateTimeOffset.UtcNow,
+            IsRetryable: false,
+            RequiresProcessRestart: false,
+            EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
+            new EndpointRecoveryMetadata(
+                EndpointRecoveryKind.DeviceEnrollment,
+                Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                RecoveryAvailable: true,
+                TransferPending: true,
+                RequiresSignedRemovalToUndo: true));
+
+        var payload = serializer.Serialize(error, EndpointRpcJsonContext.Default.EndpointRpcError);
+        var json = System.Text.Encoding.UTF8.GetString(payload);
+
+        Assert.IsFalse(json.Contains("password", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(json.Contains("token", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(json.Contains("secret", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(json.Contains("key", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(json.Contains("snapshot", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(json.Contains("path", StringComparison.OrdinalIgnoreCase));
+        Array.Clear(payload);
     }
 
     private static IpcRequestContext CreateContext(byte[] endpointMessage) =>

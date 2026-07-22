@@ -23,6 +23,39 @@ public sealed class EndpointLargeResultClientValidationTests
     }
 
     [TestMethod]
+    public async Task WrongOriginalCorrelationIsRejectedAndReleased()
+    {
+        await AssertRejectedAsync((descriptor, request) =>
+        {
+            var response = CreateChunk(descriptor, request.ChunkIndex);
+            response.OriginalCorrelationId = descriptor.OriginalCorrelationId + 1;
+            return response;
+        });
+    }
+
+    [TestMethod]
+    public async Task PreviousTransferCorrelationCannotBeReusedForNewRequest()
+    {
+        var descriptor = CreateDescriptor(8, 4);
+        var previousCorrelationId = descriptor.OriginalCorrelationId - 1;
+        var transport = new ScriptedLargeResultTransport(
+            descriptor,
+            request =>
+            {
+                var response = CreateChunk(descriptor, request.ChunkIndex);
+                response.OriginalCorrelationId = previousCorrelationId;
+                return response;
+            });
+        await using var proxy = CreateProxy(transport);
+
+        await Assert.ThrowsExactlyAsync<EndpointRpcPayloadException>(() =>
+            proxy.GetSavedPasswordsAsync(EndpointRpcTestData.Token));
+
+        Assert.AreEqual(1, transport.ChunkRequestCount);
+        Assert.AreEqual(1, transport.ReleaseRequestCount);
+    }
+
+    [TestMethod]
     public async Task DuplicateOrOutOfOrderChunkIsRejectedAndReleased()
     {
         await AssertRejectedAsync((descriptor, request) =>

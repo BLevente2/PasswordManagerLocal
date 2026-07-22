@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -208,8 +209,17 @@ public sealed class UserDataWriterService : IUserDataWriterService
         var user = await _lookup.GetAndVerifyUserAsync(token, ct);
         using var key = _interactiveState.GetEncryptionKeyFromToken(token);
         await UpdateUserDataBundleAsync(bundle, user, key, modifiedBlobs, enqueueSync, ct);
-        _interactiveState.SetUserBlobKeys(token, bundle.UserData);
-        _interactiveState.SetUserDataBundle(token, bundle);
+        try
+        {
+            _interactiveState.SetUserBlobKeys(token, bundle.UserData);
+            _interactiveState.SetUserDataBundle(token, bundle);
+        }
+        catch (Exception ex) when (enqueueSync)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The user-data mutation was committed, but the interactive cache could not be refreshed.",
+                innerException: ex);
+        }
     }
 
 

@@ -213,9 +213,9 @@ public sealed class MasterPasswordRotationService : IMasterPasswordRotationServi
 
         if (postCommitFailure is not null)
         {
-            throw new InvalidOperationException(
+            throw new MutationPartiallyCommittedException(
                 "The master password was changed durably, but the local authenticated session could not be refreshed.",
-                postCommitFailure);
+                innerException: postCommitFailure);
         }
     }
 

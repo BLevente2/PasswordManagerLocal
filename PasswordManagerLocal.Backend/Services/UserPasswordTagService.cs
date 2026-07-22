@@ -72,15 +72,28 @@ public sealed class UserPasswordTagService : IUserPasswordTagService
         if (!request.DeleteOriginal)
             return;
 
-        foreach (var passwordTagId in request.PasswordTagIds!)
-            _passwordTagService.DeletePasswordTag(passwordTagId, sourceBundle.UserPasswordsData);
+        try
+        {
+            foreach (var passwordTagId in request.PasswordTagIds!)
+                _passwordTagService.DeletePasswordTag(passwordTagId, sourceBundle.UserPasswordsData);
 
-        await _writer.UpdateUserDataBundleAsync(
-            sourceBundle,
-            sourceToken,
-            UserDataBlobKind.Passwords,
-            true,
-            ct);
+            await _writer.UpdateUserDataBundleAsync(
+                sourceBundle,
+                sourceToken,
+                UserDataBlobKind.Passwords,
+                true,
+                ct);
+        }
+        catch (MutationPartiallyCommittedException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The password-tag export was committed to the target profile, but source cleanup did not complete.",
+                innerException: ex);
+        }
     }
 
 

@@ -168,7 +168,7 @@ public sealed class WindowsEndpointRpcTransport : IEndpointRpcTransport
                     new EndpointRpcPayloadException("The endpoint RPC response payload is missing."));
             try
             {
-                return _messageCodec.DecodeResponse(encodedResponse);
+                return _messageCodec.DecodeResponse(encodedResponse, correlationId);
             }
             catch (EndpointRpcRemoteException)
             {

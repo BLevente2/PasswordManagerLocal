@@ -53,7 +53,111 @@ public sealed class EndpointOperationParityTests
             Assert.IsTrue(descriptor.MaximumLogicalResponsePayloadSize >= descriptor.MaximumResponsePayloadSize);
             Assert.IsTrue(descriptor.MaximumLogicalResponsePayloadSize <= EndpointRpcLimits.MaximumLargeResultTotalBytes);
             Assert.IsTrue(Enum.IsDefined(descriptor.CancellationClassification));
+            Assert.IsTrue(Enum.IsDefined(descriptor.CommitModel));
+            Assert.IsTrue(Enum.IsDefined(descriptor.ReplaySafety));
+            Assert.IsTrue(Enum.IsDefined(descriptor.RecoveryAction));
         }
+    }
+
+    [TestMethod]
+    public void EveryOperationHasOneCoherentMutationOutcomePolicy()
+    {
+        var descriptors = EndpointOperationManifest.All;
+        var readOnly = descriptors.Where(descriptor => !descriptor.MutatesState).ToArray();
+        var mutations = descriptors.Where(descriptor => descriptor.MutatesState).ToArray();
+
+        Assert.HasCount(8, readOnly);
+        Assert.HasCount(32, mutations);
+        Assert.IsTrue(readOnly.All(descriptor =>
+            descriptor.CommitModel == EndpointMutationCommitModel.NoDurableMutation &&
+            descriptor.ReplaySafety == EndpointMutationReplaySafety.NotApplicable &&
+            descriptor.AuthoritativeReadBackOperationId is null &&
+            descriptor.RecoveryAction == EndpointMutationRecoveryAction.None));
+        Assert.IsTrue(mutations.All(descriptor =>
+            descriptor.CommitModel != EndpointMutationCommitModel.NoDurableMutation &&
+            descriptor.ReplaySafety != EndpointMutationReplaySafety.NotApplicable &&
+            descriptor.RecoveryAction != EndpointMutationRecoveryAction.None));
+        Assert.IsTrue(descriptors.All(descriptor =>
+            descriptor.CanPartiallyCommit ==
+            (descriptor.CommitModel is EndpointMutationCommitModel.CommitThenFollowUp or
+                EndpointMutationCommitModel.MultiStageRecoverableCommit)));
+
+        foreach (var descriptor in mutations.Where(item => item.AuthoritativeReadBackOperationId.HasValue))
+        {
+            var readBack = EndpointOperationManifest.Get(descriptor.AuthoritativeReadBackOperationId!.Value);
+            Assert.IsFalse(readBack.MutatesState, descriptor.OperationId.ToString());
+        }
+    }
+
+    [TestMethod]
+    public void EnrollmentAndRepresentativeMutationPoliciesMatchTheirCommitModels()
+    {
+        AssertPolicy(
+            EndpointOperationId.Register,
+            EndpointMutationCommitModel.CommitThenFollowUp,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            null,
+            EndpointMutationRecoveryAction.ReconnectAndInspectSessionState);
+        AssertPolicy(
+            EndpointOperationId.RestoreRememberedSessions,
+            EndpointMutationCommitModel.MultiStageRecoverableCommit,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            null,
+            EndpointMutationRecoveryAction.ReconnectAndInspectSessionState);
+        AssertPolicy(
+            EndpointOperationId.AddDeviceByCode,
+            EndpointMutationCommitModel.MultiStageRecoverableCommit,
+            EndpointMutationReplaySafety.RecoveryForSameImmutableTargetOnly,
+            EndpointOperationId.GetUserDevices,
+            EndpointMutationRecoveryAction.ResumeEnrollmentForSameImmutableTargetOrPerformSignedRemoval);
+        AssertPolicy(
+            EndpointOperationId.DeleteUserAccount,
+            EndpointMutationCommitModel.CommitThenFollowUp,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetAuthSessionStatus,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
+        AssertPolicy(
+            EndpointOperationId.ChangeMasterPassword,
+            EndpointMutationCommitModel.CommitThenFollowUp,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetAuthSessionStatus,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
+        AssertPolicy(
+            EndpointOperationId.DisconnectUserDevice,
+            EndpointMutationCommitModel.SingleAtomicCommit,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetUserDevices,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
+        AssertPolicy(
+            EndpointOperationId.InitializeRememberMeSession,
+            EndpointMutationCommitModel.CommitThenFollowUp,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetAuthSessionStatus,
+            EndpointMutationRecoveryAction.ReconnectAndInspectSessionState);
+        AssertPolicy(
+            EndpointOperationId.UpdatePassword,
+            EndpointMutationCommitModel.CommitThenFollowUp,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetSavedPasswords,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
+        AssertPolicy(
+            EndpointOperationId.ExportPasswordsToUser,
+            EndpointMutationCommitModel.MultiStageRecoverableCommit,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetSavedPasswords,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
+        AssertPolicy(
+            EndpointOperationId.ExportCustomUserColorsToUser,
+            EndpointMutationCommitModel.MultiStageRecoverableCommit,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetSavedPasswords,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
+        AssertPolicy(
+            EndpointOperationId.ExportPasswordTagsToUser,
+            EndpointMutationCommitModel.MultiStageRecoverableCommit,
+            EndpointMutationReplaySafety.AuthoritativeReadBackRequired,
+            EndpointOperationId.GetSavedPasswords,
+            EndpointMutationRecoveryAction.InspectAuthoritativeState);
     }
     [TestMethod]
     public void OnlySavedPasswordsUsesTheBoundedLargeResponseProtocol()
@@ -87,5 +191,21 @@ public sealed class EndpointOperationParityTests
         foreach (var type in internalTypes)
             Assert.IsNotNull(EndpointRpcJsonContext.Default.GetTypeInfo(type), type.FullName);
     }
+
+    private static void AssertPolicy(
+        EndpointOperationId operationId,
+        EndpointMutationCommitModel commitModel,
+        EndpointMutationReplaySafety replaySafety,
+        EndpointOperationId? readBackOperationId,
+        EndpointMutationRecoveryAction recoveryAction)
+    {
+        var descriptor = EndpointOperationManifest.Get(operationId);
+        Assert.IsTrue(descriptor.MutatesState);
+        Assert.AreEqual(commitModel, descriptor.CommitModel);
+        Assert.AreEqual(replaySafety, descriptor.ReplaySafety);
+        Assert.AreEqual(readBackOperationId, descriptor.AuthoritativeReadBackOperationId);
+        Assert.AreEqual(recoveryAction, descriptor.RecoveryAction);
+    }
+
 
 }

@@ -153,26 +153,35 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         }
         catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
         {
-            return ShouldReturnOutcomeUnknown(descriptor, context, exception: null)
+            return MutationOutcomeCouldBeUnknown(descriptor, context)
                 ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
                 : Failure(context, EndpointRpcErrorCode.OperationCancelled, EndpointRpcErrorCategory.Cancellation, "The endpoint operation was cancelled.", true);
         }
         catch (EndpointLargeResultCapacityException)
         {
-            return ShouldReturnOutcomeUnknown(descriptor, context, exception: null)
+            return MutationOutcomeCouldBeUnknown(descriptor, context)
                 ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
                 : Failure(context, EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The endpoint large-result transfer capacity is unavailable.", true);
         }
         catch (EndpointRpcPayloadException)
         {
-            return ShouldReturnOutcomeUnknown(descriptor, context, exception: null)
+            return MutationOutcomeCouldBeUnknown(descriptor, context)
                 ? EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context))
                 : Failure(context, EndpointRpcErrorCode.ValidationFailed, EndpointRpcErrorCategory.Validation, "The endpoint RPC payload is invalid.");
         }
         catch (Exception exception)
         {
-            if (ShouldReturnOutcomeUnknown(descriptor, context, exception))
-                return EndpointRpcDispatchResult.Failure(_errorMapper.CreateOutcomeUnknown(context));
+            if (MutationOutcomeCouldBeUnknown(descriptor, context))
+            {
+                if (_errorMapper.TryMapKnownMutationFailure(exception, context, out var knownFailure))
+                    return EndpointRpcDispatchResult.Failure(knownFailure);
+
+                return EndpointRpcDispatchResult.Failure(
+                    _errorMapper.CreateOutcomeUnknown(
+                        context,
+                        _errorMapper.RequiresProcessRestart(exception)));
+            }
+
             return EndpointRpcDispatchResult.Failure(_errorMapper.Map(exception, context));
         }
     }
@@ -1343,20 +1352,11 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         }
     }
 
-    private bool ShouldReturnOutcomeUnknown(
+    private static bool MutationOutcomeCouldBeUnknown(
         EndpointOperationDescriptor descriptor,
-        EndpointRequestContext context,
-        Exception? exception)
-    {
-        if (!descriptor.MutatesState ||
-            context.Invocation.Stage < EndpointInvocationStage.Invoking)
-        {
-            return false;
-        }
-
-        return exception is null ||
-            !_errorMapper.IsConclusiveMutationFailure(exception, context);
-    }
+        EndpointRequestContext context) =>
+        descriptor.MutatesState &&
+        context.Invocation.Stage >= EndpointInvocationStage.Invoking;
 
     private static EndpointRpcDispatchResult Failure(
         EndpointRequestContext context,
@@ -1372,5 +1372,12 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
                 context.CorrelationId,
                 DateTimeOffset.UtcNow,
                 isRetryable,
-                RequiresProcessRestart: false));
+                RequiresProcessRestart: false,
+                GetConclusiveMutationOutcome(context.OperationId),
+                Recovery: null));
+    private static EndpointMutationOutcome GetConclusiveMutationOutcome(EndpointOperationId operationId) =>
+        Enum.IsDefined(operationId) && EndpointOperationManifest.Get(operationId).MutatesState
+            ? EndpointMutationOutcome.NotCommitted
+            : EndpointMutationOutcome.NotApplicable;
+
 }

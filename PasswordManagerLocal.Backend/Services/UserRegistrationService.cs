@@ -79,7 +79,17 @@ public sealed class UserRegistrationService : IUserRegistrationService
         var user = await CreateEncryptedUserForRegistrationAsync(bundle, usernameBytes, passwordSalt, key, linkedAt, ct);
 
         await SaveRegisteredUserAsync(user, request.RememberMe, key, ct);
-        return _sessionIssuer.IssueAuthenticatedSession(user.UId, key, bundle);
+        try
+        {
+            await _syncRuntime.RefreshSyncEnabledAsync(ct);
+            return _sessionIssuer.IssueAuthenticatedSession(user.UId, key, bundle);
+        }
+        catch (Exception ex)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The account registration was committed, but the local runtime session could not be completed.",
+                innerException: ex);
+        }
     }
 
 
@@ -252,7 +262,6 @@ public sealed class UserRegistrationService : IUserRegistrationService
             _uow.ClearTrackedChanges();
             throw;
         }
-        await _syncRuntime.RefreshSyncEnabledAsync(ct);
     }
 
 

@@ -84,15 +84,28 @@ public sealed class UserCustomColorService : IUserCustomColorService
         if (!request.DeleteOriginal)
             return;
 
-        _customUserColorService.DeleteCustomUserColors(
-            request.CustomUserColorIds!,
-            sourceBundle.UserPasswordsData);
-        await _writer.UpdateUserDataBundleAsync(
-            sourceBundle,
-            sourceToken,
-            UserDataBlobKind.Passwords,
-            true,
-            ct);
+        try
+        {
+            _customUserColorService.DeleteCustomUserColors(
+                request.CustomUserColorIds!,
+                sourceBundle.UserPasswordsData);
+            await _writer.UpdateUserDataBundleAsync(
+                sourceBundle,
+                sourceToken,
+                UserDataBlobKind.Passwords,
+                true,
+                ct);
+        }
+        catch (MutationPartiallyCommittedException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The custom-color export was committed to the target profile, but source cleanup did not complete.",
+                innerException: ex);
+        }
     }
 
 

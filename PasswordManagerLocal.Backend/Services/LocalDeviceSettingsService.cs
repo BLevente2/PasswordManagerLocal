@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -73,24 +74,33 @@ public sealed class LocalDeviceSettingsService : ILocalDeviceSettingsService
         link.GenerateIntegrityHash();
         _localUserDevices.Update(link);
         await _uow.SaveChangesAsync(ct);
-        await _syncRuntime.RefreshSyncEnabledAsync(ct);
-
-        if (isSyncOn)
+        try
         {
-            var remotes = await _userDevices.ListByUserAsync(user.UId, ct);
-            foreach (var deleted in remotes.Where(x => x.IsDeleted))
-            {
-                await _syncChanges.EnqueueForDeviceAsync(new SyncItem
-                {
-                    ModelId = SyncIdentityUtil.BuildUserDeviceModelId(deleted.UserId, deleted.DeviceId),
-                    ModelType = SyncModelType.UserDevice,
-                    ChangeType = SyncChangeType.Deleted,
-                    ChangedAtTs = deleted.LastModifiedAt.ToUnixTimeMilliseconds()
-                }, deleted.DeviceId, ct);
-            }
+            await _syncRuntime.RefreshSyncEnabledAsync(ct);
 
-            foreach (var remote in remotes.Where(x => !x.IsDeleted && x.IsSyncOn))
-                await _userSyncCatchUp.EnqueueAsync(user.UId, remote.DeviceId, ct);
+            if (isSyncOn)
+            {
+                var remotes = await _userDevices.ListByUserAsync(user.UId, ct);
+                foreach (var deleted in remotes.Where(x => x.IsDeleted))
+                {
+                    await _syncChanges.EnqueueForDeviceAsync(new SyncItem
+                    {
+                        ModelId = SyncIdentityUtil.BuildUserDeviceModelId(deleted.UserId, deleted.DeviceId),
+                        ModelType = SyncModelType.UserDevice,
+                        ChangeType = SyncChangeType.Deleted,
+                        ChangedAtTs = deleted.LastModifiedAt.ToUnixTimeMilliseconds()
+                    }, deleted.DeviceId, ct);
+                }
+
+                foreach (var remote in remotes.Where(x => !x.IsDeleted && x.IsSyncOn))
+                    await _userSyncCatchUp.EnqueueAsync(user.UId, remote.DeviceId, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new MutationPartiallyCommittedException(
+                "The local synchronization setting was committed, but follow-up synchronization work did not complete.",
+                innerException: ex);
         }
     }
 

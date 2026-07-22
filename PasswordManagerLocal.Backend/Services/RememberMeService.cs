@@ -210,10 +210,19 @@ public class RememberMeService : IRememberMeService
                         true,
                         ct);
 
-                    var token = _tokens.Issue(user.UId);
-                    _keys.SetUserKey(token, key);
-                    _keys.SetUserBlobKeys(token, bundle.UserData);
-                    return token;
+                    try
+                    {
+                        var token = _tokens.Issue(user.UId);
+                        _keys.SetUserKey(token, key);
+                        _keys.SetUserBlobKeys(token, bundle.UserData);
+                        return token;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new MutationPartiallyCommittedException(
+                            "The remembered-session state was committed, but the local session could not be initialized.",
+                            innerException: ex);
+                    }
                 }
                 catch
                 {

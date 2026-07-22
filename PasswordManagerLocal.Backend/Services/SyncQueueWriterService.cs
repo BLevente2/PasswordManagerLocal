@@ -68,7 +68,16 @@ public sealed class SyncQueueWriterService : ISyncQueueWriterService
         await _uow.SaveChangesAsync(ct);
 
         if (activateTargets)
-            _activation.ActivateDevices(targetDevices);
+        {
+            try
+            {
+                _activation.ActivateDevices(targetDevices);
+            }
+            catch
+            {
+                // Persisted queue rows remain authoritative; activation is only a wake-up optimization.
+            }
+        }
     }
 
     public async Task EnqueueForDeviceAsync(
@@ -101,9 +110,16 @@ public sealed class SyncQueueWriterService : ISyncQueueWriterService
 
         await _uow.SaveChangesAsync(ct);
 
-        var target = await _devices.GetByIdAsync(targetDeviceId, ct);
-        if (target is not null)
-            _activation.ActivateDevices([target]);
+        try
+        {
+            var target = await _devices.GetByIdAsync(targetDeviceId, ct);
+            if (target is not null)
+                _activation.ActivateDevices([target]);
+        }
+        catch
+        {
+            // Persisted queue rows remain authoritative; activation is only a wake-up optimization.
+        }
     }
 
     private async Task EnqueueMissingTargetsAsync(
