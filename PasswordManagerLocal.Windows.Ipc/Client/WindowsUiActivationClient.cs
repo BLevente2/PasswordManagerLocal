@@ -59,6 +59,7 @@ public sealed class WindowsUiActivationClient : IWindowsUiActivationClient
                     IpcPeerRole.Ui,
                     IpcCapabilities.UiActivation,
                     Environment.ProcessId,
+                    System.Diagnostics.Process.GetCurrentProcess().SessionId,
                     Guid.NewGuid(),
                     maximumPendingRequests: 2),
                 validator);

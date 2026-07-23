@@ -11,6 +11,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Serialization;
 [JsonSerializable(typeof(IpcResponseEnvelope))]
 [JsonSerializable(typeof(IpcHandshakeRequest))]
 [JsonSerializable(typeof(IpcHandshakeResponse))]
+[JsonSerializable(typeof(WindowsUiIpcIdentity))]
 [JsonSerializable(typeof(IpcError))]
 [JsonSerializable(typeof(IpcFailureDto))]
 [JsonSerializable(typeof(AgentStatusDto))]
@@ -21,9 +22,11 @@ namespace PasswordManagerLocal.Windows.Ipc.Serialization;
 [JsonSerializable(typeof(PingResponseDto))]
 [JsonSerializable(typeof(UiConnectionRegistrationResponseDto))]
 [JsonSerializable(typeof(UiActivationRequestDto))]
+[JsonSerializable(typeof(UiActivationCommand))]
 [JsonSerializable(typeof(UiOpenRequestDto))]
 [JsonSerializable(typeof(AgentExitRequestDto))]
 [JsonSerializable(typeof(RequestAcceptedDto))]
+[JsonSerializable(typeof(DatabaseResetResultDto))]
 public partial class WindowsIpcJsonContext : JsonSerializerContext
 {
 }

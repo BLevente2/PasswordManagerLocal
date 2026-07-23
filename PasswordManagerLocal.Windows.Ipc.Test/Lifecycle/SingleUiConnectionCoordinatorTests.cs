@@ -1,9 +1,9 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
-using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
-using PasswordManagerLocal.Windows.Ipc.Server;
-using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
+using PasswordManagerLocal.Windows.Ipc.Serialization;
+using PasswordManagerLocal.Windows.Ipc.Server;
+using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 
 namespace PasswordManagerLocal.Windows.Ipc.Test.Lifecycle;
 
@@ -11,23 +11,57 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Lifecycle;
 public sealed class SingleUiConnectionCoordinatorTests
 {
     [TestMethod]
-    public void SecondConnectionIsRejectedAndStaleUnregisterCannotRemoveCurrentConnection()
+    public void SameIdentityMayReplaceBrokenControlConnectionAndStaleUnregisterCannotRemoveIt()
     {
         var coordinator = new SingleUiConnectionCoordinator();
-        var first = Guid.NewGuid();
-        var second = Guid.NewGuid();
+        var instanceId = Guid.NewGuid();
+        var first = CreateUiContext(Guid.NewGuid(), 101, 4, instanceId);
+        var replacement = CreateUiContext(Guid.NewGuid(), 101, 4, instanceId);
 
-        Assert.IsTrue(coordinator.TryRegister(first));
-        Assert.IsTrue(coordinator.TryRegister(first));
-        Assert.IsFalse(coordinator.TryRegister(second));
-        Assert.IsFalse(coordinator.Unregister(second));
-        Assert.AreEqual(first, coordinator.RegisteredConnectionId);
-        Assert.IsTrue(coordinator.Unregister(first));
-        Assert.IsFalse(coordinator.Unregister(first));
-        Assert.IsNull(coordinator.RegisteredConnectionId);
-        Assert.IsTrue(coordinator.TryRegister(second));
-        Assert.IsFalse(coordinator.Unregister(first));
-        Assert.AreEqual(second, coordinator.RegisteredConnectionId);
+        Assert.IsTrue(coordinator.TryRegister(first, out var firstRegistration));
+        Assert.IsTrue(coordinator.TryRegister(replacement, out var replacementRegistration));
+        Assert.AreNotEqual(firstRegistration.ConnectionId, replacementRegistration.ConnectionId);
+        Assert.IsTrue(replacementRegistration.Generation > firstRegistration.Generation);
+        Assert.IsFalse(coordinator.Unregister(first.ConnectionId));
+        Assert.AreEqual(replacement.ConnectionId, coordinator.RegisteredConnectionId);
+        Assert.IsTrue(coordinator.IsCurrentRegistration(101, 4, instanceId, replacementRegistration.Generation));
+    }
+
+    [TestMethod]
+    public void RegistrationChangesExposeReplacementAndNormalUnregister()
+    {
+        var coordinator = new SingleUiConnectionCoordinator();
+        var changes = new List<UiConnectionRegistrationChangedEventArgs>();
+        coordinator.RegistrationChanged += (_, args) => changes.Add(args);
+        var instanceId = Guid.NewGuid();
+        var first = CreateUiContext(Guid.NewGuid(), 101, 4, instanceId);
+        var replacement = CreateUiContext(Guid.NewGuid(), 101, 4, instanceId);
+
+        Assert.IsTrue(coordinator.TryRegister(first, out var firstRegistration));
+        Assert.IsTrue(coordinator.TryRegister(replacement, out var replacementRegistration));
+        Assert.IsTrue(coordinator.Unregister(replacement.ConnectionId));
+
+        Assert.AreEqual(3, changes.Count);
+        Assert.IsNull(changes[0].Previous);
+        Assert.AreEqual(firstRegistration, changes[0].Current);
+        Assert.AreEqual(firstRegistration, changes[1].Previous);
+        Assert.AreEqual(replacementRegistration, changes[1].Current);
+        Assert.AreEqual(replacementRegistration, changes[2].Previous);
+        Assert.IsNull(changes[2].Current);
+    }
+
+    [TestMethod]
+    public void DifferentIdentityIsRejectedUntilCurrentConnectionUnregisters()
+    {
+        var coordinator = new SingleUiConnectionCoordinator();
+        var first = CreateUiContext(Guid.NewGuid(), 101, 4, Guid.NewGuid());
+        var other = CreateUiContext(Guid.NewGuid(), 102, 4, Guid.NewGuid());
+
+        Assert.IsTrue(coordinator.TryRegister(first, out _));
+        Assert.IsFalse(coordinator.TryRegister(other, out _));
+        Assert.IsTrue(coordinator.Unregister(first.ConnectionId));
+        Assert.IsTrue(coordinator.TryRegister(other, out _));
+        Assert.AreEqual(other.ConnectionId, coordinator.RegisteredConnectionId);
     }
 
     [TestMethod]
@@ -47,11 +81,33 @@ public sealed class SingleUiConnectionCoordinatorTests
     }
 
     [TestMethod]
-    public void EmptyConnectionIdentifiersAreRejected()
+    public void InvalidRegistrationInputsAreRejected()
     {
         var coordinator = new SingleUiConnectionCoordinator();
+        var nonUi = new IpcConnectionContext(
+            Guid.NewGuid(),
+            IpcPeerRole.TestClient,
+            100,
+            0,
+            Guid.NewGuid(),
+            IpcCapabilities.Control);
 
-        Assert.ThrowsExactly<ArgumentException>(() => coordinator.TryRegister(Guid.Empty));
+        Assert.ThrowsExactly<ArgumentNullException>(() =>
+            coordinator.TryRegister(null!, out _));
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            coordinator.TryRegister(nonUi, out _));
         Assert.ThrowsExactly<ArgumentException>(() => coordinator.Unregister(Guid.Empty));
     }
+
+    private static IpcConnectionContext CreateUiContext(
+        Guid connectionId,
+        int processId,
+        int windowsSessionId,
+        Guid instanceId) => new(
+            connectionId,
+            IpcPeerRole.Ui,
+            processId,
+            windowsSessionId,
+            instanceId,
+            IpcCapabilities.Control | IpcCapabilities.Status | IpcCapabilities.EndpointRpc);
 }

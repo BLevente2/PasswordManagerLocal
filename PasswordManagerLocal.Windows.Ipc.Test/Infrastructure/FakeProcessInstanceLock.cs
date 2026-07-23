@@ -14,15 +14,24 @@ internal sealed class FakeProcessInstanceLock : IProcessInstanceLock
     public bool IsDisposed { get; private set; }
     public int EnsureOwnershipCount { get; private set; }
     public Exception? EnsureOwnershipFailure { get; set; }
+    public Exception? DisposeFailure { get; set; }
+    public ICollection<string>? OperationLog { get; set; }
 
     public void EnsureOwnership()
     {
         EnsureOwnershipCount++;
+        OperationLog?.Add("lock-acquire");
         if (EnsureOwnershipFailure is not null)
             throw EnsureOwnershipFailure;
         if (!IsOwner)
             throw new ProcessInstanceAlreadyOwnedException(LockFilePath);
     }
 
-    public void Dispose() => IsDisposed = true;
+    public void Dispose()
+    {
+        IsDisposed = true;
+        OperationLog?.Add("lock-release");
+        if (DisposeFailure is not null)
+            throw DisposeFailure;
+    }
 }

@@ -241,11 +241,20 @@ public sealed class WindowsIpcContractValidatorTests
     public void RequestDtosRejectUndefinedEnumsAndInvalidHandshakeIdentity()
     {
         AssertInvalid(new UiActivationRequestDto((UiActivationReason)999, true));
+        AssertInvalid(new UiActivationRequestDto(
+            UiActivationReason.UserLaunch,
+            BringToForeground: false,
+            UiActivationCommand.Shutdown));
+        AssertInvalid(new UiActivationRequestDto(
+            UiActivationReason.AgentRequest,
+            BringToForeground: true,
+            UiActivationCommand.Shutdown));
         AssertInvalid(new UiOpenRequestDto((UiActivationReason)999));
         AssertInvalid(new AgentExitRequestDto((AgentExitReason)999));
         AssertInvalid(new IpcHandshakeRequest(
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.Ui,
+            0,
             0,
             Guid.NewGuid(),
             IpcCapabilities.Control));
@@ -253,18 +262,21 @@ public sealed class WindowsIpcContractValidatorTests
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.Ui,
             Environment.ProcessId,
+            0,
             Guid.Empty,
             IpcCapabilities.Control));
         AssertInvalid(new IpcHandshakeRequest(
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.Ui,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.None));
         AssertInvalid(new IpcHandshakeRequest(
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.Ui,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             (IpcCapabilities)128));
     }

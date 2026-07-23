@@ -22,6 +22,7 @@ internal sealed class InMemoryIpcConnection : IWindowsIpcConnection
     }
 
     public Guid ConnectionId { get; }
+    public int? VerifiedPeerProcessId => null;
     public bool IsConnected => Volatile.Read(ref _disposeStarted) == 0;
     public Exception? DisposeException { get; set; }
     public int DisposeCallCount => Volatile.Read(ref _disposeCallCount);

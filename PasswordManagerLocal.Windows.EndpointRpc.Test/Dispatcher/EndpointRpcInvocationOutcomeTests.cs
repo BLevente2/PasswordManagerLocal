@@ -138,12 +138,14 @@ public sealed class EndpointRpcInvocationOutcomeTests
     public async Task PreInvocationDatabaseVersionFailureRemainsConclusiveAndRequiresRestart()
     {
         var serializer = new EndpointRpcSerializer();
+        var restartHandler = new RecordingEndpointRpcRestartRequirementHandler();
         await using var dispatcher = new EndpointRpcDispatcher(
             new ExceptionEndpointAdapter(
                 new DatabaseVersionNotSupportedException(1, 2, 3)),
             serializer,
             new EndpointRpcContractValidator(),
-            new EndpointRpcBackendErrorMapper());
+            new EndpointRpcBackendErrorMapper(),
+            restartHandler);
         var context = CreateContext(EndpointOperationId.Logout, 113);
 
         var result = await dispatcher.DispatchAsync(
@@ -154,6 +156,8 @@ public sealed class EndpointRpcInvocationOutcomeTests
         Assert.AreEqual(EndpointInvocationStage.BeforeInvocation, context.Invocation.Stage);
         Assert.AreEqual(EndpointRpcErrorCode.RuntimeUnavailable, result.Error!.ErrorCode);
         Assert.IsTrue(result.Error.RequiresProcessRestart);
+        Assert.AreEqual(1, restartHandler.RequestCount);
+        Assert.IsInstanceOfType<DatabaseVersionNotSupportedException>(restartHandler.Failure);
     }
 
     [TestMethod]
@@ -311,6 +315,7 @@ public sealed class EndpointRpcInvocationOutcomeTests
             Guid.NewGuid(),
             IpcPeerRole.Ui,
             1234,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.EndpointRpc);
         var requestPayload = SerializeRequest(EndpointOperationId.Logout);

@@ -59,6 +59,9 @@ public sealed class WindowsIpcContractValidator
             case RequestAcceptedDto:
             case UiConnectionRegistrationResponseDto:
                 break;
+            case DatabaseResetResultDto item:
+                Validate(item);
+                break;
             default:
                 throw new IpcPayloadException(
                     "The IPC transport type does not have semantic validation.");
@@ -71,6 +74,7 @@ public sealed class WindowsIpcContractValidator
         if (request.ProtocolVersion <= 0 ||
             !Enum.IsDefined(request.ClientRole) ||
             request.ProcessId <= 0 ||
+            request.WindowsSessionId < 0 ||
             request.SessionId == Guid.Empty ||
             request.Capabilities == IpcCapabilities.None ||
             HasUnknownCapabilities(request.Capabilities))
@@ -249,8 +253,23 @@ public sealed class WindowsIpcContractValidator
         if (status.IsBackendRunning && !status.BackendOwnedByAgent)
             throw new IpcPayloadException("The IPC backend-running flag requires agent ownership.");
 
+        if ((status.IsEndpointHostReady || status.IsDatabaseResetInProgress ||
+                status.HasInteractiveUiLease || status.HasBackgroundSyncLease) &&
+            !status.BackendOwnedByAgent)
+        {
+            throw new IpcPayloadException("Agent runtime details require agent backend ownership.");
+        }
+
+        if (status.IsEndpointHostReady && status.IsDatabaseResetInProgress)
+            throw new IpcPayloadException("The endpoint host cannot be ready during database reset.");
+
+        if (status.HasBackgroundSyncLease && !status.IsBackendRunning)
+            throw new IpcPayloadException("A background lease requires a running backend runtime.");
+
         if (status.BackendOwnedByAgent &&
-            (status.AgentState is not AgentState.Running and not AgentState.Stopping))
+            (status.AgentState is not AgentState.Running and
+                not AgentState.Stopping and
+                not AgentState.Failed))
         {
             throw new IpcPayloadException("The IPC backend-ownership flag is inconsistent with the agent state.");
         }
@@ -265,7 +284,8 @@ public sealed class WindowsIpcContractValidator
             throw new IpcPayloadException("The IPC failed agent has no failure details.");
 
         if (status.LastFailure is not null &&
-            status.AgentState is not AgentState.Failed and not AgentState.Stopping)
+            status.AgentState is not AgentState.Failed and not AgentState.Stopping &&
+            !status.RequiresProcessRestart)
         {
             throw new IpcPayloadException("The IPC agent failure is inconsistent with its state.");
         }
@@ -374,11 +394,31 @@ public sealed class WindowsIpcContractValidator
         }
     }
 
+
+    public void Validate(DatabaseResetResultDto result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (result.Completed && result.RequiresProcessRestart)
+            throw new IpcPayloadException("A completed database reset cannot require process restart.");
+        if (result.Completed && result.SafeMessage is not null)
+            throw new IpcPayloadException("A completed database reset cannot contain a failure message.");
+        if (!result.Completed && string.IsNullOrWhiteSpace(result.SafeMessage))
+            throw new IpcPayloadException("A failed database reset must contain a safe message.");
+        if (result.SafeMessage is { Length: > IpcContractLimits.MaximumSafeMessageLength })
+            throw new IpcPayloadException("The database reset message is too long.");
+    }
+
     public void Validate(UiActivationRequestDto request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (!Enum.IsDefined(request.Reason))
-            throw new IpcPayloadException("The IPC UI activation reason is invalid.");
+        if (!Enum.IsDefined(request.Reason) || !Enum.IsDefined(request.Command))
+            throw new IpcPayloadException("The IPC UI activation request is invalid.");
+        if (request.Command == UiActivationCommand.Shutdown &&
+            (request.BringToForeground || request.Reason != UiActivationReason.AgentRequest))
+        {
+            throw new IpcPayloadException(
+                "A UI shutdown request must use the narrow local agent-shutdown contract.");
+        }
     }
 
     public void Validate(UiOpenRequestDto request)

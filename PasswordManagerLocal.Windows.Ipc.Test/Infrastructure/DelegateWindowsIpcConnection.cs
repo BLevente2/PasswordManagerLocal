@@ -23,6 +23,7 @@ internal sealed class DelegateWindowsIpcConnection : IWindowsIpcConnection
     }
 
     public Guid ConnectionId { get; }
+    public int? VerifiedPeerProcessId => null;
     public bool IsConnected => Volatile.Read(ref _disposeStarted) == 0;
 
     public ValueTask<IpcFrame?> ReadFrameAsync(CancellationToken cancellationToken = default) =>

@@ -197,6 +197,7 @@ public sealed class WindowsIpcRequestTests
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.TestClient,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.Control);
         var payload = serializer.Serialize(

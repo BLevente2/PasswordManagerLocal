@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using PasswordManagerLocal.Backend.Configuration;
 
 namespace PasswordManagerLocal.Backend.Hosting;
@@ -10,6 +11,8 @@ internal sealed class BackendStorageCleaner
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
     }
+
+    public void ClearSqlitePools() => SqliteConnection.ClearAllPools();
 
     public void DeleteDatabaseFiles()
     {

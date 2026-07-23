@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Windows.Ipc.Client;
+using PasswordManagerLocal.Windows.Ipc.Contracts;
 
 namespace PasswordManagerLocal.Windows.AgentConnection;
 
@@ -16,7 +17,25 @@ public sealed class WindowsAgentRegisteredConnection : IWindowsAgentRegisteredCo
         _controlClient = controlClient ?? throw new ArgumentNullException(nameof(controlClient));
     }
 
-    public bool IsConnected => _client.IsHandshakeComplete && Volatile.Read(ref _disposed) == 0;
+    public bool IsConnected => _client.IsConnected && Volatile.Read(ref _disposed) == 0;
+    public int? AgentProcessId => _client.VerifiedServerProcessId;
+    public Task Completion => _client.Completion;
+
+    public Task<BackendRuntimeStatusDto> GetBackendRuntimeStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
+        return _controlClient.GetBackendRuntimeStatusAsync(cancellationToken);
+    }
+
+    public Task<DatabaseResetResultDto> ResetDatabaseAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
+        return _controlClient.ResetDatabaseAsync(cancellationToken);
+    }
 
     public async ValueTask DisposeAsync()
     {

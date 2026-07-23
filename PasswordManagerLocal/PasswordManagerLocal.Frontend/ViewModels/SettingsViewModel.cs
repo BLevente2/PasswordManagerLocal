@@ -14,11 +14,13 @@ public sealed class SettingsViewModel : ViewModelBase
     public SettingsViewModel(
         UiPreferencesService uiPreferences,
         DeviceAppPreferencesService deviceAppPreferences,
-        Action navigateBack)
+        Action navigateBack,
+        bool isBackgroundSyncSettingAvailable = true)
         : base(uiPreferences)
     {
         _deviceAppPreferences = deviceAppPreferences ?? throw new ArgumentNullException(nameof(deviceAppPreferences));
         ArgumentNullException.ThrowIfNull(navigateBack);
+        IsBackgroundSyncSettingAvailable = isBackgroundSyncSettingAvailable;
 
         NavigateBackCommand = ReactiveCommand.Create(navigateBack);
         ToggleAppearanceSectionCommand = ReactiveCommand.Create(ToggleAppearanceSection);
@@ -96,13 +98,18 @@ public sealed class SettingsViewModel : ViewModelBase
         }
     }
 
+    public bool IsBackgroundSyncSettingAvailable { get; }
+
     public bool IsBackgroundSyncEnabled
     {
         get => _deviceAppPreferences.BackgroundSyncEnabled;
         set
         {
-            if (_deviceAppPreferences.BackgroundSyncEnabled == value)
+            if (!IsBackgroundSyncSettingAvailable ||
+                _deviceAppPreferences.BackgroundSyncEnabled == value)
+            {
                 return;
+            }
 
             _deviceAppPreferences.BackgroundSyncEnabled = value;
         }

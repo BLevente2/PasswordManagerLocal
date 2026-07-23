@@ -12,6 +12,7 @@ public sealed class WindowsIpcClientOptions
         IpcPeerRole expectedServerRole,
         IpcCapabilities capabilities,
         int processId,
+        int windowsSessionId,
         Guid sessionId,
         int maximumPendingRequests = DefaultMaximumPendingRequests,
         IpcCapabilities requiredServerCapabilities = IpcCapabilities.None)
@@ -24,6 +25,8 @@ public sealed class WindowsIpcClientOptions
             throw new ArgumentOutOfRangeException(nameof(capabilities));
         if (processId <= 0)
             throw new ArgumentOutOfRangeException(nameof(processId));
+        if (windowsSessionId < 0)
+            throw new ArgumentOutOfRangeException(nameof(windowsSessionId));
         if (sessionId == Guid.Empty)
             throw new ArgumentException("The IPC session ID cannot be empty.", nameof(sessionId));
         if (requiredServerCapabilities != IpcCapabilities.None &&
@@ -44,6 +47,7 @@ public sealed class WindowsIpcClientOptions
         ExpectedServerRole = expectedServerRole;
         Capabilities = capabilities;
         ProcessId = processId;
+        WindowsSessionId = windowsSessionId;
         SessionId = sessionId;
         MaximumPendingRequests = maximumPendingRequests;
         RequiredServerCapabilities = requiredServerCapabilities;
@@ -53,6 +57,7 @@ public sealed class WindowsIpcClientOptions
     public IpcPeerRole ExpectedServerRole { get; }
     public IpcCapabilities Capabilities { get; }
     public int ProcessId { get; }
+    public int WindowsSessionId { get; }
     public Guid SessionId { get; }
     public int MaximumPendingRequests { get; }
     public IpcCapabilities RequiredServerCapabilities { get; }

@@ -67,6 +67,30 @@ public sealed class WindowsIpcServerHostTests
     }
 
     [TestMethod]
+    public async Task ClosingActiveSessionsKeepsListenerAvailableForReplacementConnection()
+    {
+        var listener = new ChannelWindowsIpcConnectionListener();
+        var factory = new RecordingWindowsIpcServerSessionFactory();
+        var first = new BlockingWindowsIpcServerSession();
+        var second = new BlockingWindowsIpcServerSession();
+        factory.Enqueue(first);
+        factory.Enqueue(second);
+        await using var host = new WindowsIpcServerHost(listener, factory);
+        await host.StartAsync();
+        listener.Queue(new DisposableTestWindowsIpcConnection());
+        await WaitUntilAsync(() => host.ActiveSessionCount == 1);
+
+        await host.CloseActiveSessionsAsync();
+        listener.Queue(new DisposableTestWindowsIpcConnection());
+        await WaitUntilAsync(() => factory.CreatedSessions.Count == 2);
+
+        Assert.IsNull(host.ListenerFailure);
+        Assert.IsFalse(host.Completion.IsCompleted);
+        Assert.IsTrue(first.DisposeCount >= 1);
+        second.Complete();
+    }
+
+    [TestMethod]
     public async Task ShutdownStopsAcceptanceAndDisposesSessions()
     {
         var listener = new ChannelWindowsIpcConnectionListener();

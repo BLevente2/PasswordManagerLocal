@@ -32,7 +32,9 @@ public sealed class WindowsNamedPipeServer : IWindowsIpcConnectionListener
         try
         {
             await stream.WaitForConnectionAsync(cancellationToken);
-            return new WindowsIpcConnection(stream, _frameCodec);
+            var peerProcessId = new WindowsNamedPipePeerProcessIdProvider()
+                .GetClientProcessId(stream.SafePipeHandle);
+            return new WindowsIpcConnection(stream, _frameCodec, peerProcessId);
         }
         catch
         {

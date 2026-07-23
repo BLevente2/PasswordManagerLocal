@@ -36,6 +36,7 @@ public sealed class WindowsIpcHandshakeTests
                 WindowsIpcProtocol.CurrentVersion + 1,
                 IpcPeerRole.TestClient,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 IpcCapabilities.Control),
             1);
@@ -86,6 +87,7 @@ public sealed class WindowsIpcHandshakeTests
                 WindowsIpcProtocol.CurrentVersion,
                 IpcPeerRole.TestClient,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 IpcCapabilities.EndpointRpc),
             1);
@@ -192,6 +194,7 @@ public sealed class WindowsIpcHandshakeTests
             WindowsIpcProtocol.CurrentVersion,
             role,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.Control);
 

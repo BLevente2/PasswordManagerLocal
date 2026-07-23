@@ -296,6 +296,7 @@ public sealed class WindowsIpcRequestCapacityAdmissionTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests),
             new WindowsIpcContractValidator(),

@@ -11,14 +11,21 @@ public sealed class WindowsIpcConnection : IWindowsIpcConnection
     private Task? _disposeTask;
     private int _disposeStarted;
 
-    public WindowsIpcConnection(Stream stream, IpcFrameCodec frameCodec)
+    public WindowsIpcConnection(
+        Stream stream,
+        IpcFrameCodec frameCodec,
+        int? verifiedPeerProcessId = null)
     {
         _stream = stream ?? throw new ArgumentNullException(nameof(stream));
         _frameCodec = frameCodec ?? throw new ArgumentNullException(nameof(frameCodec));
+        if (verifiedPeerProcessId is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(verifiedPeerProcessId));
+        VerifiedPeerProcessId = verifiedPeerProcessId;
         ConnectionId = Guid.NewGuid();
     }
 
     public Guid ConnectionId { get; }
+    public int? VerifiedPeerProcessId { get; }
 
     public bool IsConnected => Volatile.Read(ref _disposeStarted) == 0;
 

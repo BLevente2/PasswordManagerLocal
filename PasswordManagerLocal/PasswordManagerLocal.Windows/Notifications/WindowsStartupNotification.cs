@@ -4,15 +4,15 @@ namespace PasswordManagerLocal.Windows.Notifications;
 
 public sealed class WindowsStartupNotification
 {
-    private const uint WarningIcon = 0x00000030;
+    private const uint ErrorIcon = 0x00000010;
 
-    public void ShowAgentUnavailable()
+    public void ShowBackendUnavailable()
     {
         _ = MessageBox(
             IntPtr.Zero,
-            "PasswordManagerLocal started without the Windows agent. The password manager remains available, but tray controls are unavailable for this session.",
+            "PasswordManagerLocal could not connect to its Windows agent backend. The application will close without creating an in-process fallback runtime.",
             "PasswordManagerLocal",
-            WarningIcon);
+            ErrorIcon);
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]

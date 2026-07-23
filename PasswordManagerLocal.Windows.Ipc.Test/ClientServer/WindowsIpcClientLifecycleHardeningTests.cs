@@ -204,6 +204,7 @@ public sealed class WindowsIpcClientLifecycleHardeningTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control | IpcCapabilities.Status,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 requiredServerCapabilities: requiredServerCapabilities));
 

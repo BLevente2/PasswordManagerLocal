@@ -99,6 +99,13 @@ public sealed class WindowsIpcControlClient
             WindowsIpcJsonContext.Default.RequestAcceptedDto,
             cancellationToken);
 
+    public Task<DatabaseResetResultDto> ResetDatabaseAsync(
+        CancellationToken cancellationToken = default) =>
+        SendForResultAsync(
+            IpcOperationId.ResetDatabase,
+            WindowsIpcJsonContext.Default.DatabaseResetResultDto,
+            cancellationToken);
+
     public Task<BackgroundSyncSettingsDto> GetBackgroundSyncSettingsAsync(
         CancellationToken cancellationToken = default) =>
         SendForResultAsync(

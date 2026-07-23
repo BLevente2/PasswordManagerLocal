@@ -899,6 +899,7 @@ public sealed class WindowsIpcRequestSubmissionHardeningTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control | IpcCapabilities.Status,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests));
 }

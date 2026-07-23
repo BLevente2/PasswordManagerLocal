@@ -27,7 +27,9 @@ public sealed class WindowsNamedPipeClient
         try
         {
             await stream.ConnectAsync(cancellationToken);
-            return new WindowsIpcConnection(stream, _frameCodec);
+            var peerProcessId = new WindowsNamedPipePeerProcessIdProvider()
+                .GetServerProcessId(stream.SafePipeHandle);
+            return new WindowsIpcConnection(stream, _frameCodec, peerProcessId);
         }
         catch
         {

@@ -1,0 +1,356 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Windows.Activation;
+using PasswordManagerLocal.Windows.Agent.Hosting;
+using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
+
+namespace PasswordManagerLocal.Windows.Ipc.Test.Dependency;
+
+[TestClass]
+public sealed class Phase6DependencyBoundaryTests
+{
+    [TestMethod]
+    public void AgentReferencesBackendCompositionAndEndpointRpcButNoFrontendOrAvalonia()
+    {
+        var references = typeof(WindowsAgentHost).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Backend"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Backend.Hosting"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Backend.Windows"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc"));
+        Assert.IsFalse(references.Any(name => name.StartsWith("Avalonia", StringComparison.Ordinal)));
+        Assert.IsFalse(references.Contains("PasswordManagerLocal.Frontend"));
+    }
+
+
+    [TestMethod]
+    public void AgentEndpointHostWiresTheSingleAuthoritativeConnectionLimit()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal.Windows.Agent",
+            "Endpoint",
+            "WindowsAgentEndpointHost.cs"));
+
+        StringAssert.Contains(
+            source,
+            "new WindowsIpcServerHostOptions(MaximumActiveEndpointConnections)");
+        StringAssert.Contains(
+            source,
+            "public const int MaximumActiveEndpointConnections = 1");
+    }
+
+    [TestMethod]
+    public void WindowsUiProductionSourceHasNoBackendRuntimeOrInProcessFallback()
+    {
+        var root = GetRepositoryRoot();
+        var windowsDirectory = Path.Combine(root, "PasswordManagerLocal", "PasswordManagerLocal.Windows");
+        var source = ReadSources(windowsDirectory);
+        var project = File.ReadAllText(Path.Combine(
+            windowsDirectory,
+            "PasswordManagerLocal.Windows.csproj"));
+
+        Assert.IsFalse(source.Contains("WindowsBackendRuntimeFactory", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("BackendRuntimeLifetimeCoordinator", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("InProcessFrontendBackendClient", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("new BackendRuntime", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("WindowsNamedPipeFrontendBackendClient", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("WindowsNamedPipeEndpointRpcConnector", StringComparison.Ordinal));
+        Assert.IsFalse(project.Contains("PasswordManagerLocal.Backend.Hosting.csproj", StringComparison.Ordinal));
+        Assert.IsFalse(project.Contains("PasswordManagerLocal.Backend.Windows.csproj", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void AgentIsOnlyWindowsProductionCallerOfRuntimeFactory()
+    {
+        var root = GetRepositoryRoot();
+        var productionSources = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains(".Test", StringComparison.Ordinal) &&
+                !ContainsGeneratedDirectory(path))
+            .ToArray();
+        var callers = productionSources
+            .Where(path => File.ReadAllText(path).Contains(
+                "WindowsBackendRuntimeFactory.Create",
+                StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(root, path))
+            .ToArray();
+
+        CollectionAssert.AreEqual(
+            new[] { Path.Combine("PasswordManagerLocal.Windows.Agent", "Backend", "WindowsAgentBackendRuntimeOwner.cs") },
+            callers);
+    }
+
+    [TestMethod]
+    public void AndroidRetainsInProcessRuntimeComposition()
+    {
+        var root = GetRepositoryRoot();
+        var androidSource = ReadSources(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android"));
+
+        Assert.IsTrue(androidSource.Contains("AndroidBackendRuntimeFactory.Create", StringComparison.Ordinal));
+        Assert.IsTrue(androidSource.Contains("InProcessFrontendBackendClient", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void WindowsUiStartupOrdersLockIdentityControlEndpointAndFrontendContext()
+    {
+        var program = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Program.cs"));
+        var lockIndex = program.IndexOf("names.UiLockFilePath", StringComparison.Ordinal);
+        var primaryIndex = program.IndexOf("WindowsUiInstanceRole.Primary", StringComparison.Ordinal);
+        var identityIndex = program.IndexOf("new WindowsUiIpcIdentity", StringComparison.Ordinal);
+        var controlIndex = program.IndexOf("agentConnection.ConnectAsync", StringComparison.Ordinal);
+        var endpointIndex = program.IndexOf("backendClient.ConnectAsync", StringComparison.Ordinal);
+        var contextIndex = program.IndexOf("new FrontendApplicationContext", StringComparison.Ordinal);
+
+        Assert.IsTrue(lockIndex >= 0);
+        Assert.IsTrue(primaryIndex > lockIndex);
+        Assert.IsTrue(identityIndex > primaryIndex);
+        Assert.IsTrue(controlIndex > identityIndex);
+        Assert.IsTrue(endpointIndex > controlIndex);
+        Assert.IsTrue(contextIndex > endpointIndex);
+    }
+
+    [TestMethod]
+    public void WindowsUiReusesOneIdentityForControlAndEndpointConnectors()
+    {
+        var program = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Program.cs"));
+
+        Assert.AreEqual(1, CountOccurrences(program, "new WindowsUiIpcIdentity"));
+        Assert.IsTrue(Regex.IsMatch(
+            program,
+            @"names\.ControlPipeName,\s*identity,",
+            RegexOptions.CultureInvariant));
+        Assert.IsTrue(Regex.IsMatch(
+            program,
+            @"names\.EndpointPipeName,\s*identity",
+            RegexOptions.CultureInvariant));
+        Assert.IsFalse(program.Contains("identity.ProcessId", StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains("identity.InstanceId", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void WindowsUiShutdownDisposesEndpointClientBeforeActivationServerAndReleasesLockLast()
+    {
+        var root = GetRepositoryRoot();
+        var program = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Program.cs"));
+        var client = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal.Windows.EndpointRpc",
+            "Client",
+            "WindowsNamedPipeFrontendBackendClient.cs"));
+
+        var clientDisposeIndex = program.IndexOf(
+            "backendClient.DisposeAsync",
+            StringComparison.Ordinal);
+        var activationDisposeIndex = program.IndexOf(
+            "activationServer.DisposeAsync",
+            StringComparison.Ordinal);
+        var lifetimeCancelIndex = client.IndexOf(
+            "_lifetimeSource.Cancel()",
+            StringComparison.Ordinal);
+        var endpointDisposeIndex = client.IndexOf(
+            "await DisposeEndpointConnectionLockedAsync()",
+            lifetimeCancelIndex,
+            StringComparison.Ordinal);
+        var controlDisposeIndex = client.IndexOf(
+            "await _agentConnection.DisposeAsync()",
+            endpointDisposeIndex,
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(clientDisposeIndex >= 0);
+        Assert.IsTrue(activationDisposeIndex > clientDisposeIndex);
+        Assert.IsTrue(program.Contains(
+            "using var uiProcessLock",
+            StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains(
+            "uiProcessLock.Dispose",
+            StringComparison.Ordinal));
+        Assert.IsTrue(lifetimeCancelIndex >= 0);
+        Assert.IsTrue(endpointDisposeIndex > lifetimeCancelIndex);
+        Assert.IsTrue(controlDisposeIndex > endpointDisposeIndex);
+        Assert.IsFalse(program.Contains(
+            "BackendLifetimeReason.BackgroundSync",
+            StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains(
+            "WindowsBackendRuntimeFactory",
+            StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains(
+            "new BackendRuntime",
+            StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void WindowsUiShutdownDoesNotOwnOrDisposeAgentRuntime()
+    {
+        var root = GetRepositoryRoot();
+        var windowsDirectory = Path.Combine(root, "PasswordManagerLocal", "PasswordManagerLocal.Windows");
+        var source = ReadSources(windowsDirectory);
+
+        Assert.IsFalse(source.Contains("IBackendRuntime", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("BackendRuntimeLifetimeCoordinator", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("AcquireAsync(BackendLifetimeReason.BackgroundSync", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("InProcessFrontendBackendClient", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void WindowsBackgroundSettingIsDisabledUntilAgentOwnershipPhaseSeven()
+    {
+        var root = GetRepositoryRoot();
+        var program = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Program.cs"));
+        var settingsView = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Frontend",
+            "Views",
+            "Settings",
+            "SettingsView.axaml"));
+
+        StringAssert.Contains(program, "new WindowsPhase6BackgroundSyncSettingsStore()");
+        StringAssert.Contains(program, "isBackgroundSyncSettingAvailable: false");
+        StringAssert.Contains(settingsView, "IsEnabled=\"{Binding IsBackgroundSyncSettingAvailable}\"");
+        Assert.IsFalse(program.Contains("FileBackgroundSyncSettingsStore", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void DatabaseResetClearsSqlitePoolsAfterRuntimeDisposalAndBeforeDeletion()
+    {
+        var root = GetRepositoryRoot();
+        var runtime = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal.Backend.Hosting",
+            "BackendRuntime.cs"));
+        var cleaner = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal.Backend.Hosting",
+            "BackendStorageCleaner.cs"));
+
+        Assert.AreEqual(2, CountOccurrences(runtime, "_storageCleaner.ClearSqlitePools()"));
+        Assert.AreEqual(2, CountOccurrences(runtime, "_storageCleaner.DeleteDatabaseFiles()"));
+        var resetDisposeIndex = runtime.IndexOf("await DisposeCurrentHostCoreAsync()", StringComparison.Ordinal);
+        var resetClearIndex = runtime.IndexOf("_storageCleaner.ClearSqlitePools()", resetDisposeIndex, StringComparison.Ordinal);
+        var resetDeleteIndex = runtime.IndexOf("_storageCleaner.DeleteDatabaseFiles()", resetClearIndex, StringComparison.Ordinal);
+
+        Assert.IsTrue(resetDisposeIndex >= 0);
+        Assert.IsTrue(resetClearIndex > resetDisposeIndex);
+        Assert.IsTrue(resetDeleteIndex > resetClearIndex);
+        StringAssert.Contains(cleaner, "SqliteConnection.ClearAllPools()");
+    }
+
+    [TestMethod]
+    public void DatabaseResetUiControlsRecoverOnSuccessAndFailure()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Frontend",
+            "ViewModels",
+            "MainViewModel.cs"));
+        var actionIndex = source.IndexOf(
+            "private async Task HandleDatabaseRecoveryPrimaryActionAsync()",
+            StringComparison.Ordinal);
+        var finallyIndex = source.IndexOf("finally", actionIndex, StringComparison.Ordinal);
+        var resetFlagIndex = source.IndexOf(
+            "_isResettingDatabase = false",
+            finallyIndex,
+            StringComparison.Ordinal);
+        var propertyRefreshIndex = source.IndexOf(
+            "RaiseDatabaseRecoveryProperties()",
+            resetFlagIndex,
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(actionIndex >= 0);
+        Assert.IsTrue(finallyIndex > actionIndex);
+        Assert.IsTrue(resetFlagIndex > finallyIndex);
+        Assert.IsTrue(propertyRefreshIndex > resetFlagIndex);
+    }
+
+    [TestMethod]
+    public void AgentEntryPointReturnsShellFailureWhenFinalHostDisposalFails()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal.Windows.Agent",
+            "Program.cs"));
+        var disposeIndex = source.IndexOf(
+            "host.DisposeAsync().AsTask().GetAwaiter().GetResult()",
+            StringComparison.Ordinal);
+        var catchIndex = source.IndexOf("catch", disposeIndex, StringComparison.Ordinal);
+        var failureExitIndex = source.IndexOf(
+            "exitCode = WindowsAgentExitCode.ShellFailure",
+            catchIndex,
+            StringComparison.Ordinal);
+        var returnIndex = source.LastIndexOf("return (int)exitCode", StringComparison.Ordinal);
+
+        Assert.IsTrue(disposeIndex >= 0);
+        Assert.IsTrue(catchIndex > disposeIndex);
+        Assert.IsTrue(failureExitIndex > catchIndex);
+        Assert.IsTrue(returnIndex > failureExitIndex);
+        StringAssert.Contains(source, "ShowShutdownFailure();");
+    }
+
+    [TestMethod]
+    public void WindowsUiAssemblyRetainsFrontendActivationAndIpcOnly()
+    {
+        var references = typeof(AvaloniaWindowActivationBridge).Assembly
+            .GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .ToArray();
+
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Frontend"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Runtime.Abstractions"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.Ipc"));
+        Assert.IsFalse(references.Contains("PasswordManagerLocal.Backend.Hosting"));
+        Assert.IsFalse(references.Contains("PasswordManagerLocal.Backend.Windows"));
+    }
+
+
+    private static int CountOccurrences(string value, string pattern)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = value.IndexOf(pattern, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += pattern.Length;
+        }
+        return count;
+    }
+
+    private static string ReadSources(string directory) => string.Join(
+        Environment.NewLine,
+        Directory.EnumerateFiles(directory, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !ContainsGeneratedDirectory(path))
+            .Select(File.ReadAllText));
+
+    private static bool ContainsGeneratedDirectory(string path) =>
+        path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+        path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal);
+
+    private static string GetRepositoryRoot([CallerFilePath] string sourceFilePath = "") =>
+        Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(sourceFilePath)!,
+            "..",
+            ".."));
+}

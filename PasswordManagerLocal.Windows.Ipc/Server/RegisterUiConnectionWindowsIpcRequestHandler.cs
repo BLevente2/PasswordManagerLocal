@@ -38,7 +38,7 @@ public sealed class RegisterUiConnectionWindowsIpcRequestHandler : IWindowsIpcRe
                     RequiresProcessRestart: false)));
         }
 
-        if (!_coordinator.TryRegister(context.Connection.ConnectionId))
+        if (!_coordinator.TryRegister(context.Connection, out _))
         {
             return Task.FromResult(IpcResponseEnvelope.Failure(
                 context.Request.CorrelationId,

@@ -23,6 +23,11 @@ public sealed class FakeInteractiveBackendSession : IInteractiveBackendSession
     public IEndpoints Endpoints => _endpoints
         ?? throw new ObjectDisposedException(nameof(FakeInteractiveBackendSession));
 
+    public bool IsDisposed => _endpoints is null;
+    public bool AcceptsNewOperations => !IsDisposed;
+    public bool IsClosing => IsDisposed;
+    public int ActiveOperationCount => 0;
+
     public ValueTask DisposeAsync()
     {
         _disposeTask ??= DisposeCoreAsync();

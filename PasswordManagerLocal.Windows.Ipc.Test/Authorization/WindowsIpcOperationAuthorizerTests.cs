@@ -56,18 +56,19 @@ public sealed class WindowsIpcOperationAuthorizerTests
     public void UnregisterAndExitRequireCurrentlyRegisteredUiConnection()
     {
         var coordinator = new SingleUiConnectionCoordinator();
-        var registered = Guid.NewGuid();
+        var registered = CreateContext(Guid.NewGuid(), IpcPeerRole.Ui, IpcOperationId.RegisterUiConnection);
         var other = Guid.NewGuid();
-        Assert.IsTrue(coordinator.TryRegister(registered));
+        Assert.IsTrue(coordinator.TryRegister(registered.Connection, out _));
         var authorizer = new WindowsIpcOperationAuthorizer(coordinator);
 
         foreach (var operation in new[]
         {
             IpcOperationId.UnregisterUiConnection,
-            IpcOperationId.RequestAgentExit
+            IpcOperationId.RequestAgentExit,
+            IpcOperationId.ResetDatabase
         })
         {
-            Assert.IsTrue(authorizer.Authorize(CreateContext(registered, IpcPeerRole.Ui, operation)).IsAuthorized);
+            Assert.IsTrue(authorizer.Authorize(CreateContext(registered.Connection.ConnectionId, IpcPeerRole.Ui, operation)).IsAuthorized);
             var denied = authorizer.Authorize(CreateContext(other, IpcPeerRole.Ui, operation));
             Assert.IsFalse(denied.IsAuthorized);
             Assert.AreEqual(IpcErrorCode.UiNotRegistered, denied.ErrorCode);
@@ -100,6 +101,7 @@ public sealed class WindowsIpcOperationAuthorizerTests
                 connectionId,
                 role,
                 PeerProcessId: 100,
+                0,
                 PeerSessionId: Guid.NewGuid(),
                 PeerCapabilities: IpcCapabilities.Control | IpcCapabilities.Status | IpcCapabilities.UiActivation),
             new IpcRequestEnvelope(1, operation, Payload: null),

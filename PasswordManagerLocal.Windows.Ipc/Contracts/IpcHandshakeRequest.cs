@@ -6,5 +6,6 @@ public sealed record IpcHandshakeRequest(
     int ProtocolVersion,
     IpcPeerRole ClientRole,
     int ProcessId,
+    int WindowsSessionId,
     Guid SessionId,
     IpcCapabilities Capabilities);

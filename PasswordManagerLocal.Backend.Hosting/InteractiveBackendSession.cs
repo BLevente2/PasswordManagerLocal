@@ -28,6 +28,21 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
         _sessionEndpoints = new SessionBoundEndpoints(this);
     }
 
+    public bool AcceptsNewOperations
+    {
+        get { lock (_operationLock) return !_closing && _endpoints is not null; }
+    }
+
+    public bool IsClosing
+    {
+        get { lock (_operationLock) return _closing; }
+    }
+
+    public int ActiveOperationCount
+    {
+        get { lock (_operationLock) return _activeOperations; }
+    }
+
     public IEndpoints Endpoints
     {
         get

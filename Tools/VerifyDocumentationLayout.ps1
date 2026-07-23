@@ -27,11 +27,24 @@ $requiredPhaseReports = @(
     'PHASE5_2_MODIFIED_FILES.md',
     'PHASE5_4_PARTIAL_COMMIT_RESTART_RECOVERY_HARDENING_STATIC_VERIFICATION.md',
     'PHASE5_4_IMPLEMENTATION_CHECKS.md',
-    'PHASE5_4_MODIFIED_FILES.md'
+    'PHASE5_4_MODIFIED_FILES.md',
+    'PHASE6_WINDOWS_AGENT_RUNTIME_OWNERSHIP_CUTOVER_STATIC_VERIFICATION.md',
+    'PHASE6_IMPLEMENTATION_CHECKS.md',
+    'PHASE6_MODIFIED_FILES.md'
 )
 foreach ($name in $requiredPhaseReports) {
     if (-not (Test-Path -LiteralPath (Join-Path $docs $name) -PathType Leaf)) {
         throw "Required phase documentation is missing: $name"
+    }
+}
+
+$obsoletePhase6Reports = @(
+    'PHASE6_PARTIAL_HANDOFF.md',
+    'PHASE6_PROGRESS_CHECKPOINT_2026-07-23.md'
+)
+foreach ($name in $obsoletePhase6Reports) {
+    if (Test-Path -LiteralPath (Join-Path $docs $name) -PathType Leaf) {
+        throw "Obsolete Phase 6 checkpoint documentation remains: $name"
     }
 }
 

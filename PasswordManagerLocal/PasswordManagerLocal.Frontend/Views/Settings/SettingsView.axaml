@@ -205,6 +205,7 @@
                                 MinWidth="0"
                                 VerticalAlignment="Center"
                                 IsChecked="{Binding IsBackgroundSyncEnabled, Mode=TwoWay}"
+                                IsEnabled="{Binding IsBackgroundSyncSettingAvailable}"
                                 OnContent="{Binding OnLabel}"
                                 OffContent="{Binding OffLabel}"
                                 AutomationProperties.Name="{Binding BackgroundSyncLabel}" />

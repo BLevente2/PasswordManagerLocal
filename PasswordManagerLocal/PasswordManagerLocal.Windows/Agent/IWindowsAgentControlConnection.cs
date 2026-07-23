@@ -1,7 +1,8 @@
+using PasswordManagerLocal.Windows.EndpointRpc.Client;
+
 namespace PasswordManagerLocal.Windows.AgentConnection;
 
-public interface IWindowsAgentControlConnection : IAsyncDisposable
+public interface IWindowsAgentControlConnection : IEndpointRpcAgentConnection
 {
-    bool IsConnected { get; }
     Task<bool> ConnectAsync(CancellationToken cancellationToken = default);
 }

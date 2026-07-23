@@ -131,6 +131,7 @@ public sealed class WindowsIpcRequestLimitTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests: 1));
         await client.HandshakeAsync();
@@ -257,6 +258,7 @@ public sealed class WindowsIpcRequestLimitTests
             IpcPeerRole.Agent,
             IpcCapabilities.Control,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             maximumPendingRequests: 1);
         var maximum = new WindowsIpcClientOptions(
@@ -264,6 +266,7 @@ public sealed class WindowsIpcRequestLimitTests
             IpcPeerRole.Agent,
             IpcCapabilities.Control,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             WindowsIpcClientOptions.MaximumConfigurablePendingRequests);
         var defaults = new WindowsIpcClientOptions(
@@ -271,6 +274,7 @@ public sealed class WindowsIpcRequestLimitTests
             IpcPeerRole.Agent,
             IpcCapabilities.Control,
             Environment.ProcessId,
+            0,
             Guid.NewGuid());
 
         Assert.AreEqual(1, minimum.MaximumPendingRequests);
@@ -286,6 +290,7 @@ public sealed class WindowsIpcRequestLimitTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests: 0));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
@@ -294,6 +299,7 @@ public sealed class WindowsIpcRequestLimitTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests: -1));
         Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
@@ -302,6 +308,7 @@ public sealed class WindowsIpcRequestLimitTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 WindowsIpcClientOptions.MaximumConfigurablePendingRequests + 1));
     }

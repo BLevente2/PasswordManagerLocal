@@ -89,6 +89,7 @@ public sealed class InMemoryEndpointRpcTransport : IEndpointRpcTransport
                 ConnectionId,
                 IpcPeerRole.Ui,
                 1234,
+                0,
                 SessionId,
                 IpcCapabilities.EndpointRpc);
             var envelope = new IpcRequestEnvelope(

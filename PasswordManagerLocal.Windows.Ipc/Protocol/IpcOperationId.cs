@@ -12,7 +12,9 @@ public enum IpcOperationId
     RequestUiOpen = 22,
     RequestUiActivation = 23,
     RequestAgentExit = 24,
+    ResetDatabase = 25,
     GetBackgroundSyncSettings = 30,
     SetBackgroundSyncSettings = 31,
-    EndpointRpcRequest = 40
+    EndpointRpcRequest = 40,
+    EndpointSessionReady = 41
 }

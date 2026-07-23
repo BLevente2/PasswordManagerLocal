@@ -367,6 +367,45 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
             return null;
         }
 
+        if (_connection.VerifiedPeerProcessId is { } verifiedPeerProcessId)
+        {
+            if (verifiedPeerProcessId != request.ProcessId)
+            {
+                await SendHandshakeRejectionAsync(
+                    frame.Header.CorrelationId,
+                    IpcErrorCode.RequestRejected,
+                    "The IPC peer process identity could not be verified.",
+                    cancellationToken);
+                return null;
+            }
+
+            int verifiedWindowsSessionId;
+            try
+            {
+                using var peerProcess = System.Diagnostics.Process.GetProcessById(verifiedPeerProcessId);
+                verifiedWindowsSessionId = peerProcess.SessionId;
+            }
+            catch
+            {
+                await SendHandshakeRejectionAsync(
+                    frame.Header.CorrelationId,
+                    IpcErrorCode.RequestRejected,
+                    "The IPC peer Windows session could not be verified.",
+                    cancellationToken);
+                return null;
+            }
+
+            if (verifiedWindowsSessionId != request.WindowsSessionId)
+            {
+                await SendHandshakeRejectionAsync(
+                    frame.Header.CorrelationId,
+                    IpcErrorCode.RequestRejected,
+                    "The IPC peer Windows session does not match the connected process.",
+                    cancellationToken);
+                return null;
+            }
+        }
+
         if (!_options.AcceptedClientRoles.Contains(request.ClientRole))
         {
             await SendHandshakeRejectionAsync(
@@ -402,6 +441,7 @@ public sealed class WindowsIpcServerConnectionSession : IWindowsIpcServerSession
             _connection.ConnectionId,
             request.ClientRole,
             request.ProcessId,
+            request.WindowsSessionId,
             request.SessionId,
             request.Capabilities);
 

@@ -239,6 +239,7 @@ public sealed class WindowsIpcPayloadLimitTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control | IpcCapabilities.Status,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid()));
 
     private async Task CompleteRawHandshakeAsync(InMemoryIpcConnectionPair pair)
@@ -247,6 +248,7 @@ public sealed class WindowsIpcPayloadLimitTests
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.TestClient,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.Control);
         var payload = _serializer.Serialize(

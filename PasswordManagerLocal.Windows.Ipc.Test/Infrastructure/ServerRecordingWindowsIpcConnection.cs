@@ -26,6 +26,7 @@ internal sealed class ServerRecordingWindowsIpcConnection : IWindowsIpcConnectio
     }
 
     public Guid ConnectionId { get; }
+    public int? VerifiedPeerProcessId => null;
     public bool IsConnected => Volatile.Read(ref _disposeStarted) == 0;
     public bool BlockResponseWrites { get; set; }
     public int ResponseWriteCallCount => Volatile.Read(ref _responseWriteCallCount);

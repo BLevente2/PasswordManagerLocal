@@ -12,6 +12,10 @@ public sealed class EndpointRpcConnectionAuthorizer :
     private readonly IEndpointUiRegistrationResolver _registrationResolver;
     private readonly object _gate = new();
     private Guid? _activeConnectionId;
+    private long _activeRegistrationGeneration;
+    private int _activeProcessId;
+    private int _activeWindowsSessionId;
+    private Guid _activeInstanceId;
 
     public EndpointRpcConnectionAuthorizer(IEndpointUiRegistrationResolver registrationResolver) =>
         _registrationResolver = registrationResolver
@@ -34,9 +38,11 @@ public sealed class EndpointRpcConnectionAuthorizer :
                 "The endpoint RPC capability is required.");
         }
 
-        if (!_registrationResolver.IsRegistered(
+        if (!_registrationResolver.TryResolve(
                 connection.PeerProcessId,
-                connection.PeerSessionId))
+                connection.PeerWindowsSessionId,
+                connection.PeerSessionId,
+                out var registrationGeneration))
         {
             return IpcHandshakeAuthorizationDecision.Reject(
                 IpcErrorCode.UiNotRegistered,
@@ -46,6 +52,16 @@ public sealed class EndpointRpcConnectionAuthorizer :
         lock (_gate)
         {
             if (_activeConnectionId.HasValue &&
+                !_registrationResolver.IsCurrent(
+                    _activeProcessId,
+                    _activeWindowsSessionId,
+                    _activeInstanceId,
+                    _activeRegistrationGeneration))
+            {
+                ClearActiveConnection();
+            }
+
+            if (_activeConnectionId.HasValue &&
                 _activeConnectionId.Value != connection.ConnectionId)
             {
                 return IpcHandshakeAuthorizationDecision.Reject(
@@ -54,23 +70,29 @@ public sealed class EndpointRpcConnectionAuthorizer :
             }
 
             _activeConnectionId = connection.ConnectionId;
+            _activeRegistrationGeneration = registrationGeneration;
+            _activeProcessId = connection.PeerProcessId;
+            _activeWindowsSessionId = connection.PeerWindowsSessionId;
+            _activeInstanceId = connection.PeerSessionId;
             return IpcHandshakeAuthorizationDecision.Authorized;
         }
     }
 
-
     public bool IsAuthorizedConnection(IpcConnectionContext connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        if (connection.PeerRole != IpcPeerRole.Ui ||
-            (connection.PeerCapabilities & IpcCapabilities.EndpointRpc) == 0 ||
-            !_registrationResolver.IsRegistered(connection.PeerProcessId, connection.PeerSessionId))
-        {
-            return false;
-        }
-
         lock (_gate)
-            return _activeConnectionId == connection.ConnectionId;
+        {
+            return _activeConnectionId == connection.ConnectionId &&
+                _activeProcessId == connection.PeerProcessId &&
+                _activeWindowsSessionId == connection.PeerWindowsSessionId &&
+                _activeInstanceId == connection.PeerSessionId &&
+                _registrationResolver.IsCurrent(
+                    connection.PeerProcessId,
+                    connection.PeerWindowsSessionId,
+                    connection.PeerSessionId,
+                    _activeRegistrationGeneration);
+        }
     }
 
     public ValueTask OnConnectionLifecycleChangedAsync(
@@ -87,9 +109,17 @@ public sealed class EndpointRpcConnectionAuthorizer :
         lock (_gate)
         {
             if (_activeConnectionId == notification.ConnectionId)
-                _activeConnectionId = null;
+                ClearActiveConnection();
         }
 
         return ValueTask.CompletedTask;
+    }
+    private void ClearActiveConnection()
+    {
+        _activeConnectionId = null;
+        _activeRegistrationGeneration = 0;
+        _activeProcessId = 0;
+        _activeWindowsSessionId = 0;
+        _activeInstanceId = Guid.Empty;
     }
 }

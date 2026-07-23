@@ -9,6 +9,8 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
     private readonly IWindowsAgentHost _host;
     private readonly WindowsAgentStateStore _stateStore;
     private readonly Control _dispatcher = new();
+    private int _startupCompleted;
+    private int _failureExitRequested;
 
     public bool ShellFailed { get; private set; }
 
@@ -39,6 +41,9 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         try
         {
             await _host.StartAsync();
+            Interlocked.Exchange(ref _startupCompleted, 1);
+            if (_stateStore.State == AgentState.Failed)
+                RequestFailureExitThread();
         }
         catch (ProcessInstanceAlreadyOwnedException)
         {
@@ -60,9 +65,39 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
     private void HandleStateChanged(object? sender, WindowsAgentStateChangedEventArgs args)
     {
         if (args.Current == AgentState.Failed)
+        {
             ShellFailed = true;
+            if (Volatile.Read(ref _startupCompleted) != 0)
+                RequestFailureExitThread();
+            return;
+        }
+
         if (args.Current == AgentState.Stopped)
             RequestExitThread();
+    }
+
+    private void RequestFailureExitThread()
+    {
+        if (Interlocked.Exchange(ref _failureExitRequested, 1) != 0)
+            return;
+
+        void ShowFailureAndExit()
+        {
+            MessageBox.Show(
+                "The PasswordManagerLocal agent encountered a fatal lifecycle error and will exit.",
+                "PasswordManagerLocal",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            ExitThread();
+        }
+
+        if (!_dispatcher.InvokeRequired)
+        {
+            ShowFailureAndExit();
+            return;
+        }
+
+        _dispatcher.BeginInvoke((MethodInvoker)ShowFailureAndExit);
     }
 
     private void RequestExitThread()

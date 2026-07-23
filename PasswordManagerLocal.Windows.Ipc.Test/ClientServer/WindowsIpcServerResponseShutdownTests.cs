@@ -189,6 +189,7 @@ public sealed class WindowsIpcServerResponseShutdownTests
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.TestClient,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.Control);
         var payload = serializer.Serialize(

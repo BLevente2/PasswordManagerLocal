@@ -270,22 +270,6 @@
           "SQLitePCLRaw.bundle_e_sqlcipher": "[2.1.11, )"
         }
       },
-      "passwordmanagerlocal.backend.hosting": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
-          "PasswordManagerLocal.Backend": "[1.0.0, )",
-          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )"
-        }
-      },
-      "passwordmanagerlocal.backend.windows": {
-        "type": "Project",
-        "dependencies": {
-          "PasswordManagerLocal.Backend": "[1.0.0, )",
-          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )",
-          "System.Security.Cryptography.ProtectedData": "[10.0.9, )"
-        }
-      },
       "passwordmanagerlocal.frontend": {
         "type": "Project",
         "dependencies": {
@@ -303,6 +287,14 @@
       },
       "passwordmanagerlocal.runtime.abstractions": {
         "type": "Project"
+      },
+      "passwordmanagerlocal.windows.endpointrpc": {
+        "type": "Project",
+        "dependencies": {
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )",
+          "PasswordManagerLocal.Windows.Ipc": "[1.0.0, )"
+        }
       },
       "passwordmanagerlocal.windows.ipc": {
         "type": "Project"
@@ -423,12 +415,6 @@
           "SQLitePCLRaw.lib.e_sqlcipher": "2.1.11",
           "SQLitePCLRaw.provider.e_sqlcipher": "2.1.11"
         }
-      },
-      "System.Security.Cryptography.ProtectedData": {
-        "type": "CentralTransitive",
-        "requested": "[10.0.9, )",
-        "resolved": "10.0.9",
-        "contentHash": "vXp+vBQbTkMrDzUiPCxo1KvzfaAvZWuSRS2P7e5orhtV7ZuePKAB3Cqc9dH2YHUavRJyA2uWd2yrL6hl2VoJ5g=="
       },
       "ZXing.Net": {
         "type": "CentralTransitive",

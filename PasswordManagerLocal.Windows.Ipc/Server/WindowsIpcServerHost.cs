@@ -54,6 +54,9 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
             : stopTask;
     }
 
+    public Task CloseActiveSessionsAsync(CancellationToken cancellationToken = default) =>
+        CloseActiveSessionsCoreAsync(cancellationToken);
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
@@ -174,14 +177,21 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
         {
         }
 
+        await CloseActiveSessionsCoreAsync(CancellationToken.None);
+    }
+
+    private async Task CloseActiveSessionsCoreAsync(CancellationToken cancellationToken)
+    {
         while (_activeSessions.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var snapshot = _activeSessions.Keys.ToArray();
             if (snapshot.Length == 0)
                 break;
 
             foreach (var session in snapshot)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     await session.DisposeAsync();
@@ -194,7 +204,11 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
             var tasks = snapshot
                 .Select(session => _activeSessions.TryGetValue(session, out var task) ? task : Task.CompletedTask)
                 .ToArray();
-            await Task.WhenAll(tasks);
+            var completion = Task.WhenAll(tasks);
+            if (cancellationToken.CanBeCanceled)
+                await completion.WaitAsync(cancellationToken);
+            else
+                await completion;
         }
     }
 }

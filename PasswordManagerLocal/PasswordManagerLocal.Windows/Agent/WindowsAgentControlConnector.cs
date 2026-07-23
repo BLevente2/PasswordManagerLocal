@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Windows.Ipc.Client;
+using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Transport;
@@ -10,10 +11,12 @@ public sealed class WindowsAgentControlConnector : IWindowsAgentControlConnector
 {
     public async Task<IWindowsAgentRegisteredConnection?> TryConnectAndRegisterAsync(
         string pipeName,
+        WindowsUiIpcIdentity identity,
         TimeSpan connectTimeout,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        ArgumentNullException.ThrowIfNull(identity);
         if (connectTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(connectTimeout));
 
@@ -37,8 +40,9 @@ public sealed class WindowsAgentControlConnector : IWindowsAgentControlConnector
                     IpcPeerRole.Ui,
                     IpcPeerRole.Agent,
                     IpcCapabilities.Control | IpcCapabilities.Status | IpcCapabilities.UiActivation,
-                    Environment.ProcessId,
-                    Guid.NewGuid(),
+                    identity.ProcessId,
+                    identity.WindowsSessionId,
+                    identity.InstanceId,
                     maximumPendingRequests: 16),
                 validator);
             connection = null;

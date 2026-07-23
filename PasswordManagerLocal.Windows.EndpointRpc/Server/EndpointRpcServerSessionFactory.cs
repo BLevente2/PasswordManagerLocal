@@ -20,7 +20,9 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
 
     public EndpointRpcServerSessionFactory(
         IEndpointRpcEndpointAdapter endpointAdapter,
-        EndpointRpcConnectionAuthorizer connectionAuthorizer)
+        EndpointRpcConnectionAuthorizer connectionAuthorizer,
+        IEndpointRpcSessionReadiness? sessionReadiness = null,
+        IEnumerable<PasswordManagerLocal.Windows.Ipc.Lifecycle.IWindowsIpcConnectionLifecycleObserver>? observers = null)
     {
         ArgumentNullException.ThrowIfNull(endpointAdapter);
         ArgumentNullException.ThrowIfNull(connectionAuthorizer);
@@ -35,7 +37,8 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
             serializer,
             validator,
             errorMapper,
-            _largeResultTransferStore);
+            _largeResultTransferStore,
+            endpointAdapter as IEndpointRpcRestartRequirementHandler);
         var requestHandler = new EndpointRpcWindowsIpcRequestHandler(
             dispatcher,
             codec,
@@ -43,8 +46,10 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
             serializer,
             _largeResultTransferStore,
             errorMapper);
+        var readiness = sessionReadiness ?? endpointAdapter as IEndpointRpcSessionReadiness
+            ?? throw new ArgumentException("The endpoint adapter must provide session readiness.", nameof(endpointAdapter));
         var ipcDispatcher = new WindowsIpcRequestDispatcher(
-            [requestHandler],
+            [requestHandler, new EndpointSessionReadyWindowsIpcRequestHandler(readiness)],
             new WindowsIpcContractValidator(),
             new EndpointRpcOperationAuthorizer(connectionAuthorizer));
         var options = new WindowsIpcServerOptions(
@@ -59,7 +64,7 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
             new WindowsIpcSerializer(),
             ipcDispatcher,
             options,
-            observers: [connectionAuthorizer, _largeResultTransferStore],
+            observers: [connectionAuthorizer, .. (observers ?? Array.Empty<PasswordManagerLocal.Windows.Ipc.Lifecycle.IWindowsIpcConnectionLifecycleObserver>()), _largeResultTransferStore],
             uiCoordinator: null,
             contractValidator: new WindowsIpcContractValidator(),
             handshakeAuthorizer: connectionAuthorizer);

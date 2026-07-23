@@ -10,12 +10,15 @@ internal sealed class FakeTrayIconController : ITrayIconController
     public int InitializeCount { get; private set; }
     public int DisposeCount { get; private set; }
     public bool ThrowOnInitialize { get; set; }
+    public Exception? DisposeFailure { get; set; }
     public TaskCompletionSource? InitializationRelease { get; set; }
+    public ICollection<string>? OperationLog { get; set; }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         InitializeCount++;
+        OperationLog?.Add("tray-start");
         if (ThrowOnInitialize)
             throw new InvalidOperationException("tray failed");
         if (InitializationRelease is not null)
@@ -25,7 +28,10 @@ internal sealed class FakeTrayIconController : ITrayIconController
     public ValueTask DisposeAsync()
     {
         DisposeCount++;
-        return ValueTask.CompletedTask;
+        OperationLog?.Add("tray-dispose");
+        return DisposeFailure is null
+            ? ValueTask.CompletedTask
+            : ValueTask.FromException(DisposeFailure);
     }
 
     public void RaiseOpen() => OpenRequested?.Invoke(this, EventArgs.Empty);

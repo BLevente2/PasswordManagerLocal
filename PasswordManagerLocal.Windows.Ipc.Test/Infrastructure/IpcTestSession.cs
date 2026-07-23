@@ -64,6 +64,7 @@ internal sealed class IpcTestSession : IAsyncDisposable
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control | IpcCapabilities.Status,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests),
             contractValidator);

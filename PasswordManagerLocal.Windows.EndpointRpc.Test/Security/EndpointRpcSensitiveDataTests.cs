@@ -211,6 +211,7 @@ public sealed class EndpointRpcSensitiveDataTests
                 Guid.NewGuid(),
                 IpcPeerRole.Ui,
                 1234,
+                0,
                 Guid.NewGuid(),
                 IpcCapabilities.EndpointRpc),
             new IpcRequestEnvelope(60, IpcOperationId.EndpointRpcRequest, endpointMessage),

@@ -64,6 +64,7 @@ public sealed class EndpointRpcLargeResultEndToEndTests
             Guid.NewGuid(),
             IpcPeerRole.Ui,
             1234,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.EndpointRpc);
         var publicRequestPayload = serializer.Serialize(

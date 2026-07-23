@@ -17,6 +17,7 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
     private readonly EndpointRpcContractValidator _validator;
     private readonly EndpointRpcBackendErrorMapper _errorMapper;
     private readonly EndpointLargeResultTransferStore _largeResultTransferStore;
+    private readonly IEndpointRpcRestartRequirementHandler? _restartRequirementHandler;
     private readonly bool _ownsLargeResultTransferStore;
     private int _disposed;
 
@@ -26,14 +27,16 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         IEndpointRpcEndpointAdapter endpointAdapter,
         EndpointRpcSerializer serializer,
         EndpointRpcContractValidator validator,
-        EndpointRpcBackendErrorMapper errorMapper)
+        EndpointRpcBackendErrorMapper errorMapper,
+        IEndpointRpcRestartRequirementHandler? restartRequirementHandler = null)
         : this(
             endpointAdapter,
             serializer,
             validator,
             errorMapper,
             new EndpointLargeResultTransferStore(),
-            ownsLargeResultTransferStore: true)
+            ownsLargeResultTransferStore: true,
+            restartRequirementHandler: restartRequirementHandler)
     {
     }
 
@@ -42,14 +45,16 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         EndpointRpcSerializer serializer,
         EndpointRpcContractValidator validator,
         EndpointRpcBackendErrorMapper errorMapper,
-        EndpointLargeResultTransferStore largeResultTransferStore)
+        EndpointLargeResultTransferStore largeResultTransferStore,
+        IEndpointRpcRestartRequirementHandler? restartRequirementHandler = null)
         : this(
             endpointAdapter,
             serializer,
             validator,
             errorMapper,
             largeResultTransferStore,
-            ownsLargeResultTransferStore: false)
+            ownsLargeResultTransferStore: false,
+            restartRequirementHandler: restartRequirementHandler)
     {
     }
 
@@ -59,7 +64,8 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         EndpointRpcContractValidator validator,
         EndpointRpcBackendErrorMapper errorMapper,
         EndpointLargeResultTransferStore largeResultTransferStore,
-        bool ownsLargeResultTransferStore)
+        bool ownsLargeResultTransferStore,
+        IEndpointRpcRestartRequirementHandler? restartRequirementHandler)
     {
         _endpointAdapter = endpointAdapter ?? throw new ArgumentNullException(nameof(endpointAdapter));
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
@@ -68,6 +74,7 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         _largeResultTransferStore = largeResultTransferStore
             ?? throw new ArgumentNullException(nameof(largeResultTransferStore));
         _ownsLargeResultTransferStore = ownsLargeResultTransferStore;
+        _restartRequirementHandler = restartRequirementHandler;
     }
 
     public async Task<EndpointRpcDispatchResult> DispatchAsync(
@@ -171,6 +178,7 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
         }
         catch (Exception exception)
         {
+            NotifyRestartRequirement(exception);
             if (MutationOutcomeCouldBeUnknown(descriptor, context))
             {
                 if (_errorMapper.TryMapKnownMutationFailure(exception, context, out var knownFailure))
@@ -184,6 +192,17 @@ public sealed class EndpointRpcDispatcher : IAsyncDisposable
 
             return EndpointRpcDispatchResult.Failure(_errorMapper.Map(exception, context));
         }
+    }
+
+    private void NotifyRestartRequirement(Exception exception)
+    {
+        if (_restartRequirementHandler is null ||
+            !_errorMapper.RequiresProcessRestart(exception))
+        {
+            return;
+        }
+
+        _restartRequirementHandler.RequireProcessRestart(exception);
     }
 
     private async Task<EndpointRpcDispatchResult> DispatchRegisterAsync(

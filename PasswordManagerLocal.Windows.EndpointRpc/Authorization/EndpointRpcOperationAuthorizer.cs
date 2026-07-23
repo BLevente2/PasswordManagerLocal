@@ -24,7 +24,7 @@ public sealed class EndpointRpcOperationAuthorizer : IWindowsIpcOperationAuthori
                 "The endpoint operation is not authorized.");
         }
 
-        return context.Request.OperationId == IpcOperationId.EndpointRpcRequest
+        return context.Request.OperationId is IpcOperationId.EndpointRpcRequest or IpcOperationId.EndpointSessionReady
             ? IpcAuthorizationDecision.Allowed
             : IpcAuthorizationDecision.Denied(
                 IpcErrorCode.UnauthorizedOperation,

@@ -1,16 +1,19 @@
 using Avalonia;
 using Avalonia.ReactiveUI;
-using PasswordManagerLocal.Backend.Hosting;
-using PasswordManagerLocal.Backend.Windows;
 using PasswordManagerLocal.Frontend;
 using PasswordManagerLocal.Frontend.Services;
+using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Activation;
 using PasswordManagerLocal.Windows.AgentConnection;
+using PasswordManagerLocal.Windows.EndpointRpc.Client;
 using PasswordManagerLocal.Windows.Ipc.Client;
+using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Coordination;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Notifications;
+using PasswordManagerLocal.Windows.Settings;
 using PasswordManagerLocal.Windows.SingleInstance;
+using System.Diagnostics;
 
 namespace PasswordManagerLocal.Windows;
 
@@ -38,32 +41,60 @@ internal sealed class Program
         if (instanceRole != WindowsUiInstanceRole.Primary)
             return;
 
-        ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
-        FirewallPermissionService.SetPlatformFirewallPermissionManager(new WindowsFirewallPermissionManager());
-
-        var composition = WindowsBackendRuntimeFactory.Create();
-        var backendClient = new InProcessFrontendBackendClient(
-            composition.Runtime,
-            composition.LifetimeCoordinator);
-        var backgroundSyncSettingsStore = new FileBackgroundSyncSettingsStore(
-            composition.ApplicationDataDirectory);
-        var frontendContext = new FrontendApplicationContext(
-            backendClient,
-            backgroundSyncSettingsStore,
-            composition.ApplicationDataDirectory);
-        var activationServer = new WindowsUiActivationServer(
-            names.UiActivationPipeName,
-            new AvaloniaWindowActivationBridge());
+        using var process = Process.GetCurrentProcess();
+        var identity = new WindowsUiIpcIdentity(
+            Environment.ProcessId,
+            process.SessionId,
+            Guid.NewGuid());
         var agentConnection = new WindowsAgentControlConnection(
             names.ControlPipeName,
+            identity,
             new WindowsAgentLauncher(AppContext.BaseDirectory));
+        var activationServer = new WindowsUiActivationServer(
+            names.UiActivationPipeName,
+            new AvaloniaWindowActivationBridge(),
+            new AvaloniaUiShutdownBridge(),
+            () => agentConnection.AgentProcessId);
+        var backendClient = new WindowsNamedPipeFrontendBackendClient(
+            agentConnection,
+            new WindowsNamedPipeEndpointRpcConnector(
+                names.EndpointPipeName,
+                identity));
+        var startupNotification = new WindowsStartupNotification();
 
         try
         {
+            if (!agentConnection.ConnectAsync().GetAwaiter().GetResult())
+            {
+                startupNotification.ShowBackendUnavailable();
+                return;
+            }
+
             activationServer.StartAsync().GetAwaiter().GetResult();
-            var agentConnected = agentConnection.ConnectAsync().GetAwaiter().GetResult();
-            if (!agentConnected)
-                new WindowsStartupNotification().ShowAgentUnavailable();
+            try
+            {
+                backendClient.ConnectAsync().GetAwaiter().GetResult();
+                backendClient.WaitUntilReadyAsync().GetAwaiter().GetResult();
+            }
+            catch
+            {
+                if (backendClient.Snapshot.FailureKind != BackendRuntimeFailureKind.DatabaseCompatibility)
+                {
+                    startupNotification.ShowBackendUnavailable();
+                    return;
+                }
+
+                // The frontend owns the existing compatibility-reset dialog and will issue the agent reset over control IPC.
+            }
+
+            ClipboardService.SetPlatformClipboardWriter(new WindowsClipboardWriter());
+            FirewallPermissionService.SetPlatformFirewallPermissionManager(
+                new WindowsFirewallPermissionManager());
+            var frontendContext = new FrontendApplicationContext(
+                backendClient,
+                new WindowsPhase6BackgroundSyncSettingsStore(),
+                applicationDataDirectory,
+                isBackgroundSyncSettingAvailable: false);
             BuildAvaloniaApp(frontendContext)
                 .StartWithClassicDesktopLifetime(args);
         }
@@ -71,25 +102,11 @@ internal sealed class Program
         {
             try
             {
-                agentConnection.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                backendClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
             finally
             {
-                try
-                {
-                    activationServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                }
-                finally
-                {
-                    try
-                    {
-                        backendClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                    }
-                    finally
-                    {
-                        composition.Runtime.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                    }
-                }
+                activationServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
             }
         }
     }

@@ -53,7 +53,31 @@ public sealed class WindowsAgentStateStore : IWindowsAgentStateSource
                 RequiresProcessRestart: false);
         }
 
-        StateChanged?.Invoke(this, new WindowsAgentStateChangedEventArgs(previous, AgentState.Failed));
+        Publish(previous, AgentState.Failed);
+    }
+
+
+    public void MarkShutdownFailed(string safeMessage)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(safeMessage);
+        AgentState previous;
+        lock (_gate)
+        {
+            if (_state == AgentState.Stopped)
+                return;
+
+            previous = _state;
+            _state = AgentState.Failed;
+            _startedAtUtc = null;
+            _lastFailure = new IpcFailureDto(
+                IpcFailureKind.AgentShell,
+                safeMessage,
+                DateTimeOffset.UtcNow,
+                IsRetryable: true,
+                RequiresProcessRestart: true);
+        }
+
+        Publish(previous, AgentState.Failed);
     }
 
     public void MarkStopping()
@@ -68,7 +92,7 @@ public sealed class WindowsAgentStateStore : IWindowsAgentStateSource
             _state = AgentState.Stopping;
         }
 
-        StateChanged?.Invoke(this, new WindowsAgentStateChangedEventArgs(previous, AgentState.Stopping));
+        Publish(previous, AgentState.Stopping);
     }
 
     public void MarkStopped()
@@ -87,7 +111,7 @@ public sealed class WindowsAgentStateStore : IWindowsAgentStateSource
             _lastFailure = null;
         }
 
-        StateChanged?.Invoke(this, new WindowsAgentStateChangedEventArgs(previous, AgentState.Stopped));
+        Publish(previous, AgentState.Stopped);
     }
 
     private bool TryTransition(
@@ -106,7 +130,20 @@ public sealed class WindowsAgentStateStore : IWindowsAgentStateSource
             _lastFailure = failure;
         }
 
-        StateChanged?.Invoke(this, new WindowsAgentStateChangedEventArgs(expected, next));
+        Publish(expected, next);
         return true;
+    }
+
+    private void Publish(AgentState previous, AgentState current)
+    {
+        var handlers = StateChanged;
+        if (handlers is null)
+            return;
+
+        var args = new WindowsAgentStateChangedEventArgs(previous, current);
+        foreach (EventHandler<WindowsAgentStateChangedEventArgs> handler in handlers.GetInvocationList())
+        {
+            try { handler(this, args); } catch { }
+        }
     }
 }

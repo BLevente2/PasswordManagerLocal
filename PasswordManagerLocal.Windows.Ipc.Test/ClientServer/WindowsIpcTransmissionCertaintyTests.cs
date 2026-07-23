@@ -184,6 +184,7 @@ public sealed class WindowsIpcTransmissionCertaintyTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid(),
                 maximumPendingRequests),
             new WindowsIpcContractValidator(),

@@ -3,32 +3,69 @@ namespace PasswordManagerLocal.Windows.Ipc.Lifecycle;
 public sealed class SingleUiConnectionCoordinator : IUiConnectionCoordinator
 {
     private readonly object _gate = new();
-    private Guid? _registeredConnectionId;
+    private UiConnectionRegistration? _registration;
+    private long _generation;
 
     public Guid? RegisteredConnectionId
     {
         get
         {
             lock (_gate)
-                return _registeredConnectionId;
+                return _registration?.ConnectionId;
         }
     }
 
-    public bool TryRegister(Guid connectionId)
+    public UiConnectionRegistration? Registration
     {
-        if (connectionId == Guid.Empty)
-            throw new ArgumentException("The connection ID cannot be empty.", nameof(connectionId));
+        get
+        {
+            lock (_gate)
+                return _registration;
+        }
+    }
 
+    public event EventHandler<UiConnectionRegistrationChangedEventArgs>? RegistrationChanged;
+
+    public bool TryRegister(
+        IpcConnectionContext connection,
+        out UiConnectionRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        if (connection.PeerRole != Protocol.IpcPeerRole.Ui)
+            throw new ArgumentException("Only a UI connection may be registered.", nameof(connection));
+
+        UiConnectionRegistration? previous = null;
+        var changed = false;
         lock (_gate)
         {
-            if (_registeredConnectionId is null)
+            if (_registration is not null &&
+                _registration.ConnectionId != connection.ConnectionId &&
+                !MatchesIdentity(_registration, connection))
             {
-                _registeredConnectionId = connectionId;
+                registration = _registration;
+                return false;
+            }
+
+            if (_registration?.ConnectionId == connection.ConnectionId)
+            {
+                registration = _registration;
                 return true;
             }
 
-            return _registeredConnectionId == connectionId;
+            previous = _registration;
+            registration = new UiConnectionRegistration(
+                connection.ConnectionId,
+                connection.PeerProcessId,
+                connection.PeerWindowsSessionId,
+                connection.PeerSessionId,
+                checked(++_generation));
+            _registration = registration;
+            changed = true;
         }
+
+        if (changed)
+            RaiseRegistrationChanged(previous, registration);
+        return true;
     }
 
     public bool Unregister(Guid connectionId)
@@ -36,13 +73,55 @@ public sealed class SingleUiConnectionCoordinator : IUiConnectionCoordinator
         if (connectionId == Guid.Empty)
             throw new ArgumentException("The connection ID cannot be empty.", nameof(connectionId));
 
+        UiConnectionRegistration? previous;
         lock (_gate)
         {
-            if (_registeredConnectionId != connectionId)
+            if (_registration?.ConnectionId != connectionId)
                 return false;
 
-            _registeredConnectionId = null;
-            return true;
+            previous = _registration;
+            _registration = null;
+        }
+
+        RaiseRegistrationChanged(previous, null);
+        return true;
+    }
+
+    public bool IsCurrentRegistration(
+        int processId,
+        int windowsSessionId,
+        Guid instanceId,
+        long? generation = null)
+    {
+        lock (_gate)
+        {
+            return _registration is { } registration &&
+                registration.ProcessId == processId &&
+                registration.WindowsSessionId == windowsSessionId &&
+                registration.InstanceId == instanceId &&
+                (!generation.HasValue || registration.Generation == generation.Value);
         }
     }
+
+    private void RaiseRegistrationChanged(
+        UiConnectionRegistration? previous,
+        UiConnectionRegistration? current)
+    {
+        var handlers = RegistrationChanged;
+        if (handlers is null)
+            return;
+
+        var args = new UiConnectionRegistrationChangedEventArgs(previous, current);
+        foreach (EventHandler<UiConnectionRegistrationChangedEventArgs> handler in handlers.GetInvocationList())
+        {
+            try { handler(this, args); } catch { }
+        }
+    }
+
+    private static bool MatchesIdentity(
+        UiConnectionRegistration registration,
+        IpcConnectionContext connection) =>
+        registration.ProcessId == connection.PeerProcessId &&
+        registration.WindowsSessionId == connection.PeerWindowsSessionId &&
+        registration.InstanceId == connection.PeerSessionId;
 }

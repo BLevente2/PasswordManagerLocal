@@ -8,4 +8,8 @@ public sealed record AgentStatusDto(
     bool IsBackgroundSyncEnabled,
     bool RequiresProcessRestart,
     IpcFailureDto? LastFailure,
-    DateTimeOffset? StartedAtUtc);
+    DateTimeOffset? StartedAtUtc,
+    bool IsEndpointHostReady = false,
+    bool IsDatabaseResetInProgress = false,
+    bool HasInteractiveUiLease = false,
+    bool HasBackgroundSyncLease = false);

@@ -1,3 +1,6 @@
+using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Windows.Agent.DatabaseReset;
+using PasswordManagerLocal.Windows.Agent.Endpoint;
 using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.Agent.Status;
 using PasswordManagerLocal.Windows.Agent.Tray;
@@ -46,6 +49,7 @@ internal sealed class Program
         }
 
         WindowsAgentHost? host = null;
+        var exitCode = WindowsAgentExitCode.ShellFailure;
         try
         {
             var stateStore = new WindowsAgentStateStore();
@@ -57,10 +61,28 @@ internal sealed class Program
             var uiOpenService = new WindowsUiOpenService(
                 activationClient,
                 new WindowsUiLauncher(AppContext.BaseDirectory));
+            var uiCloseService = new WindowsUiCloseService(activationClient);
+
+            var backendOwner = new WindowsAgentBackendRuntimeOwner();
+            var endpointAdapter = new AgentInteractiveEndpointAdapter(backendOwner);
+            var registrationResolver = new RegisteredUiEndpointRegistrationResolver(uiCoordinator);
+            var endpointHost = new WindowsAgentEndpointHost(
+                names.EndpointPipeName,
+                endpointAdapter,
+                registrationResolver);
+            var resetCoordinator = new WindowsAgentDatabaseResetCoordinator(
+                endpointHost,
+                backendOwner,
+                shutdownCoordinator);
             var statusProvider = new WindowsAgentStatusProvider(
                 stateStore,
                 uiCoordinator,
-                new WindowsBackgroundSyncSettingsReader(applicationDataDirectory));
+                new WindowsBackgroundSyncSettingsReader(applicationDataDirectory),
+                backendOwner,
+                endpointHost,
+                endpointAdapter,
+                resetCoordinator);
+
             var serializer = new WindowsIpcSerializer();
             var validator = new WindowsIpcContractValidator();
             var handlers = new IWindowsIpcRequestHandler[]
@@ -75,7 +97,8 @@ internal sealed class Program
                 new WindowsAgentRequestUiOpenHandler(uiOpenService),
                 new WindowsAgentRequestUiActivationHandler(uiOpenService),
                 new RequestAgentExitWindowsIpcRequestHandler(
-                    new WindowsAgentExitRequestSink(shutdownCoordinator))
+                    new WindowsAgentExitRequestSink(shutdownCoordinator)),
+                new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator)
             };
             var dispatcher = new WindowsIpcRequestDispatcher(
                 handlers,
@@ -103,21 +126,24 @@ internal sealed class Program
             host = new WindowsAgentHost(
                 processLock,
                 controlServer,
+                endpointHost,
+                backendOwner,
                 trayController,
                 uiOpenService,
+                uiCloseService,
                 shutdownCoordinator,
                 stateStore);
 
             using var applicationContext = new WindowsAgentApplicationContext(host, stateStore);
             Application.Run(applicationContext);
-            return applicationContext.ShellFailed
-                ? (int)WindowsAgentExitCode.ShellFailure
-                : (int)WindowsAgentExitCode.Success;
+            exitCode = applicationContext.ShellFailed
+                ? WindowsAgentExitCode.ShellFailure
+                : WindowsAgentExitCode.Success;
         }
         catch
         {
             ShowStartupFailure();
-            return (int)WindowsAgentExitCode.ShellFailure;
+            exitCode = WindowsAgentExitCode.ShellFailure;
         }
         finally
         {
@@ -125,30 +151,41 @@ internal sealed class Program
             {
                 try
                 {
-                    host.ShutdownAsync().GetAwaiter().GetResult();
-                }
-                catch
-                {
-                }
-
-                try
-                {
                     host.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 }
                 catch
                 {
+                    if (exitCode == WindowsAgentExitCode.Success)
+                        ShowShutdownFailure();
+                    exitCode = WindowsAgentExitCode.ShellFailure;
                 }
             }
             else
             {
-                processLock.Dispose();
+                try
+                {
+                    processLock.Dispose();
+                }
+                catch
+                {
+                    exitCode = WindowsAgentExitCode.ShellFailure;
+                }
             }
         }
+
+        return (int)exitCode;
     }
 
     private static void ShowStartupFailure() =>
         MessageBox.Show(
             "The PasswordManagerLocal agent could not start.",
+            "PasswordManagerLocal",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+
+    private static void ShowShutdownFailure() =>
+        MessageBox.Show(
+            "The PasswordManagerLocal agent could not shut down all resources safely.",
             "PasswordManagerLocal",
             MessageBoxButtons.OK,
             MessageBoxIcon.Error);

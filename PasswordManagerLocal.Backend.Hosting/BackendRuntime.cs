@@ -626,7 +626,10 @@ internal sealed class BackendRuntime : IBackendRuntime
             await DisposeCurrentHostCoreAsync();
 
             if (resetStorageFirst)
+            {
+                _storageCleaner.ClearSqlitePools();
                 _storageCleaner.DeleteDatabaseFiles();
+            }
 
             (newHost, newSyncRuntime) = await CreateAndStartHostAsync();
 
@@ -672,6 +675,7 @@ internal sealed class BackendRuntime : IBackendRuntime
             {
                 try
                 {
+                    _storageCleaner.ClearSqlitePools();
                     _storageCleaner.DeleteDatabaseFiles();
                 }
                 catch (Exception cleanupException)

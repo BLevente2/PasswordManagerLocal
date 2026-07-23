@@ -9,17 +9,61 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Activation;
 public sealed class WindowsUiActivationServerTests
 {
     [TestMethod]
-    public async Task ActivationRequestReachesBridge()
+    public async Task ActivationRequestReachesActivationBridge()
     {
-        var bridge = new FakeWindowsWindowActivationBridge();
-        var sink = new WindowsUiActivationRequestSink(bridge);
+        var activation = new FakeWindowsWindowActivationBridge();
+        var shutdown = new FakeWindowsUiShutdownBridge();
+        var sink = new WindowsUiActivationRequestSink(activation, shutdown);
 
         var accepted = await sink.RequestActivationAsync(
-            new UiActivationRequestDto(UiActivationReason.TrayIcon, BringToForeground: true),
+            new UiActivationRequestDto(
+                UiActivationReason.TrayIcon,
+                BringToForeground: true,
+                UiActivationCommand.Activate),
             CancellationToken.None);
 
         Assert.IsTrue(accepted);
-        Assert.AreEqual(1, bridge.ActivationCount);
+        Assert.AreEqual(1, activation.ActivationCount);
+        Assert.AreEqual(0, shutdown.ShutdownCount);
+    }
+
+    [TestMethod]
+    public async Task AgentShutdownRequestReachesOnlyShutdownBridge()
+    {
+        var activation = new FakeWindowsWindowActivationBridge();
+        var shutdown = new FakeWindowsUiShutdownBridge();
+        var sink = new WindowsUiActivationRequestSink(activation, shutdown);
+
+        var accepted = await sink.RequestActivationAsync(
+            new UiActivationRequestDto(
+                UiActivationReason.AgentRequest,
+                BringToForeground: false,
+                UiActivationCommand.Shutdown),
+            CancellationToken.None);
+
+        Assert.IsTrue(accepted);
+        Assert.AreEqual(0, activation.ActivationCount);
+        Assert.AreEqual(1, shutdown.ShutdownCount);
+    }
+
+    [TestMethod]
+    public async Task RepeatedAgentShutdownRequestsAreIdempotent()
+    {
+        var activation = new FakeWindowsWindowActivationBridge();
+        var shutdown = new FakeWindowsUiShutdownBridge();
+        var sink = new WindowsUiActivationRequestSink(activation, shutdown);
+        var request = new UiActivationRequestDto(
+            UiActivationReason.AgentRequest,
+            BringToForeground: false,
+            UiActivationCommand.Shutdown);
+
+        var first = await sink.RequestActivationAsync(request, CancellationToken.None);
+        var second = await sink.RequestActivationAsync(request, CancellationToken.None);
+
+        Assert.IsTrue(first);
+        Assert.IsTrue(second);
+        Assert.AreEqual(1, shutdown.ShutdownCount);
+        Assert.AreEqual(0, activation.ActivationCount);
     }
 
     [TestMethod]

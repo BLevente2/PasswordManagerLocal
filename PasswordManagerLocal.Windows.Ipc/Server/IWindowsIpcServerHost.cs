@@ -7,5 +7,6 @@ public interface IWindowsIpcServerHost : IAsyncDisposable
     Task Completion { get; }
 
     Task StartAsync(CancellationToken cancellationToken = default);
+    Task CloseActiveSessionsAsync(CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);
 }

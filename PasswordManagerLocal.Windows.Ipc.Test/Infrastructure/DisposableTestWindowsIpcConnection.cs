@@ -6,6 +6,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 internal sealed class DisposableTestWindowsIpcConnection : IWindowsIpcConnection
 {
     public Guid ConnectionId { get; } = Guid.NewGuid();
+    public int? VerifiedPeerProcessId => null;
     public bool IsConnected => DisposeCount == 0;
     public int DisposeCount { get; private set; }
 

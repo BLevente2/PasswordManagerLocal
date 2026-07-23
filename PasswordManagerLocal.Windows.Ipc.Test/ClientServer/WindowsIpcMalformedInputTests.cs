@@ -166,6 +166,7 @@ public sealed class WindowsIpcMalformedInputTests
                 IpcPeerRole.Agent,
                 IpcCapabilities.Control,
                 Environment.ProcessId,
+                0,
                 Guid.NewGuid()));
         var handshakeTask = client.HandshakeAsync();
         var requestFrame = await pair.Server.ReadFrameAsync();
@@ -222,6 +223,7 @@ public sealed class WindowsIpcMalformedInputTests
             WindowsIpcProtocol.CurrentVersion,
             IpcPeerRole.TestClient,
             Environment.ProcessId,
+            0,
             Guid.NewGuid(),
             IpcCapabilities.Control);
         var payload = serializer.Serialize(

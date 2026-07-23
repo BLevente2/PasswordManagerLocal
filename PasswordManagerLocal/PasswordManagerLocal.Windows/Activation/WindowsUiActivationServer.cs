@@ -16,20 +16,26 @@ public sealed class WindowsUiActivationServer : IAsyncDisposable
         _serverHost = serverHost ?? throw new ArgumentNullException(nameof(serverHost));
     }
 
-    public WindowsUiActivationServer(string pipeName, IWindowsWindowActivationBridge activationBridge)
+    public WindowsUiActivationServer(
+        string pipeName,
+        IWindowsWindowActivationBridge activationBridge,
+        IWindowsUiShutdownBridge shutdownBridge,
+        Func<int?> trustedAgentProcessIdProvider)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         ArgumentNullException.ThrowIfNull(activationBridge);
+        ArgumentNullException.ThrowIfNull(shutdownBridge);
+        ArgumentNullException.ThrowIfNull(trustedAgentProcessIdProvider);
         var serializer = new WindowsIpcSerializer();
         var validator = new WindowsIpcContractValidator();
         var dispatcher = new WindowsIpcRequestDispatcher(
             new IWindowsIpcRequestHandler[]
             {
                 new RequestUiActivationWindowsIpcRequestHandler(
-                    new WindowsUiActivationRequestSink(activationBridge))
+                    new WindowsUiActivationRequestSink(activationBridge, shutdownBridge))
             },
             validator,
-            new WindowsUiActivationOperationAuthorizer());
+            new WindowsUiActivationOperationAuthorizer(trustedAgentProcessIdProvider));
         var options = new WindowsIpcServerOptions(
             IpcPeerRole.Ui,
             new[] { IpcPeerRole.Agent, IpcPeerRole.Ui, IpcPeerRole.TestClient },

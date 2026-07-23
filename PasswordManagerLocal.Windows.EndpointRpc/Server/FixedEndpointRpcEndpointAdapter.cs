@@ -2,7 +2,7 @@ using PasswordManagerLocal.Backend.Abstractions;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Server;
 
-public sealed class FixedEndpointRpcEndpointAdapter : IEndpointRpcEndpointAdapter
+public sealed class FixedEndpointRpcEndpointAdapter : IEndpointRpcEndpointAdapter, IEndpointRpcSessionReadiness
 {
     private readonly IEndpoints _endpoints;
 
@@ -13,5 +13,11 @@ public sealed class FixedEndpointRpcEndpointAdapter : IEndpointRpcEndpointAdapte
     {
         ArgumentNullException.ThrowIfNull(context);
         return _endpoints;
+    }
+
+    public bool IsReady(PasswordManagerLocal.Windows.Ipc.Lifecycle.IpcConnectionContext connection)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        return true;
     }
 }

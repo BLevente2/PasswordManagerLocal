@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Client;
+using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Transport;
@@ -11,23 +12,15 @@ public sealed class WindowsNamedPipeEndpointRpcConnector : IEndpointRpcClientCon
     public const int MaximumPendingEndpointRequests = 32;
 
     private readonly string _pipeName;
-    private readonly int _processId;
-    private readonly Guid _sessionId;
+    private readonly WindowsUiIpcIdentity _identity;
 
     public WindowsNamedPipeEndpointRpcConnector(
         string pipeName,
-        int processId,
-        Guid sessionId)
+        WindowsUiIpcIdentity identity)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
-        if (processId <= 0)
-            throw new ArgumentOutOfRangeException(nameof(processId));
-        if (sessionId == Guid.Empty)
-            throw new ArgumentException("The endpoint session ID cannot be empty.", nameof(sessionId));
-
         _pipeName = pipeName;
-        _processId = processId;
-        _sessionId = sessionId;
+        _identity = identity ?? throw new ArgumentNullException(nameof(identity));
     }
 
     public async Task<IEndpointRpcTransport> ConnectAsync(
@@ -47,11 +40,22 @@ public sealed class WindowsNamedPipeEndpointRpcConnector : IEndpointRpcClientCon
                     IpcPeerRole.Ui,
                     IpcPeerRole.Agent,
                     IpcCapabilities.EndpointRpc,
-                    _processId,
-                    _sessionId,
+                    _identity.ProcessId,
+                    _identity.WindowsSessionId,
+                    _identity.InstanceId,
                     MaximumPendingEndpointRequests,
                     requiredServerCapabilities: IpcCapabilities.EndpointRpc));
             await client.HandshakeAsync(cancellationToken);
+            var readinessResponse = await client.SendAsync(
+                IpcOperationId.EndpointSessionReady,
+                cancellationToken: cancellationToken);
+            if (!readinessResponse.IsSuccess)
+                throw new IpcRemoteException(readinessResponse.Error!);
+            var readiness = new WindowsIpcSerializer().Deserialize(
+                readinessResponse.Result!,
+                PasswordManagerLocal.Windows.Ipc.Serialization.WindowsIpcJsonContext.Default.RequestAcceptedDto);
+            if (!readiness.Accepted)
+                throw new InvalidOperationException("The agent backend session is not ready.");
             return new WindowsEndpointRpcTransport(
                 client,
                 new EndpointRpcMessageCodec(new EndpointRpcSerializer()));

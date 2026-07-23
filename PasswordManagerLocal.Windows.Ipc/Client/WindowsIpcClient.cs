@@ -77,9 +77,13 @@ public sealed class WindowsIpcClient : IAsyncDisposable
     public Guid? ServerConnectionId { get; private set; }
     public IpcCapabilities ServerCapabilities { get; private set; }
     public bool IsHandshakeComplete => Volatile.Read(ref _handshakeState) == 2;
-    public bool IsConnected => IsHandshakeComplete && Volatile.Read(ref _disposeStarted) == 0;
+    public bool IsConnected =>
+        IsHandshakeComplete &&
+        Volatile.Read(ref _disposeStarted) == 0 &&
+        Volatile.Read(ref _readLoopTask) is { IsCompleted: false };
     public int PendingRequestCount => _pendingRequests.Count;
     public Task Completion => Volatile.Read(ref _readLoopTask) ?? Task.CompletedTask;
+    public int? VerifiedServerProcessId => _connection.VerifiedPeerProcessId;
 
     public Exception? TerminationFailure
     {
@@ -121,6 +125,7 @@ public sealed class WindowsIpcClient : IAsyncDisposable
                     WindowsIpcProtocol.CurrentVersion,
                     _options.ClientRole,
                     _options.ProcessId,
+                    _options.WindowsSessionId,
                     _options.SessionId,
                     _options.Capabilities);
                 _contractValidator.Validate(request);

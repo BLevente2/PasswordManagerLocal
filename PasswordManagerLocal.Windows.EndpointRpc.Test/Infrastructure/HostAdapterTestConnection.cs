@@ -13,6 +13,7 @@ public sealed class HostAdapterTestConnection : IWindowsIpcConnection
         _blockReads = blockReads;
 
     public Guid ConnectionId { get; } = Guid.NewGuid();
+    public int? VerifiedPeerProcessId => null;
     public bool IsConnected { get; private set; } = true;
     public int DisposeCount { get; private set; }
     public Task ReadStarted => _readStarted.Task;

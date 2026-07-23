@@ -6,5 +6,6 @@ public sealed record IpcConnectionContext(
     Guid ConnectionId,
     IpcPeerRole PeerRole,
     int PeerProcessId,
+    int PeerWindowsSessionId,
     Guid PeerSessionId,
     IpcCapabilities PeerCapabilities);

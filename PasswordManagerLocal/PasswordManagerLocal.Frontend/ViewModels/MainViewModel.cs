@@ -69,13 +69,15 @@ public sealed class MainViewModel : ViewModelBase
     public MainViewModel(
         IEndpoints endpoints,
         IBackendRuntimeClient backendClient,
-        IBackgroundSyncSettingsStore backgroundSyncSettingsStore)
+        IBackgroundSyncSettingsStore backgroundSyncSettingsStore,
+        bool isBackgroundSyncSettingAvailable = true)
         : this(
             endpoints,
             backendClient,
             App.AuthSessionRegistry,
             new UiPreferencesService(),
-            new DeviceAppPreferencesService(backgroundSyncSettingsStore))
+            new DeviceAppPreferencesService(backgroundSyncSettingsStore),
+            isBackgroundSyncSettingAvailable)
     {
     }
 
@@ -84,7 +86,8 @@ public sealed class MainViewModel : ViewModelBase
         IBackendRuntimeClient backendClient,
         IAuthSessionRegistry authSessionRegistry,
         UiPreferencesService uiPreferences,
-        DeviceAppPreferencesService deviceAppPreferences)
+        DeviceAppPreferencesService deviceAppPreferences,
+        bool isBackgroundSyncSettingAvailable)
         : base(uiPreferences)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
@@ -101,7 +104,8 @@ public sealed class MainViewModel : ViewModelBase
         SettingsViewModel = new SettingsViewModel(
             uiPreferences,
             _deviceAppPreferences,
-            NavigateBackFromSettings);
+            NavigateBackFromSettings,
+            isBackgroundSyncSettingAvailable);
 
         ShowSettingsCommand = ReactiveCommand.Create(NavigateToSettings);
         ShowPasswordsCommand = ReactiveCommand.Create(NavigateToPasswords);
