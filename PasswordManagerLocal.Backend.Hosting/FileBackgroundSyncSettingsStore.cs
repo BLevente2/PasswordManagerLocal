@@ -1,6 +1,5 @@
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Runtime.Abstractions;
-using System.Text;
 using System.Text.Json;
 
 namespace PasswordManagerLocal.Backend.Hosting;
@@ -8,14 +7,18 @@ namespace PasswordManagerLocal.Backend.Hosting;
 public sealed class FileBackgroundSyncSettingsStore : IBackgroundSyncSettingsStore
 {
     private readonly string _settingsPath;
+    private readonly IBackgroundSyncSettingsFileSystem _fileSystem;
     private readonly object _gate = new();
 
-    public FileBackgroundSyncSettingsStore(string applicationDataDirectory)
+    public FileBackgroundSyncSettingsStore(
+        string applicationDataDirectory,
+        IBackgroundSyncSettingsFileSystem? fileSystem = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationDataDirectory);
         _settingsPath = Path.Combine(
             Path.GetFullPath(applicationDataDirectory),
             ApplicationFileNames.BackgroundSyncSettingsFileName);
+        _fileSystem = fileSystem ?? new PhysicalBackgroundSyncSettingsFileSystem();
     }
 
     public Task<BackgroundSyncSettings> ReadAsync(
@@ -26,17 +29,33 @@ public sealed class FileBackgroundSyncSettingsStore : IBackgroundSyncSettingsSto
         lock (_gate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            if (!File.Exists(_settingsPath))
+            if (!_fileSystem.FileExists(_settingsPath))
                 return Task.FromResult(new BackgroundSyncSettings(false));
 
-            var json = File.ReadAllText(_settingsPath, Encoding.UTF8);
-            var settings = JsonSerializer.Deserialize(
-                json,
-                BackgroundSyncSettingsJsonContext.Default.BackgroundSyncSettings);
+            try
+            {
+                var json = _fileSystem.ReadAllText(_settingsPath);
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty("isEnabled", out var enabled) ||
+                    enabled.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
+                {
+                    throw new InvalidDataException(
+                        "The background synchronization settings file is semantically invalid.");
+                }
 
-            return Task.FromResult(settings ?? throw new InvalidDataException(
-                "The background synchronization settings file is empty."));
+                return Task.FromResult(new BackgroundSyncSettings(enabled.GetBoolean()));
+            }
+            catch (InvalidDataException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                throw new InvalidDataException(
+                    "The background synchronization settings file could not be read safely.",
+                    exception);
+            }
         }
     }
 
@@ -50,23 +69,27 @@ public sealed class FileBackgroundSyncSettingsStore : IBackgroundSyncSettingsSto
         lock (_gate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var temporaryPath = $"{_settingsPath}.{Guid.NewGuid():N}.tmp";
+            var directory = Path.GetDirectoryName(_settingsPath)!;
+            var temporaryPath = Path.Combine(
+                directory,
+                $"{Path.GetFileName(_settingsPath)}.{Guid.NewGuid():N}.tmp");
 
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
+                _fileSystem.CreateDirectory(directory);
                 var json = JsonSerializer.Serialize(
                     settings,
                     BackgroundSyncSettingsJsonContext.Default.BackgroundSyncSettings);
-                File.WriteAllText(temporaryPath, json, new UTF8Encoding(false));
-                File.Move(temporaryPath, _settingsPath, true);
+                _fileSystem.WriteAllText(temporaryPath, json);
+                cancellationToken.ThrowIfCancellationRequested();
+                _fileSystem.ReplaceFile(temporaryPath, _settingsPath);
             }
             finally
             {
                 try
                 {
-                    if (File.Exists(temporaryPath))
-                        File.Delete(temporaryPath);
+                    if (_fileSystem.FileExists(temporaryPath))
+                        _fileSystem.DeleteFile(temporaryPath);
                 }
                 catch
                 {

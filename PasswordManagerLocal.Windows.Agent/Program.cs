@@ -1,4 +1,7 @@
 using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Windows.Agent.Background;
+using PasswordManagerLocal.Windows.Agent.Lifecycle;
+using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Windows.Agent.DatabaseReset;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
 using PasswordManagerLocal.Windows.Agent.Hosting;
@@ -21,9 +24,21 @@ namespace PasswordManagerLocal.Windows.Agent;
 internal sealed class Program
 {
     [STAThread]
-    public static int Main()
+    public static int Main(string[] args)
     {
+        WindowsAgentCommandLineOptions commandLine;
+        try
+        {
+            commandLine = new WindowsAgentCommandLineParser().Parse(args);
+        }
+        catch
+        {
+            ShowStartupFailure();
+            return (int)WindowsAgentExitCode.ShellFailure;
+        }
+
         ApplicationConfiguration.Initialize();
+        _ = commandLine.IsBackgroundLaunch;
         var applicationDataDirectory = new WindowsApplicationDataPathProvider()
             .GetApplicationDataDirectory();
         var names = new WindowsInstanceNameProvider(
@@ -65,6 +80,27 @@ internal sealed class Program
             var uiCloseService = new WindowsUiCloseService(activationClient);
 
             var backendOwner = new WindowsAgentBackendRuntimeOwner();
+            var lifecycleTransitions = new WindowsAgentLifecycleTransitionCoordinator();
+            var settingsStore = new FileBackgroundSyncSettingsStore(applicationDataDirectory);
+            var processPath = Environment.ProcessPath;
+            var agentExecutablePath = !string.IsNullOrWhiteSpace(processPath) &&
+                string.Equals(
+                    Path.GetFileName(processPath),
+                    WindowsStartupRegistrationConstants.AgentExecutableFileName,
+                    StringComparison.OrdinalIgnoreCase)
+                ? processPath
+                : Path.Combine(
+                    AppContext.BaseDirectory,
+                    WindowsStartupRegistrationConstants.AgentExecutableFileName);
+            var startupRegistration = new WindowsRunStartupRegistration(
+                new WindowsAgentStartupCommand(agentExecutablePath));
+            var backgroundSyncCoordinator = new WindowsBackgroundSyncCoordinator(
+                settingsStore,
+                startupRegistration,
+                backendOwner,
+                stateStore,
+                admissionGate,
+                lifecycleTransitions);
             var endpointAdapter = new AgentInteractiveEndpointAdapter(backendOwner);
             var registrationResolver = new RegisteredUiEndpointRegistrationResolver(
                 uiCoordinator,
@@ -79,12 +115,14 @@ internal sealed class Program
             var resetCoordinator = new WindowsAgentDatabaseResetCoordinator(
                 endpointHost,
                 backendOwner,
-                shutdownCoordinator);
+                shutdownCoordinator,
+                backgroundSyncCoordinator,
+                lifecycleTransitions);
             var statusProvider = new WindowsAgentStatusProvider(
                 stateStore,
                 admissionGate,
                 uiCoordinator,
-                new WindowsBackgroundSyncSettingsReader(applicationDataDirectory),
+                backgroundSyncCoordinator,
                 backendOwner,
                 endpointHost,
                 endpointAdapter,
@@ -99,6 +137,9 @@ internal sealed class Program
                 new GetBackendRuntimeStatusWindowsIpcRequestHandler(statusProvider, validator),
                 new GetInteractiveSessionStatusWindowsIpcRequestHandler(statusProvider, validator),
                 new GetSynchronizationStatusWindowsIpcRequestHandler(statusProvider, validator),
+                new GetBackgroundSyncStateWindowsIpcRequestHandler(
+                    backgroundSyncCoordinator,
+                    validator),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
                     new RegisterUiConnectionWindowsIpcRequestHandler(uiCoordinator)),
@@ -117,7 +158,12 @@ internal sealed class Program
                         new WindowsAgentExitRequestSink(shutdownCoordinator))),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
-                    new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator))
+                    new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator)),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new SetBackgroundSyncEnabledWindowsIpcRequestHandler(
+                        backgroundSyncCoordinator,
+                        validator))
             };
             var dispatcher = new WindowsIpcRequestDispatcher(
                 handlers,
@@ -151,6 +197,8 @@ internal sealed class Program
                 controlServer,
                 endpointHost,
                 backendOwner,
+                backgroundSyncCoordinator,
+                lifecycleTransitions,
                 trayController,
                 uiOpenService,
                 uiCloseService,

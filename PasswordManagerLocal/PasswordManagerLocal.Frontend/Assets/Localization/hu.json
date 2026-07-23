@@ -16,6 +16,16 @@
   "Settings_Background_Description": "Háttérszinkronizálás automatikus indítással.",
   "Settings_BackgroundSync_Label": "Háttérszinkronizálás",
   "Settings_BackgroundSync_Description": "A szinkronizálás az alkalmazás felületének bezárása után is folytatódik, és az eszköz indulásakor automatikusan elindul.",
+  "Settings_BackgroundSync_Loading": "A háttérszinkronizálás hiteles állapotának betöltése…",
+  "Settings_BackgroundSync_Enabled": "A háttérszinkronizálás engedélyezve van.",
+  "Settings_BackgroundSync_Disabled": "A háttérszinkronizálás le van tiltva.",
+  "Settings_BackgroundSync_Enabling": "Háttérszinkronizálás engedélyezése…",
+  "Settings_BackgroundSync_Disabling": "Háttérszinkronizálás letiltása…",
+  "Settings_BackgroundSync_Unavailable": "A háttérszinkronizálási beállítás jelenleg nem érhető el.",
+  "Settings_BackgroundSync_StartupFailure": "Az automatikus indítás nem állítható be az aktuális Windows-felhasználónak.",
+  "Settings_BackgroundSync_PersistenceFailure": "A háttérszinkronizálási beállítás nem menthető biztonságosan.",
+  "Settings_BackgroundSync_Degraded": "A mentett beállítás, az automatikus indítás és az aktív háttérbeli futtatás nincs teljesen összhangban.",
+  "Settings_BackgroundSync_ReadBackGuidance": "A válasz megszakadt, ezért az alkalmazás újra lekérte a beállítást az ügynöktől. Újrapróbálás előtt ellenőrizze a megjelenített állapotot.",
   "Shell_PasswordVault": "Jelszavak",
   "Shell_Profile": "Profil",
   "Shell_Devices": "Eszközök",
@@ -475,5 +485,6 @@
   "Passwords_Export_Confirm_Message_Tags": "A kijelölt címkék a(z) {0} fiókba lesznek exportálva. Ellenőrizd az alábbi beállítást, majd folytasd.",
   "Passwords_Export_Copy_Tags_Success": "A kijelölt címkék másolása sikerült.",
   "Passwords_Export_Move_Tags_Success": "A kijelölt címkék áthelyezése sikerült.",
-  "Passwords_CustomColors_BackToTagEditor": "Vissza a címke szerkesztéséhez"
+  "Passwords_CustomColors_BackToTagEditor": "Vissza a címke szerkesztéséhez",
+  "Settings_BackgroundSync_Updating": "A Windows-ügynök frissíti a háttérszinkronizálás állapotát…"
 }

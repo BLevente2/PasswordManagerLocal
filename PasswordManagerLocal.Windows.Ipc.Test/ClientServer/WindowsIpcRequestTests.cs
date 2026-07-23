@@ -40,29 +40,36 @@ public sealed class WindowsIpcRequestTests
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handler = new DelegateWindowsIpcRequestHandler(
-            IpcOperationId.SetBackgroundSyncSettings,
+            IpcOperationId.SetBackgroundSyncEnabled,
             async (context, cancellationToken) =>
             {
-                var settings = context.GetRequiredPayload(
-                    WindowsIpcJsonContext.Default.BackgroundSyncSettingsDto);
-                if (!settings.IsEnabled)
+                var request = context.GetRequiredPayload(
+                    WindowsIpcJsonContext.Default.SetBackgroundSyncEnabledRequestDto);
+                if (!request.IsEnabled)
                 {
                     firstStarted.TrySetResult();
                     await releaseFirst.Task.WaitAsync(cancellationToken);
                 }
 
+                var state = request.IsEnabled
+                    ? new WindowsBackgroundSyncStateDto(true, true, true, true, false,
+                        WindowsBackgroundSyncConsistency.Operational,
+                        WindowsBackgroundSyncFailureKind.None, null)
+                    : new WindowsBackgroundSyncStateDto(false, false, false, false, false,
+                        WindowsBackgroundSyncConsistency.Disabled,
+                        WindowsBackgroundSyncFailureKind.None, null);
                 return context.Success(
-                    settings,
-                    WindowsIpcJsonContext.Default.BackgroundSyncSettingsDto);
+                    state,
+                    WindowsIpcJsonContext.Default.WindowsBackgroundSyncStateDto);
             });
         await using var session = await IpcTestSession.CreateAsync(new[] { handler });
         var controlClient = new WindowsIpcControlClient(session.Client, session.Serializer);
 
-        var firstTask = controlClient.SetBackgroundSyncSettingsAsync(
-            new BackgroundSyncSettingsDto(false));
+        var firstTask = controlClient.SetBackgroundSyncEnabledAsync(
+            new SetBackgroundSyncEnabledRequestDto(false));
         await firstStarted.Task;
-        var secondTask = controlClient.SetBackgroundSyncSettingsAsync(
-            new BackgroundSyncSettingsDto(true));
+        var secondTask = controlClient.SetBackgroundSyncEnabledAsync(
+            new SetBackgroundSyncEnabledRequestDto(true));
         var secondResult = await secondTask;
 
         Assert.IsTrue(secondResult.IsEnabled);

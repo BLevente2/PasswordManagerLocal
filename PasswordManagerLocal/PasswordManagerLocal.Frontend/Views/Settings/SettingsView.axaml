@@ -205,10 +205,20 @@
                                 MinWidth="0"
                                 VerticalAlignment="Center"
                                 IsChecked="{Binding IsBackgroundSyncEnabled, Mode=TwoWay}"
-                                IsEnabled="{Binding IsBackgroundSyncSettingAvailable}"
+                                IsVisible="{Binding IsBackgroundSyncControlVisible}"
+                                IsEnabled="{Binding IsBackgroundSyncToggleEnabled}"
                                 OnContent="{Binding OnLabel}"
                                 OffContent="{Binding OffLabel}"
                                 AutomationProperties.Name="{Binding BackgroundSyncLabel}" />
+                  <TextBlock Grid.ColumnSpan="2"
+                             Margin="0,52,0,0"
+                             Text="{Binding BackgroundSyncStatus}"
+                             Classes="subtleText"
+                             TextWrapping="Wrap" />
+                  <ProgressBar Grid.ColumnSpan="2"
+                               Margin="0,82,0,0"
+                               IsIndeterminate="True"
+                               IsVisible="{Binding IsBackgroundSyncProgressVisible}" />
                 </Grid>
               </Border>
             </StackPanel>

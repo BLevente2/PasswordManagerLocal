@@ -43,6 +43,9 @@ public sealed class WindowsIpcContractValidator
             case SynchronizationStatusDto item:
                 Validate(item);
                 break;
+            case WindowsBackgroundSyncStateDto item:
+                Validate(item);
+                break;
             case PingResponseDto item:
                 ValidateTimestamp(item.ServerTimeUtc, "The IPC server timestamp is invalid.");
                 break;
@@ -55,7 +58,7 @@ public sealed class WindowsIpcContractValidator
             case AgentExitRequestDto item:
                 Validate(item);
                 break;
-            case BackgroundSyncSettingsDto:
+            case SetBackgroundSyncEnabledRequestDto:
             case RequestAcceptedDto:
             case UiConnectionRegistrationResponseDto:
                 break;
@@ -274,9 +277,6 @@ public sealed class WindowsIpcContractValidator
         if (status.IsEndpointHostReady && status.IsDatabaseResetInProgress)
             throw new IpcPayloadException("The endpoint host cannot be ready during database reset.");
 
-        if (status.HasBackgroundSyncLease && !status.IsBackendRunning)
-            throw new IpcPayloadException("A background lease requires a running backend runtime.");
-
         if (status.BackendOwnedByAgent &&
             (status.AgentState is not AgentState.Running and
                 not AgentState.Stopping and
@@ -405,6 +405,52 @@ public sealed class WindowsIpcContractValidator
         }
     }
 
+
+    public void Validate(WindowsBackgroundSyncStateDto state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (!Enum.IsDefined(state.Consistency) || !Enum.IsDefined(state.FailureKind))
+            throw new IpcPayloadException("The background synchronization consistency is invalid.");
+
+        if (state.Consistency == WindowsBackgroundSyncConsistency.Operational &&
+            (!state.IsEnabled || !state.IsStartupRegistered ||
+                !state.IsBackgroundLeaseActive || !state.IsRuntimeRunning ||
+                state.IsTransitionInProgress || state.Failure is not null))
+        {
+            throw new IpcPayloadException("The operational background synchronization state is inconsistent.");
+        }
+
+        if (state.Consistency == WindowsBackgroundSyncConsistency.Disabled &&
+            (state.IsEnabled || state.IsStartupRegistered ||
+                state.IsBackgroundLeaseActive || state.IsTransitionInProgress ||
+                state.Failure is not null))
+        {
+            throw new IpcPayloadException("The disabled background synchronization state is inconsistent.");
+        }
+
+        if ((state.Consistency == WindowsBackgroundSyncConsistency.Transitioning) !=
+            state.IsTransitionInProgress)
+        {
+            throw new IpcPayloadException("The background synchronization transition state is inconsistent.");
+        }
+
+        var requiresFailure = state.Consistency is
+            WindowsBackgroundSyncConsistency.Degraded or
+            WindowsBackgroundSyncConsistency.Inconsistent or
+            WindowsBackgroundSyncConsistency.Unavailable;
+        if (requiresFailure != (state.Failure is not null) ||
+            requiresFailure != (state.FailureKind != WindowsBackgroundSyncFailureKind.None))
+        {
+            throw new IpcPayloadException("The background synchronization failure is inconsistent.");
+        }
+
+        if (state.Failure is not null)
+        {
+            Validate(state.Failure);
+            if (state.Failure.FailureKind != IpcFailureKind.BackgroundConfiguration)
+                throw new IpcPayloadException("The background synchronization failure kind is invalid.");
+        }
+    }
 
     public void Validate(DatabaseResetResultDto result)
     {

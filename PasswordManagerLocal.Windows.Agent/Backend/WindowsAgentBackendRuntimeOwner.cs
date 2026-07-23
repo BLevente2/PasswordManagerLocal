@@ -70,6 +70,35 @@ public sealed class WindowsAgentBackendRuntimeOwner : IWindowsAgentBackendRuntim
         }
     }
 
+    public async Task<IBackendRuntimeLease> AcquireBackgroundSyncLeaseAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _transitionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            var composition = GetUsableComposition();
+            try
+            {
+                var lease = await composition.LifetimeCoordinator.AcquireAsync(
+                    BackendLifetimeReason.BackgroundSync,
+                    cancellationToken);
+                Publish(Snapshot.State, null, requiresRestart: false, isResetting: false);
+                return lease;
+            }
+            catch (Exception exception)
+            {
+                if (composition.Runtime.Snapshot.State == BackendRuntimeState.Failed)
+                    Publish(WindowsAgentBackendOwnerState.Failed, exception, requiresRestart: false, isResetting: false);
+                throw;
+            }
+        }
+        finally
+        {
+            _transitionGate.Release();
+        }
+    }
+
     public async Task<AgentInteractiveBackendBinding> OpenInteractiveBindingAsync(
         CancellationToken cancellationToken = default)
     {

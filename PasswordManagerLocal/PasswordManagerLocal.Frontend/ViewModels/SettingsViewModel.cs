@@ -10,17 +10,23 @@ public sealed class SettingsViewModel : ViewModelBase
     private readonly DeviceAppPreferencesService _deviceAppPreferences;
     private bool _isAppearanceSectionExpanded;
     private bool _isBackgroundSectionExpanded;
+    private bool _isBackgroundSyncEnabled;
+    private bool _isBackgroundSyncAvailable;
+    private bool _isLoadingBackgroundSync;
+    private bool _isChangingBackgroundSync;
+    private bool _isBackgroundSyncDegraded;
+    private bool _isExternalBackgroundSyncTransition;
+    private bool _isApplyingBackgroundState;
 
     public SettingsViewModel(
         UiPreferencesService uiPreferences,
         DeviceAppPreferencesService deviceAppPreferences,
-        Action navigateBack,
-        bool isBackgroundSyncSettingAvailable = true)
+        Action navigateBack)
         : base(uiPreferences)
     {
-        _deviceAppPreferences = deviceAppPreferences ?? throw new ArgumentNullException(nameof(deviceAppPreferences));
+        _deviceAppPreferences = deviceAppPreferences
+            ?? throw new ArgumentNullException(nameof(deviceAppPreferences));
         ArgumentNullException.ThrowIfNull(navigateBack);
-        IsBackgroundSyncSettingAvailable = isBackgroundSyncSettingAvailable;
 
         NavigateBackCommand = ReactiveCommand.Create(navigateBack);
         ToggleAppearanceSectionCommand = ReactiveCommand.Create(ToggleAppearanceSection);
@@ -36,12 +42,11 @@ public sealed class SettingsViewModel : ViewModelBase
             new SettingsThemeOptionViewModel(AppThemeMode.Dark, GetTranslation("Theme_Dark"))
         ];
         _deviceAppPreferences.PreferencesChanged += HandleDeviceAppPreferencesChanged;
+        ApplyBackgroundState(_deviceAppPreferences.BackgroundSyncState);
     }
 
     public ReactiveCommand<Unit, Unit> NavigateBackCommand { get; }
-
     public ReactiveCommand<Unit, Unit> ToggleAppearanceSectionCommand { get; }
-
     public ReactiveCommand<Unit, Unit> ToggleBackgroundSectionCommand { get; }
 
     public bool IsAppearanceSectionExpanded
@@ -98,52 +103,96 @@ public sealed class SettingsViewModel : ViewModelBase
         }
     }
 
-    public bool IsBackgroundSyncSettingAvailable { get; }
-
     public bool IsBackgroundSyncEnabled
     {
-        get => _deviceAppPreferences.BackgroundSyncEnabled;
+        get => _isBackgroundSyncEnabled;
         set
         {
-            if (!IsBackgroundSyncSettingAvailable ||
-                _deviceAppPreferences.BackgroundSyncEnabled == value)
+            if (_isApplyingBackgroundState ||
+                !IsBackgroundSyncToggleEnabled ||
+                _isBackgroundSyncEnabled == value)
             {
                 return;
             }
 
-            _deviceAppPreferences.BackgroundSyncEnabled = value;
+            this.RaiseAndSetIfChanged(ref _isBackgroundSyncEnabled, value);
+            _ = ChangeBackgroundSyncAsync(value);
+        }
+    }
+
+    public bool IsBackgroundSyncControlVisible => _isBackgroundSyncAvailable;
+
+    public bool IsBackgroundSyncToggleEnabled =>
+        _isBackgroundSyncAvailable &&
+        !_isLoadingBackgroundSync &&
+        !_isChangingBackgroundSync &&
+        !_isExternalBackgroundSyncTransition;
+
+    public bool IsBackgroundSyncProgressVisible =>
+        _isLoadingBackgroundSync || _isChangingBackgroundSync ||
+        _isExternalBackgroundSyncTransition;
+
+    public string BackgroundSyncStatus
+    {
+        get
+        {
+            if (_isLoadingBackgroundSync)
+                return GetTranslation("Settings_BackgroundSync_Loading");
+            if (_isChangingBackgroundSync)
+            {
+                return GetTranslation(_isBackgroundSyncEnabled
+                    ? "Settings_BackgroundSync_Enabling"
+                    : "Settings_BackgroundSync_Disabling");
+            }
+            if (_isExternalBackgroundSyncTransition)
+                return GetTranslation("Settings_BackgroundSync_Updating");
+            if (!_isBackgroundSyncAvailable)
+                return GetTranslation("Settings_BackgroundSync_Unavailable");
+            if (_isBackgroundSyncDegraded)
+                return GetTranslation("Settings_BackgroundSync_Degraded");
+            return GetTranslation(_isBackgroundSyncEnabled
+                ? "Settings_BackgroundSync_Enabled"
+                : "Settings_BackgroundSync_Disabled");
         }
     }
 
     public string Title => GetTranslation("Settings");
-
     public string Subtitle => GetTranslation("Settings_Subtitle");
-
     public string BackLabel => GetTranslation("Common_Back");
-
     public string AppearanceTitle => GetTranslation("Settings_Appearance_Title");
-
     public string AppearanceDescription => GetTranslation("Settings_Appearance_Description");
-
     public string LanguageLabel => GetTranslation("Settings_Language");
-
     public string LanguageDescription => GetTranslation("Settings_Language_Description");
-
     public string ThemeLabel => GetTranslation("Settings_Theme");
-
     public string ThemeDescription => GetTranslation("Settings_Theme_Description");
-
     public string BackgroundOperationTitle => GetTranslation("Settings_Background_Title");
-
     public string BackgroundOperationDescription => GetTranslation("Settings_Background_Description");
-
     public string BackgroundSyncLabel => GetTranslation("Settings_BackgroundSync_Label");
-
     public string BackgroundSyncDescription => GetTranslation("Settings_BackgroundSync_Description");
-
     public string OnLabel => GetTranslation("Common_On");
-
     public string OffLabel => GetTranslation("Common_Off");
+
+    public async Task LoadBackgroundSyncStateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_isLoadingBackgroundSync || _isChangingBackgroundSync)
+            return;
+
+        _isLoadingBackgroundSync = true;
+        RaiseBackgroundOperationProperties();
+        try
+        {
+            var state = await _deviceAppPreferences.RefreshBackgroundSyncAsync(cancellationToken);
+            ApplyBackgroundState(state);
+            if (!state.IsAvailable || state.IsDegraded)
+                ShowErrorMessage(GetBackgroundSyncFailureMessage(state));
+        }
+        finally
+        {
+            _isLoadingBackgroundSync = false;
+            RaiseBackgroundOperationProperties();
+        }
+    }
 
     protected override void OnLanguageChanged()
     {
@@ -169,6 +218,7 @@ public sealed class SettingsViewModel : ViewModelBase
             nameof(BackgroundOperationDescription),
             nameof(BackgroundSyncLabel),
             nameof(BackgroundSyncDescription),
+            nameof(BackgroundSyncStatus),
             nameof(OnLabel),
             nameof(OffLabel)
         ]);
@@ -177,11 +227,87 @@ public sealed class SettingsViewModel : ViewModelBase
     protected override void OnThemeChanged() =>
         this.RaisePropertyChanged(nameof(SelectedThemeOption));
 
+    private async Task ChangeBackgroundSyncAsync(bool isEnabled)
+    {
+        if (_isChangingBackgroundSync)
+            return;
+
+        _isChangingBackgroundSync = true;
+        RaiseBackgroundOperationProperties();
+        try
+        {
+            var result = await _deviceAppPreferences.SetBackgroundSyncEnabledAsync(isEnabled);
+            ApplyBackgroundState(result.State);
+            if (!result.State.IsAvailable || result.State.IsDegraded)
+            {
+                ShowErrorMessage(GetBackgroundSyncFailureMessage(result.State));
+            }
+            else if (result.WasOutcomeUncertain)
+            {
+                ShowInformationMessage(GetTranslation("Settings_BackgroundSync_ReadBackGuidance"));
+            }
+            else
+            {
+                ShowSuccessMessage(GetTranslation(result.State.IsEnabled
+                    ? "Settings_BackgroundSync_Enabled"
+                    : "Settings_BackgroundSync_Disabled"));
+            }
+        }
+        finally
+        {
+            _isChangingBackgroundSync = false;
+            RaiseBackgroundOperationProperties();
+        }
+    }
+
+
+    private string GetBackgroundSyncFailureMessage(BackgroundSyncClientState state) =>
+        GetTranslation(state.FailureKind switch
+        {
+            BackgroundSyncClientFailureKind.StartupRegistration =>
+                "Settings_BackgroundSync_StartupFailure",
+            BackgroundSyncClientFailureKind.SettingPersistence =>
+                "Settings_BackgroundSync_PersistenceFailure",
+            BackgroundSyncClientFailureKind.Unavailable =>
+                "Settings_BackgroundSync_Unavailable",
+            _ => "Settings_BackgroundSync_Degraded"
+        });
+
+    private void ApplyBackgroundState(BackgroundSyncClientState state)
+    {
+        _isApplyingBackgroundState = true;
+        try
+        {
+            this.RaiseAndSetIfChanged(ref _isBackgroundSyncEnabled, state.IsEnabled,
+                nameof(IsBackgroundSyncEnabled));
+            _isBackgroundSyncAvailable = state.IsAvailable;
+            _isBackgroundSyncDegraded = state.IsDegraded;
+            _isExternalBackgroundSyncTransition = state.IsTransitionInProgress;
+        }
+        finally
+        {
+            _isApplyingBackgroundState = false;
+        }
+
+        RaiseBackgroundOperationProperties();
+    }
+
+    private void RaiseBackgroundOperationProperties()
+    {
+        RaisePropertiesChanged(
+        [
+            nameof(IsBackgroundSyncEnabled),
+            nameof(IsBackgroundSyncControlVisible),
+            nameof(IsBackgroundSyncToggleEnabled),
+            nameof(IsBackgroundSyncProgressVisible),
+            nameof(BackgroundSyncStatus)
+        ]);
+    }
+
     private void ToggleAppearanceSection()
     {
         var shouldExpand = !IsAppearanceSectionExpanded;
         IsAppearanceSectionExpanded = shouldExpand;
-
         if (shouldExpand)
             IsBackgroundSectionExpanded = false;
     }
@@ -190,15 +316,12 @@ public sealed class SettingsViewModel : ViewModelBase
     {
         var shouldExpand = !IsBackgroundSectionExpanded;
         IsBackgroundSectionExpanded = shouldExpand;
-
         if (shouldExpand)
             IsAppearanceSectionExpanded = false;
     }
 
     private void HandleDeviceAppPreferencesChanged(
         object? sender,
-        DeviceAppPreferencesChangedEventArgs args)
-    {
-        this.RaisePropertyChanged(nameof(IsBackgroundSyncEnabled));
-    }
+        DeviceAppPreferencesChangedEventArgs args) =>
+        ApplyBackgroundState(args.State);
 }

@@ -13,6 +13,12 @@
           "Xamarin.AndroidX.AppCompat": "1.6.1.5"
         }
       },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[10.0.10, )",
+        "resolved": "10.0.10",
+        "contentHash": "f5VCIE7AJpd5YvzNTeMGVzQIgyE9tX+AreTYwQF+REbu+DZo/2Ae+jNSwhPEYrVz6RRkd7y8ubXjk6Nn6Ka+Cg=="
+      },
       "Xamarin.AndroidX.Core.SplashScreen": {
         "type": "Direct",
         "requested": "[1.0.1.17, )",
@@ -23,80 +29,15 @@
           "Xamarin.Kotlin.StdLib": "2.2.0.1"
         }
       },
-      "Avalonia": {
-        "type": "CentralTransitive",
-        "requested": "[11.3.18, )",
-        "resolved": "11.3.18",
-        "contentHash": "2C4UxhWUObWGgYKWic1x5BMMWGJP6SElb91WeOxs+X/iR26rtkqpxFFwwo50FXS9AyYnHfk8QKXDEfe7oT/kZA==",
-        "dependencies": {
-          "Avalonia.BuildServices": "11.3.2",
-          "Avalonia.Remote.Protocol": "11.3.18",
-          "MicroCom.Runtime": "0.11.0"
-        }
-      },
       "Avalonia.BuildServices": {
         "type": "Transitive",
         "resolved": "11.3.2",
         "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ=="
       },
-      "Avalonia.Controls.ColorPicker": {
-        "type": "CentralTransitive",
-        "requested": "[11.3.18, )",
-        "resolved": "11.3.18",
-        "contentHash": "gcl2yQLQpS38Ur9MduD98GXzYaZEbwzYhaBmTh7Hp0YyXI4B2FlXXPdB4nijPI6WuoYdM24akdnF6uCeWL6q3Q==",
-        "dependencies": {
-          "Avalonia": "11.3.18",
-          "Avalonia.Remote.Protocol": "11.3.18"
-        }
-      },
-      "Avalonia.Fonts.Inter": {
-        "type": "CentralTransitive",
-        "requested": "[11.3.18, )",
-        "resolved": "11.3.18",
-        "contentHash": "27u6hB3Y2Ue586yjfeVakberY73VNQXtuKwe/P927XG1QPlhsfmOyifLHDDpSHG85Zl1x/Xv9IZ3+tk9FnjcZQ==",
-        "dependencies": {
-          "Avalonia": "11.3.18"
-        }
-      },
-      "Avalonia.ReactiveUI": {
-        "type": "CentralTransitive",
-        "requested": "[11.3.8, )",
-        "resolved": "11.3.8",
-        "contentHash": "nD7U8UhJcng9OEunDt5bFRDvo+UHxtVi/a+BNLH2dxQuNJnqtXpLp/2rEzrzJDtV8X2FU7fHTwTrDhNOyYjWxw==",
-        "dependencies": {
-          "Avalonia": "11.3.8",
-          "ReactiveUI": "20.1.1",
-          "System.Reactive": "6.0.1"
-        }
-      },
       "Avalonia.Remote.Protocol": {
         "type": "Transitive",
         "resolved": "11.3.18",
         "contentHash": "vw+6ZfgTuu72dA9aVWn6u56t2nrBd5MoMU0wo/qI9XJAl/c0oYYphIvwLvJP1JorubQY4UE3d0ac8ULBhrGBiA=="
-      },
-      "Avalonia.Skia": {
-        "type": "CentralTransitive",
-        "requested": "[11.3.18, )",
-        "resolved": "11.3.18",
-        "contentHash": "/B4aXmNRNjG8I5U/a1xJI+bIi0XO6DDzS3mBrIKlVnJRY2CyZiUeESRQXLnIU77Z9TvqkUROs+D47s085YjFtA==",
-        "dependencies": {
-          "Avalonia": "11.3.18",
-          "HarfBuzzSharp": "8.3.1.1",
-          "HarfBuzzSharp.NativeAssets.Linux": "8.3.1.1",
-          "HarfBuzzSharp.NativeAssets.WebAssembly": "8.3.1.1",
-          "SkiaSharp": "2.88.9",
-          "SkiaSharp.NativeAssets.Linux": "2.88.9",
-          "SkiaSharp.NativeAssets.WebAssembly": "2.88.9"
-        }
-      },
-      "Avalonia.Themes.Fluent": {
-        "type": "CentralTransitive",
-        "requested": "[11.3.18, )",
-        "resolved": "11.3.18",
-        "contentHash": "+Q/TJoynD0zNuu5w2gD+xcTl7GNKJFxlPYAndRLs/mTDrNbbsvv/271WyIysbMPsXSjCyBDp7RCZzQkpD6x5Bg==",
-        "dependencies": {
-          "Avalonia": "11.3.18"
-        }
       },
       "DynamicData": {
         "type": "Transitive",
@@ -105,12 +46,6 @@
         "dependencies": {
           "System.Reactive": "6.0.0"
         }
-      },
-      "Google.Protobuf": {
-        "type": "CentralTransitive",
-        "requested": "[3.35.1, )",
-        "resolved": "3.35.1",
-        "contentHash": "pxtkuXhR8svkvDTQrYew9GZQt6eWhblz/V/WKUFrQgkHYlQPsumJTeF6ppHRJpe6j9ffukkd5lQULiiKaek4xA=="
       },
       "HarfBuzzSharp": {
         "type": "Transitive",
@@ -134,12 +69,6 @@
         "type": "Transitive",
         "resolved": "8.3.1.1",
         "contentHash": "loJweK2u/mH/3C2zBa0ggJlITIszOkK64HLAZB7FUT670dTg965whLFYHDQo69NmC4+d9UN0icLC9VHidXaVCA=="
-      },
-      "libsodium": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.22, )",
-        "resolved": "1.0.22",
-        "contentHash": "KPD9SloJFclrsjnhABu7dzWrcyYkwPbvx5l1gRSPAX/0n+OBtSiVCKtGFv4n+ecWUHU0tCG9LSSwoZZx673zBQ=="
       },
       "MicroCom.Runtime": {
         "type": "Transitive",
@@ -186,39 +115,11 @@
           "Microsoft.Extensions.Logging": "10.0.9"
         }
       },
-      "Microsoft.EntityFrameworkCore.Sqlite.Core": {
-        "type": "CentralTransitive",
-        "requested": "[10.0.9, )",
-        "resolved": "10.0.9",
-        "contentHash": "3bPEmACAaPJJSw+m5XwTSi3yZnVtaifa4d8gLsNMzW0Qu28jS5kADSfgJRBlq49RJ1K098VCzEDRJwM8gE6f2w==",
-        "dependencies": {
-          "Microsoft.Data.Sqlite.Core": "10.0.9",
-          "Microsoft.EntityFrameworkCore.Relational": "10.0.9",
-          "Microsoft.Extensions.Caching.Memory": "10.0.9",
-          "Microsoft.Extensions.Configuration.Abstractions": "10.0.9",
-          "Microsoft.Extensions.DependencyModel": "10.0.9",
-          "Microsoft.Extensions.Logging": "10.0.9",
-          "SQLitePCLRaw.core": "2.1.11"
-        }
-      },
       "Microsoft.Extensions.Caching.Abstractions": {
         "type": "Transitive",
         "resolved": "10.0.9",
         "contentHash": "5fGxcw2vuYp8s0wio9H1ECiuk4iKSdTIlNuigdLIrkhg+5XAwgFVDB/5Ots3pfN/QhABLYXutA79JFtnUKDSHA==",
         "dependencies": {
-          "Microsoft.Extensions.Primitives": "10.0.9"
-        }
-      },
-      "Microsoft.Extensions.Caching.Memory": {
-        "type": "CentralTransitive",
-        "requested": "[10.0.9, )",
-        "resolved": "10.0.9",
-        "contentHash": "G9mregdatGWMCQWeCw012LDeJVP7G/XIxH8Ddbjc8bD1//dA+8VVQdcRE9jI1moyoJxSSZhHITUnNQ8FUDl5+Q==",
-        "dependencies": {
-          "Microsoft.Extensions.Caching.Abstractions": "10.0.9",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.9",
-          "Microsoft.Extensions.Options": "10.0.9",
           "Microsoft.Extensions.Primitives": "10.0.9"
         }
       },
@@ -228,15 +129,6 @@
         "contentHash": "qGhRPd3VxfLV9UqatVOiD9mAeUbj2KiMwGFYC5uXlzExiZQoe4X/hdmzGIU7BQjNLTqCnnbTHVyBglG3668/HA==",
         "dependencies": {
           "Microsoft.Extensions.Primitives": "10.0.9"
-        }
-      },
-      "Microsoft.Extensions.DependencyInjection": {
-        "type": "CentralTransitive",
-        "requested": "[10.0.9, )",
-        "resolved": "10.0.9",
-        "contentHash": "NijozhERJDIaJ4k5TSMy1jOi0cSC2HfkvRD/Sl+kGSSKgVbFnF4GxgtMN/MrzHB8D1JxIrD4xSer9Blh9v3axQ==",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9"
         }
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
@@ -281,15 +173,6 @@
         "resolved": "10.0.9",
         "contentHash": "fmEbAUFsaIKirgLt/lYhuFRBwhcSJN31jjHgCdbQxJiWOum6EdLjkbgGuukSP9z/a+9LibaxII/kF+GwOXgC4g=="
       },
-      "NSec.Cryptography": {
-        "type": "CentralTransitive",
-        "requested": "[26.4.0, )",
-        "resolved": "26.4.0",
-        "contentHash": "0vsCtY5f+YgQROiWNqzgWp+l2pddfk9FkWoGV/bEo0MuEYPKlJWuoA8aOfO6qp3f+EnObKE3zSJhn1PspJeJVg==",
-        "dependencies": {
-          "libsodium": "[1.0.22, 1.0.23)"
-        }
-      },
       "ReactiveUI": {
         "type": "Transitive",
         "resolved": "20.1.1",
@@ -299,47 +182,10 @@
           "Splat": "15.1.1"
         }
       },
-      "SkiaSharp": {
-        "type": "CentralTransitive",
-        "requested": "[3.119.1, )",
-        "resolved": "3.119.1",
-        "contentHash": "+Ru1BTSZQne3Vp+vbSb50Ke3Nlc3ZnItxx4+751J9WZ8YzLKAV/n+9DAo4zFTyeCI//ueT63c+VybmTTpYBEiw==",
-        "dependencies": {
-          "SkiaSharp.NativeAssets.Android": "3.119.1"
-        }
-      },
-      "SkiaSharp.NativeAssets.Android": {
-        "type": "CentralTransitive",
-        "requested": "[3.119.1, )",
-        "resolved": "3.119.1",
-        "contentHash": "b66ENYiCJEgbnwx9WoxTYMgoxL7LLQ8sfmlsTRr+ZLx1hyzATuHtiU2mcwf1jkrD7h4lN/jVysEoAzRFWDstPQ=="
-      },
-      "SkiaSharp.NativeAssets.Linux": {
-        "type": "CentralTransitive",
-        "requested": "[3.119.1, )",
-        "resolved": "3.119.1",
-        "contentHash": "9YNoc4SeKvQhrwiqwT4ezkNfMywPdPSK+UFvo/CaoXqLixcnYOTsQKm5BF9mc4+q3vKgDtEgMt0d1ygZhJTEHg=="
-      },
-      "SkiaSharp.NativeAssets.WebAssembly": {
-        "type": "CentralTransitive",
-        "requested": "[3.119.1, )",
-        "resolved": "3.119.1",
-        "contentHash": "AH/y+gLcyEygtIMHJOI6Gwks9EkVge6rXHdfXfmT3H9rOWGIii257VmQ+sjSyqY1bqgU5SE5OakXNvDh0eV7QQ=="
-      },
       "Splat": {
         "type": "Transitive",
         "resolved": "15.1.1",
         "contentHash": "RHDTdF90FwVbRia2cmuIzkiVoETqnXSB2dDBBi/I35HWXqv4OKGqoMcfcd6obMvO2OmmY5PjU1M62K8LkJafAA=="
-      },
-      "SQLitePCLRaw.bundle_e_sqlcipher": {
-        "type": "CentralTransitive",
-        "requested": "[2.1.11, )",
-        "resolved": "2.1.11",
-        "contentHash": "NFuxa/rD3Ah88jbFOgsoUjuWcLiBkj3iqgO2gJXola9NtjtCTRI3HMQtVjQDnrhCvdBOAJ4RqbwnqoEMLht8GQ==",
-        "dependencies": {
-          "SQLitePCLRaw.lib.e_sqlcipher.android": "2.1.11",
-          "SQLitePCLRaw.provider.e_sqlcipher": "2.1.11"
-        }
       },
       "SQLitePCLRaw.core": {
         "type": "Transitive",
@@ -815,22 +661,6 @@
           "Xamarin.Kotlin.StdLib.Jdk8": "1.9.10.2"
         }
       },
-      "ZXing.Net": {
-        "type": "CentralTransitive",
-        "requested": "[0.16.11, )",
-        "resolved": "0.16.11",
-        "contentHash": "OZfAVu88hl87BffQ+rlWCj/vLvAhhCK4QnFaoveeF/MY8SjHNSYBQ3qyUEWlPKNgBQGh1syXhCDg10vUnCsqkg=="
-      },
-      "ZXing.Net.Bindings.SkiaSharp": {
-        "type": "CentralTransitive",
-        "requested": "[0.16.22, )",
-        "resolved": "0.16.22",
-        "contentHash": "jdlarXJKukpYjnNf6bS7/ncRSZQh7v4uwUMFsaIc3MPZtY+fcQS0ONGXI4BSEEcNhxb8UfrULtRuL9ToLPhn1g==",
-        "dependencies": {
-          "SkiaSharp": "3.119.1",
-          "ZXing.Net": "0.16.11"
-        }
-      },
       "passwordmanagerlocal.backend": {
         "type": "Project",
         "dependencies": {
@@ -853,7 +683,8 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
-          "PasswordManagerLocal.Backend": "[1.0.0, )"
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )"
         }
       },
       "passwordmanagerlocal.frontend": {
@@ -865,11 +696,250 @@
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.18, )",
           "PasswordManagerLocal.Backend": "[1.0.0, )",
-          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )",
           "SkiaSharp": "[3.119.1, )",
           "ZXing.Net": "[0.16.11, )",
           "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"
         }
+      },
+      "passwordmanagerlocal.runtime.abstractions": {
+        "type": "Project"
+      },
+      "Avalonia": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.18, )",
+        "resolved": "11.3.18",
+        "contentHash": "2C4UxhWUObWGgYKWic1x5BMMWGJP6SElb91WeOxs+X/iR26rtkqpxFFwwo50FXS9AyYnHfk8QKXDEfe7oT/kZA==",
+        "dependencies": {
+          "Avalonia.BuildServices": "11.3.2",
+          "Avalonia.Remote.Protocol": "11.3.18",
+          "MicroCom.Runtime": "0.11.0"
+        }
+      },
+      "Avalonia.Controls.ColorPicker": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.18, )",
+        "resolved": "11.3.18",
+        "contentHash": "gcl2yQLQpS38Ur9MduD98GXzYaZEbwzYhaBmTh7Hp0YyXI4B2FlXXPdB4nijPI6WuoYdM24akdnF6uCeWL6q3Q==",
+        "dependencies": {
+          "Avalonia": "11.3.18",
+          "Avalonia.Remote.Protocol": "11.3.18"
+        }
+      },
+      "Avalonia.Fonts.Inter": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.18, )",
+        "resolved": "11.3.18",
+        "contentHash": "27u6hB3Y2Ue586yjfeVakberY73VNQXtuKwe/P927XG1QPlhsfmOyifLHDDpSHG85Zl1x/Xv9IZ3+tk9FnjcZQ==",
+        "dependencies": {
+          "Avalonia": "11.3.18"
+        }
+      },
+      "Avalonia.ReactiveUI": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.8, )",
+        "resolved": "11.3.8",
+        "contentHash": "nD7U8UhJcng9OEunDt5bFRDvo+UHxtVi/a+BNLH2dxQuNJnqtXpLp/2rEzrzJDtV8X2FU7fHTwTrDhNOyYjWxw==",
+        "dependencies": {
+          "Avalonia": "11.3.8",
+          "ReactiveUI": "20.1.1",
+          "System.Reactive": "6.0.1"
+        }
+      },
+      "Avalonia.Skia": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.18, )",
+        "resolved": "11.3.18",
+        "contentHash": "/B4aXmNRNjG8I5U/a1xJI+bIi0XO6DDzS3mBrIKlVnJRY2CyZiUeESRQXLnIU77Z9TvqkUROs+D47s085YjFtA==",
+        "dependencies": {
+          "Avalonia": "11.3.18",
+          "HarfBuzzSharp": "8.3.1.1",
+          "HarfBuzzSharp.NativeAssets.Linux": "8.3.1.1",
+          "HarfBuzzSharp.NativeAssets.WebAssembly": "8.3.1.1",
+          "SkiaSharp": "2.88.9",
+          "SkiaSharp.NativeAssets.Linux": "2.88.9",
+          "SkiaSharp.NativeAssets.WebAssembly": "2.88.9"
+        }
+      },
+      "Avalonia.Themes.Fluent": {
+        "type": "CentralTransitive",
+        "requested": "[11.3.18, )",
+        "resolved": "11.3.18",
+        "contentHash": "+Q/TJoynD0zNuu5w2gD+xcTl7GNKJFxlPYAndRLs/mTDrNbbsvv/271WyIysbMPsXSjCyBDp7RCZzQkpD6x5Bg==",
+        "dependencies": {
+          "Avalonia": "11.3.18"
+        }
+      },
+      "Google.Protobuf": {
+        "type": "CentralTransitive",
+        "requested": "[3.35.1, )",
+        "resolved": "3.35.1",
+        "contentHash": "pxtkuXhR8svkvDTQrYew9GZQt6eWhblz/V/WKUFrQgkHYlQPsumJTeF6ppHRJpe6j9ffukkd5lQULiiKaek4xA=="
+      },
+      "libsodium": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.22, )",
+        "resolved": "1.0.22",
+        "contentHash": "KPD9SloJFclrsjnhABu7dzWrcyYkwPbvx5l1gRSPAX/0n+OBtSiVCKtGFv4n+ecWUHU0tCG9LSSwoZZx673zBQ=="
+      },
+      "Microsoft.EntityFrameworkCore.Sqlite.Core": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.9, )",
+        "resolved": "10.0.9",
+        "contentHash": "3bPEmACAaPJJSw+m5XwTSi3yZnVtaifa4d8gLsNMzW0Qu28jS5kADSfgJRBlq49RJ1K098VCzEDRJwM8gE6f2w==",
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "10.0.9",
+          "Microsoft.EntityFrameworkCore.Relational": "10.0.9",
+          "Microsoft.Extensions.Caching.Memory": "10.0.9",
+          "Microsoft.Extensions.Configuration.Abstractions": "10.0.9",
+          "Microsoft.Extensions.DependencyModel": "10.0.9",
+          "Microsoft.Extensions.Logging": "10.0.9",
+          "SQLitePCLRaw.core": "2.1.11"
+        }
+      },
+      "Microsoft.Extensions.Caching.Memory": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.9, )",
+        "resolved": "10.0.9",
+        "contentHash": "G9mregdatGWMCQWeCw012LDeJVP7G/XIxH8Ddbjc8bD1//dA+8VVQdcRE9jI1moyoJxSSZhHITUnNQ8FUDl5+Q==",
+        "dependencies": {
+          "Microsoft.Extensions.Caching.Abstractions": "10.0.9",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.9",
+          "Microsoft.Extensions.Options": "10.0.9",
+          "Microsoft.Extensions.Primitives": "10.0.9"
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.9, )",
+        "resolved": "10.0.9",
+        "contentHash": "NijozhERJDIaJ4k5TSMy1jOi0cSC2HfkvRD/Sl+kGSSKgVbFnF4GxgtMN/MrzHB8D1JxIrD4xSer9Blh9v3axQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.9"
+        }
+      },
+      "NSec.Cryptography": {
+        "type": "CentralTransitive",
+        "requested": "[26.4.0, )",
+        "resolved": "26.4.0",
+        "contentHash": "0vsCtY5f+YgQROiWNqzgWp+l2pddfk9FkWoGV/bEo0MuEYPKlJWuoA8aOfO6qp3f+EnObKE3zSJhn1PspJeJVg==",
+        "dependencies": {
+          "libsodium": "[1.0.22, 1.0.23)"
+        }
+      },
+      "SkiaSharp": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "+Ru1BTSZQne3Vp+vbSb50Ke3Nlc3ZnItxx4+751J9WZ8YzLKAV/n+9DAo4zFTyeCI//ueT63c+VybmTTpYBEiw==",
+        "dependencies": {
+          "SkiaSharp.NativeAssets.Android": "3.119.1"
+        }
+      },
+      "SkiaSharp.NativeAssets.Android": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "b66ENYiCJEgbnwx9WoxTYMgoxL7LLQ8sfmlsTRr+ZLx1hyzATuHtiU2mcwf1jkrD7h4lN/jVysEoAzRFWDstPQ=="
+      },
+      "SkiaSharp.NativeAssets.Linux": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "9YNoc4SeKvQhrwiqwT4ezkNfMywPdPSK+UFvo/CaoXqLixcnYOTsQKm5BF9mc4+q3vKgDtEgMt0d1ygZhJTEHg=="
+      },
+      "SkiaSharp.NativeAssets.WebAssembly": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "AH/y+gLcyEygtIMHJOI6Gwks9EkVge6rXHdfXfmT3H9rOWGIii257VmQ+sjSyqY1bqgU5SE5OakXNvDh0eV7QQ=="
+      },
+      "SQLitePCLRaw.bundle_e_sqlcipher": {
+        "type": "CentralTransitive",
+        "requested": "[2.1.11, )",
+        "resolved": "2.1.11",
+        "contentHash": "NFuxa/rD3Ah88jbFOgsoUjuWcLiBkj3iqgO2gJXola9NtjtCTRI3HMQtVjQDnrhCvdBOAJ4RqbwnqoEMLht8GQ==",
+        "dependencies": {
+          "SQLitePCLRaw.lib.e_sqlcipher.android": "2.1.11",
+          "SQLitePCLRaw.provider.e_sqlcipher": "2.1.11"
+        }
+      },
+      "ZXing.Net": {
+        "type": "CentralTransitive",
+        "requested": "[0.16.11, )",
+        "resolved": "0.16.11",
+        "contentHash": "OZfAVu88hl87BffQ+rlWCj/vLvAhhCK4QnFaoveeF/MY8SjHNSYBQ3qyUEWlPKNgBQGh1syXhCDg10vUnCsqkg=="
+      },
+      "ZXing.Net.Bindings.SkiaSharp": {
+        "type": "CentralTransitive",
+        "requested": "[0.16.22, )",
+        "resolved": "0.16.22",
+        "contentHash": "jdlarXJKukpYjnNf6bS7/ncRSZQh7v4uwUMFsaIc3MPZtY+fcQS0ONGXI4BSEEcNhxb8UfrULtRuL9ToLPhn1g==",
+        "dependencies": {
+          "SkiaSharp": "3.119.1",
+          "ZXing.Net": "0.16.11"
+        }
+      }
+    },
+    "net10.0-android36.0/android-arm64": {
+      "HarfBuzzSharp.NativeAssets.Android": {
+        "type": "Transitive",
+        "resolved": "8.3.1.1",
+        "contentHash": "XyyWJdGDwhz065vt3jL/Yk5Vvq+7/sn72wpCLGNOxamt8Ha83W13xTbhddQ1e+PGKmgxfsLAs/3hwJ+azQa7GQ=="
+      },
+      "HarfBuzzSharp.NativeAssets.Linux": {
+        "type": "Transitive",
+        "resolved": "8.3.1.1",
+        "contentHash": "3EZ1mpIiKWRLL5hUYA82ZHteeDIVaEA/Z0rA/wU6tjx6crcAkJnBPwDXZugBSfo8+J3EznvRJf49uMsqYfKrHg=="
+      },
+      "libsodium": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.22, )",
+        "resolved": "1.0.22",
+        "contentHash": "KPD9SloJFclrsjnhABu7dzWrcyYkwPbvx5l1gRSPAX/0n+OBtSiVCKtGFv4n+ecWUHU0tCG9LSSwoZZx673zBQ=="
+      },
+      "SkiaSharp.NativeAssets.Android": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "b66ENYiCJEgbnwx9WoxTYMgoxL7LLQ8sfmlsTRr+ZLx1hyzATuHtiU2mcwf1jkrD7h4lN/jVysEoAzRFWDstPQ=="
+      },
+      "SkiaSharp.NativeAssets.Linux": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "9YNoc4SeKvQhrwiqwT4ezkNfMywPdPSK+UFvo/CaoXqLixcnYOTsQKm5BF9mc4+q3vKgDtEgMt0d1ygZhJTEHg=="
+      }
+    },
+    "net10.0-android36.0/android-x64": {
+      "HarfBuzzSharp.NativeAssets.Android": {
+        "type": "Transitive",
+        "resolved": "8.3.1.1",
+        "contentHash": "XyyWJdGDwhz065vt3jL/Yk5Vvq+7/sn72wpCLGNOxamt8Ha83W13xTbhddQ1e+PGKmgxfsLAs/3hwJ+azQa7GQ=="
+      },
+      "HarfBuzzSharp.NativeAssets.Linux": {
+        "type": "Transitive",
+        "resolved": "8.3.1.1",
+        "contentHash": "3EZ1mpIiKWRLL5hUYA82ZHteeDIVaEA/Z0rA/wU6tjx6crcAkJnBPwDXZugBSfo8+J3EznvRJf49uMsqYfKrHg=="
+      },
+      "libsodium": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.22, )",
+        "resolved": "1.0.22",
+        "contentHash": "KPD9SloJFclrsjnhABu7dzWrcyYkwPbvx5l1gRSPAX/0n+OBtSiVCKtGFv4n+ecWUHU0tCG9LSSwoZZx673zBQ=="
+      },
+      "SkiaSharp.NativeAssets.Android": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "b66ENYiCJEgbnwx9WoxTYMgoxL7LLQ8sfmlsTRr+ZLx1hyzATuHtiU2mcwf1jkrD7h4lN/jVysEoAzRFWDstPQ=="
+      },
+      "SkiaSharp.NativeAssets.Linux": {
+        "type": "CentralTransitive",
+        "requested": "[3.119.1, )",
+        "resolved": "3.119.1",
+        "contentHash": "9YNoc4SeKvQhrwiqwT4ezkNfMywPdPSK+UFvo/CaoXqLixcnYOTsQKm5BF9mc4+q3vKgDtEgMt0d1ygZhJTEHg=="
       }
     }
   }

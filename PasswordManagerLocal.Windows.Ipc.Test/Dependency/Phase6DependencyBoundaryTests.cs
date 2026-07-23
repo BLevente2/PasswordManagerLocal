@@ -210,14 +210,15 @@ public sealed class Phase6DependencyBoundaryTests
     }
 
     [TestMethod]
-    public void WindowsBackgroundSettingIsDisabledUntilAgentOwnershipPhaseSeven()
+    public void WindowsBackgroundSettingUsesAgentIpcWithoutDirectFileOrRegistryOwnership()
     {
         var root = GetRepositoryRoot();
-        var program = File.ReadAllText(Path.Combine(
+        var windowsDirectory = Path.Combine(
             root,
             "PasswordManagerLocal",
-            "PasswordManagerLocal.Windows",
-            "Program.cs"));
+            "PasswordManagerLocal.Windows");
+        var source = ReadSources(windowsDirectory);
+        var program = File.ReadAllText(Path.Combine(windowsDirectory, "Program.cs"));
         var settingsView = File.ReadAllText(Path.Combine(
             root,
             "PasswordManagerLocal",
@@ -226,10 +227,13 @@ public sealed class Phase6DependencyBoundaryTests
             "Settings",
             "SettingsView.axaml"));
 
-        StringAssert.Contains(program, "new WindowsPhase6BackgroundSyncSettingsStore()");
-        StringAssert.Contains(program, "isBackgroundSyncSettingAvailable: false");
-        StringAssert.Contains(settingsView, "IsEnabled=\"{Binding IsBackgroundSyncSettingAvailable}\"");
-        Assert.IsFalse(program.Contains("FileBackgroundSyncSettingsStore", StringComparison.Ordinal));
+        StringAssert.Contains(program, "new WindowsAgentBackgroundSyncSettingsClient(agentConnection)");
+        StringAssert.Contains(source, "GetBackgroundSyncStateAsync");
+        StringAssert.Contains(source, "SetBackgroundSyncEnabledAsync");
+        StringAssert.Contains(settingsView, "IsBackgroundSyncToggleEnabled");
+        Assert.IsFalse(source.Contains("FileBackgroundSyncSettingsStore", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("Registry.CurrentUser", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("BackgroundSyncSettingsFileName", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -323,6 +327,97 @@ public sealed class Phase6DependencyBoundaryTests
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.Ipc"));
         Assert.IsFalse(references.Contains("PasswordManagerLocal.Backend.Hosting"));
         Assert.IsFalse(references.Contains("PasswordManagerLocal.Backend.Windows"));
+    }
+
+
+    [TestMethod]
+    public void AgentIsTheOnlyWindowsProductionBackgroundSettingWriter()
+    {
+        var root = GetRepositoryRoot();
+        var productionSources = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains(".Test", StringComparison.Ordinal) &&
+                !ContainsGeneratedDirectory(path))
+            .ToArray();
+        var windowsWriters = productionSources
+            .Where(path => !path.Contains(
+                $"{Path.DirectorySeparatorChar}PasswordManagerLocal.Android{Path.DirectorySeparatorChar}",
+                StringComparison.Ordinal))
+            .Where(path => File.ReadAllText(path).Contains(
+                "new FileBackgroundSyncSettingsStore",
+                StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(root, path))
+            .ToArray();
+
+        CollectionAssert.AreEqual(
+            new[] { Path.Combine("PasswordManagerLocal.Windows.Agent", "Program.cs") },
+            windowsWriters);
+    }
+
+    [TestMethod]
+    public void ProductionStartupRegistrationUsesOnlyCurrentUserRunAndAgentExecutable()
+    {
+        var root = GetRepositoryRoot();
+        var backgroundDirectory = Path.Combine(
+            root,
+            "PasswordManagerLocal.Windows.Agent",
+            "Background");
+        var source = ReadSources(backgroundDirectory);
+
+        StringAssert.Contains(source, "Registry.CurrentUser");
+        StringAssert.Contains(source, @"Software\Microsoft\Windows\CurrentVersion\Run");
+        StringAssert.Contains(source, "PasswordManagerLocal.Agent");
+        StringAssert.Contains(source, "PasswordManagerLocal.Windows.Agent.exe");
+        StringAssert.Contains(source, "--background");
+        Assert.IsFalse(source.Contains("Registry.LocalMachine", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("HKEY_LOCAL_MACHINE", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("PasswordManagerLocal.Windows.exe", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void AgentStartupRegistrationFallsBackToTheCurrentApphostDirectory()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal.Windows.Agent",
+            "Program.cs"));
+
+        StringAssert.Contains(source, "Environment.ProcessPath");
+        StringAssert.Contains(source, "Path.GetFileName(processPath)");
+        StringAssert.Contains(source, "AppContext.BaseDirectory");
+        StringAssert.Contains(source, "WindowsStartupRegistrationConstants.AgentExecutableFileName");
+    }
+
+    [TestMethod]
+    public void AgentOwnsExactlyOneOptionalBackgroundLeaseField()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal.Windows.Agent",
+            "Background",
+            "WindowsBackgroundSyncCoordinator.cs"));
+
+        Assert.AreEqual(1, CountOccurrences(source, "IBackendRuntimeLease? _backgroundLease"));
+        Assert.AreEqual(1, CountOccurrences(source, "_backendOwner.AcquireBackgroundSyncLeaseAsync"));
+        Assert.IsFalse(source.Contains("static IBackendRuntimeLease", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void BackgroundControlWriteUsesReadBackInsteadOfAutomaticReplay()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Settings",
+            "WindowsAgentBackgroundSyncSettingsClient.cs"));
+
+        Assert.AreEqual(1, CountOccurrences(source, "SetBackgroundSyncEnabledAsync("));
+        StringAssert.Contains(source, "ReadBackAfterUncertainWriteAsync");
+        StringAssert.Contains(source, "GetBackgroundSyncStateAsync");
+        Assert.IsTrue(source.IndexOf(
+            "GetBackgroundSyncStateAsync",
+            source.IndexOf("ReadBackAfterUncertainWriteAsync", StringComparison.Ordinal),
+            StringComparison.Ordinal) >= 0);
     }
 
 

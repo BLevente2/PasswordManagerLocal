@@ -1,3 +1,5 @@
+using PasswordManagerLocal.Backend.Hosting;
+
 namespace PasswordManagerLocal.Windows.Agent.Backend;
 
 public interface IWindowsAgentBackendRuntimeOwner : IAsyncDisposable
@@ -6,6 +8,8 @@ public interface IWindowsAgentBackendRuntimeOwner : IAsyncDisposable
     event EventHandler? StateChanged;
 
     Task StartAsync(CancellationToken cancellationToken = default);
+    Task<IBackendRuntimeLease> AcquireBackgroundSyncLeaseAsync(
+        CancellationToken cancellationToken = default);
     Task<AgentInteractiveBackendBinding> OpenInteractiveBindingAsync(
         CancellationToken cancellationToken = default);
     Task ResetDatabaseAsync(CancellationToken cancellationToken = default);

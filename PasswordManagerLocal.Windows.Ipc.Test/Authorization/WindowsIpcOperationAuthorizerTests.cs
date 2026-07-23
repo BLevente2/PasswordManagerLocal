@@ -28,6 +28,7 @@ public sealed class WindowsIpcOperationAuthorizerTests
             IpcOperationId.GetBackendRuntimeStatus,
             IpcOperationId.GetInteractiveSessionStatus,
             IpcOperationId.GetSynchronizationStatus,
+            IpcOperationId.GetBackgroundSyncState,
             IpcOperationId.RequestUiOpen,
             IpcOperationId.RequestUiActivation
         })
@@ -68,7 +69,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
         {
             IpcOperationId.UnregisterUiConnection,
             IpcOperationId.RequestAgentExit,
-            IpcOperationId.ResetDatabase
+            IpcOperationId.ResetDatabase,
+            IpcOperationId.SetBackgroundSyncEnabled
         })
         {
             Assert.IsTrue(authorizer.Authorize(CreateContext(registered.Connection.ConnectionId, IpcPeerRole.Ui, operation)).IsAuthorized);
@@ -99,12 +101,19 @@ public sealed class WindowsIpcOperationAuthorizerTests
                 CreateContext(Guid.NewGuid(), IpcPeerRole.TestClient, operation)).IsAuthorized);
         }
 
-        var denied = authorizer.Authorize(CreateContext(
-            Guid.NewGuid(),
-            IpcPeerRole.Ui,
-            IpcOperationId.RegisterUiConnection));
-        Assert.IsFalse(denied.IsAuthorized);
-        Assert.AreEqual(IpcErrorCode.AgentStopping, denied.ErrorCode);
+        foreach (var operation in new[]
+        {
+            IpcOperationId.RegisterUiConnection,
+            IpcOperationId.SetBackgroundSyncEnabled
+        })
+        {
+            var denied = authorizer.Authorize(CreateContext(
+                Guid.NewGuid(),
+                IpcPeerRole.Ui,
+                operation));
+            Assert.IsFalse(denied.IsAuthorized);
+            Assert.AreEqual(IpcErrorCode.AgentStopping, denied.ErrorCode);
+        }
     }
 
     [TestMethod]
@@ -128,6 +137,7 @@ public sealed class WindowsIpcOperationAuthorizerTests
             IpcOperationId.RegisterUiConnection,
             IpcOperationId.ResetDatabase,
             IpcOperationId.RequestAgentExit,
+            IpcOperationId.SetBackgroundSyncEnabled,
             IpcOperationId.RequestUiOpen
         })
         {
@@ -163,6 +173,10 @@ public sealed class WindowsIpcOperationAuthorizerTests
             Guid.NewGuid(),
             IpcPeerRole.Ui,
             IpcOperationId.RegisterUiConnection)).IsAuthorized);
+        Assert.IsFalse(authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.Ui,
+            IpcOperationId.SetBackgroundSyncEnabled)).IsAuthorized);
     }
 
     [TestMethod]
@@ -238,7 +252,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
         IpcOperationId.GetAgentStatus,
         IpcOperationId.GetBackendRuntimeStatus,
         IpcOperationId.GetInteractiveSessionStatus,
-        IpcOperationId.GetSynchronizationStatus
+        IpcOperationId.GetSynchronizationStatus,
+        IpcOperationId.GetBackgroundSyncState
     ];
 
     private static IpcRequestContext CreateContext(

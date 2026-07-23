@@ -29,6 +29,11 @@ internal sealed class FakeWindowsAgentRegisteredConnection : IWindowsAgentRegist
         LastFailure: null,
         StartedAtUtc: DateTimeOffset.UtcNow,
         IsEndpointHostReady: true);
+    public WindowsBackgroundSyncStateDto BackgroundSyncState { get; set; } =
+        FakeWindowsBackgroundSyncCoordinator.DisabledState();
+    public Exception? BackgroundSyncSetFailure { get; set; }
+    public int BackgroundSyncSetCount { get; private set; }
+    public bool? LastBackgroundSyncEnabled { get; private set; }
     public DatabaseResetResultDto DatabaseResetResult { get; set; } = new(
         Completed: true,
         RequiresProcessRestart: false,
@@ -46,6 +51,29 @@ internal sealed class FakeWindowsAgentRegisteredConnection : IWindowsAgentRegist
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(AgentStatus);
+    }
+
+    public Task<WindowsBackgroundSyncStateDto> GetBackgroundSyncStateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(BackgroundSyncState);
+    }
+
+    public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
+        SetBackgroundSyncEnabledRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        BackgroundSyncSetCount++;
+        LastBackgroundSyncEnabled = request.IsEnabled;
+        if (BackgroundSyncSetFailure is not null)
+            return Task.FromException<WindowsBackgroundSyncStateDto>(BackgroundSyncSetFailure);
+
+        BackgroundSyncState = request.IsEnabled
+            ? FakeWindowsBackgroundSyncCoordinator.OperationalState()
+            : FakeWindowsBackgroundSyncCoordinator.DisabledState();
+        return Task.FromResult(BackgroundSyncState);
     }
 
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(

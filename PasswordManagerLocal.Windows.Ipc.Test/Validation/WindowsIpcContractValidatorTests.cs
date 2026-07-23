@@ -340,9 +340,33 @@ public sealed class WindowsIpcContractValidatorTests
         _validator.Validate(new SynchronizationStatusDto(
             SynchronizationStatusState.Degraded,
             Failure(IpcFailureKind.Synchronization)));
-        _validator.ValidateForTransport(new BackgroundSyncSettingsDto(true));
+        _validator.ValidateForTransport(new SetBackgroundSyncEnabledRequestDto(true));
+        _validator.ValidateForTransport(new WindowsBackgroundSyncStateDto(
+            true,
+            true,
+            true,
+            true,
+            false,
+            WindowsBackgroundSyncConsistency.Operational,
+            WindowsBackgroundSyncFailureKind.None,
+            null));
         _validator.ValidateForTransport(new RequestAcceptedDto(true));
         _validator.ValidateForTransport(new UiConnectionRegistrationResponseDto(true));
+    }
+
+
+    [TestMethod]
+    public void DegradedBackgroundStateCanReportLeaseWithoutRunningRuntime()
+    {
+        _validator.ValidateForTransport(new WindowsBackgroundSyncStateDto(
+            IsEnabled: true,
+            IsStartupRegistered: true,
+            IsBackgroundLeaseActive: true,
+            IsRuntimeRunning: false,
+            IsTransitionInProgress: false,
+            WindowsBackgroundSyncConsistency.Degraded,
+            WindowsBackgroundSyncFailureKind.RuntimeLease,
+            Failure(IpcFailureKind.BackgroundConfiguration)));
     }
 
     [TestMethod]

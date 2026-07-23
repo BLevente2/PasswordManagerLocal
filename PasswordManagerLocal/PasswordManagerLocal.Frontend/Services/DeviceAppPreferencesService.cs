@@ -1,41 +1,75 @@
-using PasswordManagerLocal.Runtime.Abstractions;
-
 namespace PasswordManagerLocal.Frontend.Services;
 
 public sealed class DeviceAppPreferencesService
 {
-    private readonly IBackgroundSyncSettingsStore _backgroundSyncSettingsStore;
-    private bool _backgroundSyncEnabled;
+    private readonly IBackgroundSyncSettingsClient _backgroundSyncClient;
+    private BackgroundSyncClientState _backgroundSyncState;
 
-    public DeviceAppPreferencesService(IBackgroundSyncSettingsStore backgroundSyncSettingsStore)
+    public DeviceAppPreferencesService(IBackgroundSyncSettingsClient backgroundSyncClient)
     {
-        _backgroundSyncSettingsStore = backgroundSyncSettingsStore
-            ?? throw new ArgumentNullException(nameof(backgroundSyncSettingsStore));
-        _backgroundSyncEnabled = _backgroundSyncSettingsStore
-            .ReadAsync()
-            .GetAwaiter()
-            .GetResult()
-            .IsEnabled;
+        _backgroundSyncClient = backgroundSyncClient
+            ?? throw new ArgumentNullException(nameof(backgroundSyncClient));
+        _backgroundSyncState = CreateUnavailableState();
     }
 
     public event EventHandler<DeviceAppPreferencesChangedEventArgs>? PreferencesChanged;
 
-    public bool BackgroundSyncEnabled
-    {
-        get => _backgroundSyncEnabled;
-        set
-        {
-            if (_backgroundSyncEnabled == value)
-                return;
+    public BackgroundSyncClientState BackgroundSyncState => _backgroundSyncState;
 
-            _backgroundSyncSettingsStore
-                .WriteAsync(new BackgroundSyncSettings(value))
-                .GetAwaiter()
-                .GetResult();
-            _backgroundSyncEnabled = value;
-            PreferencesChanged?.Invoke(
-                this,
-                new DeviceAppPreferencesChangedEventArgs(value));
+    public async Task<BackgroundSyncClientState> RefreshBackgroundSyncAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            Apply(await _backgroundSyncClient.GetStateAsync(cancellationToken), false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            Apply(CreateUnavailableState(), false);
+        }
+
+        return _backgroundSyncState;
+    }
+
+    public async Task<BackgroundSyncChangeResult> SetBackgroundSyncEnabledAsync(
+        bool isEnabled,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var result = await _backgroundSyncClient.SetEnabledAsync(isEnabled, cancellationToken);
+            Apply(result.State, result.WasOutcomeUncertain);
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            var state = CreateUnavailableState();
+            Apply(state, true);
+            return new BackgroundSyncChangeResult(state, WasOutcomeUncertain: true);
+        }
+    }
+
+    private BackgroundSyncClientState CreateUnavailableState() => new(
+        IsEnabled: false,
+        IsAvailable: false,
+        IsDegraded: true,
+        IsTransitionInProgress: false,
+        BackgroundSyncClientFailureKind.Unavailable,
+        SafeMessage: null);
+
+    private void Apply(BackgroundSyncClientState state, bool wasOutcomeUncertain)
+    {
+        _backgroundSyncState = state ?? throw new ArgumentNullException(nameof(state));
+        PreferencesChanged?.Invoke(
+            this,
+            new DeviceAppPreferencesChangedEventArgs(state, wasOutcomeUncertain));
     }
 }

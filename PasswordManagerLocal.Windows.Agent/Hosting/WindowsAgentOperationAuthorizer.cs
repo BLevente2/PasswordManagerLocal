@@ -70,5 +70,6 @@ public sealed class WindowsAgentOperationAuthorizer : IWindowsIpcOperationAuthor
             IpcOperationId.GetAgentStatus or
             IpcOperationId.GetBackendRuntimeStatus or
             IpcOperationId.GetInteractiveSessionStatus or
-            IpcOperationId.GetSynchronizationStatus;
+            IpcOperationId.GetSynchronizationStatus or
+            IpcOperationId.GetBackgroundSyncState;
 }

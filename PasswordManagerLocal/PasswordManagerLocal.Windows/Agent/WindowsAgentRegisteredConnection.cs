@@ -37,6 +37,23 @@ public sealed class WindowsAgentRegisteredConnection : IWindowsAgentRegisteredCo
         return _controlClient.GetBackendRuntimeStatusAsync(cancellationToken);
     }
 
+    public Task<WindowsBackgroundSyncStateDto> GetBackgroundSyncStateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
+        return _controlClient.GetBackgroundSyncStateAsync(cancellationToken);
+    }
+
+    public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
+        SetBackgroundSyncEnabledRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
+        return _controlClient.SetBackgroundSyncEnabledAsync(request, cancellationToken);
+    }
+
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(
         CancellationToken cancellationToken = default)
     {

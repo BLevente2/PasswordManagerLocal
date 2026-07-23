@@ -21,7 +21,7 @@ public sealed class WindowsIpcPayloadLimitTests
     {
         var request = new IpcRequestEnvelope(
             long.MaxValue,
-            IpcOperationId.SetBackgroundSyncSettings,
+            IpcOperationId.SetBackgroundSyncEnabled,
             new byte[IpcContractLimits.MaximumInnerPayloadSize]);
 
         _validator.Validate(request);

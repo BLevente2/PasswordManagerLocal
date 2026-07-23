@@ -1,6 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Test.Fakes;
 
 namespace PasswordManagerLocal.Test.Backend.Hosting;
 
@@ -8,83 +10,85 @@ namespace PasswordManagerLocal.Test.Backend.Hosting;
 public sealed class FileBackgroundSyncSettingsStoreTests
 {
     [TestMethod]
-    public async Task MissingFile_ReturnsDisabled()
+    public async Task MissingSettingFileReturnsDisabledDefault()
     {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var store = new FileBackgroundSyncSettingsStore(directory);
-            var settings = await store.ReadAsync();
+        var fileSystem = new FakeBackgroundSyncSettingsFileSystem();
+        var store = CreateStore(fileSystem);
 
-            Assert.IsFalse(settings.IsEnabled);
-        }
-        finally
-        {
-            DeleteDirectory(directory);
-        }
+        var settings = await store.ReadAsync();
+
+        Assert.IsFalse(settings.IsEnabled);
+    }
+
+    [DataTestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task ValidSettingReturnsPersistedValue(bool isEnabled)
+    {
+        var fileSystem = new FakeBackgroundSyncSettingsFileSystem();
+        fileSystem.SetFile(SettingsPath(), $"{{\"isEnabled\":{isEnabled.ToString().ToLowerInvariant()}}}");
+        var store = CreateStore(fileSystem);
+
+        var settings = await store.ReadAsync();
+
+        Assert.AreEqual(isEnabled, settings.IsEnabled);
+    }
+
+    [DataTestMethod]
+    [DataRow("{")]
+    [DataRow("{}")]
+    [DataRow("{\"isEnabled\":null}")]
+    [DataRow("{\"isEnabled\":1}")]
+    public async Task MalformedOrSemanticallyInvalidSettingFailsSafely(string contents)
+    {
+        var fileSystem = new FakeBackgroundSyncSettingsFileSystem();
+        fileSystem.SetFile(SettingsPath(), contents);
+        var store = CreateStore(fileSystem);
+
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => store.ReadAsync());
     }
 
     [TestMethod]
-    public async Task WriteReadAndReplace_RoundTripsWithoutTemporaryFiles()
+    public async Task AtomicReplacementFailurePreservesOldAuthoritativeValue()
     {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var store = new FileBackgroundSyncSettingsStore(directory);
+        var fileSystem = new FakeBackgroundSyncSettingsFileSystem();
+        fileSystem.SetFile(SettingsPath(), "{\"isEnabled\":false}");
+        fileSystem.ReplaceFailure = new IOException("replacement failed");
+        var store = CreateStore(fileSystem);
 
-            await store.WriteAsync(new BackgroundSyncSettings(true));
-            Assert.IsTrue((await store.ReadAsync()).IsEnabled);
+        await Assert.ThrowsExactlyAsync<IOException>(() =>
+            store.WriteAsync(new BackgroundSyncSettings(true)));
+        fileSystem.ReplaceFailure = null;
+        var settings = await store.ReadAsync();
 
-            await store.WriteAsync(new BackgroundSyncSettings(false));
-            Assert.IsFalse((await store.ReadAsync()).IsEnabled);
-            Assert.AreEqual(0, Directory.GetFiles(directory, "*.tmp", SearchOption.TopDirectoryOnly).Length);
-        }
-        finally
-        {
-            DeleteDirectory(directory);
-        }
+        Assert.IsFalse(settings.IsEnabled);
+        Assert.AreEqual(0, fileSystem.TemporaryFileCount);
     }
 
     [TestMethod]
-    public async Task ReadAndWrite_RespectCancellation()
+    public async Task RepeatedWriteOfSameValueIsIdempotent()
     {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var store = new FileBackgroundSyncSettingsStore(directory);
-            using var cancellation = new CancellationTokenSource();
-            cancellation.Cancel();
+        var fileSystem = new FakeBackgroundSyncSettingsFileSystem();
+        var store = CreateStore(fileSystem);
 
-            await Assert.ThrowsAsync<OperationCanceledException>(
-                async () => await store.ReadAsync(cancellation.Token));
-            await Assert.ThrowsAsync<OperationCanceledException>(
-                async () => await store.WriteAsync(
-                    new BackgroundSyncSettings(true),
-                    cancellation.Token));
-        }
-        finally
-        {
-            DeleteDirectory(directory);
-        }
+        await store.WriteAsync(new BackgroundSyncSettings(true));
+        await store.WriteAsync(new BackgroundSyncSettings(true));
+        var settings = await store.ReadAsync();
+
+        Assert.IsTrue(settings.IsEnabled);
+        Assert.AreEqual(2, fileSystem.ReplaceCount);
+        Assert.AreEqual(0, fileSystem.TemporaryFileCount);
     }
 
-    private static string CreateTemporaryDirectory()
-    {
-        var directory = Path.Combine(
-            Path.GetTempPath(),
-            $"PasswordManagerLocal.BackgroundSyncSettings.{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        return directory;
-    }
+    private static FileBackgroundSyncSettingsStore CreateStore(
+        FakeBackgroundSyncSettingsFileSystem fileSystem) =>
+        new(ApplicationDataDirectory(), fileSystem);
 
-    private static void DeleteDirectory(string directory)
-    {
-        try
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-        catch
-        {
-        }
-    }
+    private static string SettingsPath() => Path.Combine(
+        ApplicationDataDirectory(),
+        ApplicationFileNames.BackgroundSyncSettingsFileName);
+
+    private static string ApplicationDataDirectory() => Path.Combine(
+        Path.GetTempPath(),
+        "PasswordManagerLocal-BackgroundSyncSettingsStoreTests");
 }

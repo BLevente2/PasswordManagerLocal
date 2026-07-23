@@ -106,21 +106,21 @@ public sealed class WindowsIpcControlClient
             WindowsIpcJsonContext.Default.DatabaseResetResultDto,
             cancellationToken);
 
-    public Task<BackgroundSyncSettingsDto> GetBackgroundSyncSettingsAsync(
+    public Task<WindowsBackgroundSyncStateDto> GetBackgroundSyncStateAsync(
         CancellationToken cancellationToken = default) =>
         SendForResultAsync(
-            IpcOperationId.GetBackgroundSyncSettings,
-            WindowsIpcJsonContext.Default.BackgroundSyncSettingsDto,
+            IpcOperationId.GetBackgroundSyncState,
+            WindowsIpcJsonContext.Default.WindowsBackgroundSyncStateDto,
             cancellationToken);
 
-    public Task<BackgroundSyncSettingsDto> SetBackgroundSyncSettingsAsync(
-        BackgroundSyncSettingsDto settings,
+    public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
+        SetBackgroundSyncEnabledRequestDto request,
         CancellationToken cancellationToken = default) =>
         SendForResultAsync(
-            IpcOperationId.SetBackgroundSyncSettings,
-            settings,
-            WindowsIpcJsonContext.Default.BackgroundSyncSettingsDto,
-            WindowsIpcJsonContext.Default.BackgroundSyncSettingsDto,
+            IpcOperationId.SetBackgroundSyncEnabled,
+            request,
+            WindowsIpcJsonContext.Default.SetBackgroundSyncEnabledRequestDto,
+            WindowsIpcJsonContext.Default.WindowsBackgroundSyncStateDto,
             cancellationToken);
 
     private async Task<TResponse> SendForResultAsync<TResponse>(

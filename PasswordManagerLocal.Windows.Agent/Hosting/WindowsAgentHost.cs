@@ -1,4 +1,6 @@
 using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Windows.Agent.Background;
+using PasswordManagerLocal.Windows.Agent.Lifecycle;
 using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
 using PasswordManagerLocal.Windows.Agent.Tray;
@@ -19,6 +21,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private readonly IWindowsIpcServerHost _controlServer;
     private readonly IWindowsAgentEndpointHost _endpointHost;
     private readonly IWindowsAgentBackendRuntimeOwner _backendOwner;
+    private readonly IWindowsBackgroundSyncCoordinator _backgroundSyncCoordinator;
+    private readonly WindowsAgentLifecycleTransitionCoordinator _lifecycleTransitions;
     private readonly ITrayIconController _trayIcon;
     private readonly IWindowsUiOpenService _uiOpenService;
     private readonly IWindowsUiCloseService _uiCloseService;
@@ -49,6 +53,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         IWindowsIpcServerHost controlServer,
         IWindowsAgentEndpointHost endpointHost,
         IWindowsAgentBackendRuntimeOwner backendOwner,
+        IWindowsBackgroundSyncCoordinator backgroundSyncCoordinator,
+        WindowsAgentLifecycleTransitionCoordinator lifecycleTransitions,
         ITrayIconController trayIcon,
         IWindowsUiOpenService uiOpenService,
         IWindowsUiCloseService uiCloseService,
@@ -65,6 +71,10 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         _controlServer = controlServer ?? throw new ArgumentNullException(nameof(controlServer));
         _endpointHost = endpointHost ?? throw new ArgumentNullException(nameof(endpointHost));
         _backendOwner = backendOwner ?? throw new ArgumentNullException(nameof(backendOwner));
+        _backgroundSyncCoordinator = backgroundSyncCoordinator
+            ?? throw new ArgumentNullException(nameof(backgroundSyncCoordinator));
+        _lifecycleTransitions = lifecycleTransitions
+            ?? throw new ArgumentNullException(nameof(lifecycleTransitions));
         _trayIcon = trayIcon ?? throw new ArgumentNullException(nameof(trayIcon));
         _uiOpenService = uiOpenService ?? throw new ArgumentNullException(nameof(uiOpenService));
         _uiCloseService = uiCloseService ?? throw new ArgumentNullException(nameof(uiCloseService));
@@ -104,6 +114,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             _processLock.EnsureOwnership();
             Interlocked.Exchange(ref _backendStartupAttempted, 1);
             await _backendOwner.StartAsync(cancellationToken);
+            await _backgroundSyncCoordinator.InitializeAsync(cancellationToken);
             Interlocked.Exchange(ref _controlServerStartupAttempted, 1);
             await _controlServer.StartAsync(cancellationToken);
             EnsureBackendOwnerReadyForEndpointStart();
@@ -201,6 +212,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             _endpointHost.StateChanged -= HandleEndpointHostStateChanged;
             _lifecycleGate.Dispose();
             _shutdownCoordinationGate.Dispose();
+            _lifecycleTransitions.Dispose();
             GC.SuppressFinalize(this);
         }
 
@@ -251,6 +263,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private async Task<WindowsAgentShutdownResult> CoordinateUserExitAsync()
     {
         Task<WindowsAgentShutdownResult>? destructiveShutdown = null;
+        WindowsAgentLifecycleTransitionLease? transition = null;
+        var transitionOwnsShutdown = false;
         await _shutdownCoordinationGate.WaitAsync();
         try
         {
@@ -266,84 +280,122 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             }
             else
             {
-                var preflight = await ResolveTrayExitRegistrationAsync();
-                if (!preflight.CanProceed)
+                transition = await _lifecycleTransitions.EnterAsync(
+                    WindowsAgentLifecycleTransitionState.ShuttingDown,
+                    CancellationToken.None);
+                if (_stateStore.State != AgentState.Running || !_admissionGate.IsOpen)
                 {
-                    await ShowExitFailureAsync(preflight.SafeMessage!);
-                    return new WindowsAgentShutdownResult(
-                        WindowsAgentShutdownResultKind.Rejected,
-                        preflight.SafeMessage);
-                }
-
-                if (!_uiConnectionCoordinator.TryBeginIntentionalShutdown(out var registration))
-                {
-                    const string safeMessage = "The Windows agent is already coordinating an intentional exit.";
-                    await ShowExitFailureAsync(safeMessage);
-                    return new WindowsAgentShutdownResult(
-                        WindowsAgentShutdownResultKind.Rejected,
-                        safeMessage);
-                }
-
-                if (registration is null)
-                {
-                    var frozenProbe = _uiProcessLockProbe.Probe();
-                    if (frozenProbe != ProcessInstanceLockProbeResult.Free)
+                    destructiveShutdown = GetExistingShutdownTask();
+                    if (destructiveShutdown is null)
                     {
-                        _uiConnectionCoordinator.CancelIntentionalShutdown();
-                        const string safeMessage = "The UI is reconnecting. Close it and try again.";
+                        return new WindowsAgentShutdownResult(
+                            WindowsAgentShutdownResultKind.Rejected,
+                            "The Windows agent is no longer available for Tray Exit.");
+                    }
+                }
+                else
+                {
+                    var preflight = await ResolveTrayExitRegistrationAsync();
+                    if (!preflight.CanProceed)
+                    {
+                        await ShowExitFailureAsync(preflight.SafeMessage!);
+                        return new WindowsAgentShutdownResult(
+                            WindowsAgentShutdownResultKind.Rejected,
+                            preflight.SafeMessage);
+                    }
+
+                    if (!_uiConnectionCoordinator.TryBeginIntentionalShutdown(out var registration))
+                    {
+                        const string safeMessage = "The Windows agent is already coordinating an intentional exit.";
                         await ShowExitFailureAsync(safeMessage);
                         return new WindowsAgentShutdownResult(
                             WindowsAgentShutdownResultKind.Rejected,
                             safeMessage);
                     }
-                }
-                else
-                {
-                    WindowsUiCloseResult closeResult;
-                    try
+
+                    if (registration is null)
                     {
-                        closeResult = await _uiCloseService.RequestIntentionalShutdownAsync();
+                        var frozenProbe = _uiProcessLockProbe.Probe();
+                        if (frozenProbe != ProcessInstanceLockProbeResult.Free)
+                        {
+                            _uiConnectionCoordinator.CancelIntentionalShutdown();
+                            const string safeMessage = "The UI is reconnecting. Close it and try again.";
+                            await ShowExitFailureAsync(safeMessage);
+                            return new WindowsAgentShutdownResult(
+                                WindowsAgentShutdownResultKind.Rejected,
+                                safeMessage);
+                        }
                     }
-                    catch (Exception exception)
+                    else
                     {
-                        closeResult = new WindowsUiCloseResult(
-                            WindowsUiCloseResultKind.Failed,
-                            "The UI intentional-shutdown acknowledgement failed.");
-                        _uiConnectionCoordinator.CancelIntentionalShutdown();
-                        await ShowExitFailureAsync(closeResult.SafeMessage);
-                        return new WindowsAgentShutdownResult(
-                            WindowsAgentShutdownResultKind.Rejected,
-                            closeResult.SafeMessage,
-                            exception);
+                        WindowsUiCloseResult closeResult;
+                        try
+                        {
+                            closeResult = await _uiCloseService.RequestIntentionalShutdownAsync();
+                        }
+                        catch (Exception exception)
+                        {
+                            closeResult = new WindowsUiCloseResult(
+                                WindowsUiCloseResultKind.Failed,
+                                "The UI intentional-shutdown acknowledgement failed.");
+                            _uiConnectionCoordinator.CancelIntentionalShutdown();
+                            await ShowExitFailureAsync(closeResult.SafeMessage);
+                            return new WindowsAgentShutdownResult(
+                                WindowsAgentShutdownResultKind.Rejected,
+                                closeResult.SafeMessage,
+                                exception);
+                        }
+
+                        if (!closeResult.IsAcknowledged)
+                        {
+                            _uiConnectionCoordinator.CancelIntentionalShutdown();
+                            await ShowExitFailureAsync(closeResult.SafeMessage);
+                            return new WindowsAgentShutdownResult(
+                                WindowsAgentShutdownResultKind.Rejected,
+                                closeResult.SafeMessage);
+                        }
                     }
 
-                    if (!closeResult.IsAcknowledged)
+                    Interlocked.Exchange(ref _shutdownRequested, 1);
+                    _admissionGate.ClosePermanently();
+                    lock (_shutdownGate)
                     {
-                        _uiConnectionCoordinator.CancelIntentionalShutdown();
-                        await ShowExitFailureAsync(closeResult.SafeMessage);
-                        return new WindowsAgentShutdownResult(
-                            WindowsAgentShutdownResultKind.Rejected,
-                            closeResult.SafeMessage);
+                        if (_shutdownTask is null)
+                        {
+                            destructiveShutdown = Task.Run(
+                                () => ShutdownCoreAsync(
+                                    WindowsAgentShutdownReason.UserRequestedExit));
+                            _shutdownTask = destructiveShutdown;
+                            transitionOwnsShutdown = true;
+                        }
+                        else
+                        {
+                            destructiveShutdown = _shutdownTask;
+                        }
                     }
-                }
-
-                Interlocked.Exchange(ref _shutdownRequested, 1);
-                _admissionGate.ClosePermanently();
-                lock (_shutdownGate)
-                {
-                    destructiveShutdown = _shutdownTask ??= Task.Run(
-                        () => ShutdownCoreAsync(
-                            WindowsAgentShutdownReason.UserRequestedExit));
                 }
             }
         }
         finally
         {
+            if (!transitionOwnsShutdown && transition is not null)
+                await transition.DisposeAsync();
             _shutdownCoordinationGate.Release();
         }
 
-        return await (destructiveShutdown ?? throw new InvalidOperationException(
-            "The coordinated shutdown task was not created."));
+        var shutdown = destructiveShutdown ?? throw new InvalidOperationException(
+            "The coordinated shutdown task was not created.");
+        if (!transitionOwnsShutdown)
+            return await shutdown;
+
+        try
+        {
+            return await shutdown;
+        }
+        finally
+        {
+            await transition!.DisposeAsync();
+        }
     }
 
     private Task<WindowsAgentShutdownResult>? GetExistingShutdownTask()
@@ -368,6 +420,9 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         await _shutdownCoordinationGate.WaitAsync();
         try
         {
+            await using var transition = await _lifecycleTransitions.EnterAsync(
+                WindowsAgentLifecycleTransitionState.ShuttingDown,
+                CancellationToken.None);
             return await ShutdownCoreAsync(reason);
         }
         finally
@@ -422,6 +477,9 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                 await CaptureCriticalAsync(() => _endpointHost.StopAsync());
 
             await CaptureCriticalAsync(() => _admissionGate.WaitForDrainAsync(CancellationToken.None));
+
+            if (Volatile.Read(ref _backendStartupAttempted) != 0)
+                await CaptureCriticalAsync(() => _backgroundSyncCoordinator.ShutdownAsync());
 
             if (Volatile.Read(ref _backendStartupAttempted) != 0)
                 await CaptureCriticalAsync(() => _backendOwner.StopAsync());
@@ -492,7 +550,10 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private void EnsureBackendOwnerReadyForEndpointStart()
     {
         var snapshot = _backendOwner.Snapshot;
-        if (snapshot.State != WindowsAgentBackendOwnerState.Ready ||
+        var recoverableDatabaseFailure =
+            snapshot.State == WindowsAgentBackendOwnerState.Failed &&
+            snapshot.Runtime.FailureKind == BackendRuntimeFailureKind.DatabaseCompatibility;
+        if ((snapshot.State != WindowsAgentBackendOwnerState.Ready && !recoverableDatabaseFailure) ||
             snapshot.IsResetting ||
             snapshot.RequiresProcessRestart)
         {

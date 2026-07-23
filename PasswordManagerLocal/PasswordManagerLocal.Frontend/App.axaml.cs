@@ -34,8 +34,7 @@ public partial class App : Application
         var mainViewModel = new MainViewModel(
             endpoints,
             _context.BackendClient,
-            _context.BackgroundSyncSettingsStore,
-            _context.IsBackgroundSyncSettingAvailable);
+            _context.BackgroundSyncSettingsClient);
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

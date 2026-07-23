@@ -16,6 +16,16 @@
   "Settings_Background_Description": "Background synchronization with automatic startup.",
   "Settings_BackgroundSync_Label": "Background synchronization",
   "Settings_BackgroundSync_Description": "Continue synchronization when the application interface is closed and start it automatically when this device starts.",
+  "Settings_BackgroundSync_Loading": "Loading the authoritative background synchronization state…",
+  "Settings_BackgroundSync_Enabled": "Background synchronization is enabled.",
+  "Settings_BackgroundSync_Disabled": "Background synchronization is disabled.",
+  "Settings_BackgroundSync_Enabling": "Enabling background synchronization…",
+  "Settings_BackgroundSync_Disabling": "Disabling background synchronization…",
+  "Settings_BackgroundSync_Unavailable": "The background synchronization setting is currently unavailable.",
+  "Settings_BackgroundSync_StartupFailure": "Automatic startup could not be configured for the current Windows user.",
+  "Settings_BackgroundSync_PersistenceFailure": "The background synchronization setting could not be saved safely.",
+  "Settings_BackgroundSync_Degraded": "The saved setting, automatic startup, and active background runtime are not fully consistent.",
+  "Settings_BackgroundSync_ReadBackGuidance": "The response was interrupted, so the setting was read back from the agent. Review the displayed state before trying again.",
   "Shell_PasswordVault": "Passwords",
   "Shell_Profile": "Profile",
   "Shell_Devices": "Devices",
@@ -475,5 +485,6 @@
   "Passwords_Export_Confirm_Message_Tags": "The selected tags will be exported to {0}. Review the option below, then continue.",
   "Passwords_Export_Copy_Tags_Success": "Selected tags copied successfully.",
   "Passwords_Export_Move_Tags_Success": "Selected tags moved successfully.",
-  "Passwords_CustomColors_BackToTagEditor": "Back to tag editor"
+  "Passwords_CustomColors_BackToTagEditor": "Back to tag editor",
+  "Settings_BackgroundSync_Updating": "Background synchronization is being updated by the Windows agent…"
 }

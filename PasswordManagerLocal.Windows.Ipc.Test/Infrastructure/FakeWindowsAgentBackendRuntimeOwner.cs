@@ -11,6 +11,8 @@ internal sealed class FakeWindowsAgentBackendRuntimeOwner : IWindowsAgentBackend
     public Exception? StartFailure { get; set; }
     public Exception? StopFailure { get; set; }
     public Exception? ResetFailure { get; set; }
+    public Exception? BackgroundLeaseFailure { get; set; }
+    public Exception? BackgroundLeaseDisposeFailure { get; set; }
     public Exception? DisposeFailure { get; set; }
     public WindowsAgentBackendOwnerState StateAfterStart { get; set; } =
         WindowsAgentBackendOwnerState.Ready;
@@ -22,6 +24,8 @@ internal sealed class FakeWindowsAgentBackendRuntimeOwner : IWindowsAgentBackend
     public ICollection<string>? OperationLog { get; set; }
     public Func<CancellationToken, Task<AgentInteractiveBackendBinding>>? InteractiveBindingFactory { get; set; }
     public int OpenBindingCount { get; private set; }
+    public int BackgroundLeaseAcquireCount { get; private set; }
+    public FakeAgentBackendRuntimeLease? LastBackgroundLease { get; private set; }
 
     public event EventHandler? StateChanged;
 
@@ -39,6 +43,47 @@ internal sealed class FakeWindowsAgentBackendRuntimeOwner : IWindowsAgentBackend
         };
         StateChanged?.Invoke(this, EventArgs.Empty);
         return Task.CompletedTask;
+    }
+
+    public Task<IBackendRuntimeLease> AcquireBackgroundSyncLeaseAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        BackgroundLeaseAcquireCount++;
+        if (BackgroundLeaseFailure is not null)
+            return Task.FromException<IBackendRuntimeLease>(BackgroundLeaseFailure);
+
+        LastBackgroundLease = new FakeAgentBackendRuntimeLease(
+            BackendLifetimeReason.BackgroundSync,
+            OperationLog,
+            () =>
+            {
+                if (BackgroundLeaseDisposeFailure is not null)
+                    return ValueTask.FromException(BackgroundLeaseDisposeFailure);
+
+                var remainingReasons = Snapshot.ActiveReasons & ~BackendLifetimeReason.BackgroundSync;
+                Snapshot = Snapshot with
+                {
+                    Runtime = Snapshot.Runtime with
+                    {
+                        State = remainingReasons == BackendLifetimeReason.None
+                            ? BackendRuntimeState.Stopped
+                            : BackendRuntimeState.Ready
+                    },
+                    ActiveReasons = remainingReasons,
+                    ChangedAtUtc = DateTimeOffset.UtcNow
+                };
+                StateChanged?.Invoke(this, EventArgs.Empty);
+                return ValueTask.CompletedTask;
+            });
+        Snapshot = Snapshot with
+        {
+            Runtime = Snapshot.Runtime with { State = BackendRuntimeState.Ready },
+            ActiveReasons = Snapshot.ActiveReasons | BackendLifetimeReason.BackgroundSync,
+            ChangedAtUtc = DateTimeOffset.UtcNow
+        };
+        StateChanged?.Invoke(this, EventArgs.Empty);
+        return Task.FromResult<IBackendRuntimeLease>(LastBackgroundLease);
     }
 
     public Task<AgentInteractiveBackendBinding> OpenInteractiveBindingAsync(

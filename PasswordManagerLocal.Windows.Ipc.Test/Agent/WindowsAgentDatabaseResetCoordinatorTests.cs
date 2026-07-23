@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Agent.DatabaseReset;
 using PasswordManagerLocal.Windows.Agent.Hosting;
+using PasswordManagerLocal.Windows.Agent.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 
 namespace PasswordManagerLocal.Windows.Ipc.Test.Agent;
@@ -10,7 +11,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Agent;
 public sealed class WindowsAgentDatabaseResetCoordinatorTests
 {
     [TestMethod]
-    public async Task ResetStopsEndpointBeforeRuntimeAndRestartsAcceptanceAfterward()
+    public async Task ResetSuspendsBackgroundBeforeEndpointAndRestoresAfterRuntimeReset()
     {
         var operations = new List<string>();
         var endpoint = new FakeWindowsAgentEndpointHost { OperationLog = operations };
@@ -19,18 +20,52 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             OperationLog = operations,
             Snapshot = CreateResettableSnapshot()
         };
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            OperationLog = operations,
+            State = FakeWindowsBackgroundSyncCoordinator.OperationalState()
+        };
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
         var coordinator = new WindowsAgentDatabaseResetCoordinator(
             endpoint,
             backend,
-            new WindowsAgentShutdownCoordinator());
+            new WindowsAgentShutdownCoordinator(),
+            background,
+            transitions);
 
         var result = await coordinator.ResetAsync();
 
         Assert.IsTrue(result.Completed);
         CollectionAssert.AreEqual(
-            new[] { "endpoint-stop", "backend-reset", "endpoint-start" },
+            new[]
+            {
+                "background-suspend",
+                "endpoint-stop",
+                "backend-reset",
+                "background-restore",
+                "endpoint-start"
+            },
             operations);
+        Assert.AreEqual(true, background.LastRestoreEnabled);
         Assert.IsFalse(coordinator.IsResetting);
+    }
+
+    [TestMethod]
+    public async Task ResetWithBackgroundDisabledDoesNotRestoreLease()
+    {
+        var background = new FakeWindowsBackgroundSyncCoordinator();
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateCoordinator(
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner { Snapshot = CreateResettableSnapshot() },
+            background,
+            transitions);
+
+        var result = await coordinator.ResetAsync();
+
+        Assert.IsTrue(result.Completed);
+        Assert.AreEqual(false, background.LastRestoreEnabled);
+        Assert.IsFalse(background.State.IsBackgroundLeaseActive);
     }
 
     [TestMethod]
@@ -38,10 +73,12 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var endpoint = new FakeWindowsAgentEndpointHost { StopRelease = release };
-        var coordinator = new WindowsAgentDatabaseResetCoordinator(
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateCoordinator(
             endpoint,
             new FakeWindowsAgentBackendRuntimeOwner { Snapshot = CreateResettableSnapshot() },
-            new WindowsAgentShutdownCoordinator());
+            new FakeWindowsBackgroundSyncCoordinator(),
+            transitions);
 
         var first = coordinator.ResetAsync();
         await WaitUntilAsync(() => coordinator.IsResetting);
@@ -65,10 +102,12 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
         {
             Snapshot = CreateResettableSnapshot()
         };
-        var coordinator = new WindowsAgentDatabaseResetCoordinator(
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateCoordinator(
             endpoint,
             backend,
-            new WindowsAgentShutdownCoordinator());
+            new FakeWindowsBackgroundSyncCoordinator(),
+            transitions);
         using var cancellation = new CancellationTokenSource();
 
         var reset = coordinator.ResetAsync(cancellation.Token);
@@ -83,7 +122,7 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
     }
 
     [TestMethod]
-    public async Task FailureRequiresProcessRestartAndRequestsAgentShutdown()
+    public async Task ResetFailureRequiresRestartAndDoesNotRestoreBackgroundLease()
     {
         var failure = new IOException("database deletion failed");
         var backend = new FakeWindowsAgentBackendRuntimeOwner
@@ -91,20 +130,62 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             ResetFailure = failure,
             Snapshot = CreateResettableSnapshot()
         };
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            State = FakeWindowsBackgroundSyncCoordinator.OperationalState()
+        };
         var shutdown = new WindowsAgentShutdownCoordinator();
         WindowsAgentShutdownReason? shutdownReason = null;
         shutdown.ShutdownRequested += (_, args) => shutdownReason = args.Reason;
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
         var coordinator = new WindowsAgentDatabaseResetCoordinator(
             new FakeWindowsAgentEndpointHost(),
             backend,
-            shutdown);
+            shutdown,
+            background,
+            transitions);
 
         var result = await coordinator.ResetAsync();
 
         Assert.IsFalse(result.Completed);
         Assert.IsTrue(result.RequiresProcessRestart);
         Assert.AreEqual(1, backend.RequireRestartCount);
+        Assert.AreEqual(0, background.RestoreCount);
         Assert.AreEqual(WindowsAgentShutdownReason.RestartRequired, shutdownReason);
+    }
+
+
+    [TestMethod]
+    public async Task BackgroundRestoreFailureRequiresRestartAndDoesNotRestartEndpoint()
+    {
+        var endpoint = new FakeWindowsAgentEndpointHost();
+        var backend = new FakeWindowsAgentBackendRuntimeOwner
+        {
+            Snapshot = CreateResettableSnapshot()
+        };
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            State = FakeWindowsBackgroundSyncCoordinator.OperationalState(),
+            RestoreFailure = new IOException("background restore")
+        };
+        var shutdown = new WindowsAgentShutdownCoordinator();
+        WindowsAgentShutdownReason? reason = null;
+        shutdown.ShutdownRequested += (_, args) => reason = args.Reason;
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = new WindowsAgentDatabaseResetCoordinator(
+            endpoint,
+            backend,
+            shutdown,
+            background,
+            transitions);
+
+        var result = await coordinator.ResetAsync();
+
+        Assert.IsFalse(result.Completed);
+        Assert.IsTrue(result.RequiresProcessRestart);
+        Assert.AreEqual(1, background.RestoreCount);
+        Assert.AreEqual(0, endpoint.StartCount);
+        Assert.AreEqual(WindowsAgentShutdownReason.RestartRequired, reason);
     }
 
     [TestMethod]
@@ -112,10 +193,12 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
     {
         var endpoint = new FakeWindowsAgentEndpointHost();
         var backend = new FakeWindowsAgentBackendRuntimeOwner();
-        var coordinator = new WindowsAgentDatabaseResetCoordinator(
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateCoordinator(
             endpoint,
             backend,
-            new WindowsAgentShutdownCoordinator());
+            new FakeWindowsBackgroundSyncCoordinator(),
+            transitions);
 
         var result = await coordinator.ResetAsync();
 
@@ -126,6 +209,17 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
         Assert.IsNotNull(result.SafeMessage);
         StringAssert.Contains(result.SafeMessage, "database compatibility failure");
     }
+
+    private static WindowsAgentDatabaseResetCoordinator CreateCoordinator(
+        FakeWindowsAgentEndpointHost endpoint,
+        FakeWindowsAgentBackendRuntimeOwner backend,
+        FakeWindowsBackgroundSyncCoordinator background,
+        WindowsAgentLifecycleTransitionCoordinator transitions) => new(
+            endpoint,
+            backend,
+            new WindowsAgentShutdownCoordinator(),
+            background,
+            transitions);
 
     private static PasswordManagerLocal.Windows.Agent.Backend.WindowsAgentBackendOwnerSnapshot CreateResettableSnapshot() =>
         FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(

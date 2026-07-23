@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Windows.Agent.Lifecycle;
 using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.Agent.Ui;
 using PasswordManagerLocal.Runtime.Abstractions;
@@ -638,6 +639,155 @@ public sealed class WindowsAgentHostTests
         Assert.AreEqual(AgentState.Stopped, state.State);
     }
 
+
+    [TestMethod]
+    public async Task StartupRestoresBackgroundStateBeforeControlAndEndpointAcceptance()
+    {
+        var operations = new List<string>();
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            State = FakeWindowsBackgroundSyncCoordinator.OperationalState(),
+            OperationLog = operations
+        };
+        var control = new FakeWindowsIpcServerHost { OperationLog = operations };
+        var endpoint = new FakeWindowsAgentEndpointHost { OperationLog = operations };
+        var backend = new FakeWindowsAgentBackendRuntimeOwner { OperationLog = operations };
+        await using var host = CreateHost(
+            new FakeProcessInstanceLock { OperationLog = operations },
+            control,
+            endpoint,
+            backend,
+            new FakeTrayIconController { OperationLog = operations },
+            backgroundSync: background);
+
+        await host.StartAsync();
+
+        Assert.AreEqual(1, background.InitializeCount);
+        Assert.IsTrue(operations.IndexOf("backend-start") < operations.IndexOf("background-initialize"));
+        Assert.IsTrue(operations.IndexOf("background-initialize") < operations.IndexOf("control-start"));
+        Assert.IsTrue(operations.IndexOf("background-initialize") < operations.IndexOf("endpoint-start"));
+    }
+
+    [TestMethod]
+    public async Task BackgroundRestorationFailureRollsBackStartupBeforeAdmissionOpens()
+    {
+        var processLock = new FakeProcessInstanceLock();
+        var admissionGate = new WindowsAgentAdmissionGate();
+        var control = new FakeWindowsIpcServerHost();
+        var endpoint = new FakeWindowsAgentEndpointHost();
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            InitializeFailure = new IOException("background restoration")
+        };
+        await using var host = CreateHost(
+            processLock,
+            control,
+            endpoint,
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new FakeTrayIconController(),
+            admissionGate: admissionGate,
+            backgroundSync: background);
+
+        await Assert.ThrowsExactlyAsync<IOException>(() => host.StartAsync());
+
+        Assert.AreEqual(1, background.InitializeCount);
+        Assert.AreEqual(0, control.StartCount);
+        Assert.AreEqual(0, endpoint.StartCount);
+        Assert.AreEqual(AgentAdmissionState.Closed, admissionGate.State);
+        Assert.IsTrue(processLock.IsDisposed);
+    }
+
+    [TestMethod]
+    public async Task TrayExitWaitsForBackgroundTransitionBeforeUiHandshake()
+    {
+        var lifecycleTransitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var close = new FakeWindowsUiCloseService();
+        var coordinator = new FakeUiConnectionCoordinator
+        {
+            Registration = FakeUiConnectionCoordinator.CreateRegistration()
+        };
+        await using var host = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new FakeTrayIconController(),
+            close: close,
+            coordinator: coordinator,
+            lifecycleTransitions: lifecycleTransitions);
+        await host.StartAsync();
+        await using var backgroundTransition = await lifecycleTransitions.EnterAsync(
+            WindowsAgentLifecycleTransitionState.ChangingBackgroundSync);
+
+        var exit = host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
+        await Task.Delay(25);
+
+        Assert.AreEqual(0, close.RequestCount);
+        await backgroundTransition.DisposeAsync();
+        var result = await exit;
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Completed, result.Kind);
+        Assert.AreEqual(1, close.RequestCount);
+    }
+
+    [TestMethod]
+    public async Task ShutdownReleasesBackgroundLeaseBeforeBackendStopWithoutChangingSetting()
+    {
+        var operations = new List<string>();
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            State = FakeWindowsBackgroundSyncCoordinator.OperationalState(),
+            OperationLog = operations
+        };
+        var backend = new FakeWindowsAgentBackendRuntimeOwner { OperationLog = operations };
+        await using var host = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            backend,
+            new FakeTrayIconController(),
+            backgroundSync: background);
+        await host.StartAsync();
+        operations.Clear();
+
+        var result = await host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Completed, result.Kind);
+        Assert.AreEqual(1, background.ShutdownCount);
+        Assert.IsTrue(operations.IndexOf("background-shutdown") < operations.IndexOf("backend-stop"));
+        Assert.IsTrue(background.State.IsEnabled);
+        Assert.IsFalse(background.State.IsBackgroundLeaseActive);
+    }
+
+
+    [TestMethod]
+    public async Task BackgroundLeaseCleanupFailureRetainsProcessOwnership()
+    {
+        var processLock = new FakeProcessInstanceLock();
+        var background = new FakeWindowsBackgroundSyncCoordinator
+        {
+            State = FakeWindowsBackgroundSyncCoordinator.OperationalState(),
+            ShutdownFailure = new IOException("background lease cleanup")
+        };
+        var host = CreateHost(
+            processLock,
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new FakeTrayIconController(),
+            backgroundSync: background);
+        await host.StartAsync();
+
+        var result = await host.RequestShutdownAsync(
+            WindowsAgentShutdownReason.ApplicationExit);
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Failed, result.Kind);
+        Assert.IsFalse(processLock.IsDisposed);
+        Assert.IsTrue(host.RetainsProcessOwnershipUntilTermination);
+        Assert.AreEqual(1, background.ShutdownCount);
+        await Assert.ThrowsExactlyAsync<IOException>(() => host.DisposeAsync().AsTask());
+    }
+
     private static WindowsAgentHost CreateHost(
         FakeProcessInstanceLock processLock,
         FakeWindowsIpcServerHost control,
@@ -652,7 +802,9 @@ public sealed class WindowsAgentHostTests
         FakeProcessInstanceLockProbe? uiProcessLockProbe = null,
         WindowsAgentAdmissionGate? admissionGate = null,
         TimeSpan? uiRegistrationPreflightTimeout = null,
-        TimeSpan? uiRegistrationPollInterval = null) =>
+        TimeSpan? uiRegistrationPollInterval = null,
+        FakeWindowsBackgroundSyncCoordinator? backgroundSync = null,
+        WindowsAgentLifecycleTransitionCoordinator? lifecycleTransitions = null) =>
         new(
             processLock,
             uiProcessLockProbe ?? new FakeProcessInstanceLockProbe(),
@@ -660,6 +812,8 @@ public sealed class WindowsAgentHostTests
             control,
             endpoint,
             backend,
+            backgroundSync ?? new FakeWindowsBackgroundSyncCoordinator(),
+            lifecycleTransitions ?? new WindowsAgentLifecycleTransitionCoordinator(),
             tray,
             open ?? new FakeWindowsUiOpenService(),
             close ?? new FakeWindowsUiCloseService(),

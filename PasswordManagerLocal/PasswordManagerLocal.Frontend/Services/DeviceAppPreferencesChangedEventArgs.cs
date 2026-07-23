@@ -2,10 +2,14 @@ namespace PasswordManagerLocal.Frontend.Services;
 
 public sealed class DeviceAppPreferencesChangedEventArgs : EventArgs
 {
-    public DeviceAppPreferencesChangedEventArgs(bool backgroundSyncEnabled)
+    public DeviceAppPreferencesChangedEventArgs(
+        BackgroundSyncClientState state,
+        bool wasOutcomeUncertain)
     {
-        BackgroundSyncEnabled = backgroundSyncEnabled;
+        State = state ?? throw new ArgumentNullException(nameof(state));
+        WasOutcomeUncertain = wasOutcomeUncertain;
     }
 
-    public bool BackgroundSyncEnabled { get; }
+    public BackgroundSyncClientState State { get; }
+    public bool WasOutcomeUncertain { get; }
 }

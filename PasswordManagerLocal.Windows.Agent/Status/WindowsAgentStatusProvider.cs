@@ -2,6 +2,7 @@ using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Windows.Agent.Background;
 using PasswordManagerLocal.Windows.Agent.DatabaseReset;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
 using PasswordManagerLocal.Windows.Agent.Hosting;
@@ -16,7 +17,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
     private readonly IWindowsAgentStateSource _stateSource;
     private readonly IWindowsAgentAdmissionGate _admissionGate;
     private readonly IUiConnectionCoordinator _uiCoordinator;
-    private readonly IWindowsBackgroundSyncSettingsReader _settingsReader;
+    private readonly IWindowsBackgroundSyncCoordinator _backgroundSyncCoordinator;
     private readonly IWindowsAgentBackendRuntimeOwner _backendOwner;
     private readonly IWindowsAgentEndpointHost _endpointHost;
     private readonly AgentInteractiveEndpointAdapter _endpointAdapter;
@@ -26,7 +27,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         IWindowsAgentStateSource stateSource,
         IWindowsAgentAdmissionGate admissionGate,
         IUiConnectionCoordinator uiCoordinator,
-        IWindowsBackgroundSyncSettingsReader settingsReader,
+        IWindowsBackgroundSyncCoordinator backgroundSyncCoordinator,
         IWindowsAgentBackendRuntimeOwner backendOwner,
         IWindowsAgentEndpointHost endpointHost,
         AgentInteractiveEndpointAdapter endpointAdapter,
@@ -35,7 +36,8 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         _stateSource = stateSource ?? throw new ArgumentNullException(nameof(stateSource));
         _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _uiCoordinator = uiCoordinator ?? throw new ArgumentNullException(nameof(uiCoordinator));
-        _settingsReader = settingsReader ?? throw new ArgumentNullException(nameof(settingsReader));
+        _backgroundSyncCoordinator = backgroundSyncCoordinator
+            ?? throw new ArgumentNullException(nameof(backgroundSyncCoordinator));
         _backendOwner = backendOwner ?? throw new ArgumentNullException(nameof(backendOwner));
         _endpointHost = endpointHost ?? throw new ArgumentNullException(nameof(endpointHost));
         _endpointAdapter = endpointAdapter ?? throw new ArgumentNullException(nameof(endpointAdapter));
@@ -44,19 +46,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
 
     public async Task<AgentStatusDto> GetAgentStatusAsync(CancellationToken cancellationToken)
     {
-        bool backgroundSyncEnabled;
-        try
-        {
-            backgroundSyncEnabled = await _settingsReader.ReadIsEnabledAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            backgroundSyncEnabled = false;
-        }
+        var backgroundState = await _backgroundSyncCoordinator.GetStateAsync(cancellationToken);
 
         var owner = _backendOwner.Snapshot;
         var runtimeRunning = owner.Runtime.State is
@@ -85,14 +75,14 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
             IsUiConnected: _uiCoordinator.RegisteredConnectionId is not null,
             BackendOwnedByAgent: true,
             IsBackendRunning: runtimeRunning,
-            IsBackgroundSyncEnabled: backgroundSyncEnabled,
+            IsBackgroundSyncEnabled: backgroundState.IsEnabled,
             RequiresProcessRestart: requiresProcessRestart,
             LastFailure: failure,
             StartedAtUtc: _stateSource.StartedAtUtc,
             IsEndpointHostReady: endpointReady,
             IsDatabaseResetInProgress: _resetCoordinator.IsResetting,
             HasInteractiveUiLease: (owner.ActiveReasons & BackendLifetimeReason.InteractiveUi) != 0,
-            HasBackgroundSyncLease: (owner.ActiveReasons & BackendLifetimeReason.BackgroundSync) != 0);
+            HasBackgroundSyncLease: backgroundState.IsBackgroundLeaseActive);
     }
 
     public Task<BackendRuntimeStatusDto> GetBackendRuntimeStatusAsync(

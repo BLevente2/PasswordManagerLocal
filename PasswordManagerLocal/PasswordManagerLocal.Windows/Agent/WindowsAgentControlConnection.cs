@@ -225,6 +225,43 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
         }
     }
 
+    public async Task<WindowsBackgroundSyncStateDto> GetBackgroundSyncStateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _connectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            if (_connection?.IsConnected != true)
+                throw new InvalidOperationException("The Windows agent control connection is unavailable.");
+            return await _connection.GetBackgroundSyncStateAsync(cancellationToken);
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    public async Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
+        bool isEnabled,
+        CancellationToken cancellationToken = default)
+    {
+        await _connectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            if (_connection?.IsConnected != true)
+                throw new InvalidOperationException("The Windows agent control connection is unavailable.");
+            return await _connection.SetBackgroundSyncEnabledAsync(
+                new SetBackgroundSyncEnabledRequestDto(isEnabled),
+                cancellationToken);
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
     public async Task<DatabaseResetResultDto> ResetDatabaseAsync(
         CancellationToken cancellationToken = default)
     {

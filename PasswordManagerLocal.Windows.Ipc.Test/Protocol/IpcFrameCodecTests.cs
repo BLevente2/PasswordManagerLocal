@@ -17,7 +17,7 @@ public sealed class IpcFrameCodecTests
         Assert.AreEqual(5, (int)IpcMessageKind.RequestCancellation);
         Assert.AreEqual(1, (int)IpcOperationId.Ping);
         Assert.AreEqual(24, (int)IpcOperationId.RequestAgentExit);
-        Assert.AreEqual(31, (int)IpcOperationId.SetBackgroundSyncSettings);
+        Assert.AreEqual(31, (int)IpcOperationId.SetBackgroundSyncEnabled);
     }
 
     [TestMethod]

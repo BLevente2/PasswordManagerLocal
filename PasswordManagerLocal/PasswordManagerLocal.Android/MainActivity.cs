@@ -42,7 +42,7 @@ public class MainActivity : AvaloniaMainActivity
         _backendClient ??= application.CreateBackendClient();
         var frontendContext = new FrontendApplicationContext(
             _backendClient,
-            application.BackgroundSyncSettingsStore,
+            new StoreBackgroundSyncSettingsClient(application.BackgroundSyncSettingsStore),
             application.ApplicationDataDirectory);
 
         return AppBuilder.Configure(() => new App(frontendContext))

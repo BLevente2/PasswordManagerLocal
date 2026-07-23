@@ -15,19 +15,19 @@ public sealed class WindowsIpcMalformedInputTests
     public async Task MalformedTypedPayloadReturnsProtocolSafeFailure()
     {
         var handler = new DelegateWindowsIpcRequestHandler(
-            IpcOperationId.SetBackgroundSyncSettings,
+            IpcOperationId.SetBackgroundSyncEnabled,
             (context, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 context.GetRequiredPayload(
-                    WindowsIpcJsonContext.Default.BackgroundSyncSettingsDto);
+                    WindowsIpcJsonContext.Default.SetBackgroundSyncEnabledRequestDto);
                 return Task.FromResult(context.Success());
             });
         await using var session = await IpcTestSession.CreateAsync(new[] { handler });
 
         var exception = await Assert.ThrowsAsync<IpcRemoteException>(async () =>
             await session.Client.SendAsync(
-                IpcOperationId.SetBackgroundSyncSettings,
+                IpcOperationId.SetBackgroundSyncEnabled,
                 new byte[] { 0xFF, 0x00, 0x11 }));
 
         Assert.AreEqual(IpcErrorCode.InvalidPayload, exception.Error.ErrorCode);

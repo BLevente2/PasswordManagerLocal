@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Frontend.Services;
 
 namespace PasswordManagerLocal.Frontend;
 
@@ -7,20 +8,17 @@ public sealed record FrontendApplicationContext
 {
     public FrontendApplicationContext(
         IFrontendBackendClient<IEndpoints> backendClient,
-        IBackgroundSyncSettingsStore backgroundSyncSettingsStore,
-        string applicationDataDirectory,
-        bool isBackgroundSyncSettingAvailable = true)
+        IBackgroundSyncSettingsClient backgroundSyncSettingsClient,
+        string applicationDataDirectory)
     {
         BackendClient = backendClient ?? throw new ArgumentNullException(nameof(backendClient));
-        BackgroundSyncSettingsStore = backgroundSyncSettingsStore
-            ?? throw new ArgumentNullException(nameof(backgroundSyncSettingsStore));
+        BackgroundSyncSettingsClient = backgroundSyncSettingsClient
+            ?? throw new ArgumentNullException(nameof(backgroundSyncSettingsClient));
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationDataDirectory);
         ApplicationDataDirectory = Path.GetFullPath(applicationDataDirectory);
-        IsBackgroundSyncSettingAvailable = isBackgroundSyncSettingAvailable;
     }
 
     public IFrontendBackendClient<IEndpoints> BackendClient { get; }
-    public IBackgroundSyncSettingsStore BackgroundSyncSettingsStore { get; }
+    public IBackgroundSyncSettingsClient BackgroundSyncSettingsClient { get; }
     public string ApplicationDataDirectory { get; }
-    public bool IsBackgroundSyncSettingAvailable { get; }
 }

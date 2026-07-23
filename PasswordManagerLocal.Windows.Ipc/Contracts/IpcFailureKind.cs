@@ -11,5 +11,6 @@ public enum IpcFailureKind
     Protocol = 6,
     AgentShell = 7,
     UiActivation = 8,
-    UiLaunch = 9
+    UiLaunch = 9,
+    BackgroundConfiguration = 10
 }

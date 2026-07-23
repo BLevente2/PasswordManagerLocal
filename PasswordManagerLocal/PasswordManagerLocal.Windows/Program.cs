@@ -93,9 +93,8 @@ internal sealed class Program
                 new WindowsFirewallPermissionManager());
             var frontendContext = new FrontendApplicationContext(
                 backendClient,
-                new WindowsPhase6BackgroundSyncSettingsStore(),
-                applicationDataDirectory,
-                isBackgroundSyncSettingAvailable: false);
+                new WindowsAgentBackgroundSyncSettingsClient(agentConnection),
+                applicationDataDirectory);
             BuildAvaloniaApp(frontendContext)
                 .StartWithClassicDesktopLifetime(args);
         }

@@ -24,12 +24,14 @@ public sealed class WindowsIpcOperationAuthorizer : IWindowsIpcOperationAuthoriz
             IpcOperationId.GetBackendRuntimeStatus or
             IpcOperationId.GetInteractiveSessionStatus or
             IpcOperationId.GetSynchronizationStatus or
+            IpcOperationId.GetBackgroundSyncState or
             IpcOperationId.RequestUiOpen or
             IpcOperationId.RequestUiActivation => IpcAuthorizationDecision.Allowed,
             IpcOperationId.RegisterUiConnection => AuthorizeRegistration(context),
             IpcOperationId.UnregisterUiConnection or
             IpcOperationId.RequestAgentExit or
-            IpcOperationId.ResetDatabase => AuthorizeRegisteredUi(context),
+            IpcOperationId.ResetDatabase or
+            IpcOperationId.SetBackgroundSyncEnabled => AuthorizeRegisteredUi(context),
             _ => IpcAuthorizationDecision.Denied(
                 IpcErrorCode.UnauthorizedOperation,
                 IpcErrorCategory.Validation,
