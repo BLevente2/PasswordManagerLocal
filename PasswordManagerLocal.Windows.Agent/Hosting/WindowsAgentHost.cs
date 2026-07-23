@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
 using PasswordManagerLocal.Windows.Agent.Tray;
 using PasswordManagerLocal.Windows.Agent.Ui;
@@ -13,6 +14,8 @@ namespace PasswordManagerLocal.Windows.Agent.Hosting;
 public sealed class WindowsAgentHost : IWindowsAgentHost
 {
     private readonly IProcessInstanceLock _processLock;
+    private readonly IProcessInstanceLockProbe _uiProcessLockProbe;
+    private readonly IWindowsAgentAdmissionGate _admissionGate;
     private readonly IWindowsIpcServerHost _controlServer;
     private readonly IWindowsAgentEndpointHost _endpointHost;
     private readonly IWindowsAgentBackendRuntimeOwner _backendOwner;
@@ -22,6 +25,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private readonly IUiConnectionCoordinator _uiConnectionCoordinator;
     private readonly WindowsAgentShutdownCoordinator _shutdownCoordinator;
     private readonly WindowsAgentStateStore _stateStore;
+    private readonly TimeSpan _uiRegistrationPreflightTimeout;
+    private readonly TimeSpan _uiRegistrationPollInterval;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _shutdownCoordinationGate = new(1, 1);
     private readonly object _shutdownGate = new();
@@ -32,12 +37,15 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private int _controlServerStartupAttempted;
     private int _endpointHostStartupAttempted;
     private int _trayStartupAttempted;
+    private int _shutdownRequested;
     private int _shutdownStarted;
     private int _disposeStarted;
     private int _retainProcessOwnershipUntilTermination;
 
     public WindowsAgentHost(
         IProcessInstanceLock processLock,
+        IProcessInstanceLockProbe uiProcessLockProbe,
+        IWindowsAgentAdmissionGate admissionGate,
         IWindowsIpcServerHost controlServer,
         IWindowsAgentEndpointHost endpointHost,
         IWindowsAgentBackendRuntimeOwner backendOwner,
@@ -46,9 +54,14 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         IWindowsUiCloseService uiCloseService,
         IUiConnectionCoordinator uiConnectionCoordinator,
         WindowsAgentShutdownCoordinator shutdownCoordinator,
-        WindowsAgentStateStore stateStore)
+        WindowsAgentStateStore stateStore,
+        TimeSpan? uiRegistrationPreflightTimeout = null,
+        TimeSpan? uiRegistrationPollInterval = null)
     {
         _processLock = processLock ?? throw new ArgumentNullException(nameof(processLock));
+        _uiProcessLockProbe = uiProcessLockProbe
+            ?? throw new ArgumentNullException(nameof(uiProcessLockProbe));
+        _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _controlServer = controlServer ?? throw new ArgumentNullException(nameof(controlServer));
         _endpointHost = endpointHost ?? throw new ArgumentNullException(nameof(endpointHost));
         _backendOwner = backendOwner ?? throw new ArgumentNullException(nameof(backendOwner));
@@ -59,6 +72,15 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             ?? throw new ArgumentNullException(nameof(uiConnectionCoordinator));
         _shutdownCoordinator = shutdownCoordinator ?? throw new ArgumentNullException(nameof(shutdownCoordinator));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
+        _uiRegistrationPreflightTimeout = uiRegistrationPreflightTimeout ?? TimeSpan.FromSeconds(2);
+        _uiRegistrationPollInterval = uiRegistrationPollInterval ?? TimeSpan.FromMilliseconds(100);
+        if (_uiRegistrationPreflightTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(uiRegistrationPreflightTimeout));
+        if (_uiRegistrationPollInterval <= TimeSpan.Zero ||
+            _uiRegistrationPollInterval > _uiRegistrationPreflightTimeout)
+        {
+            throw new ArgumentOutOfRangeException(nameof(uiRegistrationPollInterval));
+        }
         _shutdownCoordinator.ShutdownRequested += HandleShutdownRequested;
         _trayIcon.OpenRequested += HandleOpenRequested;
         _trayIcon.ExitRequested += HandleExitRequested;
@@ -89,15 +111,18 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             await _endpointHost.StartAsync(cancellationToken);
             Interlocked.Exchange(ref _trayStartupAttempted, 1);
             await _trayIcon.InitializeAsync(cancellationToken);
-            if (Volatile.Read(ref _shutdownStarted) == 0)
+            if (Volatile.Read(ref _shutdownRequested) == 0 &&
+                Volatile.Read(ref _shutdownStarted) == 0)
             {
                 _stateStore.MarkRunning(DateTimeOffset.UtcNow);
+                _admissionGate.Open();
                 _ = ObserveControlServerAsync();
                 _ = ObserveEndpointHostAsync();
             }
         }
         catch (ProcessInstanceAlreadyOwnedException exception)
         {
+            _admissionGate.ClosePermanently();
             _processLock.Dispose();
             Interlocked.Exchange(ref _shutdownStarted, 1);
             startupFailure = exception;
@@ -105,6 +130,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         }
         catch (Exception exception)
         {
+            _admissionGate.ClosePermanently();
             _stateStore.MarkFailed("The Windows agent shell failed to start.");
             startupFailure = exception;
         }
@@ -228,7 +254,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         await _shutdownCoordinationGate.WaitAsync();
         try
         {
-            if (_stateStore.State != AgentState.Running)
+            if (_stateStore.State != AgentState.Running || !_admissionGate.IsOpen)
             {
                 destructiveShutdown = GetExistingShutdownTask();
                 if (destructiveShutdown is null)
@@ -240,6 +266,15 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             }
             else
             {
+                var preflight = await ResolveTrayExitRegistrationAsync();
+                if (!preflight.CanProceed)
+                {
+                    await ShowExitFailureAsync(preflight.SafeMessage!);
+                    return new WindowsAgentShutdownResult(
+                        WindowsAgentShutdownResultKind.Rejected,
+                        preflight.SafeMessage);
+                }
+
                 if (!_uiConnectionCoordinator.TryBeginIntentionalShutdown(out var registration))
                 {
                     const string safeMessage = "The Windows agent is already coordinating an intentional exit.";
@@ -249,7 +284,20 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                         safeMessage);
                 }
 
-                if (registration is not null)
+                if (registration is null)
+                {
+                    var frozenProbe = _uiProcessLockProbe.Probe();
+                    if (frozenProbe != ProcessInstanceLockProbeResult.Free)
+                    {
+                        _uiConnectionCoordinator.CancelIntentionalShutdown();
+                        const string safeMessage = "The UI is reconnecting. Close it and try again.";
+                        await ShowExitFailureAsync(safeMessage);
+                        return new WindowsAgentShutdownResult(
+                            WindowsAgentShutdownResultKind.Rejected,
+                            safeMessage);
+                    }
+                }
+                else
                 {
                     WindowsUiCloseResult closeResult;
                     try
@@ -279,6 +327,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                     }
                 }
 
+                Interlocked.Exchange(ref _shutdownRequested, 1);
+                _admissionGate.ClosePermanently();
                 lock (_shutdownGate)
                 {
                     destructiveShutdown = _shutdownTask ??= Task.Run(
@@ -305,6 +355,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private Task<WindowsAgentShutdownResult> GetOrStartDestructiveShutdownTask(
         WindowsAgentShutdownReason reason)
     {
+        Interlocked.Exchange(ref _shutdownRequested, 1);
+        _admissionGate.ClosePermanently();
         lock (_shutdownGate)
             return _shutdownTask ??= Task.Run(
                 () => CoordinateDestructiveShutdownAsync(reason));
@@ -327,12 +379,14 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private async Task<WindowsAgentShutdownResult> ShutdownCoreAsync(
         WindowsAgentShutdownReason reason)
     {
+        Interlocked.Exchange(ref _shutdownRequested, 1);
         if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
         {
             return new WindowsAgentShutdownResult(
                 WindowsAgentShutdownResultKind.Completed);
         }
 
+        _admissionGate.ClosePermanently();
         await _lifecycleGate.WaitAsync();
         try
         {
@@ -366,6 +420,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
 
             if (Volatile.Read(ref _endpointHostStartupAttempted) != 0)
                 await CaptureCriticalAsync(() => _endpointHost.StopAsync());
+
+            await CaptureCriticalAsync(() => _admissionGate.WaitForDrainAsync(CancellationToken.None));
 
             if (Volatile.Read(ref _backendStartupAttempted) != 0)
                 await CaptureCriticalAsync(() => _backendOwner.StopAsync());
@@ -451,6 +507,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         if (Volatile.Read(ref _shutdownStarted) == 0 &&
             _controlServer.ListenerFailure is not null)
         {
+            _admissionGate.ClosePermanently();
             _stateStore.MarkFailed("The Windows agent control listener failed.");
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
@@ -462,6 +519,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         if (Volatile.Read(ref _shutdownStarted) == 0 &&
             _endpointHost.Snapshot.State == WindowsAgentEndpointHostState.Failed)
         {
+            _admissionGate.ClosePermanently();
             _stateStore.MarkFailed("The Windows agent endpoint listener failed.");
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
@@ -469,8 +527,23 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
 
     private void HandleBackendOwnerStateChanged(object? sender, EventArgs args)
     {
-        if (_backendOwner.Snapshot.RequiresProcessRestart)
+        var snapshot = _backendOwner.Snapshot;
+        if (snapshot.RequiresProcessRestart)
+        {
+            _admissionGate.ClosePermanently();
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.RestartRequired);
+            return;
+        }
+
+        if (_stateStore.State == AgentState.Running &&
+            snapshot.State == WindowsAgentBackendOwnerState.Failed &&
+            snapshot.Runtime.FailureKind != BackendRuntimeFailureKind.DatabaseCompatibility &&
+            Volatile.Read(ref _shutdownStarted) == 0)
+        {
+            _admissionGate.ClosePermanently();
+            _stateStore.MarkFailed("The Windows agent backend runtime failed.");
+            _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
+        }
     }
 
     private void HandleEndpointHostStateChanged(object? sender, EventArgs args)
@@ -478,6 +551,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         if (_endpointHost.Snapshot.State == WindowsAgentEndpointHostState.Failed &&
             Volatile.Read(ref _shutdownStarted) == 0)
         {
+            _admissionGate.ClosePermanently();
             _stateStore.MarkFailed("The Windows agent endpoint listener failed.");
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
@@ -524,6 +598,39 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         }
         catch
         {
+        }
+    }
+
+    private async Task<TrayExitRegistrationPreflight> ResolveTrayExitRegistrationAsync()
+    {
+        if (_uiConnectionCoordinator.Registration is not null)
+            return TrayExitRegistrationPreflight.Proceed;
+
+        var probe = _uiProcessLockProbe.Probe();
+        if (probe == ProcessInstanceLockProbeResult.Uncertain)
+        {
+            return TrayExitRegistrationPreflight.Reject(
+                "The UI presence could not be verified. Close it and try again.");
+        }
+        if (probe == ProcessInstanceLockProbeResult.Free)
+            return TrayExitRegistrationPreflight.Proceed;
+
+        using var timeoutSource = new CancellationTokenSource(_uiRegistrationPreflightTimeout);
+        try
+        {
+            while (_uiConnectionCoordinator.Registration is null)
+            {
+                await Task.Delay(_uiRegistrationPollInterval, timeoutSource.Token);
+                if (_uiProcessLockProbe.Probe() == ProcessInstanceLockProbeResult.Free)
+                    return TrayExitRegistrationPreflight.Proceed;
+            }
+
+            return TrayExitRegistrationPreflight.Proceed;
+        }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
+        {
+            return TrayExitRegistrationPreflight.Reject(
+                "The UI is reconnecting. Close it and try again.");
         }
     }
 

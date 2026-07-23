@@ -58,6 +58,7 @@ public sealed class WindowsAgentStatusProviderTests
         var reset = new FakeWindowsAgentDatabaseResetCoordinator();
         var provider = new WindowsAgentStatusProvider(
             state,
+            CreateOpenAdmissionGate(),
             coordinator,
             new FakeWindowsBackgroundSyncSettingsReader { IsEnabled = true },
             owner,
@@ -71,6 +72,7 @@ public sealed class WindowsAgentStatusProviderTests
         var synchronization = await provider.GetSynchronizationStatusAsync(CancellationToken.None);
 
         Assert.AreEqual(AgentState.Running, agent.AgentState);
+        Assert.AreEqual(AgentAdmissionState.Open, agent.AdmissionState);
         Assert.IsTrue(agent.IsUiConnected);
         Assert.IsTrue(agent.BackendOwnedByAgent);
         Assert.IsTrue(agent.IsBackendRunning);
@@ -101,6 +103,7 @@ public sealed class WindowsAgentStatusProviderTests
         await using var adapter = new AgentInteractiveEndpointAdapter(owner);
         var provider = new WindowsAgentStatusProvider(
             state,
+            CreateOpenAdmissionGate(),
             new SingleUiConnectionCoordinator(),
             new FakeWindowsBackgroundSyncSettingsReader { ThrowOnRead = true },
             owner,
@@ -142,6 +145,7 @@ public sealed class WindowsAgentStatusProviderTests
         await using var adapter = new AgentInteractiveEndpointAdapter(owner);
         var provider = new WindowsAgentStatusProvider(
             state,
+            new WindowsAgentAdmissionGate(),
             new SingleUiConnectionCoordinator(),
             new FakeWindowsBackgroundSyncSettingsReader(),
             owner,
@@ -164,7 +168,7 @@ public sealed class WindowsAgentStatusProviderTests
     }
 
     [TestMethod]
-    public async Task RuntimeOwnerFailureOverridesListenerReadinessAndReportsStartupFailure()
+    public async Task RuntimeOwnerFailureKeepsListenerStatusSeparateAndReportsStartupFailure()
     {
         var state = new WindowsAgentStateStore();
         state.MarkRunning(DateTimeOffset.UtcNow);
@@ -185,6 +189,7 @@ public sealed class WindowsAgentStatusProviderTests
         await using var adapter = new AgentInteractiveEndpointAdapter(owner);
         var provider = new WindowsAgentStatusProvider(
             state,
+            CreateOpenAdmissionGate(),
             new SingleUiConnectionCoordinator(),
             new FakeWindowsBackgroundSyncSettingsReader(),
             owner,
@@ -195,11 +200,14 @@ public sealed class WindowsAgentStatusProviderTests
         var agent = await provider.GetAgentStatusAsync(CancellationToken.None);
         var backend = await provider.GetBackendRuntimeStatusAsync(CancellationToken.None);
 
-        Assert.IsFalse(agent.IsEndpointHostReady);
-        Assert.IsNotNull(agent.LastFailure);
+        Assert.IsTrue(agent.IsEndpointHostReady);
+        Assert.IsNull(agent.LastFailure);
         Assert.AreEqual(BackendRuntimeStatusState.Failed, backend.RuntimeState);
         Assert.AreEqual(BackendRuntimeFailureStatusKind.StartupFailure, backend.FailureKind);
         Assert.IsNotNull(backend.Failure);
+        var validator = new WindowsIpcContractValidator();
+        validator.Validate(agent);
+        validator.Validate(backend);
     }
 
     [TestMethod]
@@ -225,6 +233,7 @@ public sealed class WindowsAgentStatusProviderTests
         await using var adapter = new AgentInteractiveEndpointAdapter(owner);
         var provider = new WindowsAgentStatusProvider(
             state,
+            new WindowsAgentAdmissionGate(),
             new SingleUiConnectionCoordinator(),
             new FakeWindowsBackgroundSyncSettingsReader(),
             owner,
@@ -258,6 +267,7 @@ public sealed class WindowsAgentStatusProviderTests
         await using var adapter = new AgentInteractiveEndpointAdapter(owner);
         var provider = new WindowsAgentStatusProvider(
             state,
+            CreateOpenAdmissionGate(),
             new SingleUiConnectionCoordinator(),
             new FakeWindowsBackgroundSyncSettingsReader(),
             owner,
@@ -270,6 +280,13 @@ public sealed class WindowsAgentStatusProviderTests
         Assert.IsTrue(status.IsDatabaseResetInProgress);
         Assert.IsFalse(status.IsEndpointHostReady);
         new WindowsIpcContractValidator().Validate(status);
+    }
+
+    private static WindowsAgentAdmissionGate CreateOpenAdmissionGate()
+    {
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        return gate;
     }
 
     private static IpcConnectionContext CreateUiContext() => new(

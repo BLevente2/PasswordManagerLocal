@@ -84,7 +84,7 @@ public sealed class WindowsAgentControlConnectionTests
         Assert.AreEqual(2, connector.AttemptCount);
         Assert.IsTrue(connector.Identities.All(item => ReferenceEquals(item, identity)));
         Assert.AreEqual(1, first.DisposeCount);
-        Assert.AreEqual(1, processExitWaiter.WaitCount);
+        Assert.AreEqual(0, processExitWaiter.WaitCount);
     }
 
     [TestMethod]
@@ -125,7 +125,7 @@ public sealed class WindowsAgentControlConnectionTests
 
         exitCompletion.TrySetResult(true);
         Assert.IsTrue(await recovery);
-        Assert.AreEqual(1, launcher.LaunchCount);
+        Assert.AreEqual(0, launcher.LaunchCount);
         Assert.AreEqual(5, connector.AttemptCount);
         Assert.AreEqual(2L, connection.ConnectionGeneration);
         Assert.AreEqual(6301, connection.AgentProcessId);
@@ -186,12 +186,74 @@ public sealed class WindowsAgentControlConnectionTests
             retryDelay: TimeSpan.Zero);
         Assert.IsTrue(await connection.ConnectAsync());
 
+        var agentStatus = await connection.GetAgentStatusAsync();
         var status = await connection.GetBackendRuntimeStatusAsync();
         var reset = await connection.ResetDatabaseAsync();
 
+        Assert.AreEqual(AgentState.Running, agentStatus.AgentState);
         Assert.AreEqual(BackendRuntimeStatusState.Ready, status.RuntimeState);
         Assert.IsTrue(reset.Completed);
         Assert.AreEqual(registered.AgentProcessId, connection.AgentProcessId);
+    }
+
+    [TestMethod]
+    public async Task UnhealthyObservedAgentCannotTriggerEarlyReplacementLaunch()
+    {
+        var connector = new FakeWindowsAgentControlConnector();
+        connector.EnqueueObservedUnavailable(7000);
+        connector.Enqueue(null);
+        connector.Enqueue(null);
+        connector.Enqueue(null);
+        var launcher = new FakeWindowsAgentLauncher();
+        var processExitWaiter = new FakeWindowsAgentProcessExitWaiter { Result = false };
+        await using var connection = new WindowsAgentControlConnection(
+            "control-pipe",
+            CreateIdentity(),
+            launcher,
+            connector,
+            maximumConnectionAttempts: 2,
+            retryDelay: TimeSpan.Zero,
+            processExitWaiter: processExitWaiter);
+
+        Assert.IsFalse(await connection.ConnectAsync());
+
+        Assert.AreEqual(0, launcher.LaunchCount);
+        Assert.AreEqual(7000, processExitWaiter.ProcessId);
+        Assert.AreEqual(7000, connection.AgentProcessId);
+    }
+
+    [TestMethod]
+    public async Task HealthyReplacementConnectsAfterUnhealthyObservedAgentExits()
+    {
+        var replacement = new FakeWindowsAgentRegisteredConnection { AgentProcessId = 7001 };
+        var connector = new FakeWindowsAgentControlConnector();
+        connector.EnqueueObservedUnavailable(7000);
+        connector.Enqueue(null);
+        connector.Enqueue(replacement);
+        var exitCompletion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var processExitWaiter = new FakeWindowsAgentProcessExitWaiter
+        {
+            Completion = exitCompletion
+        };
+        var launcher = new FakeWindowsAgentLauncher();
+        await using var connection = new WindowsAgentControlConnection(
+            "control-pipe",
+            CreateIdentity(),
+            launcher,
+            connector,
+            maximumConnectionAttempts: 1,
+            retryDelay: TimeSpan.Zero,
+            processExitWaiter: processExitWaiter);
+
+        var connecting = connection.ConnectAsync();
+        await WaitUntilAsync(() => processExitWaiter.WaitCount == 1);
+        Assert.AreEqual(0, launcher.LaunchCount);
+        exitCompletion.TrySetResult(true);
+
+        Assert.IsTrue(await connecting);
+        Assert.AreEqual(7001, connection.AgentProcessId);
+        Assert.AreEqual(0, launcher.LaunchCount);
     }
 
     [TestMethod]

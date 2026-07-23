@@ -14,6 +14,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
 {
     private readonly IEndpointRpcClientConnector _connector;
     private readonly IEndpointRpcAgentConnection? _agentConnection;
+    private readonly WindowsAgentHealthValidator _agentHealthValidator = new();
     private readonly int _maximumRecoveryAttempts;
     private readonly TimeSpan _recoveryDelay;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -111,6 +112,8 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
             ThrowIfNewWorkRejected();
             if (_transport?.IsConnected == true && _proxy is not null)
             {
+                await EnsureAgentHealthyAsync(cancellationToken);
+                ChangeState(BackendRuntimeState.Ready, BackendRuntimeFailureKind.None, null);
                 ChangeConnectionState(WindowsEndpointClientConnectionState.Ready);
                 return;
             }
@@ -122,10 +125,12 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
                 throw new EndpointRpcDisconnectedException(
                     new InvalidOperationException("The Windows agent control connection is unavailable."));
             }
+            await EnsureAgentHealthyAsync(cancellationToken);
 
             ChangeState(BackendRuntimeState.Starting, BackendRuntimeFailureKind.None, null);
             await DisposeEndpointConnectionLockedAsync();
             await ConnectEndpointLockedAsync(cancellationToken);
+            await EnsureAgentHealthyAsync(cancellationToken);
             StartAgentObserverLocked();
             ChangeState(BackendRuntimeState.Ready, BackendRuntimeFailureKind.None, null);
             ChangeConnectionState(WindowsEndpointClientConnectionState.Ready);
@@ -679,6 +684,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
 
                 if (!await _agentConnection.EnsureConnectedAsync(cancellationToken))
                     continue;
+                await EnsureAgentHealthyAsync(cancellationToken);
 
                 await _lifecycleLock.WaitAsync(cancellationToken);
                 try
@@ -689,6 +695,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
                     ChangeState(BackendRuntimeState.Starting, BackendRuntimeFailureKind.None, null);
                     await DisposeEndpointConnectionLockedAsync();
                     await ConnectEndpointLockedAsync(cancellationToken);
+                    await EnsureAgentHealthyAsync(cancellationToken);
                     StartAgentObserverLocked();
                     ChangeState(BackendRuntimeState.Ready, BackendRuntimeFailureKind.None, null);
                     ChangeConnectionState(WindowsEndpointClientConnectionState.Ready);
@@ -789,12 +796,13 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
 
         try
         {
+            var agentStatus = await _agentConnection.GetAgentStatusAsync(cancellationToken);
             var status = await _agentConnection.GetBackendRuntimeStatusAsync(cancellationToken);
-            if (status.RequiresProcessRestart)
+            if (_agentHealthValidator.RequiresProcessReplacement(agentStatus, status))
             {
                 return (
                     new InvalidOperationException(
-                        "The Windows agent must restart before the backend can be used.",
+                        "The Windows agent is not healthy enough to serve the frontend.",
                         original),
                     BackendRuntimeFailureKind.ShutdownFailure);
             }
@@ -829,6 +837,20 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
         catch
         {
             return (original, BackendRuntimeFailureKind.StartupFailure);
+        }
+    }
+
+    private async Task EnsureAgentHealthyAsync(CancellationToken cancellationToken)
+    {
+        if (_agentConnection is null)
+            return;
+
+        var agentStatus = await _agentConnection.GetAgentStatusAsync(cancellationToken);
+        var backendStatus = await _agentConnection.GetBackendRuntimeStatusAsync(cancellationToken);
+        if (!_agentHealthValidator.IsHealthyForEndpoint(agentStatus, backendStatus))
+        {
+            throw new InvalidOperationException(
+                "The Windows agent is not healthy enough to serve the frontend.");
         }
     }
 

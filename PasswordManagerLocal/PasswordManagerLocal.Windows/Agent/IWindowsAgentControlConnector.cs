@@ -4,7 +4,7 @@ namespace PasswordManagerLocal.Windows.AgentConnection;
 
 public interface IWindowsAgentControlConnector
 {
-    Task<IWindowsAgentRegisteredConnection?> TryConnectAndRegisterAsync(
+    Task<WindowsAgentControlConnectionAttempt> TryConnectAndRegisterAsync(
         string pipeName,
         WindowsUiIpcIdentity identity,
         TimeSpan connectTimeout,

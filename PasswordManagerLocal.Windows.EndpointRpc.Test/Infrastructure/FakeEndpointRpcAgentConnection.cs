@@ -25,6 +25,17 @@ public sealed class FakeEndpointRpcAgentConnection : IEndpointRpcAgentConnection
         null,
         false,
         DateTimeOffset.UtcNow);
+    public AgentStatusDto AgentStatus { get; set; } = new(
+        AgentState.Running,
+        AgentAdmissionState.Open,
+        IsUiConnected: true,
+        BackendOwnedByAgent: true,
+        IsBackendRunning: true,
+        IsBackgroundSyncEnabled: false,
+        RequiresProcessRestart: false,
+        LastFailure: null,
+        StartedAtUtc: DateTimeOffset.UtcNow,
+        IsEndpointHostReady: true);
     public DatabaseResetResultDto ResetResult { get; set; } = new(true, false, null);
 
     public void EnqueueEnsureResult(bool result) => _ensureResults.Enqueue(result);
@@ -76,6 +87,13 @@ public sealed class FakeEndpointRpcAgentConnection : IEndpointRpcAgentConnection
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(BackendStatus);
+    }
+
+    public Task<AgentStatusDto> GetAgentStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(AgentStatus);
     }
 
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(

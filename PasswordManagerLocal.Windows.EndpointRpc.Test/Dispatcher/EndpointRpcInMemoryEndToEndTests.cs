@@ -23,7 +23,11 @@ public sealed class EndpointRpcInMemoryEndToEndTests
             serializer,
             validator,
             new EndpointRpcBackendErrorMapper());
-        var handler = new EndpointRpcWindowsIpcRequestHandler(dispatcher, codec, validator);
+        var handler = new EndpointRpcWindowsIpcRequestHandler(
+            dispatcher,
+            codec,
+            validator,
+            new ControllableEndpointRpcAdmissionPolicy());
         await using var transport = new InMemoryEndpointRpcTransport(handler, codec);
         var proxy = new NamedPipeEndpointsProxy(transport, serializer, validator);
 

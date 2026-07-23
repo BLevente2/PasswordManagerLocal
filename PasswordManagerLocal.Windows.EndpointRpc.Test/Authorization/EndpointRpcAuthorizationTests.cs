@@ -22,7 +22,9 @@ public sealed class EndpointRpcAuthorizationTests
             ExpectedWindowsSessionId = 7,
             ExpectedInstanceId = expectedInstance
         };
-        var authorizer = new EndpointRpcConnectionAuthorizer(resolver);
+        var authorizer = new EndpointRpcConnectionAuthorizer(
+            resolver,
+            new ControllableEndpointRpcAdmissionPolicy());
 
         var wrongRole = authorizer.Authorize(CreateConnection(
             IpcPeerRole.TestClient, IpcCapabilities.EndpointRpc, 1234, 7, expectedInstance));
@@ -46,7 +48,8 @@ public sealed class EndpointRpcAuthorizationTests
     public async Task DuplicateConnectionIsRejectedAndStaleDisconnectCannotReleaseNewerConnection()
     {
         var authorizer = new EndpointRpcConnectionAuthorizer(
-            new FakeEndpointUiRegistrationResolver());
+            new FakeEndpointUiRegistrationResolver(),
+            new ControllableEndpointRpcAdmissionPolicy());
         var first = CreateConnection(IpcPeerRole.Ui, IpcCapabilities.EndpointRpc);
         var second = CreateConnection(IpcPeerRole.Ui, IpcCapabilities.EndpointRpc);
 
@@ -63,7 +66,9 @@ public sealed class EndpointRpcAuthorizationTests
     public void NewControlRegistrationGenerationInvalidatesOldEndpointImmediately()
     {
         var resolver = new FakeEndpointUiRegistrationResolver { RegistrationGeneration = 4 };
-        var authorizer = new EndpointRpcConnectionAuthorizer(resolver);
+        var authorizer = new EndpointRpcConnectionAuthorizer(
+            resolver,
+            new ControllableEndpointRpcAdmissionPolicy());
         var connection = CreateConnection(IpcPeerRole.Ui, IpcCapabilities.EndpointRpc);
         Assert.IsTrue(authorizer.Authorize(connection).IsAuthorized);
         Assert.IsTrue(authorizer.IsAuthorizedConnection(connection));
@@ -84,7 +89,9 @@ public sealed class EndpointRpcAuthorizationTests
             ExpectedInstanceId = instanceId,
             RegistrationGeneration = 4
         };
-        var authorizer = new EndpointRpcConnectionAuthorizer(resolver);
+        var authorizer = new EndpointRpcConnectionAuthorizer(
+            resolver,
+            new ControllableEndpointRpcAdmissionPolicy());
         var first = CreateConnection(
             IpcPeerRole.Ui, IpcCapabilities.EndpointRpc, 1234, 7, instanceId);
         Assert.IsTrue(authorizer.Authorize(first).IsAuthorized);
@@ -102,8 +109,13 @@ public sealed class EndpointRpcAuthorizationTests
     public void EndpointOperationsRequireActiveCurrentConnection()
     {
         var resolver = new FakeEndpointUiRegistrationResolver();
-        var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(resolver);
-        var authorizer = new EndpointRpcOperationAuthorizer(connectionAuthorizer);
+        var admissionPolicy = new ControllableEndpointRpcAdmissionPolicy();
+        var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(
+            resolver,
+            admissionPolicy);
+        var authorizer = new EndpointRpcOperationAuthorizer(
+            connectionAuthorizer,
+            admissionPolicy);
         var connection = CreateConnection(IpcPeerRole.Ui, IpcCapabilities.EndpointRpc);
         var endpointRequest = CreateRequestContext(connection, IpcOperationId.EndpointRpcRequest);
         var readinessRequest = CreateRequestContext(connection, IpcOperationId.EndpointSessionReady);
@@ -117,6 +129,34 @@ public sealed class EndpointRpcAuthorizationTests
 
         resolver.IsRegisteredResult = false;
         Assert.IsFalse(authorizer.Authorize(endpointRequest).IsAuthorized);
+    }
+
+    [TestMethod]
+    public void ClosedAdmissionRejectsHandshakeAndExistingConnectionOperations()
+    {
+        var admissionPolicy = new ControllableEndpointRpcAdmissionPolicy();
+        var resolver = new FakeEndpointUiRegistrationResolver();
+        var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(
+            resolver,
+            admissionPolicy);
+        var operationAuthorizer = new EndpointRpcOperationAuthorizer(
+            connectionAuthorizer,
+            admissionPolicy);
+        var connection = CreateConnection(IpcPeerRole.Ui, IpcCapabilities.EndpointRpc);
+
+        Assert.IsTrue(connectionAuthorizer.Authorize(connection).IsAuthorized);
+        admissionPolicy.CanAcceptConnection = false;
+
+        var replacement = connectionAuthorizer.Authorize(
+            CreateConnection(IpcPeerRole.Ui, IpcCapabilities.EndpointRpc));
+        var request = operationAuthorizer.Authorize(
+            CreateRequestContext(connection, IpcOperationId.EndpointRpcRequest));
+
+        Assert.IsFalse(replacement.IsAuthorized);
+        Assert.AreEqual(IpcErrorCode.AgentUnavailable, replacement.ErrorCode);
+        Assert.IsFalse(request.IsAuthorized);
+        Assert.AreEqual(IpcErrorCode.AgentUnavailable, request.ErrorCode);
+        Assert.IsFalse(connectionAuthorizer.IsAuthorizedConnection(connection));
     }
 
     private static Task ReleaseAsync(

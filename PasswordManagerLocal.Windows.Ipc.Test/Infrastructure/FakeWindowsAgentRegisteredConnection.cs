@@ -18,6 +18,17 @@ internal sealed class FakeWindowsAgentRegisteredConnection : IWindowsAgentRegist
         Failure: null,
         RequiresProcessRestart: false,
         DateTimeOffset.UtcNow);
+    public AgentStatusDto AgentStatus { get; set; } = new(
+        AgentState.Running,
+        AgentAdmissionState.Open,
+        IsUiConnected: true,
+        BackendOwnedByAgent: true,
+        IsBackendRunning: true,
+        IsBackgroundSyncEnabled: false,
+        RequiresProcessRestart: false,
+        LastFailure: null,
+        StartedAtUtc: DateTimeOffset.UtcNow,
+        IsEndpointHostReady: true);
     public DatabaseResetResultDto DatabaseResetResult { get; set; } = new(
         Completed: true,
         RequiresProcessRestart: false,
@@ -28,6 +39,13 @@ internal sealed class FakeWindowsAgentRegisteredConnection : IWindowsAgentRegist
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(BackendStatus);
+    }
+
+    public Task<AgentStatusDto> GetAgentStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(AgentStatus);
     }
 
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(

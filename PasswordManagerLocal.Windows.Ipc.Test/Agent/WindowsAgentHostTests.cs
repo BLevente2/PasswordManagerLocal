@@ -1,6 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.Agent.Ui;
+using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Coordination;
 using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
@@ -78,6 +80,91 @@ public sealed class WindowsAgentHostTests
     }
 
     [TestMethod]
+    public async Task NoRegistrationWithHeldUiLockRejectsExitWithoutClosingAdmission()
+    {
+        var state = new WindowsAgentStateStore();
+        var admissionGate = new WindowsAgentAdmissionGate();
+        var probe = new FakeProcessInstanceLockProbe
+        {
+            Result = ProcessInstanceLockProbeResult.Held
+        };
+        var endpoint = new FakeWindowsAgentEndpointHost();
+        await using var host = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            endpoint,
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new FakeTrayIconController(),
+            state: state,
+            uiProcessLockProbe: probe,
+            admissionGate: admissionGate,
+            uiRegistrationPreflightTimeout: TimeSpan.FromMilliseconds(40),
+            uiRegistrationPollInterval: TimeSpan.FromMilliseconds(5));
+        await host.StartAsync();
+
+        var result = await host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Rejected, result.Kind);
+        Assert.AreEqual(AgentState.Running, state.State);
+        Assert.IsTrue(admissionGate.IsOpen);
+        Assert.AreEqual(0, endpoint.StopCount);
+    }
+
+    [TestMethod]
+    public async Task HeldUiLockThatReregistersUsesIntentionalShutdownHandshake()
+    {
+        var coordinator = new FakeUiConnectionCoordinator();
+        var close = new FakeWindowsUiCloseService();
+        var probe = new FakeProcessInstanceLockProbe
+        {
+            Result = ProcessInstanceLockProbeResult.Held
+        };
+        await using var host = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new FakeTrayIconController(),
+            close: close,
+            coordinator: coordinator,
+            uiProcessLockProbe: probe,
+            uiRegistrationPreflightTimeout: TimeSpan.FromSeconds(1),
+            uiRegistrationPollInterval: TimeSpan.FromMilliseconds(5));
+        await host.StartAsync();
+
+        var exit = host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
+        await WaitUntilAsync(() => probe.ProbeCount > 1);
+        coordinator.Registration = FakeUiConnectionCoordinator.CreateRegistration();
+        var result = await exit;
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Completed, result.Kind);
+        Assert.AreEqual(1, close.RequestCount);
+        Assert.AreEqual(1, coordinator.BeginShutdownCount);
+    }
+
+    [TestMethod]
+    public async Task UncertainUiPresenceRejectsExitFailClosed()
+    {
+        var endpoint = new FakeWindowsAgentEndpointHost();
+        await using var host = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            endpoint,
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new FakeTrayIconController(),
+            uiProcessLockProbe: new FakeProcessInstanceLockProbe
+            {
+                Result = ProcessInstanceLockProbeResult.Uncertain
+            });
+        await host.StartAsync();
+
+        var result = await host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Rejected, result.Kind);
+        Assert.AreEqual(0, endpoint.StopCount);
+    }
+
+    [TestMethod]
     public async Task AcknowledgementFailureRejectsExitWithoutDestructiveCleanupAndAllowsRetry()
     {
         var processLock = new FakeProcessInstanceLock();
@@ -96,9 +183,11 @@ public sealed class WindowsAgentHostTests
             Registration = FakeUiConnectionCoordinator.CreateRegistration()
         };
         var state = new WindowsAgentStateStore();
+        var admissionGate = new WindowsAgentAdmissionGate();
         await using var host = CreateHost(
             processLock, control, endpoint, backend, tray,
-            close: close, coordinator: coordinator, state: state);
+            close: close, coordinator: coordinator, state: state,
+            admissionGate: admissionGate);
         await host.StartAsync();
 
         var rejected = await host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
@@ -112,6 +201,7 @@ public sealed class WindowsAgentHostTests
         Assert.IsFalse(processLock.IsDisposed);
         Assert.AreEqual(1, tray.ExitFailureCount);
         Assert.AreEqual(1, coordinator.CancelShutdownCount);
+        Assert.IsTrue(admissionGate.IsOpen);
 
         close.Result = new WindowsUiCloseResult(
             WindowsUiCloseResultKind.Acknowledged,
@@ -166,6 +256,7 @@ public sealed class WindowsAgentHostTests
         var close = new FakeWindowsUiCloseService { Completion = closeCompletion };
         var endpoint = new FakeWindowsAgentEndpointHost();
         var processLock = new FakeProcessInstanceLock();
+        var admissionGate = new WindowsAgentAdmissionGate();
         var coordinator = new FakeUiConnectionCoordinator
         {
             Registration = FakeUiConnectionCoordinator.CreateRegistration()
@@ -177,7 +268,8 @@ public sealed class WindowsAgentHostTests
             new FakeWindowsAgentBackendRuntimeOwner(),
             new FakeTrayIconController(),
             close: close,
-            coordinator: coordinator);
+            coordinator: coordinator,
+            admissionGate: admissionGate);
         await host.StartAsync();
 
         var trayExit = host.RequestShutdownAsync(WindowsAgentShutdownReason.UserRequestedExit);
@@ -185,6 +277,7 @@ public sealed class WindowsAgentHostTests
         var restart = host.RequestShutdownAsync(WindowsAgentShutdownReason.RestartRequired);
         await Task.Delay(25);
 
+        Assert.AreEqual(AgentAdmissionState.Closed, admissionGate.State);
         Assert.AreEqual(0, endpoint.StopCount);
 
         closeCompletion.TrySetResult(new WindowsUiCloseResult(
@@ -239,9 +332,11 @@ public sealed class WindowsAgentHostTests
             var control = new FakeWindowsIpcServerHost();
             testCase.Configure(endpoint, backend, control);
             var state = new WindowsAgentStateStore();
+            var admissionGate = new WindowsAgentAdmissionGate();
             var host = CreateHost(
                 processLock, control, endpoint, backend,
-                new FakeTrayIconController(), state: state);
+                new FakeTrayIconController(), state: state,
+                admissionGate: admissionGate);
             await host.StartAsync();
 
             var result = await host.RequestShutdownAsync(WindowsAgentShutdownReason.ApplicationExit);
@@ -251,6 +346,8 @@ public sealed class WindowsAgentHostTests
             Assert.IsTrue(state.LastFailure!.RequiresProcessRestart, testCase.Name);
             Assert.IsFalse(processLock.IsDisposed, testCase.Name);
             Assert.IsTrue(host.RetainsProcessOwnershipUntilTermination, testCase.Name);
+            Assert.AreEqual(AgentAdmissionState.Closed, admissionGate.State, testCase.Name);
+            Assert.ThrowsExactly<InvalidOperationException>(admissionGate.Open);
             await Assert.ThrowsExactlyAsync<IOException>(() => host.DisposeAsync().AsTask());
         }
     }
@@ -421,9 +518,39 @@ public sealed class WindowsAgentHostTests
     }
 
     [TestMethod]
+    public async Task NonResettableBackendFailureClosesAdmissionAndTriggersFatalShutdown()
+    {
+        var processLock = new FakeProcessInstanceLock();
+        var state = new WindowsAgentStateStore();
+        var admissionGate = new WindowsAgentAdmissionGate();
+        var backend = new FakeWindowsAgentBackendRuntimeOwner();
+        await using var host = CreateHost(
+            processLock,
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            backend,
+            new FakeTrayIconController(),
+            state: state,
+            admissionGate: admissionGate);
+        await host.StartAsync();
+
+        backend.PublishSnapshot(FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(
+            ownerState: WindowsAgentBackendOwnerState.Failed,
+            runtimeState: BackendRuntimeState.Failed,
+            runtimeFailureKind: BackendRuntimeFailureKind.StorageUnavailable,
+            failure: new IOException("storage failure")));
+
+        await WaitUntilAsync(() => host.RetainsProcessOwnershipUntilTermination);
+
+        Assert.AreEqual(AgentAdmissionState.Closed, admissionGate.State);
+        Assert.IsFalse(processLock.IsDisposed);
+    }
+
+    [TestMethod]
     public async Task StartupRollbackFailureRetainsLockUntilProcessTermination()
     {
         var processLock = new FakeProcessInstanceLock();
+        var admissionGate = new WindowsAgentAdmissionGate();
         var host = CreateHost(
             processLock,
             new FakeWindowsIpcServerHost(),
@@ -433,12 +560,15 @@ public sealed class WindowsAgentHostTests
                 StartFailure = new IOException("startup"),
                 DisposeFailure = new IOException("rollback dispose")
             },
-            new FakeTrayIconController());
+            new FakeTrayIconController(),
+            admissionGate: admissionGate);
 
         await Assert.ThrowsExactlyAsync<AggregateException>(() => host.StartAsync());
 
         Assert.IsFalse(processLock.IsDisposed);
         Assert.IsTrue(host.RetainsProcessOwnershipUntilTermination);
+        Assert.AreEqual(AgentAdmissionState.Closed, admissionGate.State);
+        Assert.ThrowsExactly<InvalidOperationException>(admissionGate.Open);
         await Assert.ThrowsExactlyAsync<IOException>(() => host.DisposeAsync().AsTask());
     }
 
@@ -446,17 +576,21 @@ public sealed class WindowsAgentHostTests
     public async Task SuccessfulStartupFailureRollbackReleasesLock()
     {
         var processLock = new FakeProcessInstanceLock();
+        var admissionGate = new WindowsAgentAdmissionGate();
         await using var host = CreateHost(
             processLock,
             new FakeWindowsIpcServerHost(),
             new FakeWindowsAgentEndpointHost(),
             new FakeWindowsAgentBackendRuntimeOwner { StartFailure = new IOException("startup") },
-            new FakeTrayIconController());
+            new FakeTrayIconController(),
+            admissionGate: admissionGate);
 
         await Assert.ThrowsExactlyAsync<IOException>(() => host.StartAsync());
 
         Assert.IsTrue(processLock.IsDisposed);
         Assert.IsFalse(host.RetainsProcessOwnershipUntilTermination);
+        Assert.AreEqual(AgentAdmissionState.Closed, admissionGate.State);
+        Assert.ThrowsExactly<InvalidOperationException>(admissionGate.Open);
     }
 
     [TestMethod]
@@ -514,9 +648,15 @@ public sealed class WindowsAgentHostTests
         FakeWindowsUiCloseService? close = null,
         FakeUiConnectionCoordinator? coordinator = null,
         WindowsAgentShutdownCoordinator? shutdownCoordinator = null,
-        WindowsAgentStateStore? state = null) =>
+        WindowsAgentStateStore? state = null,
+        FakeProcessInstanceLockProbe? uiProcessLockProbe = null,
+        WindowsAgentAdmissionGate? admissionGate = null,
+        TimeSpan? uiRegistrationPreflightTimeout = null,
+        TimeSpan? uiRegistrationPollInterval = null) =>
         new(
             processLock,
+            uiProcessLockProbe ?? new FakeProcessInstanceLockProbe(),
+            admissionGate ?? new WindowsAgentAdmissionGate(),
             control,
             endpoint,
             backend,
@@ -525,7 +665,9 @@ public sealed class WindowsAgentHostTests
             close ?? new FakeWindowsUiCloseService(),
             coordinator ?? new FakeUiConnectionCoordinator(),
             shutdownCoordinator ?? new WindowsAgentShutdownCoordinator(),
-            state ?? new WindowsAgentStateStore());
+            state ?? new WindowsAgentStateStore(),
+            uiRegistrationPreflightTimeout,
+            uiRegistrationPollInterval);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

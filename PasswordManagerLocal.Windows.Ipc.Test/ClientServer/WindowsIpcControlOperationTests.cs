@@ -73,6 +73,7 @@ public sealed class WindowsIpcControlOperationTests
                     return Task.FromResult(context.Success(
                         new AgentStatusDto(
                             AgentState.Failed,
+                            AgentAdmissionState.Closed,
                             IsUiConnected: false,
                             BackendOwnedByAgent: false,
                             IsBackendRunning: false,

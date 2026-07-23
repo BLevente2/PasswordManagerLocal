@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
+using PasswordManagerLocal.Windows.EndpointRpc.Authorization;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer;
 using PasswordManagerLocal.Windows.EndpointRpc.Metadata;
 using PasswordManagerLocal.Windows.EndpointRpc.Security;
@@ -20,18 +21,21 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
     private readonly EndpointLargeResultContractValidator _largeResultValidator;
     private readonly EndpointLargeResultTransferStore _largeResultTransferStore;
     private readonly EndpointRpcBackendErrorMapper _errorMapper;
+    private readonly IEndpointRpcAdmissionPolicy _admissionPolicy;
 
     public EndpointRpcWindowsIpcRequestHandler(
         EndpointRpcDispatcher dispatcher,
         EndpointRpcMessageCodec messageCodec,
-        EndpointRpcContractValidator validator)
+        EndpointRpcContractValidator validator,
+        IEndpointRpcAdmissionPolicy admissionPolicy)
         : this(
             dispatcher,
             messageCodec,
             validator,
             new EndpointRpcSerializer(),
             dispatcher.LargeResultTransferStore,
-            new EndpointRpcBackendErrorMapper())
+            new EndpointRpcBackendErrorMapper(),
+            admissionPolicy)
     {
     }
 
@@ -41,7 +45,8 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
         EndpointRpcContractValidator validator,
         EndpointRpcSerializer serializer,
         EndpointLargeResultTransferStore largeResultTransferStore,
-        EndpointRpcBackendErrorMapper errorMapper)
+        EndpointRpcBackendErrorMapper errorMapper,
+        IEndpointRpcAdmissionPolicy admissionPolicy)
     {
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _messageCodec = messageCodec ?? throw new ArgumentNullException(nameof(messageCodec));
@@ -50,6 +55,8 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
         _largeResultTransferStore = largeResultTransferStore
             ?? throw new ArgumentNullException(nameof(largeResultTransferStore));
         _errorMapper = errorMapper ?? throw new ArgumentNullException(nameof(errorMapper));
+        _admissionPolicy = admissionPolicy
+            ?? throw new ArgumentNullException(nameof(admissionPolicy));
         _largeResultValidator = new EndpointLargeResultContractValidator();
     }
 
@@ -60,53 +67,74 @@ public sealed class EndpointRpcWindowsIpcRequestHandler : IWindowsIpcRequestHand
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.Request.Payload is null)
-            return SuccessFailure(context, CreateInvalidPayloadError(context.Request.CorrelationId));
-
-        byte[]? decodedPayload = null;
-        try
+        if (!_admissionPolicy.TryEnterRequest(out var admissionLease))
         {
-            EndpointRpcDecodedRequest decoded;
-            try
-            {
-                decoded = _messageCodec.DecodeRequest(context.Request.Payload);
-                decodedPayload = decoded.Payload;
-            }
-            catch (EndpointRpcPayloadException)
-            {
-                return SuccessFailure(context, CreateInvalidPayloadError(context.Request.CorrelationId));
-            }
-
-            try
-            {
-                return decoded.RequestKind switch
-                {
-                    EndpointRpcRequestKind.PublicOperation => await HandlePublicOperationAsync(
-                        context,
-                        decoded.OperationId!.Value,
-                        decodedPayload,
-                        cancellationToken),
-                    EndpointRpcRequestKind.GetLargeResultChunk => HandleLargeResultChunk(
-                        context,
-                        decodedPayload),
-                    EndpointRpcRequestKind.ReleaseLargeResult => HandleLargeResultRelease(
-                        context,
-                        decodedPayload),
-                    _ => SuccessFailure(
-                        context,
-                        CreateInvalidPayloadError(context.Request.CorrelationId))
-                };
-            }
-            catch (EndpointRpcPayloadException)
-                when (decoded.RequestKind != EndpointRpcRequestKind.PublicOperation)
-            {
-                return SuccessFailure(context, CreateInvalidPayloadError(context.Request.CorrelationId));
-            }
+            return IpcResponseEnvelope.Failure(
+                context.Request.CorrelationId,
+                new IpcError(
+                    IpcErrorCode.AgentUnavailable,
+                    IpcErrorCategory.Availability,
+                    "The Windows agent endpoint channel is unavailable.",
+                    context.Request.CorrelationId,
+                    DateTimeOffset.UtcNow,
+                    IsRetryable: true,
+                    RequiresProcessRestart: false));
         }
-        finally
+
+        using (admissionLease)
         {
-            EndpointSensitiveData.Clear(decodedPayload);
-            EndpointSensitiveData.Clear(context.Request.Payload);
+            if (context.Request.Payload is null)
+                return SuccessFailure(context, CreateInvalidPayloadError(context.Request.CorrelationId));
+
+            byte[]? decodedPayload = null;
+            try
+            {
+                EndpointRpcDecodedRequest decoded;
+                try
+                {
+                    decoded = _messageCodec.DecodeRequest(context.Request.Payload);
+                    decodedPayload = decoded.Payload;
+                }
+                catch (EndpointRpcPayloadException)
+                {
+                    return SuccessFailure(
+                        context,
+                        CreateInvalidPayloadError(context.Request.CorrelationId));
+                }
+
+                try
+                {
+                    return decoded.RequestKind switch
+                    {
+                        EndpointRpcRequestKind.PublicOperation => await HandlePublicOperationAsync(
+                            context,
+                            decoded.OperationId!.Value,
+                            decodedPayload,
+                            cancellationToken),
+                        EndpointRpcRequestKind.GetLargeResultChunk => HandleLargeResultChunk(
+                            context,
+                            decodedPayload),
+                        EndpointRpcRequestKind.ReleaseLargeResult => HandleLargeResultRelease(
+                            context,
+                            decodedPayload),
+                        _ => SuccessFailure(
+                            context,
+                            CreateInvalidPayloadError(context.Request.CorrelationId))
+                    };
+                }
+                catch (EndpointRpcPayloadException)
+                    when (decoded.RequestKind != EndpointRpcRequestKind.PublicOperation)
+                {
+                    return SuccessFailure(
+                        context,
+                        CreateInvalidPayloadError(context.Request.CorrelationId));
+                }
+            }
+            finally
+            {
+                EndpointSensitiveData.Clear(decodedPayload);
+                EndpointSensitiveData.Clear(context.Request.Payload);
+            }
         }
     }
 

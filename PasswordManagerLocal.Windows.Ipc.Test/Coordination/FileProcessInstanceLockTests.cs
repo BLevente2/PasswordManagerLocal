@@ -168,6 +168,41 @@ public sealed class FileProcessInstanceLockTests
         DeleteRoot(path);
     }
 
+    [TestMethod]
+    public void NonOwningProbeDistinguishesFreeAndHeldUiLock()
+    {
+        var path = CreateLockPath("ui-probe");
+        try
+        {
+            using (var owner = new FileProcessInstanceLock(path))
+            {
+                var held = new FileProcessInstanceLockProbe(path).Probe();
+                Assert.AreEqual(ProcessInstanceLockProbeResult.Held, held);
+                Assert.IsTrue(owner.IsOwner);
+            }
+
+            var free = new FileProcessInstanceLockProbe(path).Probe();
+            Assert.AreEqual(ProcessInstanceLockProbeResult.Free, free);
+        }
+        finally
+        {
+            DeleteRoot(path);
+        }
+    }
+
+    [TestMethod]
+    public void NonOwningProbeReportsUncertainWithoutTakingOwnership()
+    {
+        var path = CreateLockPath("ui-probe-failure");
+        var probe = new FileProcessInstanceLockProbe(
+            path,
+            new DelegateProcessInstanceLockFileOpener(
+                _ => throw new UnauthorizedAccessException("denied")));
+
+        Assert.AreEqual(ProcessInstanceLockProbeResult.Uncertain, probe.Probe());
+        DeleteRoot(path);
+    }
+
     private static string CreateLockPath(string role) =>
         Path.Combine(CreateRoot(), $"{role}.lock");
 

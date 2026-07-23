@@ -19,6 +19,17 @@ public sealed class WindowsIpcContractValidatorTests
     {
         AssertInvalid(new AgentStatusDto(
             (AgentState)999,
+            AgentAdmissionState.Closed,
+            false,
+            false,
+            false,
+            false,
+            false,
+            null,
+            null));
+        AssertInvalid(new AgentStatusDto(
+            AgentState.NotStarted,
+            (AgentAdmissionState)999,
             false,
             false,
             false,
@@ -54,6 +65,7 @@ public sealed class WindowsIpcContractValidatorTests
     {
         AssertInvalid(new AgentStatusDto(
             AgentState.NotStarted,
+            AgentAdmissionState.Closed,
             false,
             false,
             false,
@@ -63,6 +75,7 @@ public sealed class WindowsIpcContractValidatorTests
             DateTimeOffset.UtcNow));
         AssertInvalid(new AgentStatusDto(
             AgentState.Running,
+            AgentAdmissionState.Open,
             false,
             true,
             true,
@@ -124,10 +137,27 @@ public sealed class WindowsIpcContractValidatorTests
     }
 
     [TestMethod]
+    public void EndpointReadinessRequiresOpenAdmission()
+    {
+        AssertInvalid(new AgentStatusDto(
+            AgentState.Running,
+            AgentAdmissionState.Closed,
+            false,
+            true,
+            true,
+            false,
+            false,
+            null,
+            DateTimeOffset.UtcNow,
+            IsEndpointHostReady: true));
+    }
+
+    [TestMethod]
     public void FailureAndStateMismatchesAreRejected()
     {
         AssertInvalid(new AgentStatusDto(
             AgentState.Running,
+            AgentAdmissionState.Open,
             false,
             true,
             true,
@@ -174,6 +204,7 @@ public sealed class WindowsIpcContractValidatorTests
             RequiresProcessRestart: true));
         AssertInvalid(new AgentStatusDto(
             AgentState.Running,
+            AgentAdmissionState.Open,
             false,
             true,
             true,
@@ -286,6 +317,7 @@ public sealed class WindowsIpcContractValidatorTests
     {
         _validator.Validate(new AgentStatusDto(
             AgentState.Running,
+            AgentAdmissionState.Open,
             true,
             true,
             true,
@@ -321,6 +353,7 @@ public sealed class WindowsIpcContractValidatorTests
             (context, _) => Task.FromResult(context.Success(
                 new AgentStatusDto(
                     (AgentState)999,
+                    AgentAdmissionState.Closed,
                     false,
                     false,
                     false,

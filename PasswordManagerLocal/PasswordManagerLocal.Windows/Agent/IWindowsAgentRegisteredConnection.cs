@@ -7,6 +7,7 @@ public interface IWindowsAgentRegisteredConnection : IAsyncDisposable
     bool IsConnected { get; }
     int? AgentProcessId { get; }
     Task Completion { get; }
+    Task<AgentStatusDto> GetAgentStatusAsync(CancellationToken cancellationToken = default);
     Task<BackendRuntimeStatusDto> GetBackendRuntimeStatusAsync(CancellationToken cancellationToken = default);
     Task<DatabaseResetResultDto> ResetDatabaseAsync(CancellationToken cancellationToken = default);
 }

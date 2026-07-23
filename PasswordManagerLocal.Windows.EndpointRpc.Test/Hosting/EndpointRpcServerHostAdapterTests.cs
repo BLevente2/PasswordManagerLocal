@@ -107,11 +107,14 @@ public sealed class EndpointRpcServerHostAdapterTests
 
     private static EndpointRpcServerSessionFactory CreateFactory()
     {
+        var admissionPolicy = new ControllableEndpointRpcAdmissionPolicy();
         var authorizer = new EndpointRpcConnectionAuthorizer(
-            new FakeEndpointUiRegistrationResolver());
+            new FakeEndpointUiRegistrationResolver(),
+            admissionPolicy);
         return new EndpointRpcServerSessionFactory(
             new FixedEndpointRpcEndpointAdapter(new SuccessfulRecordingEndpoints()),
-            authorizer);
+            authorizer,
+            admissionPolicy);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

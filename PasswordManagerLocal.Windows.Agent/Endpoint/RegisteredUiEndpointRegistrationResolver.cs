@@ -8,11 +8,15 @@ public sealed class RegisteredUiEndpointRegistrationResolver :
     IDisposable
 {
     private readonly IUiConnectionCoordinator _coordinator;
+    private readonly IWindowsAgentAdmissionGate _admissionGate;
     private int _disposed;
 
-    public RegisteredUiEndpointRegistrationResolver(IUiConnectionCoordinator coordinator)
+    public RegisteredUiEndpointRegistrationResolver(
+        IUiConnectionCoordinator coordinator,
+        IWindowsAgentAdmissionGate admissionGate)
     {
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _coordinator.RegistrationChanged += HandleRegistrationChanged;
     }
 
@@ -24,6 +28,12 @@ public sealed class RegisteredUiEndpointRegistrationResolver :
         Guid instanceId,
         out long registrationGeneration)
     {
+        if (!_admissionGate.IsOpen)
+        {
+            registrationGeneration = 0;
+            return false;
+        }
+
         var registration = _coordinator.Registration;
         if (registration is null ||
             registration.ProcessId != processId ||
@@ -43,6 +53,7 @@ public sealed class RegisteredUiEndpointRegistrationResolver :
         int windowsSessionId,
         Guid instanceId,
         long registrationGeneration) =>
+        _admissionGate.IsOpen &&
         _coordinator.IsCurrentRegistration(
             processId,
             windowsSessionId,

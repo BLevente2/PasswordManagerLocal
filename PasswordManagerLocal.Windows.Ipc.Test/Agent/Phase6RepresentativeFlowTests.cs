@@ -4,6 +4,7 @@ using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
+using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.EndpointRpc.Authorization;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
@@ -36,15 +37,19 @@ public sealed class Phase6RepresentativeFlowTests
             IpcCapabilities.Control | IpcCapabilities.Status);
         Assert.IsTrue(coordinator.TryRegister(controlConnection, out _));
 
-        using var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator);
-        var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(resolver);
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var admissionGate = new WindowsAgentAdmissionGate();
+        admissionGate.Open();
+        using var resolver = new RegisteredUiEndpointRegistrationResolver(
+            coordinator,
+            admissionGate);
         var endpointConnection = CreateConnection(
             Guid.NewGuid(),
             processId,
             windowsSessionId,
             instanceId,
             IpcCapabilities.EndpointRpc);
-        Assert.IsTrue(connectionAuthorizer.Authorize(endpointConnection).IsAuthorized);
 
         var expectedDeviceId = Guid.NewGuid();
         var endpoints = DispatchProxy.Create<IEndpoints, TestEndpointsDispatchProxy>();
@@ -66,6 +71,15 @@ public sealed class Phase6RepresentativeFlowTests
             InteractiveBindingFactory = _ => Task.FromResult(
                 new AgentInteractiveBackendBinding(session, lease, () => ValueTask.CompletedTask))
         };
+        var admissionPolicy = new WindowsAgentEndpointAdmissionPolicy(
+            admissionGate,
+            state,
+            owner,
+            () => WindowsAgentEndpointHostState.Ready);
+        var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(
+            resolver,
+            admissionPolicy);
+        Assert.IsTrue(connectionAuthorizer.Authorize(endpointConnection).IsAuthorized);
         await using var adapter = new AgentInteractiveEndpointAdapter(owner);
         await adapter.OnConnectionLifecycleChangedAsync(new IpcConnectionLifecycleNotification(
             endpointConnection.ConnectionId,

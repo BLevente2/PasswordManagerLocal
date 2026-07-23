@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.EndpointRpc.Client;
 using PasswordManagerLocal.Windows.Ipc.Client;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
@@ -9,7 +10,9 @@ namespace PasswordManagerLocal.Windows.AgentConnection;
 
 public sealed class WindowsAgentControlConnector : IWindowsAgentControlConnector
 {
-    public async Task<IWindowsAgentRegisteredConnection?> TryConnectAndRegisterAsync(
+    private readonly WindowsAgentHealthValidator _healthValidator = new();
+
+    public async Task<WindowsAgentControlConnectionAttempt> TryConnectAndRegisterAsync(
         string pipeName,
         WindowsUiIpcIdentity identity,
         TimeSpan connectTimeout,
@@ -28,6 +31,7 @@ public sealed class WindowsAgentControlConnector : IWindowsAgentControlConnector
             timeoutSource.Token);
         IWindowsIpcConnection? connection = null;
         WindowsIpcClient? client = null;
+        int? agentProcessId = null;
         try
         {
             connection = await new WindowsNamedPipeClient(
@@ -47,14 +51,21 @@ public sealed class WindowsAgentControlConnector : IWindowsAgentControlConnector
                 validator);
             connection = null;
             await client.HandshakeAsync(linkedSource.Token);
+            agentProcessId = client.VerifiedServerProcessId;
+
             var controlClient = new WindowsIpcControlClient(client, serializer, validator);
+            var agentStatus = await controlClient.GetAgentStatusAsync(linkedSource.Token);
+            var backendStatus = await controlClient.GetBackendRuntimeStatusAsync(linkedSource.Token);
+            if (!_healthValidator.CanRegisterUi(agentStatus, backendStatus))
+                return new WindowsAgentControlConnectionAttempt(null, agentProcessId);
+
             var registration = await controlClient.RegisterUiConnectionAsync(linkedSource.Token);
             if (!registration.IsRegistered)
-                throw new InvalidOperationException("The agent did not register the UI connection.");
+                return new WindowsAgentControlConnectionAttempt(null, agentProcessId);
 
             var registered = new WindowsAgentRegisteredConnection(client, controlClient);
             client = null;
-            return registered;
+            return new WindowsAgentControlConnectionAttempt(registered, agentProcessId);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -62,7 +73,7 @@ public sealed class WindowsAgentControlConnector : IWindowsAgentControlConnector
         }
         catch
         {
-            return null;
+            return new WindowsAgentControlConnectionAttempt(null, agentProcessId);
         }
         finally
         {

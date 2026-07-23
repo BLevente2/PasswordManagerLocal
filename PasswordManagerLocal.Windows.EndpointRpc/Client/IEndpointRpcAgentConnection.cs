@@ -11,6 +11,7 @@ public interface IEndpointRpcAgentConnection : IAsyncDisposable
     Task<bool> EnsureConnectedAsync(CancellationToken cancellationToken = default);
     Task DisconnectAsync(CancellationToken cancellationToken = default);
     Task<bool> PrepareForReplacementAsync(CancellationToken cancellationToken = default);
+    Task<AgentStatusDto> GetAgentStatusAsync(CancellationToken cancellationToken = default);
     Task<BackendRuntimeStatusDto> GetBackendRuntimeStatusAsync(CancellationToken cancellationToken = default);
     Task<DatabaseResetResultDto> ResetDatabaseAsync(CancellationToken cancellationToken = default);
 }

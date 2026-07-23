@@ -2,6 +2,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Contracts;
 
 public sealed record AgentStatusDto(
     AgentState AgentState,
+    AgentAdmissionState AdmissionState,
     bool IsUiConnected,
     bool BackendOwnedByAgent,
     bool IsBackendRunning,

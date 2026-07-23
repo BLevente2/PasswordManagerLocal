@@ -10,6 +10,7 @@ public sealed class EndpointRpcConnectionAuthorizer :
     IWindowsIpcConnectionLifecycleObserver
 {
     private readonly IEndpointUiRegistrationResolver _registrationResolver;
+    private readonly IEndpointRpcAdmissionPolicy _admissionPolicy;
     private readonly object _gate = new();
     private Guid? _activeConnectionId;
     private long _activeRegistrationGeneration;
@@ -17,13 +18,26 @@ public sealed class EndpointRpcConnectionAuthorizer :
     private int _activeWindowsSessionId;
     private Guid _activeInstanceId;
 
-    public EndpointRpcConnectionAuthorizer(IEndpointUiRegistrationResolver registrationResolver) =>
+    public EndpointRpcConnectionAuthorizer(
+        IEndpointUiRegistrationResolver registrationResolver,
+        IEndpointRpcAdmissionPolicy admissionPolicy)
+    {
         _registrationResolver = registrationResolver
             ?? throw new ArgumentNullException(nameof(registrationResolver));
+        _admissionPolicy = admissionPolicy
+            ?? throw new ArgumentNullException(nameof(admissionPolicy));
+    }
 
     public IpcHandshakeAuthorizationDecision Authorize(IpcConnectionContext connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
+        if (!_admissionPolicy.CanAcceptConnection)
+        {
+            return IpcHandshakeAuthorizationDecision.Reject(
+                IpcErrorCode.AgentUnavailable,
+                "The Windows agent endpoint channel is unavailable.");
+        }
+
         if (connection.PeerRole != IpcPeerRole.Ui)
         {
             return IpcHandshakeAuthorizationDecision.Reject(
@@ -51,6 +65,23 @@ public sealed class EndpointRpcConnectionAuthorizer :
 
         lock (_gate)
         {
+            if (!_admissionPolicy.CanAcceptConnection)
+            {
+                return IpcHandshakeAuthorizationDecision.Reject(
+                    IpcErrorCode.AgentUnavailable,
+                    "The Windows agent endpoint channel is unavailable.");
+            }
+            if (!_registrationResolver.IsCurrent(
+                    connection.PeerProcessId,
+                    connection.PeerWindowsSessionId,
+                    connection.PeerSessionId,
+                    registrationGeneration))
+            {
+                return IpcHandshakeAuthorizationDecision.Reject(
+                    IpcErrorCode.UiNotRegistered,
+                    "The UI registration changed before endpoint authorization completed.");
+            }
+
             if (_activeConnectionId.HasValue &&
                 !_registrationResolver.IsCurrent(
                     _activeProcessId,
@@ -83,7 +114,8 @@ public sealed class EndpointRpcConnectionAuthorizer :
         ArgumentNullException.ThrowIfNull(connection);
         lock (_gate)
         {
-            return _activeConnectionId == connection.ConnectionId &&
+            return _admissionPolicy.CanAcceptConnection &&
+                _activeConnectionId == connection.ConnectionId &&
                 _activeProcessId == connection.PeerProcessId &&
                 _activeWindowsSessionId == connection.PeerWindowsSessionId &&
                 _activeInstanceId == connection.PeerSessionId &&

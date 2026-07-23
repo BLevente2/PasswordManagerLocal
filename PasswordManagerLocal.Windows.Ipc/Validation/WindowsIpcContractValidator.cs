@@ -234,6 +234,14 @@ public sealed class WindowsIpcContractValidator
         ArgumentNullException.ThrowIfNull(status);
         if (!Enum.IsDefined(status.AgentState))
             throw new IpcPayloadException("The IPC agent state is invalid.");
+        if (!Enum.IsDefined(status.AdmissionState))
+            throw new IpcPayloadException("The IPC agent admission state is invalid.");
+
+        if (status.AdmissionState == AgentAdmissionState.Open &&
+            status.AgentState != AgentState.Running)
+        {
+            throw new IpcPayloadException("Open admission requires a running agent.");
+        }
 
         if (status.StartedAtUtc.HasValue)
             ValidateTimestamp(status.StartedAtUtc.Value, "The IPC agent start timestamp is invalid.");
@@ -259,6 +267,9 @@ public sealed class WindowsIpcContractValidator
         {
             throw new IpcPayloadException("Agent runtime details require agent backend ownership.");
         }
+
+        if (status.IsEndpointHostReady && status.AdmissionState != AgentAdmissionState.Open)
+            throw new IpcPayloadException("Endpoint readiness requires open agent admission.");
 
         if (status.IsEndpointHostReady && status.IsDatabaseResetInProgress)
             throw new IpcPayloadException("The endpoint host cannot be ready during database reset.");

@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
+using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 
@@ -16,7 +17,9 @@ public sealed class RegisteredUiEndpointRegistrationResolverTests
         Assert.IsTrue(coordinator.TryRegister(
             CreateContext(Guid.NewGuid(), 100, 3, instanceId),
             out var registration));
-        using var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator);
+        using var resolver = new RegisteredUiEndpointRegistrationResolver(
+            coordinator,
+            CreateOpenAdmissionGate());
 
         Assert.IsTrue(resolver.TryResolve(100, 3, instanceId, out var generation));
         Assert.AreEqual(registration.Generation, generation);
@@ -31,7 +34,9 @@ public sealed class RegisteredUiEndpointRegistrationResolverTests
         Assert.IsTrue(coordinator.TryRegister(
             CreateContext(Guid.NewGuid(), 100, 3, instanceId),
             out _));
-        using var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator);
+        using var resolver = new RegisteredUiEndpointRegistrationResolver(
+            coordinator,
+            CreateOpenAdmissionGate());
 
         Assert.IsFalse(resolver.TryResolve(101, 3, instanceId, out _));
         Assert.IsFalse(resolver.TryResolve(100, 4, instanceId, out _));
@@ -49,17 +54,41 @@ public sealed class RegisteredUiEndpointRegistrationResolverTests
         Assert.IsTrue(coordinator.TryRegister(
             CreateContext(Guid.NewGuid(), 100, 3, instanceId),
             out var replacement));
-        using var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator);
+        using var resolver = new RegisteredUiEndpointRegistrationResolver(
+            coordinator,
+            CreateOpenAdmissionGate());
 
         Assert.IsFalse(resolver.IsCurrent(100, 3, instanceId, first.Generation));
         Assert.IsTrue(resolver.IsCurrent(100, 3, instanceId, replacement.Generation));
     }
 
     [TestMethod]
+    public void ClosedAdmissionInvalidatesCurrentRegistrationForEndpointAuthorization()
+    {
+        var coordinator = new SingleUiConnectionCoordinator();
+        var instanceId = Guid.NewGuid();
+        Assert.IsTrue(coordinator.TryRegister(
+            CreateContext(Guid.NewGuid(), 100, 3, instanceId),
+            out var registration));
+        var gate = CreateOpenAdmissionGate();
+        using var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator, gate);
+
+        Assert.IsTrue(resolver.TryResolve(100, 3, instanceId, out var generation));
+        Assert.AreEqual(registration.Generation, generation);
+
+        gate.ClosePermanently();
+
+        Assert.IsFalse(resolver.TryResolve(100, 3, instanceId, out _));
+        Assert.IsFalse(resolver.IsCurrent(100, 3, instanceId, registration.Generation));
+    }
+
+    [TestMethod]
     public void ResolverForwardsRegistrationReplacementForEndpointInvalidation()
     {
         var coordinator = new SingleUiConnectionCoordinator();
-        using var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator);
+        using var resolver = new RegisteredUiEndpointRegistrationResolver(
+            coordinator,
+            CreateOpenAdmissionGate());
         UiConnectionRegistrationChangedEventArgs? observed = null;
         resolver.RegistrationChanged += (_, args) => observed = args;
         var instanceId = Guid.NewGuid();
@@ -88,4 +117,11 @@ public sealed class RegisteredUiEndpointRegistrationResolverTests
             windowsSessionId,
             instanceId,
             IpcCapabilities.Control | IpcCapabilities.Status);
+
+    private static WindowsAgentAdmissionGate CreateOpenAdmissionGate()
+    {
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        return gate;
+    }
 }

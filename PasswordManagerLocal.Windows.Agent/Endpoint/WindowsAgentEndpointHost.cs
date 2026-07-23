@@ -1,4 +1,6 @@
 using PasswordManagerLocal.Windows.EndpointRpc.Authorization;
+using PasswordManagerLocal.Windows.Agent.Backend;
+using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.EndpointRpc.Server;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
@@ -14,9 +16,11 @@ public sealed class WindowsAgentEndpointHost : IWindowsAgentEndpointHost
     private readonly string _pipeName;
     private readonly AgentInteractiveEndpointAdapter _endpointAdapter;
     private readonly RegisteredUiEndpointRegistrationResolver _registrationResolver;
+    private readonly IEndpointRpcAdmissionPolicy _admissionPolicy;
     private readonly Func<
         AgentInteractiveEndpointAdapter,
         RegisteredUiEndpointRegistrationResolver,
+        IEndpointRpcAdmissionPolicy,
         IEndpointRpcServerSessionFactory> _sessionFactoryFactory;
     private readonly Func<
         string,
@@ -38,34 +42,50 @@ public sealed class WindowsAgentEndpointHost : IWindowsAgentEndpointHost
     public WindowsAgentEndpointHost(
         string pipeName,
         AgentInteractiveEndpointAdapter endpointAdapter,
-        RegisteredUiEndpointRegistrationResolver registrationResolver)
-        : this(
-            pipeName,
-            endpointAdapter,
-            registrationResolver,
-            (adapter, resolver) =>
-            {
-                var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(resolver);
-                return new EndpointRpcServerSessionFactory(
-                    adapter,
-                    connectionAuthorizer,
-                    adapter,
-                    [adapter]);
-            },
-            (name, sessionFactory) => new WindowsIpcServerHost(
-                new WindowsNamedPipeServer(name, new IpcFrameCodec()),
-                sessionFactory,
-                new WindowsIpcServerHostOptions(MaximumActiveEndpointConnections)))
+        RegisteredUiEndpointRegistrationResolver registrationResolver,
+        IWindowsAgentAdmissionGate admissionGate,
+        IWindowsAgentStateSource stateSource,
+        IWindowsAgentBackendRuntimeOwner backendOwner)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        _pipeName = pipeName;
+        _endpointAdapter = endpointAdapter ?? throw new ArgumentNullException(nameof(endpointAdapter));
+        _registrationResolver = registrationResolver
+            ?? throw new ArgumentNullException(nameof(registrationResolver));
+        ArgumentNullException.ThrowIfNull(admissionGate);
+        ArgumentNullException.ThrowIfNull(stateSource);
+        ArgumentNullException.ThrowIfNull(backendOwner);
+        _admissionPolicy = new WindowsAgentEndpointAdmissionPolicy(
+            admissionGate,
+            stateSource,
+            backendOwner,
+            () => Snapshot.State);
+        _sessionFactoryFactory = (adapter, resolver, policy) =>
+        {
+            var connectionAuthorizer = new EndpointRpcConnectionAuthorizer(resolver, policy);
+            return new EndpointRpcServerSessionFactory(
+                adapter,
+                connectionAuthorizer,
+                policy,
+                adapter,
+                [adapter]);
+        };
+        _hostFactory = (name, sessionFactory) => new WindowsIpcServerHost(
+            new WindowsNamedPipeServer(name, new IpcFrameCodec()),
+            sessionFactory,
+            new WindowsIpcServerHostOptions(MaximumActiveEndpointConnections));
+        _registrationResolver.RegistrationChanged += HandleRegistrationChanged;
     }
 
     internal WindowsAgentEndpointHost(
         string pipeName,
         AgentInteractiveEndpointAdapter endpointAdapter,
         RegisteredUiEndpointRegistrationResolver registrationResolver,
+        IEndpointRpcAdmissionPolicy admissionPolicy,
         Func<
             AgentInteractiveEndpointAdapter,
             RegisteredUiEndpointRegistrationResolver,
+            IEndpointRpcAdmissionPolicy,
             IEndpointRpcServerSessionFactory> sessionFactoryFactory,
         Func<
             string,
@@ -77,6 +97,7 @@ public sealed class WindowsAgentEndpointHost : IWindowsAgentEndpointHost
         _endpointAdapter = endpointAdapter ?? throw new ArgumentNullException(nameof(endpointAdapter));
         _registrationResolver = registrationResolver
             ?? throw new ArgumentNullException(nameof(registrationResolver));
+        _admissionPolicy = admissionPolicy ?? throw new ArgumentNullException(nameof(admissionPolicy));
         _sessionFactoryFactory = sessionFactoryFactory
             ?? throw new ArgumentNullException(nameof(sessionFactoryFactory));
         _hostFactory = hostFactory ?? throw new ArgumentNullException(nameof(hostFactory));
@@ -110,7 +131,10 @@ public sealed class WindowsAgentEndpointHost : IWindowsAgentEndpointHost
             IWindowsIpcServerHost? host = null;
             try
             {
-                sessionFactory = _sessionFactoryFactory(_endpointAdapter, _registrationResolver)
+                sessionFactory = _sessionFactoryFactory(
+                    _endpointAdapter,
+                    _registrationResolver,
+                    _admissionPolicy)
                     ?? throw new InvalidOperationException("The endpoint session factory returned null.");
                 host = _hostFactory(_pipeName, sessionFactory)
                     ?? throw new InvalidOperationException("The endpoint server host factory returned null.");
@@ -163,10 +187,12 @@ public sealed class WindowsAgentEndpointHost : IWindowsAgentEndpointHost
 
             Publish(WindowsAgentEndpointHostState.Stopping, null);
             Exception? failure = null;
+            try { await _admissionPolicy.WaitForDrainAsync(CancellationToken.None); }
+            catch (Exception exception) { failure = exception; }
             if (host is not null)
             {
                 try { await host.StopAsync(cancellationToken); }
-                catch (Exception exception) { failure = exception; }
+                catch (Exception exception) { failure = Combine(failure, exception); }
                 try { await host.DisposeAsync(); }
                 catch (Exception exception) { failure = Combine(failure, exception); }
             }

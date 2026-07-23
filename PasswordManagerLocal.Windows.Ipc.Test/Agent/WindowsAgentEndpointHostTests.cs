@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
+using PasswordManagerLocal.Windows.Agent.Hosting;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
@@ -193,15 +194,27 @@ public sealed class WindowsAgentEndpointHostTests
     {
         owner ??= new FakeWindowsAgentBackendRuntimeOwner();
         coordinator ??= new SingleUiConnectionCoordinator();
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var admissionGate = new WindowsAgentAdmissionGate();
+        admissionGate.Open();
         var adapter = new AgentInteractiveEndpointAdapter(owner);
-        var resolver = new RegisteredUiEndpointRegistrationResolver(coordinator);
+        var resolver = new RegisteredUiEndpointRegistrationResolver(
+            coordinator,
+            admissionGate);
+        var admissionPolicy = new WindowsAgentEndpointAdmissionPolicy(
+            admissionGate,
+            state,
+            owner,
+            () => WindowsAgentEndpointHostState.Ready);
         var sessionFactory = new FakeEndpointRpcServerSessionFactory();
         var serverHost = new FakeWindowsIpcServerHost();
         var host = new WindowsAgentEndpointHost(
             "test-endpoint-pipe",
             adapter,
             resolver,
-            (_, _) => sessionFactory,
+            admissionPolicy,
+            (_, _, _) => sessionFactory,
             (_, _) => serverHost);
         return new EndpointHostTestContext(
             host,

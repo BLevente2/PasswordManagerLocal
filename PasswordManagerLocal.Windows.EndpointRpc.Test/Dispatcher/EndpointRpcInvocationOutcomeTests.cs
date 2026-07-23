@@ -310,7 +310,8 @@ public sealed class EndpointRpcInvocationOutcomeTests
             new EndpointRpcContractValidator(),
             failingSerializer,
             dispatcher.LargeResultTransferStore,
-            new EndpointRpcBackendErrorMapper());
+            new EndpointRpcBackendErrorMapper(),
+            new ControllableEndpointRpcAdmissionPolicy());
         var connection = new IpcConnectionContext(
             Guid.NewGuid(),
             IpcPeerRole.Ui,

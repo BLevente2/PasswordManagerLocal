@@ -53,6 +53,7 @@ internal sealed class Program
         try
         {
             var stateStore = new WindowsAgentStateStore();
+            var admissionGate = new WindowsAgentAdmissionGate();
             var uiCoordinator = new SingleUiConnectionCoordinator();
             var shutdownCoordinator = new WindowsAgentShutdownCoordinator();
             var activationClient = new WindowsUiActivationClient(
@@ -65,17 +66,23 @@ internal sealed class Program
 
             var backendOwner = new WindowsAgentBackendRuntimeOwner();
             var endpointAdapter = new AgentInteractiveEndpointAdapter(backendOwner);
-            var registrationResolver = new RegisteredUiEndpointRegistrationResolver(uiCoordinator);
+            var registrationResolver = new RegisteredUiEndpointRegistrationResolver(
+                uiCoordinator,
+                admissionGate);
             var endpointHost = new WindowsAgentEndpointHost(
                 names.EndpointPipeName,
                 endpointAdapter,
-                registrationResolver);
+                registrationResolver,
+                admissionGate,
+                stateStore,
+                backendOwner);
             var resetCoordinator = new WindowsAgentDatabaseResetCoordinator(
                 endpointHost,
                 backendOwner,
                 shutdownCoordinator);
             var statusProvider = new WindowsAgentStatusProvider(
                 stateStore,
+                admissionGate,
                 uiCoordinator,
                 new WindowsBackgroundSyncSettingsReader(applicationDataDirectory),
                 backendOwner,
@@ -92,19 +99,33 @@ internal sealed class Program
                 new GetBackendRuntimeStatusWindowsIpcRequestHandler(statusProvider, validator),
                 new GetInteractiveSessionStatusWindowsIpcRequestHandler(statusProvider, validator),
                 new GetSynchronizationStatusWindowsIpcRequestHandler(statusProvider, validator),
-                new RegisterUiConnectionWindowsIpcRequestHandler(uiCoordinator),
-                new UnregisterUiConnectionWindowsIpcRequestHandler(uiCoordinator),
-                new WindowsAgentRequestUiOpenHandler(uiOpenService),
-                new WindowsAgentRequestUiActivationHandler(uiOpenService),
-                new RequestAgentExitWindowsIpcRequestHandler(
-                    new WindowsAgentExitRequestSink(shutdownCoordinator)),
-                new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator)
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new RegisterUiConnectionWindowsIpcRequestHandler(uiCoordinator)),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new UnregisterUiConnectionWindowsIpcRequestHandler(uiCoordinator)),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new WindowsAgentRequestUiOpenHandler(uiOpenService)),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new WindowsAgentRequestUiActivationHandler(uiOpenService)),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new RequestAgentExitWindowsIpcRequestHandler(
+                        new WindowsAgentExitRequestSink(shutdownCoordinator))),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator))
             };
             var dispatcher = new WindowsIpcRequestDispatcher(
                 handlers,
                 validator,
                 new WindowsAgentOperationAuthorizer(
                     stateStore,
+                    admissionGate,
+                    backendOwner,
                     new WindowsIpcOperationAuthorizer(uiCoordinator)));
             var serverOptions = new WindowsIpcServerOptions(
                 IpcPeerRole.Agent,
@@ -125,6 +146,8 @@ internal sealed class Program
                     Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico")));
             host = new WindowsAgentHost(
                 processLock,
+                new FileProcessInstanceLockProbe(names.UiLockFilePath),
+                admissionGate,
                 controlServer,
                 endpointHost,
                 backendOwner,

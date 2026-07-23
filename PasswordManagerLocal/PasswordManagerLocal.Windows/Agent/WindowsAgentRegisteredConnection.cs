@@ -21,6 +21,14 @@ public sealed class WindowsAgentRegisteredConnection : IWindowsAgentRegisteredCo
     public int? AgentProcessId => _client.VerifiedServerProcessId;
     public Task Completion => _client.Completion;
 
+    public Task<AgentStatusDto> GetAgentStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
+        return _controlClient.GetAgentStatusAsync(cancellationToken);
+    }
+
     public Task<BackendRuntimeStatusDto> GetBackendRuntimeStatusAsync(
         CancellationToken cancellationToken = default)
     {

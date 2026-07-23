@@ -21,11 +21,13 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
     public EndpointRpcServerSessionFactory(
         IEndpointRpcEndpointAdapter endpointAdapter,
         EndpointRpcConnectionAuthorizer connectionAuthorizer,
+        IEndpointRpcAdmissionPolicy admissionPolicy,
         IEndpointRpcSessionReadiness? sessionReadiness = null,
         IEnumerable<PasswordManagerLocal.Windows.Ipc.Lifecycle.IWindowsIpcConnectionLifecycleObserver>? observers = null)
     {
         ArgumentNullException.ThrowIfNull(endpointAdapter);
         ArgumentNullException.ThrowIfNull(connectionAuthorizer);
+        ArgumentNullException.ThrowIfNull(admissionPolicy);
 
         var serializer = new EndpointRpcSerializer();
         var validator = new EndpointRpcContractValidator();
@@ -45,13 +47,14 @@ public sealed class EndpointRpcServerSessionFactory : IEndpointRpcServerSessionF
             validator,
             serializer,
             _largeResultTransferStore,
-            errorMapper);
+            errorMapper,
+            admissionPolicy);
         var readiness = sessionReadiness ?? endpointAdapter as IEndpointRpcSessionReadiness
             ?? throw new ArgumentException("The endpoint adapter must provide session readiness.", nameof(endpointAdapter));
         var ipcDispatcher = new WindowsIpcRequestDispatcher(
-            [requestHandler, new EndpointSessionReadyWindowsIpcRequestHandler(readiness)],
+            [requestHandler, new EndpointSessionReadyWindowsIpcRequestHandler(readiness, admissionPolicy)],
             new WindowsIpcContractValidator(),
-            new EndpointRpcOperationAuthorizer(connectionAuthorizer));
+            new EndpointRpcOperationAuthorizer(connectionAuthorizer, admissionPolicy));
         var options = new WindowsIpcServerOptions(
             IpcPeerRole.Agent,
             [IpcPeerRole.Ui],

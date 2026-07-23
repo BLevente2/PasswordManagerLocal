@@ -74,7 +74,11 @@ public sealed class EndpointRpcSensitiveDataTests
             serializer,
             validator,
             new EndpointRpcBackendErrorMapper());
-        var handler = new EndpointRpcWindowsIpcRequestHandler(dispatcher, codec, validator);
+        var handler = new EndpointRpcWindowsIpcRequestHandler(
+            dispatcher,
+            codec,
+            validator,
+            new ControllableEndpointRpcAdmissionPolicy());
         var requestPayload = serializer.Serialize(
             new DeleteUserAccountEndpointRequest
             {

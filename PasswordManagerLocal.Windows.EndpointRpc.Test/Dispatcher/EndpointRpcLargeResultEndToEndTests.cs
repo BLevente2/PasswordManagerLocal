@@ -33,7 +33,11 @@ public sealed class EndpointRpcLargeResultEndToEndTests
             serializer,
             validator,
             new EndpointRpcBackendErrorMapper());
-        var handler = new EndpointRpcWindowsIpcRequestHandler(dispatcher, codec, validator);
+        var handler = new EndpointRpcWindowsIpcRequestHandler(
+            dispatcher,
+            codec,
+            validator,
+            new ControllableEndpointRpcAdmissionPolicy());
         await using var transport = new InMemoryEndpointRpcTransport(handler, codec);
         await using var proxy = new NamedPipeEndpointsProxy(transport, serializer, validator);
 
@@ -59,7 +63,11 @@ public sealed class EndpointRpcLargeResultEndToEndTests
             serializer,
             validator,
             new EndpointRpcBackendErrorMapper());
-        var handler = new EndpointRpcWindowsIpcRequestHandler(dispatcher, codec, validator);
+        var handler = new EndpointRpcWindowsIpcRequestHandler(
+            dispatcher,
+            codec,
+            validator,
+            new ControllableEndpointRpcAdmissionPolicy());
         var connection = new IpcConnectionContext(
             Guid.NewGuid(),
             IpcPeerRole.Ui,

@@ -1,11 +1,14 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Hosting;
+using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Windows.Ipc.Authorization;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Server;
+using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 
 namespace PasswordManagerLocal.Windows.Ipc.Test.Authorization;
 
@@ -76,21 +79,167 @@ public sealed class WindowsIpcOperationAuthorizerTests
     }
 
     [TestMethod]
-    public void StoppingAgentAllowsOnlyPingAndAgentStatus()
+    public void StoppingAgentAllowsOnlyStatusOperations()
     {
         var state = new WindowsAgentStateStore();
         state.MarkRunning(DateTimeOffset.UtcNow);
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        gate.ClosePermanently();
         state.MarkStopping();
         var authorizer = new WindowsAgentOperationAuthorizer(
             state,
+            gate,
+            new FakeWindowsAgentBackendRuntimeOwner(),
             new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
 
-        Assert.IsTrue(authorizer.Authorize(CreateContext(Guid.NewGuid(), IpcPeerRole.TestClient, IpcOperationId.Ping)).IsAuthorized);
-        Assert.IsTrue(authorizer.Authorize(CreateContext(Guid.NewGuid(), IpcPeerRole.TestClient, IpcOperationId.GetAgentStatus)).IsAuthorized);
-        var denied = authorizer.Authorize(CreateContext(Guid.NewGuid(), IpcPeerRole.TestClient, IpcOperationId.RequestUiOpen));
+        foreach (var operation in StatusOperations)
+        {
+            Assert.IsTrue(authorizer.Authorize(
+                CreateContext(Guid.NewGuid(), IpcPeerRole.TestClient, operation)).IsAuthorized);
+        }
+
+        var denied = authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.Ui,
+            IpcOperationId.RegisterUiConnection));
         Assert.IsFalse(denied.IsAuthorized);
         Assert.AreEqual(IpcErrorCode.AgentStopping, denied.ErrorCode);
     }
+
+    [TestMethod]
+    public void FailedAgentAllowsStatusButRejectsRegistrationAndMutations()
+    {
+        var state = new WindowsAgentStateStore();
+        state.MarkFailed("fatal lifecycle failure");
+        var authorizer = new WindowsAgentOperationAuthorizer(
+            state,
+            new WindowsAgentAdmissionGate(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+
+        foreach (var operation in StatusOperations)
+        {
+            Assert.IsTrue(authorizer.Authorize(
+                CreateContext(Guid.NewGuid(), IpcPeerRole.TestClient, operation)).IsAuthorized);
+        }
+        foreach (var operation in new[]
+        {
+            IpcOperationId.RegisterUiConnection,
+            IpcOperationId.ResetDatabase,
+            IpcOperationId.RequestAgentExit,
+            IpcOperationId.RequestUiOpen
+        })
+        {
+            var denied = authorizer.Authorize(CreateContext(
+                Guid.NewGuid(),
+                IpcPeerRole.Ui,
+                operation));
+            Assert.IsFalse(denied.IsAuthorized);
+            Assert.AreEqual(IpcErrorCode.AgentUnavailable, denied.ErrorCode);
+        }
+    }
+
+    [TestMethod]
+    public void RestartRequiredBackendMakesRunningAgentStatusOnly()
+    {
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        var backend = new FakeWindowsAgentBackendRuntimeOwner();
+        backend.RequireProcessRestart(new IOException("cleanup failed"));
+        var authorizer = new WindowsAgentOperationAuthorizer(
+            state,
+            gate,
+            backend,
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+
+        Assert.IsTrue(authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.TestClient,
+            IpcOperationId.GetAgentStatus)).IsAuthorized);
+        Assert.IsFalse(authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.Ui,
+            IpcOperationId.RegisterUiConnection)).IsAuthorized);
+    }
+
+    [TestMethod]
+    public void RunningAgentWithNonResettableBackendFailureIsStatusOnly()
+    {
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        var backend = new FakeWindowsAgentBackendRuntimeOwner
+        {
+            Snapshot = FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(
+                ownerState: WindowsAgentBackendOwnerState.Failed,
+                runtimeState: BackendRuntimeState.Failed,
+                runtimeFailureKind: BackendRuntimeFailureKind.StorageUnavailable)
+        };
+        var authorizer = new WindowsAgentOperationAuthorizer(
+            state,
+            gate,
+            backend,
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+
+        Assert.IsTrue(authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.TestClient,
+            IpcOperationId.GetBackendRuntimeStatus)).IsAuthorized);
+        Assert.IsFalse(authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.Ui,
+            IpcOperationId.RegisterUiConnection)).IsAuthorized);
+    }
+
+    [TestMethod]
+    public void RunningAgentWithResettableBackendFailureAllowsOnlyControlRecoveryOperations()
+    {
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        var coordinator = new SingleUiConnectionCoordinator();
+        var backend = new FakeWindowsAgentBackendRuntimeOwner
+        {
+            Snapshot = FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(
+                ownerState: WindowsAgentBackendOwnerState.Failed,
+                runtimeState: BackendRuntimeState.Failed,
+                runtimeFailureKind: BackendRuntimeFailureKind.DatabaseCompatibility)
+        };
+        var authorizer = new WindowsAgentOperationAuthorizer(
+            state,
+            gate,
+            backend,
+            new WindowsIpcOperationAuthorizer(coordinator));
+        var registration = CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.Ui,
+            IpcOperationId.RegisterUiConnection);
+
+        Assert.IsTrue(authorizer.Authorize(registration).IsAuthorized);
+        Assert.IsTrue(coordinator.TryRegister(registration.Connection, out _));
+        Assert.IsTrue(authorizer.Authorize(CreateContext(
+            registration.Connection.ConnectionId,
+            IpcPeerRole.Ui,
+            IpcOperationId.ResetDatabase)).IsAuthorized);
+        Assert.IsFalse(authorizer.Authorize(CreateContext(
+            registration.Connection.ConnectionId,
+            IpcPeerRole.Ui,
+            IpcOperationId.RequestAgentExit)).IsAuthorized);
+    }
+
+    private static readonly IpcOperationId[] StatusOperations =
+    [
+        IpcOperationId.Ping,
+        IpcOperationId.GetAgentStatus,
+        IpcOperationId.GetBackendRuntimeStatus,
+        IpcOperationId.GetInteractiveSessionStatus,
+        IpcOperationId.GetSynchronizationStatus
+    ];
 
     private static IpcRequestContext CreateContext(
         Guid connectionId,

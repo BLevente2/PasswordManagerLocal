@@ -78,6 +78,12 @@ internal sealed class FakeWindowsAgentBackendRuntimeOwner : IWindowsAgentBackend
         return Task.CompletedTask;
     }
 
+    public void PublishSnapshot(WindowsAgentBackendOwnerSnapshot snapshot)
+    {
+        Snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public void RequireProcessRestart(Exception failure)
     {
         ArgumentNullException.ThrowIfNull(failure);

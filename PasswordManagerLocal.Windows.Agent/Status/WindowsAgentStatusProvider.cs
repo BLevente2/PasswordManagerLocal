@@ -14,6 +14,7 @@ namespace PasswordManagerLocal.Windows.Agent.Status;
 public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
 {
     private readonly IWindowsAgentStateSource _stateSource;
+    private readonly IWindowsAgentAdmissionGate _admissionGate;
     private readonly IUiConnectionCoordinator _uiCoordinator;
     private readonly IWindowsBackgroundSyncSettingsReader _settingsReader;
     private readonly IWindowsAgentBackendRuntimeOwner _backendOwner;
@@ -23,6 +24,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
 
     public WindowsAgentStatusProvider(
         IWindowsAgentStateSource stateSource,
+        IWindowsAgentAdmissionGate admissionGate,
         IUiConnectionCoordinator uiCoordinator,
         IWindowsBackgroundSyncSettingsReader settingsReader,
         IWindowsAgentBackendRuntimeOwner backendOwner,
@@ -31,6 +33,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         IWindowsAgentDatabaseResetCoordinator resetCoordinator)
     {
         _stateSource = stateSource ?? throw new ArgumentNullException(nameof(stateSource));
+        _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _uiCoordinator = uiCoordinator ?? throw new ArgumentNullException(nameof(uiCoordinator));
         _settingsReader = settingsReader ?? throw new ArgumentNullException(nameof(settingsReader));
         _backendOwner = backendOwner ?? throw new ArgumentNullException(nameof(backendOwner));
@@ -69,21 +72,16 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
                 "The Windows agent backend requires a clean process restart.",
                 retryable: true,
                 requiresRestart: true)
-            : owner.State == WindowsAgentBackendOwnerState.Failed
-                ? CreateFailure(
-                    IpcFailureKind.Runtime,
-                    "The Windows agent backend runtime failed.",
-                    retryable: true,
-                    requiresRestart: false)
-                : _stateSource.LastFailure;
+            : _stateSource.LastFailure;
         var endpointReady = _stateSource.State == AgentState.Running &&
+            _admissionGate.IsOpen &&
             _endpointHost.Snapshot.State == WindowsAgentEndpointHostState.Ready &&
-            (owner.State is WindowsAgentBackendOwnerState.Ready or WindowsAgentBackendOwnerState.Interactive) &&
             !owner.IsResetting &&
             !requiresProcessRestart;
 
         return new AgentStatusDto(
             AgentState: _stateSource.State,
+            AdmissionState: _admissionGate.State,
             IsUiConnected: _uiCoordinator.RegisteredConnectionId is not null,
             BackendOwnedByAgent: true,
             IsBackendRunning: runtimeRunning,
