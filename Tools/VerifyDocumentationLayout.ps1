@@ -24,11 +24,14 @@ if ($outsideDocs.Count -ne 0) {
 $requiredPhaseReports = @(
     'PHASE5_2_ENDPOINT_CORRELATION_RESTART_STATIC_VERIFICATION.md',
     'PHASE5_2_IMPLEMENTATION_CHECKS.md',
-    'PHASE5_2_MODIFIED_FILES.md'
+    'PHASE5_2_MODIFIED_FILES.md',
+    'PHASE5_4_PARTIAL_COMMIT_RESTART_RECOVERY_HARDENING_STATIC_VERIFICATION.md',
+    'PHASE5_4_IMPLEMENTATION_CHECKS.md',
+    'PHASE5_4_MODIFIED_FILES.md'
 )
 foreach ($name in $requiredPhaseReports) {
     if (-not (Test-Path -LiteralPath (Join-Path $docs $name) -PathType Leaf)) {
-        throw "Required Phase 5.2 documentation is missing: $name"
+        throw "Required phase documentation is missing: $name"
     }
 }
 

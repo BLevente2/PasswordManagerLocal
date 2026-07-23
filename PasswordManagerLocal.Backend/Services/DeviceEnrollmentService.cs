@@ -593,7 +593,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             recoveryAvailable: true,
             transferPending,
             requiresSignedRemovalToUndo: true,
-            requiresProcessRestart: errorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion || RequiresProcessRestart(innerException),
+            requiresProcessRestart: errorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion,
             innerException);
 
     private DeviceEnrollmentPartiallyCommittedException CreatePartialCommitException(
@@ -612,20 +612,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             recoveryAvailable: true,
             transferPending,
             requiresSignedRemovalToUndo: true,
-            requiresProcessRestart: errorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion || RequiresProcessRestart(innerException),
+            requiresProcessRestart: errorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion,
             innerException);
 
-    private bool RequiresProcessRestart(Exception? exception) => exception switch
-    {
-        null => false,
-        DatabaseVersionNotSupportedException => true,
-        DeviceEnrollmentException enrollmentException =>
-            enrollmentException.ErrorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion ||
-            RequiresProcessRestart(enrollmentException.InnerException),
-        AggregateException aggregateException => aggregateException.InnerExceptions.Any(RequiresProcessRestart),
-        { InnerException: not null } => RequiresProcessRestart(exception.InnerException),
-        _ => false
-    };
 
     private void ValidateRecoverableEnrollmentCommit(DeviceEnrollmentCommit commit, EnrollmentEndpoint endpoint)
     {

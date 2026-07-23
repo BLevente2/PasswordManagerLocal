@@ -16,8 +16,11 @@ public sealed class EndpointRpcBackendErrorMapper
         if (exception is MutationPartiallyCommittedException partialCommitException)
             return MapPartialCommit(partialCommitException, context);
 
+        var requiresProcessRestart = ExceptionRestartRequirementClassifier.RequiresProcessRestart(exception);
         var metadata = exception switch
         {
+            _ when requiresProcessRestart =>
+                Error(EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The backend runtime requires process replacement.", false, true),
             ArgumentException =>
                 Error(EndpointRpcErrorCode.ValidationFailed, EndpointRpcErrorCategory.Validation, "The endpoint input is invalid."),
             SyncRouteDisabledException =>
@@ -45,8 +48,6 @@ public sealed class EndpointRpcBackendErrorMapper
                 Error(EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The backend runtime is temporarily unavailable.", true),
             KeyProtectorUnavailableException =>
                 Error(EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The backend runtime is temporarily unavailable.", true),
-            DatabaseVersionNotSupportedException =>
-                Error(EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The backend runtime requires process replacement.", false, true),
             CryptographicException or InvalidDataIntegrityException =>
                 Error(EndpointRpcErrorCode.BackendFailure, EndpointRpcErrorCategory.Internal, "The backend could not safely complete the operation."),
             InvalidOperationException =>
@@ -123,20 +124,7 @@ public sealed class EndpointRpcBackendErrorMapper
     public bool RequiresProcessRestart(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        return exception switch
-        {
-            MutationPartiallyCommittedException partialCommitException =>
-                partialCommitException.RequiresProcessRestart,
-            DatabaseVersionNotSupportedException => true,
-            DeviceEnrollmentException enrollmentException =>
-                enrollmentException.ErrorCode == DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion ||
-                (enrollmentException.InnerException is not null &&
-                    RequiresProcessRestart(enrollmentException.InnerException)),
-            AggregateException aggregateException =>
-                aggregateException.InnerExceptions.Any(RequiresProcessRestart),
-            { InnerException: not null } => RequiresProcessRestart(exception.InnerException!),
-            _ => false
-        };
+        return ExceptionRestartRequirementClassifier.RequiresProcessRestart(exception);
     }
 
     private EndpointRpcError MapPartialCommit(
@@ -144,15 +132,16 @@ public sealed class EndpointRpcBackendErrorMapper
         EndpointRequestContext context)
     {
         var descriptor = EndpointOperationManifest.Get(context.OperationId);
+        var requiresProcessRestart = ExceptionRestartRequirementClassifier.RequiresProcessRestart(exception);
         if (!descriptor.CanPartiallyCommit)
-            return CreateOutcomeUnknown(context, exception.RequiresProcessRestart);
+            return CreateOutcomeUnknown(context, requiresProcessRestart);
 
         EndpointRecoveryMetadata? recovery = null;
         var safeMessage = "The endpoint operation committed authoritative state, but required follow-up work did not complete.";
         if (context.OperationId == EndpointOperationId.AddDeviceByCode)
         {
             if (exception is not DeviceEnrollmentPartiallyCommittedException enrollmentException)
-                return CreateOutcomeUnknown(context, exception.RequiresProcessRestart);
+                return CreateOutcomeUnknown(context, requiresProcessRestart);
 
             recovery = new EndpointRecoveryMetadata(
                 EndpointRecoveryKind.DeviceEnrollment,
@@ -166,7 +155,7 @@ public sealed class EndpointRpcBackendErrorMapper
         }
         else if (exception is DeviceEnrollmentPartiallyCommittedException)
         {
-            return CreateOutcomeUnknown(context, exception.RequiresProcessRestart);
+            return CreateOutcomeUnknown(context, requiresProcessRestart);
         }
 
         return new EndpointRpcError(
@@ -176,7 +165,7 @@ public sealed class EndpointRpcBackendErrorMapper
             context.CorrelationId,
             DateTimeOffset.UtcNow,
             IsRetryable: false,
-            RequiresProcessRestart: exception.RequiresProcessRestart,
+            RequiresProcessRestart: requiresProcessRestart,
             EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
             recovery);
     }
@@ -211,8 +200,6 @@ public sealed class EndpointRpcBackendErrorMapper
             Error(EndpointRpcErrorCode.NotFound, EndpointRpcErrorCategory.NotFound, "The requested endpoint resource was not found."),
         DeviceEnrollmentErrorCode.DeviceIdentityConflict =>
             Error(EndpointRpcErrorCode.Conflict, EndpointRpcErrorCategory.Conflict, "The endpoint operation conflicts with current state."),
-        DeviceEnrollmentErrorCode.UnsupportedDatabaseVersion =>
-            Error(EndpointRpcErrorCode.RuntimeUnavailable, EndpointRpcErrorCategory.Availability, "The backend runtime requires process replacement.", false, true),
         DeviceEnrollmentErrorCode.NewDeviceConnectionFailed or
             DeviceEnrollmentErrorCode.LocalNetworkUnavailable or
             DeviceEnrollmentErrorCode.LocalEnrollmentListenerUnavailable =>

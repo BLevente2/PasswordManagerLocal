@@ -88,6 +88,30 @@ public sealed class EndpointRpcInvocationOutcomeTests
     }
 
     [TestMethod]
+    public async Task UnknownMutationOutcomePreservesNestedRestartRequirement()
+    {
+        var endpoints = new ConfiguredEndpointFailureEndpoints(
+            EndpointOperationId.Logout,
+            new IOException(
+                "outer runtime wrapper",
+                new AggregateException(
+                    new InvalidOperationException("ordinary failure"),
+                    new DatabaseVersionNotSupportedException(1, 2, 3))));
+        var context = CreateContext(EndpointOperationId.Logout, 124);
+        await using var dispatcher = CreateDispatcher(endpoints, new EndpointRpcSerializer());
+
+        var result = await dispatcher.DispatchAsync(
+            context,
+            SerializeRequest(EndpointOperationId.Logout),
+            CancellationToken.None);
+
+        Assert.AreEqual(EndpointRpcErrorCode.OperationOutcomeUnknown, result.Error!.ErrorCode);
+        Assert.AreEqual(EndpointMutationOutcome.OutcomeUnknown, result.Error.MutationOutcome);
+        Assert.IsTrue(result.Error.RequiresProcessRestart);
+        Assert.IsNull(result.Error.Recovery);
+    }
+
+    [TestMethod]
     public async Task EnrollmentUnsupportedDatabaseFailureWithoutCommitContextIsConclusiveAndRequiresRestart()
     {
         var endpoints = new ConfiguredEndpointFailureEndpoints(

@@ -276,24 +276,27 @@ public sealed class EndpointRpcValidationTests
     {
         foreach (var requiresProcessRestart in new[] { false, true })
         {
-            var enrollmentError = new EndpointRpcError(
-                EndpointRpcErrorCode.OperationPartiallyCommitted,
-                EndpointRpcErrorCategory.Recovery,
-                "The device addition was committed, but enrollment recovery is required.",
-                1,
-                DateTimeOffset.UtcNow,
-                IsRetryable: false,
-                RequiresProcessRestart: requiresProcessRestart,
-                EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
-                CreateRecovery());
-            var genericError = enrollmentError with { Recovery = null };
+            foreach (var transferPending in new[] { false, true })
+            {
+                var enrollmentError = new EndpointRpcError(
+                    EndpointRpcErrorCode.OperationPartiallyCommitted,
+                    EndpointRpcErrorCategory.Recovery,
+                    "The device addition was committed, but enrollment recovery is required.",
+                    1,
+                    DateTimeOffset.UtcNow,
+                    IsRetryable: false,
+                    RequiresProcessRestart: requiresProcessRestart,
+                    EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
+                    CreateRecovery() with { TransferPending = transferPending });
+                var genericError = enrollmentError with { Recovery = null };
 
-            _validator.Validate(EndpointOperationId.AddDeviceByCode, enrollmentError);
-            _validator.Validate(EndpointOperationId.ChangeMasterPassword, genericError);
-            Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
-                _validator.Validate(EndpointOperationId.AddDeviceByCode, genericError));
-            Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
-                _validator.Validate(EndpointOperationId.ChangeMasterPassword, enrollmentError));
+                _validator.Validate(EndpointOperationId.AddDeviceByCode, enrollmentError);
+                _validator.Validate(EndpointOperationId.ChangeMasterPassword, genericError);
+                Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+                    _validator.Validate(EndpointOperationId.AddDeviceByCode, genericError));
+                Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+                    _validator.Validate(EndpointOperationId.ChangeMasterPassword, enrollmentError));
+            }
         }
     }
 
@@ -319,6 +322,72 @@ public sealed class EndpointRpcValidationTests
         Assert.ThrowsExactly<EndpointRpcPayloadException>(() => _validator.Validate(retryable));
         Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
             _validator.Validate(EndpointOperationId.AddDeviceByCode, invalidRecovery));
+    }
+
+    [TestMethod]
+    public void EnrollmentRecoveryRejectsContradictoryBooleanCombinations()
+    {
+        var invalidRecoveryStates = new[]
+        {
+            CreateRecovery() with
+            {
+                RecoveryAvailable = false,
+                TransferPending = true,
+                RequiresSignedRemovalToUndo = true
+            },
+            CreateRecovery() with
+            {
+                RecoveryAvailable = false,
+                TransferPending = false,
+                RequiresSignedRemovalToUndo = false
+            },
+            CreateRecovery() with
+            {
+                RecoveryAvailable = false,
+                TransferPending = false,
+                RequiresSignedRemovalToUndo = true
+            },
+            CreateRecovery() with
+            {
+                RecoveryAvailable = true,
+                TransferPending = true,
+                RequiresSignedRemovalToUndo = false
+            },
+            CreateRecovery() with
+            {
+                RecoveryAvailable = true,
+                TransferPending = false,
+                RequiresSignedRemovalToUndo = false
+            }
+        };
+
+        foreach (var recovery in invalidRecoveryStates)
+        {
+            Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+                _validator.Validate(
+                    EndpointOperationId.AddDeviceByCode,
+                    CreatePartialCommitError(recovery)));
+        }
+    }
+
+    [TestMethod]
+    public void EnrollmentRecoveryRejectsMissingIdentifiersAndUndefinedKind()
+    {
+        var invalidRecoveryStates = new[]
+        {
+            CreateRecovery() with { EnrollmentCommitId = Guid.Empty },
+            CreateRecovery() with { TargetDeviceId = Guid.Empty },
+            CreateRecovery() with { TargetOriginInstanceId = Guid.Empty },
+            CreateRecovery() with { RecoveryKind = (EndpointRecoveryKind)int.MaxValue }
+        };
+
+        foreach (var recovery in invalidRecoveryStates)
+        {
+            Assert.ThrowsExactly<EndpointRpcPayloadException>(() =>
+                _validator.Validate(
+                    EndpointOperationId.AddDeviceByCode,
+                    CreatePartialCommitError(recovery)));
+        }
     }
 
     [TestMethod]
@@ -399,6 +468,18 @@ public sealed class EndpointRpcValidationTests
         };
         Assert.ThrowsExactly<EndpointRpcPayloadException>(() => validator.Validate(response));
     }
+
+    private static EndpointRpcError CreatePartialCommitError(EndpointRecoveryMetadata recovery) =>
+        new(
+            EndpointRpcErrorCode.OperationPartiallyCommitted,
+            EndpointRpcErrorCategory.Recovery,
+            "The device addition was committed, but enrollment recovery is required.",
+            1,
+            DateTimeOffset.UtcNow,
+            IsRetryable: false,
+            RequiresProcessRestart: false,
+            EndpointMutationOutcome.PartiallyCommittedRecoveryRequired,
+            recovery);
 
     private static EndpointRecoveryMetadata CreateRecovery() =>
         new(

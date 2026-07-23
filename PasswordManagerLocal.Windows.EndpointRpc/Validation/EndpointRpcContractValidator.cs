@@ -295,10 +295,12 @@ public sealed class EndpointRpcContractValidator
 
     private static bool ValidRecovery(EndpointRecoveryMetadata? recovery) =>
         recovery is not null &&
-        Enum.IsDefined(recovery.RecoveryKind) &&
+        recovery.RecoveryKind == EndpointRecoveryKind.DeviceEnrollment &&
         recovery.TargetDeviceId != Guid.Empty &&
         recovery.TargetOriginInstanceId != Guid.Empty &&
-        recovery.EnrollmentCommitId != Guid.Empty;
+        recovery.EnrollmentCommitId != Guid.Empty &&
+        recovery.RecoveryAvailable &&
+        recovery.RequiresSignedRemovalToUndo;
 
 
     private static bool HasExpectedErrorCategory(

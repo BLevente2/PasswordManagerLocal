@@ -8,7 +8,8 @@ public class MutationPartiallyCommittedException : Exception
         Exception? innerException = null)
         : base(message, innerException)
     {
-        RequiresProcessRestart = requiresProcessRestart;
+        RequiresProcessRestart = requiresProcessRestart ||
+            ExceptionRestartRequirementClassifier.RequiresProcessRestart(innerException);
     }
 
     public bool RequiresProcessRestart { get; }
