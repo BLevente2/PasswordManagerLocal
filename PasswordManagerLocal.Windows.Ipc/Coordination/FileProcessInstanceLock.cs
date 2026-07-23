@@ -38,7 +38,13 @@ public sealed class FileProcessInstanceLock : IProcessInstanceLock
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
 
-        Interlocked.Exchange(ref _ownershipHandle, null)?.Dispose();
+        var ownershipHandle = Volatile.Read(ref _ownershipHandle);
+        if (ownershipHandle is not null)
+        {
+            // A throwing close must leave the handle strongly owned until process termination.
+            ownershipHandle.Dispose();
+            Interlocked.CompareExchange(ref _ownershipHandle, null, ownershipHandle);
+        }
         GC.SuppressFinalize(this);
     }
 

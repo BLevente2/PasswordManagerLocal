@@ -41,6 +41,21 @@ public sealed class WindowsTrayIconControllerTests
         Assert.AreEqual(1, exitCount);
     }
 
+
+    [TestMethod]
+    public async Task ExitFailureIsSurfacedWithoutDisposingTray()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        await using var controller = new WindowsTrayIconController(adapter);
+        await controller.InitializeAsync();
+
+        await controller.ShowExitFailureAsync("The UI did not acknowledge shutdown.");
+
+        Assert.AreEqual(1, adapter.ShowErrorCount);
+        Assert.AreEqual("The UI did not acknowledge shutdown.", adapter.LastErrorMessage);
+        Assert.AreEqual(0, adapter.HideAndDisposeCount);
+    }
+
     [TestMethod]
     public async Task DisposalHidesAndDisposesIconAndIsIdempotent()
     {

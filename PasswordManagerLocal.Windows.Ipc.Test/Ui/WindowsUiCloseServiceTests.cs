@@ -10,23 +10,21 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Ui;
 public sealed class WindowsUiCloseServiceTests
 {
     [TestMethod]
-    public async Task RequestsOnlyTheNarrowAgentShutdownCommand()
+    public async Task AcknowledgedResultMeansIntentionalShutdownCommandWasAccepted()
     {
         var client = new FakeWindowsUiActivationClient();
         var service = new WindowsUiCloseService(client, TimeSpan.FromSeconds(1));
 
-        var acknowledged = await service.RequestCloseAsync();
+        var result = await service.RequestIntentionalShutdownAsync();
 
-        Assert.IsTrue(acknowledged);
-        Assert.AreEqual(1, client.RequestCount);
-        Assert.IsNotNull(client.LastRequest);
-        Assert.AreEqual(UiActivationReason.AgentRequest, client.LastRequest.Reason);
-        Assert.AreEqual(UiActivationCommand.Shutdown, client.LastRequest.Command);
+        Assert.AreEqual(WindowsUiCloseResultKind.Acknowledged, result.Kind);
+        Assert.IsTrue(result.IsAcknowledged);
+        Assert.AreEqual(UiActivationCommand.IntentionalAgentShutdown, client.LastRequest!.Command);
         Assert.IsFalse(client.LastRequest.BringToForeground);
     }
 
     [TestMethod]
-    public async Task RejectedAcknowledgementUsesSafeFalseFallback()
+    public async Task RejectionRemainsExplicit()
     {
         var client = new FakeWindowsUiActivationClient
         {
@@ -34,13 +32,14 @@ public sealed class WindowsUiCloseServiceTests
         };
         var service = new WindowsUiCloseService(client, TimeSpan.FromSeconds(1));
 
-        var acknowledged = await service.RequestCloseAsync();
+        var result = await service.RequestIntentionalShutdownAsync();
 
-        Assert.IsFalse(acknowledged);
+        Assert.AreEqual(WindowsUiCloseResultKind.Rejected, result.Kind);
+        Assert.IsFalse(result.IsAcknowledged);
     }
 
     [TestMethod]
-    public async Task MissingAcknowledgementIsBoundedAndUsesSafeFalseFallback()
+    public async Task MissingAcknowledgementReturnsBoundedFailure()
     {
         var client = new FakeWindowsUiActivationClient
         {
@@ -49,14 +48,14 @@ public sealed class WindowsUiCloseServiceTests
         };
         var service = new WindowsUiCloseService(client, TimeSpan.FromMilliseconds(25));
 
-        var acknowledged = await service.RequestCloseAsync();
+        var result = await service.RequestIntentionalShutdownAsync();
 
-        Assert.IsFalse(acknowledged);
-        Assert.AreEqual(1, client.RequestCount);
+        Assert.AreEqual(WindowsUiCloseResultKind.Failed, result.Kind);
+        StringAssert.Contains(result.SafeMessage, "timed out");
     }
 
     [TestMethod]
-    public async Task CallerCancellationIsNotReportedAsAcknowledgementTimeout()
+    public async Task CallerCancellationPropagates()
     {
         var client = new FakeWindowsUiActivationClient
         {
@@ -68,6 +67,6 @@ public sealed class WindowsUiCloseServiceTests
         cancellation.Cancel();
 
         await Assert.ThrowsExactlyAsync<OperationCanceledException>(
-            () => service.RequestCloseAsync(cancellation.Token));
+            () => service.RequestIntentionalShutdownAsync(cancellation.Token));
     }
 }

@@ -208,7 +208,7 @@ public sealed class WindowsAgentStatusProviderTests
         var state = new WindowsAgentStateStore();
         state.MarkRunning(DateTimeOffset.UtcNow);
         state.MarkStopping();
-        state.MarkShutdownFailed("cleanup failed");
+        state.MarkShutdownFailed("cleanup failed", requiresProcessRestart: true);
         var owner = new FakeWindowsAgentBackendRuntimeOwner
         {
             Snapshot = FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(

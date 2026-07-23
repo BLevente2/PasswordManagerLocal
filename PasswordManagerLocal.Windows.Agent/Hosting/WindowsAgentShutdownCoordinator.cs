@@ -2,16 +2,13 @@ namespace PasswordManagerLocal.Windows.Agent.Hosting;
 
 public sealed class WindowsAgentShutdownCoordinator
 {
-    private int _requested;
+    public event EventHandler<WindowsAgentShutdownRequestedEventArgs>? ShutdownRequested;
 
-    public event EventHandler? ShutdownRequested;
-
-    public bool RequestShutdown()
+    public void RequestShutdown(WindowsAgentShutdownReason reason)
     {
-        if (Interlocked.Exchange(ref _requested, 1) != 0)
-            return false;
+        if (!Enum.IsDefined(reason))
+            throw new ArgumentOutOfRangeException(nameof(reason));
 
-        ShutdownRequested?.Invoke(this, EventArgs.Empty);
-        return true;
+        ShutdownRequested?.Invoke(this, new WindowsAgentShutdownRequestedEventArgs(reason));
     }
 }

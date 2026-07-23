@@ -99,6 +99,36 @@ public sealed class SingleUiConnectionCoordinatorTests
         Assert.ThrowsExactly<ArgumentException>(() => coordinator.Unregister(Guid.Empty));
     }
 
+
+    [TestMethod]
+    public void IntentionalShutdownCoordinationBlocksReplacementUntilCancelled()
+    {
+        var coordinator = new SingleUiConnectionCoordinator();
+        var instanceId = Guid.NewGuid();
+        var first = CreateUiContext(Guid.NewGuid(), 101, 4, instanceId);
+        var replacement = CreateUiContext(Guid.NewGuid(), 101, 4, instanceId);
+        Assert.IsTrue(coordinator.TryRegister(first, out var registration));
+
+        Assert.IsTrue(coordinator.TryBeginIntentionalShutdown(out var coordinated));
+        Assert.AreEqual(registration, coordinated);
+        Assert.IsFalse(coordinator.TryRegister(replacement, out _));
+
+        coordinator.CancelIntentionalShutdown();
+        Assert.IsTrue(coordinator.TryRegister(replacement, out _));
+    }
+
+    [TestMethod]
+    public void NoUiShutdownCoordinationAtomicallyBlocksLateRegistration()
+    {
+        var coordinator = new SingleUiConnectionCoordinator();
+
+        Assert.IsTrue(coordinator.TryBeginIntentionalShutdown(out var registration));
+        Assert.IsNull(registration);
+        Assert.IsFalse(coordinator.TryRegister(
+            CreateUiContext(Guid.NewGuid(), 101, 4, Guid.NewGuid()),
+            out _));
+    }
+
     private static IpcConnectionContext CreateUiContext(
         Guid connectionId,
         int processId,

@@ -8,7 +8,9 @@ using PasswordManagerLocal.Windows.Ipc.Contracts;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Client;
 
-public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClient<IEndpoints>
+public sealed class WindowsNamedPipeFrontendBackendClient :
+    IFrontendBackendClient<IEndpoints>,
+    IIntentionalAgentShutdownCoordinator
 {
     private readonly IEndpointRpcClientConnector _connector;
     private readonly IEndpointRpcAgentConnection? _agentConnection;
@@ -18,11 +20,19 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
     private readonly CancellationTokenSource _lifetimeSource = new();
     private readonly object _snapshotGate = new();
     private readonly object _taskGate = new();
-    private readonly List<Task> _observerTasks = [];
+    private readonly object _suppressionGate = new();
+    private readonly object _observerGate = new();
+    private readonly ActiveObserverTaskTracker _observerTaskTracker = new();
     private IEndpointRpcTransport? _transport;
     private NamedPipeEndpointsProxy? _proxy;
     private Task _recoveryTask = Task.CompletedTask;
+    private CancellationTokenSource? _recoverySource;
+    private CancellationTokenSource? _endpointObserverSource;
+    private CancellationTokenSource? _agentObserverSource;
+    private Task<bool>? _intentionalShutdownTask;
     private long _observedAgentGeneration;
+    private long _endpointGeneration;
+    private WindowsFrontendRecoverySuppressionState _suppressionState;
     private WindowsEndpointClientConnectionState _connectionState = WindowsEndpointClientConnectionState.Disconnected;
     private BackendRuntimeSnapshot _snapshot = new(
         BackendRuntimeState.NotStarted,
@@ -31,7 +41,6 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         DateTimeOffset.UtcNow);
     private bool _disposed;
     private int _disposeStarted;
-    private int _recoverySuppressed;
 
     public WindowsNamedPipeFrontendBackendClient(
         string pipeName,
@@ -80,15 +89,26 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         }
     }
 
+    internal int ActiveObserverCount => _observerTaskTracker.ActiveCount;
+
+    internal WindowsFrontendRecoverySuppressionState RecoverySuppressionState
+    {
+        get
+        {
+            lock (_suppressionGate)
+                return _suppressionState;
+        }
+    }
+
     public event EventHandler<BackendRuntimeStateChangedEventArgs>? StateChanged;
 
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        ThrowIfNewWorkRejected();
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfNewWorkRejected();
             if (_transport?.IsConnected == true && _proxy is not null)
             {
                 ChangeConnectionState(WindowsEndpointClientConnectionState.Ready);
@@ -127,7 +147,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
 
     public Task WaitUntilReadyAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        ThrowIfNewWorkRejected();
         cancellationToken.ThrowIfCancellationRequested();
         if (Snapshot.State != BackendRuntimeState.Ready || _transport?.IsConnected != true)
             throw new InvalidOperationException("The endpoint backend client is not ready.");
@@ -136,15 +156,17 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
 
     public async Task ResetDatabaseAndRestartAsync(CancellationToken cancellationToken = default)
     {
-        ThrowIfDisposed();
+        ThrowIfNewWorkRejected();
         if (_agentConnection is null)
         {
             throw new NotSupportedException(
                 "Database reset requires the agent control connection.");
         }
+        if (!TryEnterDatabaseResetSuppression())
+            throw CreateShuttingDownException();
 
-        var requiresProcessRestart = false;
-        Interlocked.Exchange(ref _recoverySuppressed, 1);
+        await CancelRecoveryAsync();
+        var recoveryAllowed = true;
         try
         {
             await _lifecycleLock.WaitAsync(cancellationToken);
@@ -161,40 +183,45 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             }
 
             var result = await _agentConnection.ResetDatabaseAsync(cancellationToken);
-            requiresProcessRestart = result.RequiresProcessRestart;
             if (!result.Completed)
             {
                 var failure = new InvalidOperationException(
                     result.SafeMessage ?? "The database reset did not complete.");
                 ChangeState(
                     BackendRuntimeState.Failed,
-                    requiresProcessRestart
+                    result.RequiresProcessRestart
                         ? BackendRuntimeFailureKind.ShutdownFailure
                         : BackendRuntimeFailureKind.StorageUnavailable,
                     failure);
+                if (result.RequiresProcessRestart)
+                {
+                    recoveryAllowed = false;
+                    CancelAgentObserverLocked();
+                    recoveryAllowed = await _agentConnection.PrepareForReplacementAsync(
+                        cancellationToken);
+                }
                 throw failure;
             }
 
+            ExitDatabaseResetSuppression();
             await ConnectAsync(cancellationToken);
         }
         finally
         {
-            Interlocked.Exchange(ref _recoverySuppressed, 0);
-            if (Volatile.Read(ref _disposeStarted) == 0 &&
-                _transport?.IsConnected != true)
-            {
+            ExitDatabaseResetSuppression();
+            if (recoveryAllowed && CanRecover() && _transport?.IsConnected != true)
                 StartRecovery();
-            }
         }
     }
 
     public async Task<IEndpoints> GetEndpointsAsync(
         CancellationToken cancellationToken = default)
     {
+        ThrowIfNewWorkRejected();
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfNewWorkRejected();
             cancellationToken.ThrowIfCancellationRequested();
             if (_transport?.IsConnected != true || _proxy is null ||
                 Snapshot.State != BackendRuntimeState.Ready)
@@ -209,14 +236,56 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         }
     }
 
+    public Task<bool> BeginIntentionalAgentShutdownAsync(
+        CancellationToken cancellationToken = default)
+    {
+        Task<bool> shutdownTask;
+        lock (_taskGate)
+            shutdownTask = _intentionalShutdownTask ??= BeginIntentionalAgentShutdownCoreAsync(cancellationToken);
+        return ObserveIntentionalShutdownResultAsync(shutdownTask);
+    }
+
+    public Task CancelIntentionalAgentShutdownAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var changed = false;
+        lock (_suppressionGate)
+        {
+            if (_suppressionState == WindowsFrontendRecoverySuppressionState.IntentionalShutdown)
+            {
+                _suppressionState = WindowsFrontendRecoverySuppressionState.None;
+                changed = true;
+            }
+        }
+        if (!changed)
+            return Task.CompletedTask;
+
+        lock (_taskGate)
+            _intentionalShutdownTask = null;
+
+        ChangeState(
+            BackendRuntimeState.Failed,
+            BackendRuntimeFailureKind.StorageUnavailable,
+            new InvalidOperationException("The intentional agent exit was rejected before shutdown."));
+        ChangeConnectionState(WindowsEndpointClientConnectionState.Unavailable);
+        StartRecovery();
+        return Task.CompletedTask;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
 
+        lock (_suppressionGate)
+            _suppressionState = WindowsFrontendRecoverySuppressionState.Disposed;
         ChangeConnectionState(WindowsEndpointClientConnectionState.Disposed);
         _lifetimeSource.Cancel();
-        Interlocked.Exchange(ref _recoverySuppressed, 1);
+        CancelEndpointObserverLocked();
+        CancelAgentObserverLocked();
+        await CancelRecoveryAsync();
+
         Exception? failure = null;
         await _lifecycleLock.WaitAsync(CancellationToken.None);
         try
@@ -249,12 +318,9 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             }
         }
 
-        Task[] backgroundTasks;
-        lock (_taskGate)
-            backgroundTasks = [.. _observerTasks, _recoveryTask];
         try
         {
-            await Task.WhenAll(backgroundTasks);
+            await _observerTaskTracker.WaitForCompletionAsync();
         }
         catch (Exception exception)
         {
@@ -266,12 +332,85 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             failure is null ? BackendRuntimeFailureKind.None : BackendRuntimeFailureKind.ShutdownFailure,
             failure);
         StateChanged = null;
+        lock (_taskGate)
+        {
+            _recoverySource?.Dispose();
+            _recoverySource = null;
+        }
         _lifetimeSource.Dispose();
         _lifecycleLock.Dispose();
         GC.SuppressFinalize(this);
 
         if (failure is not null)
             throw failure;
+    }
+
+    private async Task<bool> ObserveIntentionalShutdownResultAsync(Task<bool> shutdownTask)
+    {
+        try
+        {
+            var result = await shutdownTask;
+            if (!result)
+                ClearIntentionalShutdownTask(shutdownTask);
+            return result;
+        }
+        catch
+        {
+            ClearIntentionalShutdownTask(shutdownTask);
+            throw;
+        }
+    }
+
+    private void ClearIntentionalShutdownTask(Task<bool> shutdownTask)
+    {
+        lock (_taskGate)
+        {
+            if (ReferenceEquals(_intentionalShutdownTask, shutdownTask))
+                _intentionalShutdownTask = null;
+        }
+    }
+
+    private async Task<bool> BeginIntentionalAgentShutdownCoreAsync(
+        CancellationToken cancellationToken)
+    {
+        lock (_suppressionGate)
+        {
+            if (_suppressionState == WindowsFrontendRecoverySuppressionState.IntentionalShutdown)
+                return true;
+            if (_suppressionState != WindowsFrontendRecoverySuppressionState.None)
+                return false;
+            // Suppression is visible before recovery cancellation or connection disposal begins.
+            _suppressionState = WindowsFrontendRecoverySuppressionState.IntentionalShutdown;
+        }
+
+        try
+        {
+            await CancelRecoveryAsync();
+            await _lifecycleLock.WaitAsync(cancellationToken);
+            try
+            {
+                ThrowIfDisposed();
+                ChangeState(BackendRuntimeState.Stopping, BackendRuntimeFailureKind.None, null);
+                ChangeConnectionState(WindowsEndpointClientConnectionState.IntentionalShutdown);
+                await DisposeEndpointConnectionLockedAsync();
+            }
+            finally
+            {
+                _lifecycleLock.Release();
+            }
+
+            if (_agentConnection is not null)
+            {
+                CancelAgentObserverLocked();
+                await _agentConnection.DisconnectAsync(cancellationToken);
+            }
+            return true;
+        }
+        catch
+        {
+            await CancelIntentionalAgentShutdownAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     private async Task ConnectEndpointLockedAsync(CancellationToken cancellationToken)
@@ -283,12 +422,20 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             throw new EndpointRpcDisconnectedException();
         }
 
+        var generation = checked(++_endpointGeneration);
         _transport = transport;
         _proxy = new NamedPipeEndpointsProxy(
             transport,
             new EndpointRpcSerializer(),
             new EndpointRpcContractValidator());
-        TrackBackgroundTask(ObserveEndpointConnectionAsync(transport));
+        var observerToken = ReplaceEndpointObserver();
+        var completion = transport.Completion;
+        _observerTaskTracker.Start(
+            () => ObserveEndpointConnectionAsync(
+                generation,
+                transport,
+                completion,
+                observerToken));
     }
 
     private void StartAgentObserverLocked()
@@ -297,19 +444,29 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             return;
 
         var generation = _agentConnection.ConnectionGeneration;
-        if (_observedAgentGeneration == generation)
+        var observerToken = ReplaceAgentObserver(generation);
+        if (!observerToken.HasValue)
             return;
-
-        _observedAgentGeneration = generation;
-        TrackBackgroundTask(ObserveAgentConnectionAsync(generation, _agentConnection.Completion));
+        var completion = _agentConnection.Completion;
+        _observerTaskTracker.Start(
+            () => ObserveAgentConnectionAsync(generation, completion, observerToken.Value));
     }
 
-    private async Task ObserveEndpointConnectionAsync(IEndpointRpcTransport transport)
+    private async Task ObserveEndpointConnectionAsync(
+        long generation,
+        IEndpointRpcTransport transport,
+        Task completion,
+        CancellationToken cancellationToken)
     {
         Exception? failure = null;
         try
         {
-            await transport.Completion;
+            await completion.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ObserveLateCompletionFailure(completion);
+            return;
         }
         catch (Exception exception)
         {
@@ -317,16 +474,26 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         }
 
         await HandleObservedConnectionLossAsync(
-            transport,
-            failure ?? new EndpointRpcDisconnectedException());
+            endpointGeneration: generation,
+            agentGeneration: null,
+            expectedTransport: transport,
+            failure: failure ?? new EndpointRpcDisconnectedException());
     }
 
-    private async Task ObserveAgentConnectionAsync(long generation, Task completion)
+    private async Task ObserveAgentConnectionAsync(
+        long generation,
+        Task completion,
+        CancellationToken cancellationToken)
     {
         Exception? failure = null;
         try
         {
-            await completion;
+            await completion.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            ObserveLateCompletionFailure(completion);
+            return;
         }
         catch (Exception exception)
         {
@@ -340,23 +507,37 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         }
 
         await HandleObservedConnectionLossAsync(
+            endpointGeneration: null,
+            agentGeneration: generation,
             expectedTransport: null,
-            failure ?? new EndpointRpcDisconnectedException(
+            failure: failure ?? new EndpointRpcDisconnectedException(
                 new InvalidOperationException("The Windows agent control connection was lost.")));
     }
 
     private async Task HandleObservedConnectionLossAsync(
+        long? endpointGeneration,
+        long? agentGeneration,
         IEndpointRpcTransport? expectedTransport,
         Exception failure)
     {
         try
         {
-            await HandleConnectionLossAsync(expectedTransport, failure);
+            await HandleConnectionLossAsync(
+                endpointGeneration,
+                agentGeneration,
+                expectedTransport,
+                failure);
         }
         catch (Exception cleanupFailure)
         {
-            if (_disposed || Volatile.Read(ref _disposeStarted) != 0)
+            if (!CanRecover() ||
+                !IsObservedConnectionCurrent(
+                    endpointGeneration,
+                    agentGeneration,
+                    expectedTransport))
+            {
                 return;
+            }
 
             ChangeState(
                 BackendRuntimeState.Failed,
@@ -368,19 +549,26 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
     }
 
     private async Task HandleConnectionLossAsync(
+        long? endpointGeneration,
+        long? agentGeneration,
         IEndpointRpcTransport? expectedTransport,
         Exception failure)
     {
-        if (_disposed || Volatile.Read(ref _recoverySuppressed) != 0)
+        if (!CanRecover())
             return;
 
         await _lifecycleLock.WaitAsync(CancellationToken.None);
         try
         {
-            if (_disposed || Volatile.Read(ref _recoverySuppressed) != 0)
+            if (!CanRecover())
                 return;
-            if (expectedTransport is not null && !ReferenceEquals(_transport, expectedTransport))
+            if (!IsObservedConnectionCurrent(
+                    endpointGeneration,
+                    agentGeneration,
+                    expectedTransport))
+            {
                 return;
+            }
 
             ChangeState(
                 BackendRuntimeState.Failed,
@@ -397,44 +585,110 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         StartRecovery();
     }
 
+    private bool IsObservedConnectionCurrent(
+        long? endpointGeneration,
+        long? agentGeneration,
+        IEndpointRpcTransport? expectedTransport)
+    {
+        if (endpointGeneration.HasValue && endpointGeneration.Value != _endpointGeneration)
+            return false;
+        if (expectedTransport is not null && !ReferenceEquals(_transport, expectedTransport))
+            return false;
+        if (agentGeneration.HasValue &&
+            (_agentConnection is null ||
+                _agentConnection.ConnectionGeneration != agentGeneration.Value))
+        {
+            return false;
+        }
+        return true;
+    }
+
     private void StartRecovery()
     {
+        if (!CanRecover() || _agentConnection is null)
+            return;
+
         lock (_taskGate)
         {
-            if (!_recoveryTask.IsCompleted)
+            if (!CanRecover() || !_recoveryTask.IsCompleted)
                 return;
-            _recoveryTask = RecoverAsync();
+
+            _recoverySource?.Dispose();
+            _recoverySource = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeSource.Token);
+            var source = _recoverySource;
+            var recoveryTask = RecoverAsync(source.Token);
+            _recoveryTask = recoveryTask;
+            _ = recoveryTask.ContinueWith(
+                completed =>
+                {
+                    _ = completed.Exception;
+                    lock (_taskGate)
+                    {
+                        if (!ReferenceEquals(_recoveryTask, completed))
+                            return;
+                        if (ReferenceEquals(_recoverySource, source))
+                        {
+                            _recoverySource.Dispose();
+                            _recoverySource = null;
+                        }
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
     }
 
-    private async Task RecoverAsync()
+    private async Task CancelRecoveryAsync()
     {
-        if (_disposed || Volatile.Read(ref _recoverySuppressed) != 0 ||
-            _agentConnection is null)
+        Task recoveryTask;
+        lock (_taskGate)
         {
-            return;
+            _recoverySource?.Cancel();
+            recoveryTask = _recoveryTask;
         }
 
+        try
+        {
+            await recoveryTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task RecoverAsync(CancellationToken cancellationToken)
+    {
+        if (!CanRecover() || _agentConnection is null)
+            return;
+
         ChangeConnectionState(WindowsEndpointClientConnectionState.Reconnecting);
+        var replacementPreparationUsed = false;
         for (var attempt = 0; attempt < _maximumRecoveryAttempts; attempt++)
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!CanRecover())
+                    return;
                 if (attempt > 0)
-                    await Task.Delay(_recoveryDelay, _lifetimeSource.Token);
+                    await Task.Delay(_recoveryDelay, cancellationToken);
 
-                if (!await _agentConnection.EnsureConnectedAsync(_lifetimeSource.Token))
+                if (!await _agentConnection.EnsureConnectedAsync(cancellationToken))
                     continue;
 
-                await _lifecycleLock.WaitAsync(_lifetimeSource.Token);
+                await _lifecycleLock.WaitAsync(cancellationToken);
                 try
                 {
-                    if (_disposed || Volatile.Read(ref _recoverySuppressed) != 0)
+                    if (!CanRecover())
                         return;
 
                     ChangeState(BackendRuntimeState.Starting, BackendRuntimeFailureKind.None, null);
                     await DisposeEndpointConnectionLockedAsync();
-                    await ConnectEndpointLockedAsync(_lifetimeSource.Token);
+                    await ConnectEndpointLockedAsync(cancellationToken);
                     StartAgentObserverLocked();
                     ChangeState(BackendRuntimeState.Ready, BackendRuntimeFailureKind.None, null);
                     ChangeConnectionState(WindowsEndpointClientConnectionState.Ready);
@@ -445,21 +699,21 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
                     _lifecycleLock.Release();
                 }
             }
-            catch (OperationCanceledException) when (_lifetimeSource.IsCancellationRequested)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return;
             }
             catch (Exception exception)
             {
-                if (_lifetimeSource.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested || !CanRecover())
                     return;
 
                 (Exception Exception, BackendRuntimeFailureKind FailureKind) mapped;
                 try
                 {
-                    mapped = await MapAgentRuntimeFailureAsync(exception, _lifetimeSource.Token);
+                    mapped = await MapAgentRuntimeFailureAsync(exception, cancellationToken);
                 }
-                catch (OperationCanceledException) when (_lifetimeSource.IsCancellationRequested)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
@@ -471,7 +725,31 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
                         : mapped.FailureKind,
                     mapped.Exception);
                 if (mapped.FailureKind == BackendRuntimeFailureKind.ShutdownFailure)
-                    return;
+                {
+                    try
+                    {
+                        CancelAgentObserverLocked();
+                        if (!await _agentConnection.PrepareForReplacementAsync(cancellationToken))
+                        {
+                            ChangeConnectionState(WindowsEndpointClientConnectionState.Unavailable);
+                            return;
+                        }
+                        if (!replacementPreparationUsed)
+                        {
+                            replacementPreparationUsed = true;
+                            attempt--;
+                        }
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch
+                    {
+                        ChangeConnectionState(WindowsEndpointClientConnectionState.Unavailable);
+                        return;
+                    }
+                }
             }
         }
 
@@ -480,10 +758,12 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
 
     private async Task DisposeEndpointConnectionLockedAsync()
     {
+        CancelEndpointObserverLocked();
         var transport = _transport;
         var proxy = _proxy;
         _transport = null;
         _proxy = null;
+        checked { _endpointGeneration++; }
 
         Exception? failure = null;
         if (transport is not null)
@@ -552,10 +832,110 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
         }
     }
 
-    private void TrackBackgroundTask(Task task)
+    private CancellationToken ReplaceEndpointObserver()
     {
-        lock (_taskGate)
-            _observerTasks.Add(task);
+        CancellationTokenSource? previous;
+        CancellationTokenSource current;
+        lock (_observerGate)
+        {
+            previous = _endpointObserverSource;
+            current = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeSource.Token);
+            _endpointObserverSource = current;
+        }
+        CancelAndDispose(previous);
+        return current.Token;
+    }
+
+    private CancellationToken? ReplaceAgentObserver(long generation)
+    {
+        CancellationTokenSource? previous;
+        CancellationTokenSource current;
+        lock (_observerGate)
+        {
+            if (_observedAgentGeneration == generation && _agentObserverSource is not null)
+                return null;
+
+            previous = _agentObserverSource;
+            current = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeSource.Token);
+            _agentObserverSource = current;
+            _observedAgentGeneration = generation;
+        }
+        CancelAndDispose(previous);
+        return current.Token;
+    }
+
+    private void CancelEndpointObserverLocked()
+    {
+        CancellationTokenSource? source;
+        lock (_observerGate)
+        {
+            source = _endpointObserverSource;
+            _endpointObserverSource = null;
+        }
+        CancelAndDispose(source);
+    }
+
+    private void CancelAgentObserverLocked()
+    {
+        CancellationTokenSource? source;
+        lock (_observerGate)
+        {
+            source = _agentObserverSource;
+            _agentObserverSource = null;
+            _observedAgentGeneration = 0;
+        }
+        CancelAndDispose(source);
+    }
+
+    private static void CancelAndDispose(CancellationTokenSource? source)
+    {
+        if (source is null)
+            return;
+        source.Cancel();
+        source.Dispose();
+    }
+
+    private static void ObserveLateCompletionFailure(Task completion)
+    {
+        if (completion.IsCompleted)
+        {
+            _ = completion.Exception;
+            return;
+        }
+
+        _ = completion.ContinueWith(
+            completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private bool TryEnterDatabaseResetSuppression()
+    {
+        lock (_suppressionGate)
+        {
+            if (_suppressionState != WindowsFrontendRecoverySuppressionState.None)
+                return false;
+            _suppressionState = WindowsFrontendRecoverySuppressionState.DatabaseReset;
+            return true;
+        }
+    }
+
+    private void ExitDatabaseResetSuppression()
+    {
+        lock (_suppressionGate)
+        {
+            if (_suppressionState == WindowsFrontendRecoverySuppressionState.DatabaseReset)
+                _suppressionState = WindowsFrontendRecoverySuppressionState.None;
+        }
+    }
+
+    private bool CanRecover()
+    {
+        if (_disposed || Volatile.Read(ref _disposeStarted) != 0)
+            return false;
+        lock (_suppressionGate)
+            return _suppressionState == WindowsFrontendRecoverySuppressionState.None;
     }
 
     private void ChangeState(
@@ -596,11 +976,24 @@ public sealed class WindowsNamedPipeFrontendBackendClient : IFrontendBackendClie
             _connectionState = state;
     }
 
+    private void ThrowIfNewWorkRejected()
+    {
+        ThrowIfDisposed();
+        lock (_suppressionGate)
+        {
+            if (_suppressionState == WindowsFrontendRecoverySuppressionState.IntentionalShutdown)
+                throw CreateShuttingDownException();
+        }
+    }
+
     private void ThrowIfDisposed()
     {
         if (_disposed || Volatile.Read(ref _disposeStarted) != 0)
             throw new ObjectDisposedException(nameof(WindowsNamedPipeFrontendBackendClient));
     }
+
+    private InvalidOperationException CreateShuttingDownException() =>
+        new("The Windows frontend backend client is shutting down intentionally.");
 
     private Exception Combine(Exception? first, Exception second) =>
         first is null ? second : new AggregateException(first, second);

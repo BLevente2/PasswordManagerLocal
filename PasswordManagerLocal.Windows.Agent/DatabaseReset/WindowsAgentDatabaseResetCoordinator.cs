@@ -71,7 +71,7 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
         catch (Exception exception)
         {
             _backendOwner.RequireProcessRestart(exception);
-            _shutdownCoordinator.RequestShutdown();
+            _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.RestartRequired);
             return new DatabaseResetResultDto(
                 Completed: false,
                 RequiresProcessRestart: true,

@@ -57,7 +57,9 @@ public sealed class WindowsAgentStateStore : IWindowsAgentStateSource
     }
 
 
-    public void MarkShutdownFailed(string safeMessage)
+    public void MarkShutdownFailed(
+        string safeMessage,
+        bool requiresProcessRestart)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(safeMessage);
         AgentState previous;
@@ -74,7 +76,7 @@ public sealed class WindowsAgentStateStore : IWindowsAgentStateSource
                 safeMessage,
                 DateTimeOffset.UtcNow,
                 IsRetryable: true,
-                RequiresProcessRestart: true);
+                RequiresProcessRestart: requiresProcessRestart);
         }
 
         Publish(previous, AgentState.Failed);

@@ -244,11 +244,11 @@ public sealed class WindowsIpcContractValidatorTests
         AssertInvalid(new UiActivationRequestDto(
             UiActivationReason.UserLaunch,
             BringToForeground: false,
-            UiActivationCommand.Shutdown));
+            UiActivationCommand.IntentionalAgentShutdown));
         AssertInvalid(new UiActivationRequestDto(
             UiActivationReason.AgentRequest,
             BringToForeground: true,
-            UiActivationCommand.Shutdown));
+            UiActivationCommand.IntentionalAgentShutdown));
         AssertInvalid(new UiOpenRequestDto((UiActivationReason)999));
         AssertInvalid(new AgentExitRequestDto((AgentExitReason)999));
         AssertInvalid(new IpcHandshakeRequest(

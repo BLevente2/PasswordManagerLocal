@@ -18,7 +18,8 @@ public sealed class WindowsUiCloseService : IWindowsUiCloseService
             throw new ArgumentOutOfRangeException(nameof(acknowledgementTimeout));
     }
 
-    public async Task<bool> RequestCloseAsync(CancellationToken cancellationToken = default)
+    public async Task<WindowsUiCloseResult> RequestIntentionalShutdownAsync(
+        CancellationToken cancellationToken = default)
     {
         using var timeoutSource = new CancellationTokenSource(_acknowledgementTimeout);
         using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
@@ -30,15 +31,31 @@ public sealed class WindowsUiCloseService : IWindowsUiCloseService
                 new UiActivationRequestDto(
                     UiActivationReason.AgentRequest,
                     BringToForeground: false,
-                    UiActivationCommand.Shutdown),
+                    UiActivationCommand.IntentionalAgentShutdown),
                 linkedSource.Token);
-            return result.Kind == UiActivationResultKind.Activated;
+            return result.Kind switch
+            {
+                UiActivationResultKind.Activated => new WindowsUiCloseResult(
+                    WindowsUiCloseResultKind.Acknowledged,
+                    "The UI installed recovery suppression and scheduled shutdown."),
+                UiActivationResultKind.Rejected => new WindowsUiCloseResult(
+                    WindowsUiCloseResultKind.Rejected,
+                    "The UI rejected the intentional shutdown request."),
+                UiActivationResultKind.Unavailable => new WindowsUiCloseResult(
+                    WindowsUiCloseResultKind.Unavailable,
+                    "The registered UI activation server is unavailable."),
+                _ => new WindowsUiCloseResult(
+                    WindowsUiCloseResultKind.Failed,
+                    "The UI did not acknowledge intentional shutdown safely.")
+            };
         }
         catch (OperationCanceledException) when (
             timeoutSource.IsCancellationRequested &&
             !cancellationToken.IsCancellationRequested)
         {
-            return false;
+            return new WindowsUiCloseResult(
+                WindowsUiCloseResultKind.Failed,
+                "The UI intentional-shutdown acknowledgement timed out.");
         }
     }
 }

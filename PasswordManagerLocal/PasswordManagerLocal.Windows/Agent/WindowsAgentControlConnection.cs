@@ -11,8 +11,11 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
     private readonly int _maximumConnectionAttempts;
     private readonly TimeSpan _connectTimeout;
     private readonly TimeSpan _retryDelay;
+    private readonly TimeSpan _replacementExitTimeout;
+    private readonly IWindowsAgentProcessExitWaiter _processExitWaiter;
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private IWindowsAgentRegisteredConnection? _connection;
+    private int? _lastAgentProcessId;
     private long _connectionGeneration;
     private int _disposed;
 
@@ -23,7 +26,9 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
         IWindowsAgentControlConnector? connector = null,
         int maximumConnectionAttempts = 6,
         TimeSpan? connectTimeout = null,
-        TimeSpan? retryDelay = null)
+        TimeSpan? retryDelay = null,
+        TimeSpan? replacementExitTimeout = null,
+        IWindowsAgentProcessExitWaiter? processExitWaiter = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         _pipeName = pipeName;
@@ -35,10 +40,14 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
         _maximumConnectionAttempts = maximumConnectionAttempts;
         _connectTimeout = connectTimeout ?? TimeSpan.FromMilliseconds(500);
         _retryDelay = retryDelay ?? TimeSpan.FromMilliseconds(250);
+        _replacementExitTimeout = replacementExitTimeout ?? TimeSpan.FromSeconds(10);
+        _processExitWaiter = processExitWaiter ?? new WindowsAgentProcessExitWaiter();
         if (_connectTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(connectTimeout));
         if (_retryDelay < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(retryDelay));
+        if (_replacementExitTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(replacementExitTimeout));
     }
 
     public bool IsConnected => _connection?.IsConnected == true;
@@ -58,43 +67,136 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
             if (IsConnected)
                 return true;
 
-            await DisposeCurrentConnectionAsync();
-            _connection = await _connector.TryConnectAndRegisterAsync(
-                _pipeName,
-                _identity,
-                _connectTimeout,
-                cancellationToken);
-            if (_connection is not null)
+            var previousAgentProcessId = _connection?.AgentProcessId ?? _lastAgentProcessId;
+            CancellationTokenSource? exitObservationSource = null;
+            Task<bool>? exitObservation = null;
+            if (previousAgentProcessId.HasValue)
             {
-                Interlocked.Increment(ref _connectionGeneration);
-                return true;
+                exitObservationSource = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+                exitObservation = _processExitWaiter.WaitForExitAsync(
+                    previousAgentProcessId.Value,
+                    _replacementExitTimeout,
+                    exitObservationSource.Token);
             }
 
-            if (!await _agentLauncher.LaunchAsync(cancellationToken))
-                return false;
-
-            for (var attempt = 0; attempt < _maximumConnectionAttempts; attempt++)
+            try
             {
-                if (attempt > 0)
-                    await Task.Delay(_retryDelay, cancellationToken);
-                _connection = await _connector.TryConnectAndRegisterAsync(
-                    _pipeName,
-                    _identity,
-                    _connectTimeout,
-                    cancellationToken);
-                if (_connection is not null)
+                await DisposeCurrentConnectionAsync();
+                if (await TryConnectAndRegisterAsync(cancellationToken))
                 {
-                    Interlocked.Increment(ref _connectionGeneration);
+                    await CancelExitObservationAsync(
+                        exitObservationSource,
+                        exitObservation,
+                        cancellationToken);
                     return true;
                 }
-            }
 
-            return false;
+                if (exitObservation is not null)
+                {
+                    for (var attempt = 0;
+                        attempt < _maximumConnectionAttempts && !exitObservation.IsCompleted;
+                        attempt++)
+                    {
+                        if (_retryDelay > TimeSpan.Zero)
+                            await Task.Delay(_retryDelay, cancellationToken);
+                        if (await TryConnectAndRegisterAsync(cancellationToken))
+                        {
+                            await CancelExitObservationAsync(
+                                exitObservationSource,
+                                exitObservation,
+                                cancellationToken);
+                            return true;
+                        }
+                    }
+
+                    if (!await exitObservation)
+                    {
+                        if (await TryConnectAndRegisterAsync(cancellationToken))
+                            return true;
+                        return false;
+                    }
+                    _lastAgentProcessId = null;
+                }
+
+                if (!await _agentLauncher.LaunchAsync(cancellationToken))
+                    return false;
+
+                for (var attempt = 0; attempt < _maximumConnectionAttempts; attempt++)
+                {
+                    if (attempt > 0)
+                        await Task.Delay(_retryDelay, cancellationToken);
+                    if (await TryConnectAndRegisterAsync(cancellationToken))
+                        return true;
+                }
+
+                return false;
+            }
+            finally
+            {
+                exitObservationSource?.Dispose();
+            }
         }
         finally
         {
             _connectionGate.Release();
         }
+    }
+
+
+    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    {
+        await _connectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            await DisposeCurrentConnectionAsync();
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
+    public async Task<bool> PrepareForReplacementAsync(
+        CancellationToken cancellationToken = default)
+    {
+        Task<bool> exitTask = Task.FromResult(true);
+        int? agentProcessId = null;
+        await _connectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            agentProcessId = _connection?.AgentProcessId ?? _lastAgentProcessId;
+            if (agentProcessId.HasValue)
+            {
+                exitTask = _processExitWaiter.WaitForExitAsync(
+                    agentProcessId.Value,
+                    _replacementExitTimeout,
+                    cancellationToken);
+            }
+            await DisposeCurrentConnectionAsync();
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+
+        var exited = await exitTask;
+        if (exited && agentProcessId.HasValue)
+        {
+            await _connectionGate.WaitAsync(cancellationToken);
+            try
+            {
+                if (_lastAgentProcessId == agentProcessId)
+                    _lastAgentProcessId = null;
+            }
+            finally
+            {
+                _connectionGate.Release();
+            }
+        }
+        return exited;
     }
 
     public async Task<BackendRuntimeStatusDto> GetBackendRuntimeStatusAsync(
@@ -148,12 +250,49 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
         }
     }
 
+    private async Task<bool> TryConnectAndRegisterAsync(
+        CancellationToken cancellationToken)
+    {
+        _connection = await _connector.TryConnectAndRegisterAsync(
+            _pipeName,
+            _identity,
+            _connectTimeout,
+            cancellationToken);
+        if (_connection is null)
+            return false;
+
+        _lastAgentProcessId = _connection.AgentProcessId;
+        Interlocked.Increment(ref _connectionGeneration);
+        return true;
+    }
+
+    private static async Task CancelExitObservationAsync(
+        CancellationTokenSource? source,
+        Task<bool>? observation,
+        CancellationToken cancellationToken)
+    {
+        if (source is null || observation is null)
+            return;
+
+        source.Cancel();
+        try
+        {
+            await observation;
+        }
+        catch (OperationCanceledException) when (source.IsCancellationRequested)
+        {
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
     private async Task DisposeCurrentConnectionAsync()
     {
         var connection = _connection;
         _connection = null;
         if (connection is null)
             return;
+        if (connection.AgentProcessId.HasValue)
+            _lastAgentProcessId = connection.AgentProcessId;
         try { await connection.DisposeAsync(); } catch { }
     }
 

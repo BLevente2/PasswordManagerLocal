@@ -19,7 +19,7 @@ public sealed class WindowsUiActivationOperationAuthorizerTests
         var decision = authorizer.Authorize(CreateContext(
             IpcPeerRole.Agent,
             processId: 200,
-            command: UiActivationCommand.Shutdown));
+            command: UiActivationCommand.IntentionalAgentShutdown));
 
         Assert.IsTrue(decision.IsAuthorized);
     }
@@ -32,11 +32,11 @@ public sealed class WindowsUiActivationOperationAuthorizerTests
         Assert.IsFalse(authorizer.Authorize(CreateContext(
             IpcPeerRole.Ui,
             processId: 200,
-            command: UiActivationCommand.Shutdown)).IsAuthorized);
+            command: UiActivationCommand.IntentionalAgentShutdown)).IsAuthorized);
         Assert.IsFalse(authorizer.Authorize(CreateContext(
             IpcPeerRole.Agent,
             processId: 201,
-            command: UiActivationCommand.Shutdown)).IsAuthorized);
+            command: UiActivationCommand.IntentionalAgentShutdown)).IsAuthorized);
     }
 
     [TestMethod]
@@ -62,7 +62,7 @@ public sealed class WindowsUiActivationOperationAuthorizerTests
     {
         var serializer = new WindowsIpcSerializer();
         var request = new UiActivationRequestDto(
-            command == UiActivationCommand.Shutdown
+            command == UiActivationCommand.IntentionalAgentShutdown
                 ? UiActivationReason.AgentRequest
                 : UiActivationReason.UserLaunch,
             BringToForeground: command == UiActivationCommand.Activate,

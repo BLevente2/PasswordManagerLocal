@@ -4,18 +4,24 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 
 internal sealed class FakeWindowsUiCloseService : IWindowsUiCloseService
 {
-    public bool Result { get; set; } = true;
+    public WindowsUiCloseResult Result { get; set; } = new(
+        WindowsUiCloseResultKind.Acknowledged,
+        "Acknowledged.");
     public int RequestCount { get; private set; }
     public Exception? Failure { get; set; }
+    public TaskCompletionSource<WindowsUiCloseResult>? Completion { get; set; }
     public ICollection<string>? OperationLog { get; set; }
 
-    public Task<bool> RequestCloseAsync(CancellationToken cancellationToken = default)
+    public Task<WindowsUiCloseResult> RequestIntentionalShutdownAsync(
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         RequestCount++;
-        OperationLog?.Add("ui-close");
-        return Failure is null
+        OperationLog?.Add("ui-close-request");
+        if (Failure is not null)
+            return Task.FromException<WindowsUiCloseResult>(Failure);
+        return Completion is null
             ? Task.FromResult(Result)
-            : Task.FromException<bool>(Failure);
+            : Completion.Task.WaitAsync(cancellationToken);
     }
 }

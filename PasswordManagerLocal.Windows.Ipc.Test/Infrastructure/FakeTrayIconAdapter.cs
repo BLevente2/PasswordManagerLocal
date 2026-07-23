@@ -10,11 +10,23 @@ internal sealed class FakeTrayIconAdapter : ITrayIconAdapter
 
     public int InitializeCount { get; private set; }
     public int HideAndDisposeCount { get; private set; }
+    public int ShowErrorCount { get; private set; }
+    public string? LastErrorMessage { get; private set; }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         InitializeCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task ShowErrorAsync(
+        string safeMessage,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ShowErrorCount++;
+        LastErrorMessage = safeMessage;
         return Task.CompletedTask;
     }
 

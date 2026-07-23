@@ -30,7 +30,10 @@ $requiredPhaseReports = @(
     'PHASE5_4_MODIFIED_FILES.md',
     'PHASE6_WINDOWS_AGENT_RUNTIME_OWNERSHIP_CUTOVER_STATIC_VERIFICATION.md',
     'PHASE6_IMPLEMENTATION_CHECKS.md',
-    'PHASE6_MODIFIED_FILES.md'
+    'PHASE6_MODIFIED_FILES.md',
+    'PHASE6_1_SHUTDOWN_OWNERSHIP_INTENTIONAL_EXIT_HARDENING_STATIC_VERIFICATION.md',
+    'PHASE6_1_IMPLEMENTATION_CHECKS.md',
+    'PHASE6_1_MODIFIED_FILES.md'
 )
 foreach ($name in $requiredPhaseReports) {
     if (-not (Test-Path -LiteralPath (Join-Path $docs $name) -PathType Leaf)) {

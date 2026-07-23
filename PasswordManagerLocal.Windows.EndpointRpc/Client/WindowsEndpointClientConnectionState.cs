@@ -7,5 +7,6 @@ public enum WindowsEndpointClientConnectionState
     Ready = 2,
     Reconnecting = 3,
     Unavailable = 4,
-    Disposed = 5
+    IntentionalShutdown = 5,
+    Disposed = 6
 }

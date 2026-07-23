@@ -50,16 +50,17 @@ internal sealed class Program
             names.ControlPipeName,
             identity,
             new WindowsAgentLauncher(AppContext.BaseDirectory));
-        var activationServer = new WindowsUiActivationServer(
-            names.UiActivationPipeName,
-            new AvaloniaWindowActivationBridge(),
-            new AvaloniaUiShutdownBridge(),
-            () => agentConnection.AgentProcessId);
         var backendClient = new WindowsNamedPipeFrontendBackendClient(
             agentConnection,
             new WindowsNamedPipeEndpointRpcConnector(
                 names.EndpointPipeName,
                 identity));
+        var activationServer = new WindowsUiActivationServer(
+            names.UiActivationPipeName,
+            new AvaloniaWindowActivationBridge(),
+            new AvaloniaUiShutdownBridge(),
+            backendClient,
+            () => agentConnection.AgentProcessId);
         var startupNotification = new WindowsStartupNotification();
 
         try

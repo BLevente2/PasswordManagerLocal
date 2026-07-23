@@ -92,8 +92,8 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             Snapshot = CreateResettableSnapshot()
         };
         var shutdown = new WindowsAgentShutdownCoordinator();
-        var shutdownRequested = 0;
-        shutdown.ShutdownRequested += (_, _) => shutdownRequested++;
+        WindowsAgentShutdownReason? shutdownReason = null;
+        shutdown.ShutdownRequested += (_, args) => shutdownReason = args.Reason;
         var coordinator = new WindowsAgentDatabaseResetCoordinator(
             new FakeWindowsAgentEndpointHost(),
             backend,
@@ -104,7 +104,7 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
         Assert.IsFalse(result.Completed);
         Assert.IsTrue(result.RequiresProcessRestart);
         Assert.AreEqual(1, backend.RequireRestartCount);
-        Assert.AreEqual(1, shutdownRequested);
+        Assert.AreEqual(WindowsAgentShutdownReason.RestartRequired, shutdownReason);
     }
 
     [TestMethod]

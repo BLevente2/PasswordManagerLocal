@@ -33,6 +33,14 @@ public sealed class WindowsTrayIconController : ITrayIconController
         }
     }
 
+    public Task ShowExitFailureAsync(
+        string safeMessage,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(safeMessage);
+        return _adapter.ShowErrorAsync(safeMessage, cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)

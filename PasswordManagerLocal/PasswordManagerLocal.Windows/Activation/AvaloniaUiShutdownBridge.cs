@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 
 namespace PasswordManagerLocal.Windows.Activation;
 
@@ -21,7 +22,7 @@ public sealed class AvaloniaUiShutdownBridge : IWindowsUiShutdownBridge
             if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
                 return false;
 
-            desktop.Shutdown();
+            Dispatcher.UIThread.Post(() => desktop.Shutdown());
             return true;
         }, cancellationToken);
 }

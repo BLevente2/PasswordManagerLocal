@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.EndpointRpc.Client;
 using PasswordManagerLocal.Windows.Ipc.Authorization;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
@@ -20,11 +21,13 @@ public sealed class WindowsUiActivationServer : IAsyncDisposable
         string pipeName,
         IWindowsWindowActivationBridge activationBridge,
         IWindowsUiShutdownBridge shutdownBridge,
+        IIntentionalAgentShutdownCoordinator shutdownCoordinator,
         Func<int?> trustedAgentProcessIdProvider)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         ArgumentNullException.ThrowIfNull(activationBridge);
         ArgumentNullException.ThrowIfNull(shutdownBridge);
+        ArgumentNullException.ThrowIfNull(shutdownCoordinator);
         ArgumentNullException.ThrowIfNull(trustedAgentProcessIdProvider);
         var serializer = new WindowsIpcSerializer();
         var validator = new WindowsIpcContractValidator();
@@ -32,7 +35,10 @@ public sealed class WindowsUiActivationServer : IAsyncDisposable
             new IWindowsIpcRequestHandler[]
             {
                 new RequestUiActivationWindowsIpcRequestHandler(
-                    new WindowsUiActivationRequestSink(activationBridge, shutdownBridge))
+                    new WindowsUiActivationRequestSink(
+                        activationBridge,
+                        shutdownBridge,
+                        shutdownCoordinator))
             },
             validator,
             new WindowsUiActivationOperationAuthorizer(trustedAgentProcessIdProvider));

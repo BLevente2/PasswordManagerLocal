@@ -13,6 +13,12 @@ internal sealed class ThrowingDisposeStream : MemoryStream
 
     public int DisposeCallCount => Volatile.Read(ref _disposeCallCount);
 
+    protected override void Dispose(bool disposing)
+    {
+        Interlocked.Increment(ref _disposeCallCount);
+        throw _disposeException;
+    }
+
     public override ValueTask DisposeAsync()
     {
         Interlocked.Increment(ref _disposeCallCount);

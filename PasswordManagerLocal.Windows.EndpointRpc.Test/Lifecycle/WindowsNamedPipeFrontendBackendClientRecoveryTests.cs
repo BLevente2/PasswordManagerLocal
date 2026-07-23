@@ -231,10 +231,293 @@ public sealed class WindowsNamedPipeFrontendBackendClientRecoveryTests
             client.ConnectionState == WindowsEndpointClientConnectionState.Ready);
 
         Assert.AreEqual(1, agent.ResetCount);
+        Assert.AreEqual(1, agent.PrepareReplacementCount);
         Assert.AreEqual(2L, agent.ConnectionGeneration);
         Assert.AreEqual(2, connector.ConnectCount);
         Assert.IsTrue(first.IsDisposed);
         Assert.IsNotNull(await client.GetEndpointsAsync());
+    }
+
+
+    [TestMethod]
+    public async Task RestartRequiredResetWaitsForOldAgentTerminationBeforeRecovery()
+    {
+        var replacementReady = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = new FakeEndpointRpcAgentConnection
+        {
+            ResetResult = new(false, true, "The agent must restart."),
+            ReplacementPreparationCompletion = replacementReady
+        };
+        var first = new ControllableEndpointRpcTransport();
+        var second = new ControllableEndpointRpcTransport();
+        var connector = new SequenceEndpointRpcClientConnector(first, second);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        var reset = client.ResetDatabaseAndRestartAsync();
+        await WaitUntilAsync(() => agent.PrepareReplacementCount == 1);
+
+        Assert.AreEqual(1, connector.ConnectCount);
+        Assert.AreEqual(1, agent.EnsureCount);
+
+        replacementReady.TrySetResult(true);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => reset);
+        await WaitUntilAsync(() => connector.ConnectCount == 2 &&
+            client.ConnectionState == WindowsEndpointClientConnectionState.Ready);
+
+        Assert.AreEqual(2, agent.EnsureCount);
+    }
+
+    [TestMethod]
+    public async Task RestartRequiredExitWaitTimeoutDoesNotLaunchRecovery()
+    {
+        var agent = new FakeEndpointRpcAgentConnection
+        {
+            ResetResult = new(false, true, "The old agent did not exit."),
+            ReplacementPreparationCompletion = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        agent.ReplacementPreparationCompletion.TrySetResult(false);
+        var connector = new SequenceEndpointRpcClientConnector(
+            new ControllableEndpointRpcTransport());
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => client.ResetDatabaseAndRestartAsync());
+        await Task.Delay(25);
+
+        Assert.AreEqual(1, agent.PrepareReplacementCount);
+        Assert.AreEqual(1, agent.EnsureCount);
+        Assert.AreEqual(1, connector.ConnectCount);
+        Assert.AreEqual(WindowsEndpointClientConnectionState.Unavailable, client.ConnectionState);
+    }
+
+    [TestMethod]
+    public async Task IntentionalShutdownSuppressesRecoveryBeforeBothConnectionsClose()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        var transport = new ControllableEndpointRpcTransport();
+        var connector = new SequenceEndpointRpcClientConnector(transport);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        var acknowledged = await client.BeginIntentionalAgentShutdownAsync();
+        transport.Disconnect();
+        agent.Disconnect();
+        await Task.Delay(25);
+
+        Assert.IsTrue(acknowledged);
+        Assert.AreEqual(WindowsFrontendRecoverySuppressionState.IntentionalShutdown, client.RecoverySuppressionState);
+        Assert.AreEqual(WindowsEndpointClientConnectionState.IntentionalShutdown, client.ConnectionState);
+        Assert.AreEqual(1, connector.ConnectCount);
+        Assert.AreEqual(1, agent.EnsureCount);
+        Assert.AreEqual(1, agent.DisconnectCount);
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => client.GetEndpointsAsync());
+    }
+
+    [TestMethod]
+    public async Task RepeatedIntentionalShutdownRequestsAreIdempotent()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            new SequenceEndpointRpcClientConnector(new ControllableEndpointRpcTransport()),
+            maximumRecoveryAttempts: 1,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        var first = await client.BeginIntentionalAgentShutdownAsync();
+        var second = await client.BeginIntentionalAgentShutdownAsync();
+
+        Assert.IsTrue(first);
+        Assert.IsTrue(second);
+        Assert.AreEqual(1, agent.DisconnectCount);
+    }
+
+    [TestMethod]
+    public async Task RejectedIntentionalShutdownRestoresNormalRecovery()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        var first = new ControllableEndpointRpcTransport();
+        var second = new ControllableEndpointRpcTransport();
+        var connector = new SequenceEndpointRpcClientConnector(first, second);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+        await client.BeginIntentionalAgentShutdownAsync();
+
+        await client.CancelIntentionalAgentShutdownAsync();
+        await WaitUntilAsync(() => connector.ConnectCount == 2 &&
+            client.ConnectionState == WindowsEndpointClientConnectionState.Ready);
+
+        Assert.AreEqual(WindowsFrontendRecoverySuppressionState.None, client.RecoverySuppressionState);
+        Assert.IsNotNull(await client.GetEndpointsAsync());
+    }
+
+    [TestMethod]
+    public async Task IntentionalShutdownDuringDatabaseResetIsRejectedWithoutPermanentSuppression()
+    {
+        var resetCompletion = new TaskCompletionSource<DatabaseResetResultDto>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = new FakeEndpointRpcAgentConnection { ResetCompletion = resetCompletion };
+        var first = new ControllableEndpointRpcTransport();
+        var second = new ControllableEndpointRpcTransport();
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            new SequenceEndpointRpcClientConnector(first, second),
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        var reset = client.ResetDatabaseAndRestartAsync();
+        await WaitUntilAsync(() => agent.ResetCount == 1);
+        var acknowledged = await client.BeginIntentionalAgentShutdownAsync();
+        resetCompletion.TrySetResult(new DatabaseResetResultDto(true, false, null));
+        await reset;
+
+        Assert.IsFalse(acknowledged);
+        Assert.AreEqual(WindowsFrontendRecoverySuppressionState.None, client.RecoverySuppressionState);
+        Assert.AreEqual(WindowsEndpointClientConnectionState.Ready, client.ConnectionState);
+
+        Assert.IsTrue(await client.BeginIntentionalAgentShutdownAsync());
+        Assert.AreEqual(WindowsFrontendRecoverySuppressionState.IntentionalShutdown, client.RecoverySuppressionState);
+    }
+
+    [TestMethod]
+    public async Task RepeatedRecoveryRetainsOnlyCurrentEndpointAndControlObservers()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        var transports = Enumerable.Range(0, 6)
+            .Select(_ => new ControllableEndpointRpcTransport())
+            .ToArray();
+        var connector = new SequenceEndpointRpcClientConnector(transports);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        for (var index = 0; index < 5; index++)
+        {
+            transports[index].Disconnect();
+            var expectedConnectCount = index + 2;
+            await WaitUntilAsync(() => connector.ConnectCount == expectedConnectCount &&
+                client.ConnectionState == WindowsEndpointClientConnectionState.Ready &&
+                client.ActiveObserverCount == 2);
+            Assert.AreEqual(2, client.ActiveObserverCount);
+        }
+    }
+
+    [TestMethod]
+    public async Task StaleEndpointObserverCannotAffectNewGeneration()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        var stale = new DelayedCompletionEndpointRpcTransport();
+        var current = new ControllableEndpointRpcTransport();
+        var connector = new SequenceEndpointRpcClientConnector(stale, current);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        agent.Disconnect();
+        await WaitUntilAsync(() => connector.ConnectCount == 2 &&
+            client.ConnectionState == WindowsEndpointClientConnectionState.Ready);
+        stale.Complete(new IOException("stale completion"));
+        await WaitUntilAsync(() => client.ActiveObserverCount == 2);
+
+        Assert.AreEqual(WindowsEndpointClientConnectionState.Ready, client.ConnectionState);
+        Assert.AreEqual(2, connector.ConnectCount);
+        Assert.IsNotNull(await client.GetEndpointsAsync());
+    }
+
+    [TestMethod]
+    public async Task FaultedEndpointObserverIsObservedRemovedAndReplaced()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        var first = new ControllableEndpointRpcTransport();
+        var second = new ControllableEndpointRpcTransport();
+        var connector = new SequenceEndpointRpcClientConnector(first, second);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        first.Disconnect(new IOException("observer failure"));
+        await WaitUntilAsync(() => connector.ConnectCount == 2 &&
+            client.ConnectionState == WindowsEndpointClientConnectionState.Ready &&
+            client.ActiveObserverCount == 2);
+
+        Assert.AreEqual(2, client.ActiveObserverCount);
+        Assert.IsNotNull(await client.GetEndpointsAsync());
+    }
+
+    [TestMethod]
+    public async Task StaleControlObserverCannotAffectNewConnectionGeneration()
+    {
+        var agent = new FakeEndpointRpcAgentConnection();
+        var first = new ControllableEndpointRpcTransport();
+        var second = new ControllableEndpointRpcTransport();
+        var connector = new SequenceEndpointRpcClientConnector(first, second);
+        await using var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            connector,
+            maximumRecoveryAttempts: 2,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+
+        var staleControlCompletion = agent.ReplaceConnectionWithoutCompletingPrevious();
+        first.Disconnect();
+        await WaitUntilAsync(() => connector.ConnectCount == 2 &&
+            client.ConnectionState == WindowsEndpointClientConnectionState.Ready);
+        staleControlCompletion.TrySetException(new IOException("stale control completion"));
+        await WaitUntilAsync(() => client.ActiveObserverCount == 2);
+
+        Assert.AreEqual(WindowsEndpointClientConnectionState.Ready, client.ConnectionState);
+        Assert.AreEqual(2, connector.ConnectCount);
+        Assert.IsNotNull(await client.GetEndpointsAsync());
+    }
+
+    [TestMethod]
+    public async Task DisposalCancelsObserversWhoseTransportCompletionNeverFinishes()
+    {
+        var transport = new DelayedCompletionEndpointRpcTransport();
+        var agent = new FakeEndpointRpcAgentConnection();
+        var client = new WindowsNamedPipeFrontendBackendClient(
+            agent,
+            new SequenceEndpointRpcClientConnector(transport),
+            maximumRecoveryAttempts: 1,
+            recoveryDelay: TimeSpan.Zero);
+        await client.ConnectAsync();
+        Assert.AreEqual(2, client.ActiveObserverCount);
+
+        await client.DisposeAsync();
+
+        Assert.AreEqual(0, client.ActiveObserverCount);
+        Assert.IsTrue(transport.IsDisposed);
+        Assert.AreEqual(WindowsEndpointClientConnectionState.Disposed, client.ConnectionState);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

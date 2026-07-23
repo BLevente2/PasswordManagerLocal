@@ -49,6 +49,22 @@ public sealed class WindowsFormsTrayIconAdapter : ITrayIconAdapter
             _notifyIcon.Visible = true;
         });
 
+    public Task ShowErrorAsync(
+        string safeMessage,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(safeMessage);
+        return InvokeAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _notifyIcon?.ShowBalloonTip(
+                4000,
+                "PasswordManagerLocal",
+                safeMessage,
+                ToolTipIcon.Error);
+        });
+    }
+
     public Task HideAndDisposeAsync(CancellationToken cancellationToken = default)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)

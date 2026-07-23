@@ -13,4 +13,6 @@ public interface IUiConnectionCoordinator
         int windowsSessionId,
         Guid instanceId,
         long? generation = null);
+    bool TryBeginIntentionalShutdown(out UiConnectionRegistration? registration);
+    void CancelIntentionalShutdown();
 }

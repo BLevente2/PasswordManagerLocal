@@ -37,7 +37,7 @@ public sealed class WindowsUiActivationOperationAuthorizer : IWindowsIpcOperatio
                 "The UI activation request is invalid.");
         }
 
-        if (request.Command != UiActivationCommand.Shutdown)
+        if (request.Command != UiActivationCommand.IntentionalAgentShutdown)
             return IpcAuthorizationDecision.Allowed;
 
         var trustedAgentProcessId = _trustedAgentProcessIdProvider();

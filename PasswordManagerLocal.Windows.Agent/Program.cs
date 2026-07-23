@@ -131,6 +131,7 @@ internal sealed class Program
                 trayController,
                 uiOpenService,
                 uiCloseService,
+                uiCoordinator,
                 shutdownCoordinator,
                 stateStore);
 
@@ -155,8 +156,7 @@ internal sealed class Program
                 }
                 catch
                 {
-                    if (exitCode == WindowsAgentExitCode.Success)
-                        ShowShutdownFailure();
+                    ShowShutdownFailure();
                     exitCode = WindowsAgentExitCode.ShellFailure;
                 }
             }
@@ -184,9 +184,6 @@ internal sealed class Program
             MessageBoxIcon.Error);
 
     private static void ShowShutdownFailure() =>
-        MessageBox.Show(
-            "The PasswordManagerLocal agent could not shut down all resources safely.",
-            "PasswordManagerLocal",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Error);
+        System.Diagnostics.Trace.TraceError(
+            "The PasswordManagerLocal agent encountered an error during final shutdown.");
 }

@@ -13,6 +13,8 @@ internal sealed class FakeTrayIconController : ITrayIconController
     public Exception? DisposeFailure { get; set; }
     public TaskCompletionSource? InitializationRelease { get; set; }
     public ICollection<string>? OperationLog { get; set; }
+    public int ExitFailureCount { get; private set; }
+    public string? LastExitFailureMessage { get; private set; }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -23,6 +25,17 @@ internal sealed class FakeTrayIconController : ITrayIconController
             throw new InvalidOperationException("tray failed");
         if (InitializationRelease is not null)
             await InitializationRelease.Task.WaitAsync(cancellationToken);
+    }
+
+    public Task ShowExitFailureAsync(
+        string safeMessage,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ExitFailureCount++;
+        LastExitFailureMessage = safeMessage;
+        OperationLog?.Add("tray-exit-failure");
+        return Task.CompletedTask;
     }
 
     public ValueTask DisposeAsync()

@@ -147,6 +147,27 @@ public sealed class FileProcessInstanceLockTests
         DeleteRoot(path);
     }
 
+
+    [TestMethod]
+    public void FailedHandleDisposalLeavesOwnershipHandleStronglyReferenced()
+    {
+        var path = CreateLockPath("failed-dispose");
+        var stream = new ThrowingDisposeStream(new IOException("close failed"));
+        var instanceLock = new FileProcessInstanceLock(
+            path,
+            new DelegateProcessInstanceLockFileOpener(_ => stream));
+
+        Assert.ThrowsExactly<IOException>(instanceLock.Dispose);
+
+        var field = typeof(FileProcessInstanceLock).GetField(
+            "_ownershipHandle",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.IsNotNull(field);
+        Assert.AreSame(stream, field.GetValue(instanceLock));
+        Assert.AreEqual(1, stream.DisposeCallCount);
+        DeleteRoot(path);
+    }
+
     private static string CreateLockPath(string role) =>
         Path.Combine(CreateRoot(), $"{role}.lock");
 

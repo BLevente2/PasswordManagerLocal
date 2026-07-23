@@ -5,6 +5,7 @@ public sealed class SingleUiConnectionCoordinator : IUiConnectionCoordinator
     private readonly object _gate = new();
     private UiConnectionRegistration? _registration;
     private long _generation;
+    private bool _intentionalShutdownActive;
 
     public Guid? RegisteredConnectionId
     {
@@ -38,6 +39,17 @@ public sealed class SingleUiConnectionCoordinator : IUiConnectionCoordinator
         var changed = false;
         lock (_gate)
         {
+            if (_intentionalShutdownActive)
+            {
+                registration = _registration ?? new UiConnectionRegistration(
+                    connection.ConnectionId,
+                    connection.PeerProcessId,
+                    connection.PeerWindowsSessionId,
+                    connection.PeerSessionId,
+                    _generation);
+                return false;
+            }
+
             if (_registration is not null &&
                 _registration.ConnectionId != connection.ConnectionId &&
                 !MatchesIdentity(_registration, connection))
@@ -101,6 +113,25 @@ public sealed class SingleUiConnectionCoordinator : IUiConnectionCoordinator
                 registration.InstanceId == instanceId &&
                 (!generation.HasValue || registration.Generation == generation.Value);
         }
+    }
+
+    public bool TryBeginIntentionalShutdown(out UiConnectionRegistration? registration)
+    {
+        lock (_gate)
+        {
+            registration = _registration;
+            if (_intentionalShutdownActive)
+                return false;
+
+            _intentionalShutdownActive = true;
+            return true;
+        }
+    }
+
+    public void CancelIntentionalShutdown()
+    {
+        lock (_gate)
+            _intentionalShutdownActive = false;
     }
 
     private void RaiseRegistrationChanged(

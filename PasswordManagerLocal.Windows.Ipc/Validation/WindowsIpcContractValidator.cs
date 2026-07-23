@@ -413,7 +413,7 @@ public sealed class WindowsIpcContractValidator
         ArgumentNullException.ThrowIfNull(request);
         if (!Enum.IsDefined(request.Reason) || !Enum.IsDefined(request.Command))
             throw new IpcPayloadException("The IPC UI activation request is invalid.");
-        if (request.Command == UiActivationCommand.Shutdown &&
+        if (request.Command == UiActivationCommand.IntentionalAgentShutdown &&
             (request.BringToForeground || request.Reason != UiActivationReason.AgentRequest))
         {
             throw new IpcPayloadException(

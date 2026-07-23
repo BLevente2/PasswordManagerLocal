@@ -81,23 +81,13 @@ public sealed class WindowsAgentApplicationContext : ApplicationContext
         if (Interlocked.Exchange(ref _failureExitRequested, 1) != 0)
             return;
 
-        void ShowFailureAndExit()
-        {
-            MessageBox.Show(
-                "The PasswordManagerLocal agent encountered a fatal lifecycle error and will exit.",
-                "PasswordManagerLocal",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            ExitThread();
-        }
-
         if (!_dispatcher.InvokeRequired)
         {
-            ShowFailureAndExit();
+            ExitThread();
             return;
         }
 
-        _dispatcher.BeginInvoke((MethodInvoker)ShowFailureAndExit);
+        _dispatcher.BeginInvoke((MethodInvoker)ExitThread);
     }
 
     private void RequestExitThread()
