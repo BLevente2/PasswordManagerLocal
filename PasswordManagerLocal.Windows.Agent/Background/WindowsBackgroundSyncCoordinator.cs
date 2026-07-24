@@ -64,22 +64,37 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
 
         if (!settings.IsEnabled)
         {
+            var startupCleanupFailed = false;
             try
             {
                 await _startupRegistration.UnregisterAsync(cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                startupCleanupFailed = true;
+                SetFailure(
+                    WindowsBackgroundSyncFailureKind.StartupRegistration,
+                    CreateSafeMessage(
+                        exception,
+                        "The disabled background synchronization startup registration could not be restored."),
+                    retryable: true,
+                    requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
+            }
+
+            try
+            {
                 await ReleaseBackgroundLeaseAsync();
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                SetFailure(
-                    exception is UnauthorizedAccessException
-                        ? WindowsBackgroundSyncFailureKind.StartupRegistration
-                        : WindowsBackgroundSyncFailureKind.RuntimeLease,
-                    CreateSafeMessage(
-                        exception,
-                        "The disabled background synchronization state could not be restored completely."),
-                    retryable: true,
-                    requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
+                if (!startupCleanupFailed)
+                {
+                    SetFailure(
+                        WindowsBackgroundSyncFailureKind.RuntimeLease,
+                        "The disabled background synchronization runtime lease could not be released.",
+                        retryable: true,
+                        requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
+                }
             }
             return;
         }

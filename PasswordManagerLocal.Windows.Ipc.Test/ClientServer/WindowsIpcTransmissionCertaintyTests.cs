@@ -148,6 +148,51 @@ public sealed class WindowsIpcTransmissionCertaintyTests
         await client.DisposeAsync();
     }
 
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task BackgroundSettingControlWritePreservesSentCancellationState()
+    {
+        var serializer = new WindowsIpcSerializer();
+        var connection = new RecordingWindowsIpcConnection(serializer);
+        var client = CreateClient(connection, serializer, maximumPendingRequests: 1);
+        await client.HandshakeAsync();
+        var controlClient = new WindowsIpcControlClient(client, serializer);
+        using var cancellation = new CancellationTokenSource();
+        var write = controlClient.SetBackgroundSyncEnabledAsync(
+            new SetBackgroundSyncEnabledRequestDto(true),
+            cancellation.Token);
+        await connection.WaitForCompletedWritesAsync(2);
+
+        cancellation.Cancel();
+        var exception = await Assert.ThrowsExactlyAsync<IpcRequestTransmissionException>(() => write);
+
+        Assert.AreEqual(IpcRequestTransmissionState.Sent, exception.TransmissionState);
+        await client.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task BackgroundSettingControlWritePreservesUnknownTransmissionState()
+    {
+        var serializer = new WindowsIpcSerializer();
+        var connection = new RecordingWindowsIpcConnection(serializer)
+        {
+            FailRequestWrites = true
+        };
+        var client = CreateClient(connection, serializer, maximumPendingRequests: 1);
+        await client.HandshakeAsync();
+        var controlClient = new WindowsIpcControlClient(client, serializer);
+
+        var exception = await Assert.ThrowsExactlyAsync<IpcRequestTransmissionException>(() =>
+            controlClient.SetBackgroundSyncEnabledAsync(
+                new SetBackgroundSyncEnabledRequestDto(true)));
+
+        Assert.AreEqual(
+            IpcRequestTransmissionState.TransmissionUnknown,
+            exception.TransmissionState);
+        await client.DisposeAsync();
+    }
+
     [TestMethod]
     public async Task DisposedClientBeforeTransmissionIsDefinitelyNotSent()
     {

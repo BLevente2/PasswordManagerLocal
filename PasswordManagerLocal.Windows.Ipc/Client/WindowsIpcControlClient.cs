@@ -116,7 +116,7 @@ public sealed class WindowsIpcControlClient
     public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
         SetBackgroundSyncEnabledRequestDto request,
         CancellationToken cancellationToken = default) =>
-        SendForResultAsync(
+        SendTransmissionAwareForResultAsync(
             IpcOperationId.SetBackgroundSyncEnabled,
             request,
             WindowsIpcJsonContext.Default.SetBackgroundSyncEnabledRequestDto,
@@ -144,6 +144,23 @@ public sealed class WindowsIpcControlClient
         var payload = _serializer.Serialize(request, requestTypeInfo);
         var response = await _client.SendAsync(operationId, payload, cancellationToken);
         return DeserializeRequiredResult(response, responseTypeInfo);
+    }
+
+    private async Task<TResponse> SendTransmissionAwareForResultAsync<TRequest, TResponse>(
+        IpcOperationId operationId,
+        TRequest request,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _contractValidator.ValidateForTransport(request);
+        var payload = _serializer.Serialize(request, requestTypeInfo);
+        var response = await _client.SendWithTransmissionStateAsync(
+            operationId,
+            payload,
+            cancellationToken);
+        return DeserializeRequiredResult(response.Response, responseTypeInfo);
     }
 
     private TResponse DeserializeRequiredResult<TResponse>(

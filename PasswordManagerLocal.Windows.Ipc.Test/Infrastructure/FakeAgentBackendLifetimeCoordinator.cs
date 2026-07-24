@@ -6,6 +6,10 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 internal sealed class FakeAgentBackendLifetimeCoordinator : IBackendRuntimeLifetimeCoordinator
 {
     public BackendLifetimeReason ActiveReasons { get; set; }
+    public event EventHandler? ActiveReasonsChanged;
+
+    public void PublishActiveReasonsChanged() =>
+        ActiveReasonsChanged?.Invoke(this, EventArgs.Empty);
 
     public Task<IBackendRuntimeLease> AcquireAsync(
         BackendLifetimeReason reason,

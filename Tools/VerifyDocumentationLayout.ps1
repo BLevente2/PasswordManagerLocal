@@ -39,7 +39,10 @@ $requiredPhaseReports = @(
     'PHASE6_2_MODIFIED_FILES.md',
     'PHASE7_WINDOWS_BACKGROUND_SYNC_STARTUP_STATIC_VERIFICATION.md',
     'PHASE7_IMPLEMENTATION_CHECKS.md',
-    'PHASE7_MODIFIED_FILES.md'
+    'PHASE7_MODIFIED_FILES.md',
+    'PHASE7_1_BACKGROUND_WRITE_CERTAINTY_REASON_FRESHNESS_STATIC_VERIFICATION.md',
+    'PHASE7_1_IMPLEMENTATION_CHECKS.md',
+    'PHASE7_1_MODIFIED_FILES.md'
 )
 foreach ($name in $requiredPhaseReports) {
     if (-not (Test-Path -LiteralPath (Join-Path $docs $name) -PathType Leaf)) {

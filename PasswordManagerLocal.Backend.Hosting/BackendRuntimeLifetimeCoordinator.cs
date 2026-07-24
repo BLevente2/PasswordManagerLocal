@@ -15,19 +15,14 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     }
 
+    public event EventHandler? ActiveReasonsChanged;
+
     public BackendLifetimeReason ActiveReasons
     {
         get
         {
             lock (_stateLock)
-            {
-                var reasons = BackendLifetimeReason.None;
-                if (_interactiveUiCount > 0)
-                    reasons |= BackendLifetimeReason.InteractiveUi;
-                if (_backgroundSyncCount > 0)
-                    reasons |= BackendLifetimeReason.BackgroundSync;
-                return reasons;
-            }
+                return GetActiveReasonsLocked();
         }
     }
 
@@ -38,6 +33,7 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
         ValidateReason(reason);
         await _transitionLock.WaitAsync(cancellationToken);
         var shouldStopAfterCancellation = false;
+        var reasonsChanged = false;
 
         try
         {
@@ -50,7 +46,7 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
-            Increment(reason);
+            reasonsChanged = Increment(reason);
             shouldStopAfterCancellation = false;
             return new BackendRuntimeLease(this, reason);
         }
@@ -64,6 +60,8 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
         finally
         {
             _transitionLock.Release();
+            if (reasonsChanged)
+                PublishActiveReasonsChanged();
         }
     }
 
@@ -74,6 +72,7 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
         ValidateReason(reason);
         await _transitionLock.WaitAsync(cancellationToken);
         var shouldStopAfterCancellation = false;
+        var reasonsChanged = false;
 
         try
         {
@@ -88,7 +87,7 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
             await _runtime.ResetDatabaseAndRestartAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            Increment(reason);
+            reasonsChanged = Increment(reason);
             shouldStopAfterCancellation = false;
             return new BackendRuntimeLease(this, reason);
         }
@@ -102,6 +101,8 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
         finally
         {
             _transitionLock.Release();
+            if (reasonsChanged)
+                PublishActiveReasonsChanged();
         }
     }
 
@@ -125,15 +126,18 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
     internal async ValueTask ReleaseAsync(BackendLifetimeReason reason)
     {
         await _transitionLock.WaitAsync(CancellationToken.None);
+        var reasonsChanged = false;
         try
         {
-            Decrement(reason);
+            reasonsChanged = Decrement(reason);
             if (GetTotalLeaseCount() == 0)
                 await _runtime.StopAsync(CancellationToken.None);
         }
         finally
         {
             _transitionLock.Release();
+            if (reasonsChanged)
+                PublishActiveReasonsChanged();
         }
     }
 
@@ -143,21 +147,24 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
             return _interactiveUiCount + _backgroundSyncCount;
     }
 
-    private void Increment(BackendLifetimeReason reason)
+    private bool Increment(BackendLifetimeReason reason)
     {
         lock (_stateLock)
         {
+            var previous = GetActiveReasonsLocked();
             if (reason == BackendLifetimeReason.InteractiveUi)
                 _interactiveUiCount++;
             else
                 _backgroundSyncCount++;
+            return previous != GetActiveReasonsLocked();
         }
     }
 
-    private void Decrement(BackendLifetimeReason reason)
+    private bool Decrement(BackendLifetimeReason reason)
     {
         lock (_stateLock)
         {
+            var previous = GetActiveReasonsLocked();
             if (reason == BackendLifetimeReason.InteractiveUi)
             {
                 if (_interactiveUiCount == 0)
@@ -172,6 +179,29 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
 
                 _backgroundSyncCount--;
             }
+            return previous != GetActiveReasonsLocked();
+        }
+    }
+
+    private BackendLifetimeReason GetActiveReasonsLocked()
+    {
+        var reasons = BackendLifetimeReason.None;
+        if (_interactiveUiCount > 0)
+            reasons |= BackendLifetimeReason.InteractiveUi;
+        if (_backgroundSyncCount > 0)
+            reasons |= BackendLifetimeReason.BackgroundSync;
+        return reasons;
+    }
+
+    private void PublishActiveReasonsChanged()
+    {
+        var handlers = ActiveReasonsChanged;
+        if (handlers is null)
+            return;
+
+        foreach (EventHandler handler in handlers.GetInvocationList())
+        {
+            try { handler(this, EventArgs.Empty); } catch { }
         }
     }
 

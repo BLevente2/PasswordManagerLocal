@@ -9,8 +9,11 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
     public long ConnectionGeneration { get; private set; } = 1;
     public Task Completion { get; set; } = Task.CompletedTask;
     public bool EnsureConnectedResult { get; set; } = true;
+    public Queue<bool> EnsureConnectedResults { get; } = new();
     public Exception? GetBackgroundFailure { get; set; }
+    public Queue<Exception?> GetBackgroundFailures { get; } = new();
     public Exception? SetBackgroundFailure { get; set; }
+    public CancellationTokenSource? CancelDuringSet { get; set; }
     public WindowsBackgroundSyncStateDto BackgroundState { get; set; } =
         FakeWindowsBackgroundSyncCoordinator.DisabledState();
     public int EnsureConnectedCount { get; private set; }
@@ -24,10 +27,13 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureConnectedCount++;
-        IsConnected = EnsureConnectedResult;
+        var result = EnsureConnectedResults.Count == 0
+            ? EnsureConnectedResult
+            : EnsureConnectedResults.Dequeue();
+        IsConnected = result;
         if (IsConnected)
             ConnectionGeneration++;
-        return Task.FromResult(EnsureConnectedResult);
+        return Task.FromResult(result);
     }
 
     public Task DisconnectAsync(CancellationToken cancellationToken = default)
@@ -52,9 +58,12 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
     {
         cancellationToken.ThrowIfCancellationRequested();
         GetBackgroundCount++;
-        return GetBackgroundFailure is null
+        var failure = GetBackgroundFailures.Count == 0
+            ? GetBackgroundFailure
+            : GetBackgroundFailures.Dequeue();
+        return failure is null
             ? Task.FromResult(BackgroundState)
-            : Task.FromException<WindowsBackgroundSyncStateDto>(GetBackgroundFailure);
+            : Task.FromException<WindowsBackgroundSyncStateDto>(failure);
     }
 
     public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
@@ -64,6 +73,7 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
         cancellationToken.ThrowIfCancellationRequested();
         SetBackgroundCount++;
         LastRequestedEnabled = isEnabled;
+        CancelDuringSet?.Cancel();
         if (MutateBeforeSetFailure)
         {
             BackgroundState = isEnabled

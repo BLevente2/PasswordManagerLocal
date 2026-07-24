@@ -6,6 +6,7 @@ namespace PasswordManagerLocal.Windows.Settings;
 
 public sealed class WindowsAgentBackgroundSyncSettingsClient : IBackgroundSyncSettingsClient
 {
+    private const int MaximumReadBackAttempts = 2;
     private readonly IWindowsAgentControlConnection _connection;
 
     public WindowsAgentBackgroundSyncSettingsClient(
@@ -54,44 +55,55 @@ public sealed class WindowsAgentBackgroundSyncSettingsClient : IBackgroundSyncSe
                 Map(state),
                 WasOutcomeUncertain: false);
         }
+        catch (WindowsAgentControlWriteException exception)
+            when (exception.TransmissionState ==
+                WindowsAgentControlWriteTransmissionState.DefinitelyNotSent &&
+                exception.InnerException is OperationCanceledException &&
+                cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (WindowsAgentControlWriteException exception)
+            when (exception.TransmissionState is
+                WindowsAgentControlWriteTransmissionState.Sent or
+                WindowsAgentControlWriteTransmissionState.TransmissionUnknown)
+        {
+            return await ReadBackAfterUncertainWriteAsync();
+        }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
         catch
         {
-            return await ReadBackAfterUncertainWriteAsync(cancellationToken);
+            return await ReadBackAfterUncertainWriteAsync();
         }
     }
 
-    private async Task<BackgroundSyncChangeResult> ReadBackAfterUncertainWriteAsync(
-        CancellationToken cancellationToken)
+    private async Task<BackgroundSyncChangeResult> ReadBackAfterUncertainWriteAsync()
     {
-        try
+        for (var attempt = 0; attempt < MaximumReadBackAttempts; attempt++)
         {
-            await _connection.DisconnectAsync(CancellationToken.None);
-            if (!await _connection.EnsureConnectedAsync(cancellationToken))
+            try
             {
+                await _connection.DisconnectAsync(CancellationToken.None);
+                if (!await _connection.EnsureConnectedAsync(CancellationToken.None))
+                    continue;
+
+                var state = await _connection.GetBackgroundSyncStateAsync(
+                    CancellationToken.None);
                 return new BackgroundSyncChangeResult(
-                    CreateUnavailableState(),
+                    Map(state),
                     WasOutcomeUncertain: true);
             }
+            catch
+            {
+            }
+        }
 
-            var state = await _connection.GetBackgroundSyncStateAsync(cancellationToken);
-            return new BackgroundSyncChangeResult(
-                Map(state),
-                WasOutcomeUncertain: true);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            return new BackgroundSyncChangeResult(
-                CreateUnavailableState(),
-                WasOutcomeUncertain: true);
-        }
+        return new BackgroundSyncChangeResult(
+            CreateUnavailableState(),
+            WasOutcomeUncertain: true);
     }
 
     private BackgroundSyncClientState CreateUnavailableState() => new(

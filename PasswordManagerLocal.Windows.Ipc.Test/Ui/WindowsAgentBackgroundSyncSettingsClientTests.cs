@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Windows.AgentConnection;
 using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 using PasswordManagerLocal.Windows.Settings;
 
@@ -52,6 +53,97 @@ public sealed class WindowsAgentBackgroundSyncSettingsClientTests
         Assert.AreEqual(1, connection.SetBackgroundCount);
         Assert.IsFalse(result.WasOutcomeUncertain);
         Assert.IsTrue(result.State.IsEnabled);
+    }
+
+
+    [TestMethod]
+    public async Task CancellationBeforeTransmissionPropagatesWithoutReadBackOrReplay()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var connection = new FakeWindowsAgentControlConnection
+        {
+            CancelDuringSet = cancellation,
+            SetBackgroundFailure = new WindowsAgentControlWriteException(
+                WindowsAgentControlWriteTransmissionState.DefinitelyNotSent,
+                new OperationCanceledException(cancellation.Token))
+        };
+        var client = new WindowsAgentBackgroundSyncSettingsClient(connection);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            client.SetEnabledAsync(true, cancellation.Token));
+
+        Assert.AreEqual(1, connection.SetBackgroundCount);
+        Assert.AreEqual(0, connection.DisconnectCount);
+        Assert.AreEqual(0, connection.GetBackgroundCount);
+    }
+
+    [TestMethod]
+    public async Task CancellationAfterTransmissionReadsBackAuthoritativeStateWithoutReplay()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var connection = new FakeWindowsAgentControlConnection
+        {
+            CancelDuringSet = cancellation,
+            MutateBeforeSetFailure = true,
+            SetBackgroundFailure = new WindowsAgentControlWriteException(
+                WindowsAgentControlWriteTransmissionState.Sent,
+                new OperationCanceledException(cancellation.Token))
+        };
+        var client = new WindowsAgentBackgroundSyncSettingsClient(connection);
+
+        var result = await client.SetEnabledAsync(true, cancellation.Token);
+
+        Assert.IsTrue(result.WasOutcomeUncertain);
+        Assert.IsTrue(result.State.IsEnabled);
+        Assert.AreEqual(1, connection.SetBackgroundCount);
+        Assert.AreEqual(1, connection.GetBackgroundCount);
+    }
+
+    [TestMethod]
+    public async Task CancellationWithUnknownTransmissionReadsBackWithoutReplay()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var connection = new FakeWindowsAgentControlConnection
+        {
+            CancelDuringSet = cancellation,
+            MutateBeforeSetFailure = true,
+            SetBackgroundFailure = new WindowsAgentControlWriteException(
+                WindowsAgentControlWriteTransmissionState.TransmissionUnknown,
+                new OperationCanceledException(cancellation.Token))
+        };
+        var client = new WindowsAgentBackgroundSyncSettingsClient(connection);
+
+        var result = await client.SetEnabledAsync(true, cancellation.Token);
+
+        Assert.IsTrue(result.WasOutcomeUncertain);
+        Assert.IsTrue(result.State.IsEnabled);
+        Assert.AreEqual(1, connection.SetBackgroundCount);
+        Assert.AreEqual(1, connection.GetBackgroundCount);
+    }
+
+    [TestMethod]
+    public async Task ReadBackReconnectsAgainAfterInitialConnectionLossWithoutReplay()
+    {
+        var connection = new FakeWindowsAgentControlConnection
+        {
+            MutateBeforeSetFailure = true,
+            SetBackgroundFailure = new WindowsAgentControlWriteException(
+                WindowsAgentControlWriteTransmissionState.Sent,
+                new IOException("response lost"))
+        };
+        connection.EnsureConnectedResults.Enqueue(true);
+        connection.EnsureConnectedResults.Enqueue(false);
+        connection.EnsureConnectedResults.Enqueue(true);
+        var client = new WindowsAgentBackgroundSyncSettingsClient(connection);
+
+        var result = await client.SetEnabledAsync(true);
+
+        Assert.IsTrue(result.WasOutcomeUncertain);
+        Assert.IsTrue(result.State.IsEnabled);
+        Assert.AreEqual(1, connection.SetBackgroundCount);
+        Assert.AreEqual(2, connection.DisconnectCount);
+        Assert.AreEqual(3, connection.EnsureConnectedCount);
+        Assert.AreEqual(1, connection.GetBackgroundCount);
     }
 
     [TestMethod]

@@ -5,6 +5,7 @@ namespace PasswordManagerLocal.Backend.Hosting;
 public interface IBackendRuntimeLifetimeCoordinator
 {
     BackendLifetimeReason ActiveReasons { get; }
+    event EventHandler? ActiveReasonsChanged;
 
     Task<IBackendRuntimeLease> AcquireAsync(
         BackendLifetimeReason reason,

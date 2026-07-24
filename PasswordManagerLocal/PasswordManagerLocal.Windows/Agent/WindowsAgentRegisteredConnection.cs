@@ -45,13 +45,25 @@ public sealed class WindowsAgentRegisteredConnection : IWindowsAgentRegisteredCo
         return _controlClient.GetBackgroundSyncStateAsync(cancellationToken);
     }
 
-    public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
+    public async Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
         SetBackgroundSyncEnabledRequestDto request,
         CancellationToken cancellationToken = default)
     {
         if (Volatile.Read(ref _disposed) != 0)
             throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
-        return _controlClient.SetBackgroundSyncEnabledAsync(request, cancellationToken);
+
+        try
+        {
+            return await _controlClient.SetBackgroundSyncEnabledAsync(
+                request,
+                cancellationToken);
+        }
+        catch (IpcRequestTransmissionException exception)
+        {
+            throw new WindowsAgentControlWriteException(
+                MapTransmissionState(exception.TransmissionState),
+                exception.InnerException ?? exception);
+        }
     }
 
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(
@@ -61,6 +73,21 @@ public sealed class WindowsAgentRegisteredConnection : IWindowsAgentRegisteredCo
             throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
         return _controlClient.ResetDatabaseAsync(cancellationToken);
     }
+
+    private static WindowsAgentControlWriteTransmissionState MapTransmissionState(
+        IpcRequestTransmissionState transmissionState) => transmissionState switch
+        {
+            IpcRequestTransmissionState.DefinitelyNotSent =>
+                WindowsAgentControlWriteTransmissionState.DefinitelyNotSent,
+            IpcRequestTransmissionState.Sent =>
+                WindowsAgentControlWriteTransmissionState.Sent,
+            IpcRequestTransmissionState.TransmissionUnknown =>
+                WindowsAgentControlWriteTransmissionState.TransmissionUnknown,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(transmissionState),
+                transmissionState,
+                "The IPC transmission state is invalid.")
+        };
 
     public async ValueTask DisposeAsync()
     {

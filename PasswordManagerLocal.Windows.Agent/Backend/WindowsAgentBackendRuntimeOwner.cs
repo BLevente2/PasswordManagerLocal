@@ -56,6 +56,7 @@ public sealed class WindowsAgentBackendRuntimeOwner : IWindowsAgentBackendRuntim
                 _composition = composition;
                 composition.Runtime.StateChanged += HandleRuntimeStateChanged;
                 composition.Runtime.SyncStateChanged += HandleSyncStateChanged;
+                composition.LifetimeCoordinator.ActiveReasonsChanged += HandleActiveReasonsChanged;
                 Publish(WindowsAgentBackendOwnerState.Ready, null, requiresRestart: false, isResetting: false);
             }
             catch (Exception exception)
@@ -80,11 +81,9 @@ public sealed class WindowsAgentBackendRuntimeOwner : IWindowsAgentBackendRuntim
             var composition = GetUsableComposition();
             try
             {
-                var lease = await composition.LifetimeCoordinator.AcquireAsync(
+                return await composition.LifetimeCoordinator.AcquireAsync(
                     BackendLifetimeReason.BackgroundSync,
                     cancellationToken);
-                Publish(Snapshot.State, null, requiresRestart: false, isResetting: false);
-                return lease;
             }
             catch (Exception exception)
             {
@@ -252,6 +251,7 @@ public sealed class WindowsAgentBackendRuntimeOwner : IWindowsAgentBackendRuntim
             {
                 composition.Runtime.StateChanged -= HandleRuntimeStateChanged;
                 composition.Runtime.SyncStateChanged -= HandleSyncStateChanged;
+                composition.LifetimeCoordinator.ActiveReasonsChanged -= HandleActiveReasonsChanged;
                 await composition.Runtime.DisposeAsync();
             }
 
@@ -292,6 +292,9 @@ public sealed class WindowsAgentBackendRuntimeOwner : IWindowsAgentBackendRuntim
     }
 
     private void HandleRuntimeStateChanged(object? sender, BackendRuntimeStateChangedEventArgs args) =>
+        RefreshFromRuntime();
+
+    private void HandleActiveReasonsChanged(object? sender, EventArgs args) =>
         RefreshFromRuntime();
 
     private void HandleSyncStateChanged(object? sender, SyncRuntimeStateChangedEventArgs args) =>

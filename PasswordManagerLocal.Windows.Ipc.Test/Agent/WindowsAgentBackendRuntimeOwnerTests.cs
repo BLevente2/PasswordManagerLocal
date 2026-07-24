@@ -104,6 +104,70 @@ public sealed class WindowsAgentBackendRuntimeOwnerTests
         await owner.DisposeAsync();
     }
 
+
+    [TestMethod]
+    public async Task ReasonAcquisitionAndReleaseRefreshOwnerSnapshotWithoutRuntimeRestart()
+    {
+        var runtime = new FakeAgentOwnedBackendRuntime();
+        var lifetime = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var owner = new WindowsAgentBackendRuntimeOwner(() =>
+            new BackendRuntimeComposition(runtime, lifetime, @"C:\agent-data"));
+        await owner.StartAsync();
+        await using var interactive = await lifetime.AcquireAsync(
+            BackendLifetimeReason.InteractiveUi);
+
+        var background = await owner.AcquireBackgroundSyncLeaseAsync();
+
+        Assert.AreEqual(
+            BackendLifetimeReason.InteractiveUi | BackendLifetimeReason.BackgroundSync,
+            owner.Snapshot.ActiveReasons);
+
+        await background.DisposeAsync();
+
+        Assert.AreEqual(BackendLifetimeReason.InteractiveUi, owner.Snapshot.ActiveReasons);
+        Assert.AreEqual(BackendRuntimeState.Ready, owner.Snapshot.Runtime.State);
+        Assert.AreEqual(1, runtime.EnsureStartedCount);
+        Assert.AreEqual(0, runtime.StopCount);
+    }
+
+    [TestMethod]
+    public async Task FinalReasonReleaseRefreshesOwnerAndAllowsRuntimeStop()
+    {
+        var runtime = new FakeAgentOwnedBackendRuntime();
+        var lifetime = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var owner = new WindowsAgentBackendRuntimeOwner(() =>
+            new BackendRuntimeComposition(runtime, lifetime, @"C:\agent-data"));
+        await owner.StartAsync();
+        var background = await owner.AcquireBackgroundSyncLeaseAsync();
+
+        await background.DisposeAsync();
+
+        Assert.AreEqual(BackendLifetimeReason.None, owner.Snapshot.ActiveReasons);
+        Assert.AreEqual(BackendRuntimeState.Stopped, owner.Snapshot.Runtime.State);
+        Assert.AreEqual(1, runtime.StopCount);
+    }
+
+    [TestMethod]
+    public async Task RepeatedLeaseDisposalPublishesReasonRemovalExactlyOnce()
+    {
+        var runtime = new FakeAgentOwnedBackendRuntime();
+        var lifetime = new BackendRuntimeLifetimeCoordinator(runtime);
+        await using var owner = new WindowsAgentBackendRuntimeOwner(() =>
+            new BackendRuntimeComposition(runtime, lifetime, @"C:\agent-data"));
+        await owner.StartAsync();
+        await using var interactive = await lifetime.AcquireAsync(
+            BackendLifetimeReason.InteractiveUi);
+        var background = await owner.AcquireBackgroundSyncLeaseAsync();
+        var changeCount = 0;
+        owner.StateChanged += (_, _) => changeCount++;
+
+        await background.DisposeAsync();
+        await background.DisposeAsync();
+
+        Assert.AreEqual(1, changeCount);
+        Assert.AreEqual(BackendLifetimeReason.InteractiveUi, owner.Snapshot.ActiveReasons);
+    }
+
     [TestMethod]
     public async Task UnsafeResetFailureRequiresAgentProcessReplacement()
     {

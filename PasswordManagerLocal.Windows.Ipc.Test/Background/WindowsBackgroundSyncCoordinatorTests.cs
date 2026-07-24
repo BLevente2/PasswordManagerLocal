@@ -57,6 +57,68 @@ public sealed class WindowsBackgroundSyncCoordinatorTests
         Assert.AreEqual(WindowsBackgroundSyncConsistency.Disabled, state.Consistency);
     }
 
+
+    [TestMethod]
+    public async Task DisabledStartupRegistryCleanupFailureIsClassifiedAsStartupRegistration()
+    {
+        var store = new FakeBackgroundSyncSettingsStore();
+        var startup = new FakeWindowsStartupRegistration
+        {
+            Snapshot = new WindowsStartupRegistrationSnapshot(true, false, "stale"),
+            UnregisterFailure = new UnauthorizedAccessException("denied")
+        };
+        var owner = new FakeWindowsAgentBackendRuntimeOwner();
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateCoordinator(store, startup, owner, transitions);
+
+        await coordinator.InitializeAsync();
+        var state = await coordinator.GetStateAsync();
+
+        Assert.AreEqual(
+            WindowsBackgroundSyncFailureKind.StartupRegistration,
+            state.FailureKind);
+        Assert.AreEqual(0, owner.BackgroundLeaseAcquireCount);
+        Assert.AreNotEqual(WindowsBackgroundSyncConsistency.Operational, state.Consistency);
+    }
+
+    [TestMethod]
+    public async Task DisabledStartupLeaseCleanupFailureIsClassifiedAsRuntimeLease()
+    {
+        var store = new FakeBackgroundSyncSettingsStore();
+        var startup = new FakeWindowsStartupRegistration();
+        var owner = new FakeWindowsAgentBackendRuntimeOwner();
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateOperationalCoordinator(store, startup, owner, transitions);
+        await coordinator.SetEnabledAsync(true);
+        store.Settings = new BackgroundSyncSettings(false);
+        owner.BackgroundLeaseDisposeFailure = new IOException("release failed");
+
+        await coordinator.InitializeAsync();
+        var state = await coordinator.GetStateAsync();
+
+        Assert.AreEqual(WindowsBackgroundSyncFailureKind.RuntimeLease, state.FailureKind);
+        Assert.AreNotEqual(WindowsBackgroundSyncConsistency.Operational, state.Consistency);
+    }
+
+    [TestMethod]
+    public async Task DisabledStartupCleanupSuccessReportsDisabled()
+    {
+        var store = new FakeBackgroundSyncSettingsStore();
+        var startup = new FakeWindowsStartupRegistration
+        {
+            Snapshot = new WindowsStartupRegistrationSnapshot(true, false, "stale")
+        };
+        var owner = new FakeWindowsAgentBackendRuntimeOwner();
+        using var transitions = new WindowsAgentLifecycleTransitionCoordinator();
+        var coordinator = CreateCoordinator(store, startup, owner, transitions);
+
+        await coordinator.InitializeAsync();
+        var state = await coordinator.GetStateAsync();
+
+        Assert.AreEqual(WindowsBackgroundSyncConsistency.Disabled, state.Consistency);
+        Assert.AreEqual(WindowsBackgroundSyncFailureKind.None, state.FailureKind);
+    }
+
     [TestMethod]
     public async Task SuccessfulEnableCommitsSettingRegistrationLeaseAndRuntime()
     {

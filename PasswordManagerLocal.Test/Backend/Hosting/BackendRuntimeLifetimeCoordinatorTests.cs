@@ -54,6 +54,39 @@ public sealed class BackendRuntimeLifetimeCoordinatorTests
         Assert.AreEqual(1, runtime.StopCalls);
     }
 
+
+    [TestMethod]
+    public async Task ActiveReasonChangesPublishOnceAndRepeatedDisposalIsSilent()
+    {
+        using var host = new BackendTestHost();
+        var runtime = new FakeBackendRuntime(host.Services.GetRequiredService<IEndpoints>());
+        var coordinator = new BackendRuntimeLifetimeCoordinator(runtime);
+        var observed = new List<BackendLifetimeReason>();
+        coordinator.ActiveReasonsChanged += (_, _) => observed.Add(coordinator.ActiveReasons);
+
+        var firstInteractive = await coordinator.AcquireAsync(
+            BackendLifetimeReason.InteractiveUi);
+        var secondInteractive = await coordinator.AcquireAsync(
+            BackendLifetimeReason.InteractiveUi);
+        var background = await coordinator.AcquireAsync(
+            BackendLifetimeReason.BackgroundSync);
+
+        await background.DisposeAsync();
+        await background.DisposeAsync();
+        await firstInteractive.DisposeAsync();
+        await secondInteractive.DisposeAsync();
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                BackendLifetimeReason.InteractiveUi,
+                BackendLifetimeReason.InteractiveUi | BackendLifetimeReason.BackgroundSync,
+                BackendLifetimeReason.InteractiveUi,
+                BackendLifetimeReason.None
+            },
+            observed);
+    }
+
     [TestMethod]
     public async Task StartupFailureRollsBackReason()
     {
