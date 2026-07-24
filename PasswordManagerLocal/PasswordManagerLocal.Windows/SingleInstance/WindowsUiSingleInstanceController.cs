@@ -14,7 +14,7 @@ public sealed class WindowsUiSingleInstanceController
     public WindowsUiSingleInstanceController(
         IProcessInstanceLock processLock,
         IWindowsUiActivationClient activationClient,
-        int maximumActivationAttempts = 3,
+        int maximumActivationAttempts = 10,
         TimeSpan? retryDelay = null)
     {
         _processLock = processLock ?? throw new ArgumentNullException(nameof(processLock));
@@ -22,7 +22,7 @@ public sealed class WindowsUiSingleInstanceController
         if (maximumActivationAttempts <= 0)
             throw new ArgumentOutOfRangeException(nameof(maximumActivationAttempts));
         _maximumActivationAttempts = maximumActivationAttempts;
-        _retryDelay = retryDelay ?? TimeSpan.FromMilliseconds(200);
+        _retryDelay = retryDelay ?? TimeSpan.FromMilliseconds(100);
         if (_retryDelay < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(retryDelay));
     }
@@ -31,25 +31,37 @@ public sealed class WindowsUiSingleInstanceController
         CancellationToken cancellationToken = default)
     {
         if (_processLock.IsOwner)
-        {
-            _processLock.EnsureOwnership();
-            return WindowsUiInstanceRole.Primary;
-        }
+            return ConfirmPrimaryOwnership();
 
         for (var attempt = 0; attempt < _maximumActivationAttempts; attempt++)
         {
+            if (_processLock.TryAcquire())
+                return ConfirmPrimaryOwnership();
+
             var result = await _activationClient.TryActivateAsync(
                 new UiActivationRequestDto(
                     UiActivationReason.UserLaunch,
                     BringToForeground: true),
                 cancellationToken);
-            if (result.Kind != UiActivationResultKind.Unavailable)
+            if (result.Kind is UiActivationResultKind.Activated or
+                UiActivationResultKind.Rejected)
+            {
                 return WindowsUiInstanceRole.SecondaryActivationRequested;
+            }
 
-            if (attempt + 1 < _maximumActivationAttempts)
+            if (_processLock.TryAcquire())
+                return ConfirmPrimaryOwnership();
+
+            if (attempt + 1 < _maximumActivationAttempts && _retryDelay > TimeSpan.Zero)
                 await Task.Delay(_retryDelay, cancellationToken);
         }
 
         return WindowsUiInstanceRole.SecondaryActivationUnavailable;
+    }
+
+    private WindowsUiInstanceRole ConfirmPrimaryOwnership()
+    {
+        _processLock.EnsureOwnership();
+        return WindowsUiInstanceRole.Primary;
     }
 }

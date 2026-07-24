@@ -57,10 +57,54 @@ public sealed class WindowsUiSingleInstanceControllerTests
     }
 
     [TestMethod]
-    public async Task ProtocolFailureStillUsesSecondaryExitPathWithoutRetrying()
+    public async Task PreviousUiExitDuringActivationAllowsCurrentLaunchToBecomePrimary()
+    {
+        var state = new FakeProcessInstanceLockState();
+        using var previous = new FakeProcessInstanceLock(state);
+        var contender = new FakeProcessInstanceLock(state);
+        var activation = new DelegateWindowsUiActivationClient((_, _) =>
+        {
+            previous.Dispose();
+            return Task.FromResult(new UiActivationResult(
+                UiActivationResultKind.Failed,
+                "The previous UI activation endpoint is shutting down."));
+        });
+        var controller = new WindowsUiSingleInstanceController(
+            contender,
+            activation,
+            maximumActivationAttempts: 3,
+            retryDelay: TimeSpan.Zero);
+
+        var role = await controller.EnterAsync();
+
+        Assert.AreEqual(WindowsUiInstanceRole.Primary, role);
+        Assert.IsTrue(contender.IsOwner);
+        Assert.AreEqual(1, activation.CallCount);
+        Assert.AreEqual(1, contender.EnsureOwnershipCount);
+    }
+
+    [TestMethod]
+    public async Task PersistentActivationFailureUsesBoundedAttemptsWithoutStartingSecondUi()
     {
         var activation = new DelegateWindowsUiActivationClient((_, _) =>
             Task.FromResult(new UiActivationResult(UiActivationResultKind.Failed, "Protocol failed.")));
+        var controller = new WindowsUiSingleInstanceController(
+            new FakeProcessInstanceLock(isOwner: false),
+            activation,
+            maximumActivationAttempts: 3,
+            retryDelay: TimeSpan.Zero);
+
+        var role = await controller.EnterAsync();
+
+        Assert.AreEqual(WindowsUiInstanceRole.SecondaryActivationUnavailable, role);
+        Assert.AreEqual(3, activation.CallCount);
+    }
+
+    [TestMethod]
+    public async Task RejectedActivationKeepsTheExistingUiAuthoritative()
+    {
+        var activation = new DelegateWindowsUiActivationClient((_, _) =>
+            Task.FromResult(new UiActivationResult(UiActivationResultKind.Rejected, "Rejected.")));
         var controller = new WindowsUiSingleInstanceController(
             new FakeProcessInstanceLock(isOwner: false),
             activation,

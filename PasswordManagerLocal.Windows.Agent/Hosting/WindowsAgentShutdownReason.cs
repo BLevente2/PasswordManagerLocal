@@ -6,5 +6,6 @@ public enum WindowsAgentShutdownReason
     RestartRequired = 2,
     StartupFailure = 3,
     FatalLifecycleFailure = 4,
-    ApplicationExit = 5
+    ApplicationExit = 5,
+    NoUiAndBackgroundDisabled = 6
 }

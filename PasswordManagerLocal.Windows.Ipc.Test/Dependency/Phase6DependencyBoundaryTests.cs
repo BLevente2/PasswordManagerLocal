@@ -84,7 +84,7 @@ public sealed class Phase6DependencyBoundaryTests
     }
 
     [TestMethod]
-    public void AndroidRetainsInProcessRuntimeComposition()
+    public void AndroidUsesServiceOwnedInProcessRuntimeComposition()
     {
         var root = GetRepositoryRoot();
         var androidSource = ReadSources(Path.Combine(
@@ -92,8 +92,9 @@ public sealed class Phase6DependencyBoundaryTests
             "PasswordManagerLocal",
             "PasswordManagerLocal.Android"));
 
-        Assert.IsTrue(androidSource.Contains("AndroidBackendRuntimeFactory.Create", StringComparison.Ordinal));
-        Assert.IsTrue(androidSource.Contains("InProcessFrontendBackendClient", StringComparison.Ordinal));
+        Assert.IsTrue(androidSource.Contains("PasswordManagerBackgroundService", StringComparison.Ordinal));
+        Assert.IsTrue(androidSource.Contains("AndroidServiceFrontendBackendClient", StringComparison.Ordinal));
+        Assert.IsFalse(androidSource.Contains("new InProcessFrontendBackendClient", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -142,7 +143,7 @@ public sealed class Phase6DependencyBoundaryTests
     }
 
     [TestMethod]
-    public void WindowsUiShutdownDisposesEndpointClientBeforeActivationServerAndReleasesLockLast()
+    public void WindowsUiShutdownRequestsActivationStopReleasesLockAndBoundsBackendCleanup()
     {
         var root = GetRepositoryRoot();
         var program = File.ReadAllText(Path.Combine(
@@ -150,17 +151,32 @@ public sealed class Phase6DependencyBoundaryTests
             "PasswordManagerLocal",
             "PasswordManagerLocal.Windows",
             "Program.cs"));
+        var shutdown = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Lifecycle",
+            "WindowsUiProcessShutdownCoordinator.cs"));
         var client = File.ReadAllText(Path.Combine(
             root,
             "PasswordManagerLocal.Windows.EndpointRpc",
             "Client",
             "WindowsNamedPipeFrontendBackendClient.cs"));
 
-        var clientDisposeIndex = program.IndexOf(
-            "backendClient.DisposeAsync",
+        var activationStopIndex = shutdown.IndexOf(
+            "activationServer.RequestStop()",
             StringComparison.Ordinal);
-        var activationDisposeIndex = program.IndexOf(
-            "activationServer.DisposeAsync",
+        var lockDisposeIndex = shutdown.IndexOf(
+            "processLock.Dispose()",
+            activationStopIndex,
+            StringComparison.Ordinal);
+        var activationDisposeIndex = shutdown.IndexOf(
+            "activationServer.DisposeAsync()",
+            lockDisposeIndex,
+            StringComparison.Ordinal);
+        var clientDisposeIndex = shutdown.IndexOf(
+            "backendClient.DisposeAsync()",
+            activationDisposeIndex,
             StringComparison.Ordinal);
         var lifetimeCancelIndex = client.IndexOf(
             "_lifetimeSource.Cancel()",
@@ -174,13 +190,15 @@ public sealed class Phase6DependencyBoundaryTests
             endpointDisposeIndex,
             StringComparison.Ordinal);
 
-        Assert.IsTrue(clientDisposeIndex >= 0);
-        Assert.IsTrue(activationDisposeIndex > clientDisposeIndex);
+        StringAssert.Contains(program, "new WindowsUiProcessShutdownCoordinator()");
+        StringAssert.Contains(program, ".ShutdownAsync(");
+        Assert.IsTrue(activationStopIndex >= 0);
+        Assert.IsTrue(lockDisposeIndex > activationStopIndex);
+        Assert.IsTrue(activationDisposeIndex > lockDisposeIndex);
+        Assert.IsTrue(clientDisposeIndex > activationDisposeIndex);
+        StringAssert.Contains(shutdown, "Task.WhenAny(operation, Task.Delay(timeout))");
         Assert.IsTrue(program.Contains(
             "using var uiProcessLock",
-            StringComparison.Ordinal));
-        Assert.IsFalse(program.Contains(
-            "uiProcessLock.Dispose",
             StringComparison.Ordinal));
         Assert.IsTrue(lifetimeCancelIndex >= 0);
         Assert.IsTrue(endpointDisposeIndex > lifetimeCancelIndex);
@@ -362,15 +380,54 @@ public sealed class Phase6DependencyBoundaryTests
             "PasswordManagerLocal.Windows.Agent",
             "Background");
         var source = ReadSources(backgroundDirectory);
+        var launchArgumentsSource = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal.Windows.Ipc",
+            "Coordination",
+            "WindowsAgentLaunchArguments.cs"));
 
         StringAssert.Contains(source, "Registry.CurrentUser");
         StringAssert.Contains(source, @"Software\Microsoft\Windows\CurrentVersion\Run");
         StringAssert.Contains(source, "PasswordManagerLocal.Agent");
         StringAssert.Contains(source, "PasswordManagerLocal.Windows.Agent.exe");
-        StringAssert.Contains(source, "--background");
+        StringAssert.Contains(source, "WindowsAgentLaunchArguments.Background");
+        StringAssert.Contains(
+            launchArgumentsSource,
+            "public const string Background = \"--background\";");
         Assert.IsFalse(source.Contains("Registry.LocalMachine", StringComparison.Ordinal));
         Assert.IsFalse(source.Contains("HKEY_LOCAL_MACHINE", StringComparison.Ordinal));
         Assert.IsFalse(source.Contains("PasswordManagerLocal.Windows.exe", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void WindowsUiBuildPublishesAgentIntoDedicatedDeploymentDirectory()
+    {
+        var project = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "PasswordManagerLocal.Windows.csproj"));
+
+        StringAssert.Contains(project, "<WindowsAgentDeploymentDirectoryName>AgentRuntime\\</WindowsAgentDeploymentDirectoryName>");
+        StringAssert.Contains(
+            project,
+            "ReferenceOutputAssembly=\"false\" Private=\"false\"");
+        StringAssert.Contains(project, "@(_WindowsAgentRootBuildArtifact)");
+        StringAssert.Contains(project, "$(TargetDir)PasswordManagerLocal.Windows.Agent.exe");
+        StringAssert.Contains(project, "$(TargetDir)PasswordManagerLocal.Windows.Agent.deps.json");
+        StringAssert.Contains(project, "$(TargetDir)PasswordManagerLocal.Windows.Agent.runtimeconfig.json");
+        StringAssert.Contains(project, "Targets=\"Publish\"");
+        StringAssert.Contains(project, "SelfContained=false");
+        StringAssert.Contains(project, "PublishSingleFile=false");
+        StringAssert.Contains(project, "PublishTrimmed=false");
+        StringAssert.Contains(project, "$(TargetDir)$(WindowsAgentDeploymentDirectoryName)");
+        StringAssert.Contains(project, "$(MSBuildProjectDirectory)\\Agent\\");
+        StringAssert.Contains(project, "must never resolve to the UI source Agent directory");
+        StringAssert.Contains(project, "$(WindowsAgentBuildDeploymentDirectory)PasswordManagerLocal.Windows.Agent.exe");
+        StringAssert.Contains(project, "The complete Windows agent deployment was not produced");
+        Assert.IsFalse(project.Contains("WindowsAgentBuildFile", StringComparison.Ordinal));
+        Assert.IsFalse(project.Contains("WindowsAgentOutputDirectory", StringComparison.Ordinal));
+        Assert.IsFalse(project.Contains("<WindowsAgentBuildDeploymentDirectory>$(OutDir)", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -420,6 +477,121 @@ public sealed class Phase6DependencyBoundaryTests
             StringComparison.Ordinal) >= 0);
     }
 
+
+    [TestMethod]
+    public void WindowsUiReleasesItsInstanceLockBeforeBoundedConnectionCleanup()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Lifecycle",
+            "WindowsUiProcessShutdownCoordinator.cs"));
+        var activationStop = source.IndexOf(
+            "activationServer.RequestStop()",
+            StringComparison.Ordinal);
+        var lockRelease = source.IndexOf(
+            "processLock.Dispose()",
+            activationStop,
+            StringComparison.Ordinal);
+        var activationCleanup = source.IndexOf(
+            "activationServer.DisposeAsync()",
+            lockRelease,
+            StringComparison.Ordinal);
+        var backendCleanup = source.IndexOf(
+            "backendClient.DisposeAsync()",
+            activationCleanup,
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(activationStop >= 0);
+        Assert.IsTrue(lockRelease > activationStop);
+        Assert.IsTrue(activationCleanup > lockRelease);
+        Assert.IsTrue(backendCleanup > activationCleanup);
+        StringAssert.Contains(source, "Task.WhenAny(operation, Task.Delay(timeout))");
+    }
+
+    [TestMethod]
+    public void WindowsUiMainWindowCloseExplicitlyEndsTheDesktopLifetime()
+    {
+        var repositoryRoot = GetRepositoryRoot();
+        var appSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Frontend",
+            "App.axaml.cs"));
+        var programSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Program.cs"));
+
+        StringAssert.Contains(
+            appSource,
+            "desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;");
+        StringAssert.Contains(
+            appSource,
+            "mainWindow.Closed += (_, _) =>");
+        StringAssert.Contains(
+            appSource,
+            "_context.DesktopExitRequested?.Invoke();");
+        StringAssert.Contains(
+            appSource,
+            "desktop.TryShutdown();");
+        StringAssert.Contains(
+            programSource,
+            "ShutdownMode.OnExplicitShutdown");
+        StringAssert.Contains(
+            programSource,
+            "new WindowsUiProcessExitController(");
+        StringAssert.Contains(
+            programSource,
+            "() => exitController.RequestExit()");
+    }
+
+    [TestMethod]
+    public void WindowsUiWindowCloseStartsIndependentProcessExitBeforeAvaloniaReturns()
+    {
+        var repositoryRoot = GetRepositoryRoot();
+        var contextSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Frontend",
+            "FrontendApplicationContext.cs"));
+        var appSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Frontend",
+            "App.axaml.cs"));
+        var programSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Program.cs"));
+        var exitControllerSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Lifecycle",
+            "WindowsUiProcessExitController.cs"));
+        var shutdownSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Windows",
+            "Lifecycle",
+            "WindowsUiProcessShutdownCoordinator.cs"));
+
+        StringAssert.Contains(contextSource, "Action? desktopExitRequested = null");
+        StringAssert.Contains(contextSource, "DesktopExitRequested = desktopExitRequested;");
+        StringAssert.Contains(appSource, "_context.DesktopExitRequested?.Invoke();");
+        StringAssert.Contains(programSource, "() => exitController.RequestExit()");
+        StringAssert.Contains(exitControllerSource, "IsBackground = false");
+        StringAssert.Contains(exitControllerSource, "_terminateProcess(exitCode);");
+        StringAssert.Contains(exitControllerSource, "StopAcceptanceAndReleaseLock(");
+        StringAssert.Contains(shutdownSource, "Task.Factory.StartNew(");
+        Assert.IsFalse(appSource.Contains(
+            "Dispatcher.UIThread.Post(() => TryShutdownDesktop(desktop))",
+            StringComparison.Ordinal));
+    }
 
     private static int CountOccurrences(string value, string pattern)
     {

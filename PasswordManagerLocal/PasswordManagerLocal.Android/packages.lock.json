@@ -661,6 +661,14 @@
           "Xamarin.Kotlin.StdLib.Jdk8": "1.9.10.2"
         }
       },
+      "passwordmanagerlocal.android.runtime": {
+        "type": "Project",
+        "dependencies": {
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )"
+        }
+      },
       "passwordmanagerlocal.backend": {
         "type": "Project",
         "dependencies": {

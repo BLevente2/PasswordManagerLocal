@@ -285,6 +285,14 @@
         "resolved": "6.0.1",
         "contentHash": "rHaWtKDwCi9qJ3ObKo8LHPMuuwv33YbmQi7TcUK1C264V3MFnOr5Im7QgCTdLniztP3GJyeiSg5x8NqYJFqRmg=="
       },
+      "passwordmanagerlocal.android.runtime": {
+        "type": "Project",
+        "dependencies": {
+          "PasswordManagerLocal.Backend": "[1.0.0, )",
+          "PasswordManagerLocal.Backend.Hosting": "[1.0.0, )",
+          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )"
+        }
+      },
       "passwordmanagerlocal.backend": {
         "type": "Project",
         "dependencies": {

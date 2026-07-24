@@ -109,6 +109,31 @@ public sealed class WindowsIpcServerHostTests
     }
 
     [TestMethod]
+    public async Task StopWaitsForSessionDisposalCompletion()
+    {
+        var listener = new ChannelWindowsIpcConnectionListener();
+        var factory = new RecordingWindowsIpcServerSessionFactory();
+        var session = new BlockingWindowsIpcServerSession { BlockDispose = true };
+        factory.Enqueue(session);
+        await using var host = new WindowsIpcServerHost(listener, factory);
+        await host.StartAsync();
+        listener.Queue(new DisposableTestWindowsIpcConnection());
+        await WaitUntilAsync(() => host.ActiveSessionCount == 1);
+
+        var stopTask = host.StopAsync();
+        await WaitUntilAsync(() => session.DisposeCount == 1);
+
+        Assert.IsFalse(stopTask.IsCompleted);
+        Assert.AreEqual(1, host.ActiveSessionCount);
+
+        session.CompleteDispose();
+        await stopTask;
+
+        Assert.AreEqual(0, host.ActiveSessionCount);
+        Assert.AreEqual(1, session.DisposeCount);
+    }
+
+    [TestMethod]
     public async Task ListenerFailureIsSurfaced()
     {
         var listener = new ChannelWindowsIpcConnectionListener();

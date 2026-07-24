@@ -8,7 +8,7 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
     private readonly IWindowsIpcConnectionListener _listener;
     private readonly IWindowsIpcServerSessionFactory _sessionFactory;
     private readonly SemaphoreSlim _connectionCapacity;
-    private readonly ConcurrentDictionary<IWindowsIpcServerSession, Task> _activeSessions = new();
+    private readonly ConcurrentDictionary<IWindowsIpcServerSession, WindowsIpcServerSessionLifetime> _activeSessions = new();
     private readonly CancellationTokenSource _shutdownSource = new();
     private readonly object _gate = new();
     private Task? _acceptLoopTask;
@@ -102,21 +102,16 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
                     continue;
                 }
 
-                var runTask = RunSessionAsync(session, cancellationToken);
-                if (!_activeSessions.TryAdd(session, runTask))
+                var lifetime = new WindowsIpcServerSessionLifetime(session);
+                if (!_activeSessions.TryAdd(session, lifetime))
                 {
                     _connectionCapacity.Release();
-                    try
-                    {
-                        await session.DisposeAsync();
-                    }
-                    catch
-                    {
-                    }
+                    await lifetime.DisposeAsync();
                     continue;
                 }
 
-                _ = ObserveSessionAsync(session, runTask);
+                lifetime.Start(cancellationToken);
+                _ = ObserveSessionAsync(session, lifetime);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -129,40 +124,12 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
         }
     }
 
-    private static async Task RunSessionAsync(
-        IWindowsIpcServerSession session,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await session.RunAsync(cancellationToken);
-        }
-        catch
-        {
-        }
-    }
-
     private async Task ObserveSessionAsync(
         IWindowsIpcServerSession session,
-        Task runTask)
+        WindowsIpcServerSessionLifetime lifetime)
     {
-        try
-        {
-            await runTask;
-        }
-        finally
-        {
-            if (_activeSessions.TryRemove(session, out _))
-                _connectionCapacity.Release();
-
-            try
-            {
-                await session.DisposeAsync();
-            }
-            catch
-            {
-            }
-        }
+        await lifetime.Completion;
+        RemoveSession(session, lifetime);
     }
 
     private async Task StopCoreAsync()
@@ -185,30 +152,38 @@ public sealed class WindowsIpcServerHost : IWindowsIpcServerHost
         while (_activeSessions.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var snapshot = _activeSessions.Keys.ToArray();
+            var snapshot = _activeSessions.ToArray();
             if (snapshot.Length == 0)
                 break;
 
-            foreach (var session in snapshot)
+            foreach (var entry in snapshot)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    await session.DisposeAsync();
-                }
-                catch
-                {
-                }
+                await entry.Value.DisposeAsync();
             }
 
-            var tasks = snapshot
-                .Select(session => _activeSessions.TryGetValue(session, out var task) ? task : Task.CompletedTask)
-                .ToArray();
-            var completion = Task.WhenAll(tasks);
+            var completion = Task.WhenAll(snapshot.Select(entry => entry.Value.Completion));
             if (cancellationToken.CanBeCanceled)
                 await completion.WaitAsync(cancellationToken);
             else
                 await completion;
+
+            foreach (var entry in snapshot)
+                RemoveSession(entry.Key, entry.Value);
+        }
+    }
+
+    private void RemoveSession(
+        IWindowsIpcServerSession session,
+        WindowsIpcServerSessionLifetime lifetime)
+    {
+        var entry = new KeyValuePair<IWindowsIpcServerSession, WindowsIpcServerSessionLifetime>(
+            session,
+            lifetime);
+        if (((ICollection<KeyValuePair<IWindowsIpcServerSession, WindowsIpcServerSessionLifetime>>)_activeSessions)
+            .Remove(entry))
+        {
+            _connectionCapacity.Release();
         }
     }
 }

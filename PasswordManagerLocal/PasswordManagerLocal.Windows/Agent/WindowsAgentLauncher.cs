@@ -6,13 +6,18 @@ namespace PasswordManagerLocal.Windows.AgentConnection;
 public sealed class WindowsAgentLauncher : IWindowsAgentLauncher
 {
     private readonly string _agentExecutablePath;
+    private readonly IWindowsAgentProcessLauncher _processLauncher;
 
-    public WindowsAgentLauncher(string executableDirectory)
+    public WindowsAgentLauncher(
+        string executableDirectory,
+        IWindowsAgentProcessLauncher? processLauncher = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executableDirectory);
         _agentExecutablePath = Path.Combine(
             Path.GetFullPath(executableDirectory),
+            WindowsExecutableNames.AgentDeploymentDirectoryName,
             WindowsExecutableNames.AgentExecutableFileName);
+        _processLauncher = processLauncher ?? new WindowsAgentProcessLauncher();
     }
 
     public Task<bool> LaunchAsync(CancellationToken cancellationToken = default)
@@ -23,12 +28,14 @@ public sealed class WindowsAgentLauncher : IWindowsAgentLauncher
 
         try
         {
-            return Task.FromResult(Process.Start(new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
             {
                 FileName = _agentExecutablePath,
                 WorkingDirectory = Path.GetDirectoryName(_agentExecutablePath)!,
-                UseShellExecute = true
-            }) is not null);
+                UseShellExecute = false
+            };
+            startInfo.ArgumentList.Add(WindowsAgentLaunchArguments.UiRequested);
+            return Task.FromResult(_processLauncher.TryStart(startInfo));
         }
         catch
         {

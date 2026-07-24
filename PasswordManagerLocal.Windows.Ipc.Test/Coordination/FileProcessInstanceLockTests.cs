@@ -169,6 +169,29 @@ public sealed class FileProcessInstanceLockTests
     }
 
     [TestMethod]
+    public void NonOwnerCanAcquireAfterPreviousOwnerReleasesLock()
+    {
+        var path = CreateLockPath("reacquire");
+        try
+        {
+            using var first = new FileProcessInstanceLock(path);
+            using var contender = new FileProcessInstanceLock(path);
+            Assert.IsTrue(first.IsOwner);
+            Assert.IsFalse(contender.IsOwner);
+
+            first.Dispose();
+
+            Assert.IsTrue(contender.TryAcquire());
+            Assert.IsTrue(contender.IsOwner);
+            contender.EnsureOwnership();
+        }
+        finally
+        {
+            DeleteRoot(path);
+        }
+    }
+
+    [TestMethod]
     public void NonOwningProbeDistinguishesFreeAndHeldUiLock()
     {
         var path = CreateLockPath("ui-probe");

@@ -38,6 +38,7 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var mainWindow = new MainWindow
             {
                 DataContext = mainViewModel
@@ -46,6 +47,11 @@ public partial class App : Application
             if (OperatingSystem.IsWindows())
                 mainWindow.WindowState = WindowState.Maximized;
 
+            mainWindow.Closed += (_, _) =>
+            {
+                _context.DesktopExitRequested?.Invoke();
+                TryShutdownDesktop(desktop);
+            };
             desktop.MainWindow = mainWindow;
 
             Dispatcher.UIThread.Post(async () =>
@@ -67,6 +73,18 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static void TryShutdownDesktop(
+        IClassicDesktopStyleApplicationLifetime desktop)
+    {
+        try
+        {
+            desktop.TryShutdown();
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private async Task TryShowFirewallPermissionPromptAsync(

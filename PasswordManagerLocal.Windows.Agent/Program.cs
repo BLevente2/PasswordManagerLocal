@@ -38,7 +38,6 @@ internal sealed class Program
         }
 
         ApplicationConfiguration.Initialize();
-        _ = commandLine.IsBackgroundLaunch;
         var applicationDataDirectory = new WindowsApplicationDataPathProvider()
             .GetApplicationDataDirectory();
         var names = new WindowsInstanceNameProvider(
@@ -190,9 +189,16 @@ internal sealed class Program
             var trayController = new WindowsTrayIconController(
                 new WindowsFormsTrayIconAdapter(
                     Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico")));
+            var uiProcessLockProbe = new FileProcessInstanceLockProbe(names.UiLockFilePath);
+            var processLifetimeCoordinator = new WindowsAgentProcessLifetimeCoordinator(
+                commandLine.LaunchMode,
+                uiCoordinator,
+                backgroundSyncCoordinator,
+                uiProcessLockProbe,
+                shutdownCoordinator);
             host = new WindowsAgentHost(
                 processLock,
-                new FileProcessInstanceLockProbe(names.UiLockFilePath),
+                uiProcessLockProbe,
                 admissionGate,
                 controlServer,
                 endpointHost,
@@ -204,7 +210,8 @@ internal sealed class Program
                 uiCloseService,
                 uiCoordinator,
                 shutdownCoordinator,
-                stateStore);
+                stateStore,
+                processLifetimeCoordinator: processLifetimeCoordinator);
 
             using var applicationContext = new WindowsAgentApplicationContext(host, stateStore);
             Application.Run(applicationContext);

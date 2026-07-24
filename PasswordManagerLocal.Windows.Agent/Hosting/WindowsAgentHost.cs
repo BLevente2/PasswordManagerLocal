@@ -29,6 +29,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private readonly IUiConnectionCoordinator _uiConnectionCoordinator;
     private readonly WindowsAgentShutdownCoordinator _shutdownCoordinator;
     private readonly WindowsAgentStateStore _stateStore;
+    private readonly WindowsAgentProcessLifetimeCoordinator? _processLifetimeCoordinator;
     private readonly TimeSpan _uiRegistrationPreflightTimeout;
     private readonly TimeSpan _uiRegistrationPollInterval;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
@@ -62,7 +63,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         WindowsAgentShutdownCoordinator shutdownCoordinator,
         WindowsAgentStateStore stateStore,
         TimeSpan? uiRegistrationPreflightTimeout = null,
-        TimeSpan? uiRegistrationPollInterval = null)
+        TimeSpan? uiRegistrationPollInterval = null,
+        WindowsAgentProcessLifetimeCoordinator? processLifetimeCoordinator = null)
     {
         _processLock = processLock ?? throw new ArgumentNullException(nameof(processLock));
         _uiProcessLockProbe = uiProcessLockProbe
@@ -82,6 +84,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             ?? throw new ArgumentNullException(nameof(uiConnectionCoordinator));
         _shutdownCoordinator = shutdownCoordinator ?? throw new ArgumentNullException(nameof(shutdownCoordinator));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
+        _processLifetimeCoordinator = processLifetimeCoordinator;
         _uiRegistrationPreflightTimeout = uiRegistrationPreflightTimeout ?? TimeSpan.FromSeconds(2);
         _uiRegistrationPollInterval = uiRegistrationPollInterval ?? TimeSpan.FromMilliseconds(100);
         if (_uiRegistrationPreflightTimeout <= TimeSpan.Zero)
@@ -127,6 +130,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             {
                 _stateStore.MarkRunning(DateTimeOffset.UtcNow);
                 _admissionGate.Open();
+                _processLifetimeCoordinator?.Start();
                 _ = ObserveControlServerAsync();
                 _ = ObserveEndpointHostAsync();
             }
@@ -471,6 +475,12 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                 {
                     noncriticalFailures.Add(exception);
                 }
+            }
+
+            if (_processLifetimeCoordinator is not null)
+            {
+                await CaptureNoncriticalAsync(
+                    async () => await _processLifetimeCoordinator.DisposeAsync());
             }
 
             if (Volatile.Read(ref _endpointHostStartupAttempted) != 0)

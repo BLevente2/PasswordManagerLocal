@@ -32,6 +32,7 @@ public class MainActivity : AvaloniaMainActivity
     private bool _isHandlingBackRequest;
     private long _lastAcceptedBackRequestTimestamp;
     private AlertDialog? _backConfirmationDialog;
+    private AndroidActivityServiceAttachmentHandle? _serviceAttachment;
     private IFrontendBackendClient<IEndpoints>? _backendClient;
 
 
@@ -39,10 +40,13 @@ public class MainActivity : AvaloniaMainActivity
     {
         var application = Application as PasswordManagerLocalApplication
             ?? throw new InvalidOperationException("The process-level application composition root is unavailable.");
-        _backendClient ??= application.CreateBackendClient();
+        _serviceAttachment ??= new AndroidActivityServiceAttachmentHandle(
+            application.RuntimeServiceConnector,
+            this);
+        _backendClient = _serviceAttachment.BackendClient;
         var frontendContext = new FrontendApplicationContext(
             _backendClient,
-            new StoreBackgroundSyncSettingsClient(application.BackgroundSyncSettingsStore),
+            _serviceAttachment.BackgroundSyncSettingsClient,
             application.ApplicationDataDirectory);
 
         return AppBuilder.Configure(() => new App(frontendContext))
@@ -131,13 +135,18 @@ public class MainActivity : AvaloniaMainActivity
         SoftwareKeyboardService.SetPlatformHideAction(null);
 
         var backendClient = Interlocked.Exchange(ref _backendClient, null);
+        var serviceAttachment = Interlocked.Exchange(ref _serviceAttachment, null);
         try
         {
             if (backendClient is not null)
             {
-                backendClient
-                    .DisposeAsync()
-                    .AsTask()
+                Task.Run(async () => await backendClient.DisposeAsync())
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            else if (serviceAttachment is not null)
+            {
+                Task.Run(async () => await serviceAttachment.DisposeAsync())
                     .GetAwaiter()
                     .GetResult();
             }

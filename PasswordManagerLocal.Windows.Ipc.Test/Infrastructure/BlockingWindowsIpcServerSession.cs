@@ -6,10 +6,13 @@ internal sealed class BlockingWindowsIpcServerSession : IWindowsIpcServerSession
 {
     private readonly TaskCompletionSource _release = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _disposeRelease = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
 
     public int RunCount { get; private set; }
     public int DisposeCount { get; private set; }
     public bool FailRun { get; set; }
+    public bool BlockDispose { get; set; }
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -21,12 +24,15 @@ internal sealed class BlockingWindowsIpcServerSession : IWindowsIpcServerSession
         await _release.Task;
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         DisposeCount++;
         _release.TrySetResult();
-        return ValueTask.CompletedTask;
+        if (BlockDispose)
+            await _disposeRelease.Task;
     }
 
     public void Complete() => _release.TrySetResult();
+
+    public void CompleteDispose() => _disposeRelease.TrySetResult();
 }

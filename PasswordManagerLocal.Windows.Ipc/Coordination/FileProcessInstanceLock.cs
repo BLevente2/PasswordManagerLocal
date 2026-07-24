@@ -2,6 +2,8 @@ namespace PasswordManagerLocal.Windows.Ipc.Coordination;
 
 public sealed class FileProcessInstanceLock : IProcessInstanceLock
 {
+    private readonly IProcessInstanceLockFileOpener _fileOpener;
+    private readonly object _gate = new();
     private Stream? _ownershipHandle;
     private int _disposeStarted;
 
@@ -18,13 +20,26 @@ public sealed class FileProcessInstanceLock : IProcessInstanceLock
             ?? throw new ArgumentException("The process lock file path has no parent directory.", nameof(lockFilePath));
         Directory.CreateDirectory(directory);
 
-        var opener = fileOpener ?? new ProcessInstanceLockFileOpener();
-        _ownershipHandle = opener.OpenExclusive(LockFilePath);
-        IsOwner = _ownershipHandle is not null;
+        _fileOpener = fileOpener ?? new ProcessInstanceLockFileOpener();
+        TryAcquire();
     }
 
     public string LockFilePath { get; }
-    public bool IsOwner { get; }
+    public bool IsOwner => Volatile.Read(ref _ownershipHandle) is not null;
+
+    public bool TryAcquire()
+    {
+        ThrowIfDisposed();
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (_ownershipHandle is not null)
+                return true;
+
+            _ownershipHandle = _fileOpener.OpenExclusive(LockFilePath);
+            return _ownershipHandle is not null;
+        }
+    }
 
     public void EnsureOwnership()
     {
@@ -38,12 +53,14 @@ public sealed class FileProcessInstanceLock : IProcessInstanceLock
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
 
-        var ownershipHandle = Volatile.Read(ref _ownershipHandle);
-        if (ownershipHandle is not null)
+        lock (_gate)
         {
-            // A throwing close must leave the handle strongly owned until process termination.
-            ownershipHandle.Dispose();
-            Interlocked.CompareExchange(ref _ownershipHandle, null, ownershipHandle);
+            var ownershipHandle = _ownershipHandle;
+            if (ownershipHandle is not null)
+            {
+                ownershipHandle.Dispose();
+                _ownershipHandle = null;
+            }
         }
         GC.SuppressFinalize(this);
     }

@@ -18,7 +18,9 @@ internal sealed class FakeWindowsIpcServerHost : IWindowsIpcServerHost
     public Exception? StartFailure { get; set; }
     public Exception? CloseActiveSessionsFailure { get; set; }
     public Exception? StopFailure { get; set; }
+    public Task? StopTaskOverride { get; set; }
     public Exception? DisposeFailure { get; set; }
+    public Task? DisposeTaskOverride { get; set; }
     public ICollection<string>? OperationLog { get; set; }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -49,6 +51,8 @@ internal sealed class FakeWindowsIpcServerHost : IWindowsIpcServerHost
         cancellationToken.ThrowIfCancellationRequested();
         StopCount++;
         OperationLog?.Add("control-stop");
+        if (StopTaskOverride is not null)
+            return StopTaskOverride;
         _completion.TrySetResult();
         return StopFailure is null
             ? Task.CompletedTask
@@ -59,6 +63,8 @@ internal sealed class FakeWindowsIpcServerHost : IWindowsIpcServerHost
     {
         DisposeCount++;
         OperationLog?.Add("control-dispose");
+        if (DisposeTaskOverride is not null)
+            return new ValueTask(DisposeTaskOverride);
         _completion.TrySetResult();
         return DisposeFailure is null
             ? ValueTask.CompletedTask

@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.ReactiveUI;
 using PasswordManagerLocal.Frontend;
 using PasswordManagerLocal.Frontend.Services;
@@ -10,6 +11,7 @@ using PasswordManagerLocal.Windows.Ipc.Client;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Coordination;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
+using PasswordManagerLocal.Windows.Lifecycle;
 using PasswordManagerLocal.Windows.Notifications;
 using PasswordManagerLocal.Windows.Settings;
 using PasswordManagerLocal.Windows.SingleInstance;
@@ -61,13 +63,20 @@ internal sealed class Program
             new AvaloniaUiShutdownBridge(),
             backendClient,
             () => agentConnection.AgentProcessId);
+        var exitController = new WindowsUiProcessExitController(
+            activationServer,
+            uiProcessLock,
+            backendClient);
         var startupNotification = new WindowsStartupNotification();
+        var exitCode = 0;
+        var controlledExit = false;
 
         try
         {
             if (!agentConnection.ConnectAsync().GetAwaiter().GetResult())
             {
                 startupNotification.ShowBackendUnavailable();
+                controlledExit = true;
                 return;
             }
 
@@ -82,6 +91,7 @@ internal sealed class Program
                 if (backendClient.Snapshot.FailureKind != BackendRuntimeFailureKind.DatabaseCompatibility)
                 {
                     startupNotification.ShowBackendUnavailable();
+                    controlledExit = true;
                     return;
                 }
 
@@ -94,19 +104,29 @@ internal sealed class Program
             var frontendContext = new FrontendApplicationContext(
                 backendClient,
                 new WindowsAgentBackgroundSyncSettingsClient(agentConnection),
-                applicationDataDirectory);
-            BuildAvaloniaApp(frontendContext)
-                .StartWithClassicDesktopLifetime(args);
+                applicationDataDirectory,
+                () => exitController.RequestExit());
+            exitCode = BuildAvaloniaApp(frontendContext)
+                .StartWithClassicDesktopLifetime(
+                    args,
+                    ShutdownMode.OnExplicitShutdown);
+            controlledExit = true;
         }
         finally
         {
-            try
+            if (controlledExit || exitController.IsExitRequested)
             {
-                backendClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                exitController.RequestExit(exitCode);
             }
-            finally
+            else
             {
-                activationServer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                new WindowsUiProcessShutdownCoordinator()
+                    .ShutdownAsync(
+                        activationServer,
+                        uiProcessLock,
+                        backendClient)
+                    .GetAwaiter()
+                    .GetResult();
             }
         }
     }

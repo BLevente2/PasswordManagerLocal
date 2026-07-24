@@ -10,6 +10,7 @@ internal sealed class FakeProcessInstanceLock : IProcessInstanceLock
     public FakeProcessInstanceLock(bool isOwner = true)
     {
         IsOwner = isOwner;
+        TryAcquireResult = isOwner;
     }
 
     public FakeProcessInstanceLock(FakeProcessInstanceLockState sharedState)
@@ -19,12 +20,32 @@ internal sealed class FakeProcessInstanceLock : IProcessInstanceLock
     }
 
     public string LockFilePath => @"C:\test\instance.lock";
-    public bool IsOwner { get; }
+    public bool IsOwner { get; private set; }
+    public bool TryAcquireResult { get; set; }
     public bool IsDisposed { get; private set; }
+    public int TryAcquireCount { get; private set; }
     public int EnsureOwnershipCount { get; private set; }
+    public Exception? TryAcquireFailure { get; set; }
     public Exception? EnsureOwnershipFailure { get; set; }
     public Exception? DisposeFailure { get; set; }
     public ICollection<string>? OperationLog { get; set; }
+
+    public bool TryAcquire()
+    {
+        if (IsDisposed)
+            throw new ObjectDisposedException(nameof(FakeProcessInstanceLock));
+        TryAcquireCount++;
+        if (TryAcquireFailure is not null)
+            throw TryAcquireFailure;
+        if (IsOwner)
+            return true;
+
+        if (_sharedState is not null)
+            IsOwner = _ownsSharedState = _sharedState.TryAcquire();
+        else
+            IsOwner = TryAcquireResult;
+        return IsOwner;
+    }
 
     public void EnsureOwnership()
     {
@@ -43,9 +64,14 @@ internal sealed class FakeProcessInstanceLock : IProcessInstanceLock
             throw DisposeFailure;
         IsDisposed = true;
         ReleaseSharedState();
+        IsOwner = false;
     }
 
-    public void SimulateProcessTermination() => ReleaseSharedState();
+    public void SimulateProcessTermination()
+    {
+        ReleaseSharedState();
+        IsOwner = false;
+    }
 
     private void ReleaseSharedState()
     {

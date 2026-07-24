@@ -5,5 +5,6 @@ public interface IProcessInstanceLock : IDisposable
     string LockFilePath { get; }
     bool IsOwner { get; }
 
+    bool TryAcquire();
     void EnsureOwnership();
 }

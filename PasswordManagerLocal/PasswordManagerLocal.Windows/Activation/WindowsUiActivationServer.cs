@@ -8,9 +8,11 @@ using PasswordManagerLocal.Windows.Ipc.Validation;
 
 namespace PasswordManagerLocal.Windows.Activation;
 
-public sealed class WindowsUiActivationServer : IAsyncDisposable
+public sealed class WindowsUiActivationServer : IWindowsUiActivationServerLifetime
 {
     private readonly IWindowsIpcServerHost _serverHost;
+    private readonly object _stopGate = new();
+    private Task? _stopTask;
 
     public WindowsUiActivationServer(IWindowsIpcServerHost serverHost)
     {
@@ -62,10 +64,18 @@ public sealed class WindowsUiActivationServer : IAsyncDisposable
     public Task StartAsync(CancellationToken cancellationToken = default) =>
         _serverHost.StartAsync(cancellationToken);
 
+    public void RequestStop() => _ = GetStopTask();
+
     public async ValueTask DisposeAsync()
     {
-        await _serverHost.StopAsync();
+        await GetStopTask();
         await _serverHost.DisposeAsync();
         GC.SuppressFinalize(this);
+    }
+
+    private Task GetStopTask()
+    {
+        lock (_stopGate)
+            return _stopTask ??= _serverHost.StopAsync();
     }
 }

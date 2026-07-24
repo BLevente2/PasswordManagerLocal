@@ -32,9 +32,11 @@ public sealed class FakeBackendRuntime : IBackendRuntime
     public int ResetCalls { get; private set; }
     public int StopCalls { get; private set; }
     public int ClosedInteractiveSessionCalls { get; private set; }
+    public int DisposeCalls { get; private set; }
     public Exception? StartupFailure { get; set; }
     public Exception? InteractiveSessionFailure { get; set; }
     public Exception? InteractiveSessionDisposeFailure { get; set; }
+    public Exception? ResetFailure { get; set; }
     public Exception? StopFailure { get; set; }
     public Action? AfterStart { get; set; }
     public Action? BeforeReset { get; set; }
@@ -111,6 +113,8 @@ public sealed class FakeBackendRuntime : IBackendRuntime
         cancellationToken.ThrowIfCancellationRequested();
         ResetCalls++;
         BeforeReset?.Invoke();
+        if (ResetFailure is not null)
+            throw ResetFailure;
         SetSnapshot(new BackendRuntimeSnapshot(
             BackendRuntimeState.Ready,
             BackendRuntimeFailureKind.None,
@@ -138,7 +142,11 @@ public sealed class FakeBackendRuntime : IBackendRuntime
         return Task.CompletedTask;
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        DisposeCalls++;
+        return ValueTask.CompletedTask;
+    }
 
     public void SetSnapshot(BackendRuntimeSnapshot snapshot)
     {

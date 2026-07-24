@@ -24,7 +24,7 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
         WindowsUiIpcIdentity identity,
         IWindowsAgentLauncher agentLauncher,
         IWindowsAgentControlConnector? connector = null,
-        int maximumConnectionAttempts = 6,
+        int maximumConnectionAttempts = 20,
         TimeSpan? connectTimeout = null,
         TimeSpan? retryDelay = null,
         TimeSpan? replacementExitTimeout = null,
