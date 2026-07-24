@@ -9,16 +9,18 @@ if (-not (Test-Path -LiteralPath $docs -PathType Container)) {
     throw 'The root-level Docs directory is missing.'
 }
 
+$rootReadme = Join-Path $root 'README.md'
 $outsideDocs = @(
     Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.md' |
         Where-Object {
+            $_.FullName -ne $rootReadme -and
             $_.FullName -notlike "$docs\*" -and
             $_.FullName -notmatch '[\/](bin|obj)[\/]'
         }
 )
 if ($outsideDocs.Count -ne 0) {
     $paths = $outsideDocs.FullName -join [Environment]::NewLine
-    throw "Markdown files remain outside Docs:$([Environment]::NewLine)$paths"
+    throw "Markdown files other than the repository README remain outside Docs:$([Environment]::NewLine)$paths"
 }
 
 $requiredPhaseReports = @(
@@ -46,7 +48,12 @@ $requiredPhaseReports = @(
     'PHASE8_DYNAMIC_EXECUTION_PROFILES_ARCHITECTURE.md',
     'PHASE8_DYNAMIC_EXECUTION_PROFILES_LIFECYCLE_STATIC_VERIFICATION.md',
     'PHASE8_IMPLEMENTATION_CHECKS.md',
-    'PHASE8_MODIFIED_FILES.md'
+    'PHASE8_MODIFIED_FILES.md',
+    'PHASE9_WINDOWS_INTEGRATION_DEPLOYMENT_HARDENING_STATIC_VERIFICATION.md',
+    'PHASE9_IMPLEMENTATION_CHECKS.md',
+    'PHASE9_MODIFIED_FILES.md',
+    'PHASE9_AUTOMATED_WINDOWS_TEST_MATRIX.md',
+    'PHASE9_USER_RUN_CHECKLIST.md'
 )
 foreach ($name in $requiredPhaseReports) {
     if (-not (Test-Path -LiteralPath (Join-Path $docs $name) -PathType Leaf)) {

@@ -164,4 +164,37 @@ public sealed class WindowsAgentBackgroundSyncSettingsClientTests
         Assert.AreEqual(1, connection.DisconnectCount);
         Assert.AreEqual(1, connection.GetBackgroundCount);
     }
+    [TestMethod]
+    [Timeout(5_000)]
+    public async Task SilentAuthoritativeReadBackHasIndependentBoundedDeadline()
+    {
+        var connection = new FakeWindowsAgentControlConnection
+        {
+            MutateBeforeSetFailure = true,
+            SetBackgroundFailure = new WindowsAgentControlWriteException(
+                WindowsAgentControlWriteTransmissionState.Sent,
+                new IOException("response lost")),
+            StallBackgroundRead = true
+        };
+        var client = new WindowsAgentBackgroundSyncSettingsClient(
+            connection,
+            TimeSpan.FromMilliseconds(100));
+
+        var result = await client.SetEnabledAsync(true);
+
+        Assert.IsTrue(result.WasOutcomeUncertain);
+        Assert.IsFalse(result.State.IsAvailable);
+        Assert.AreEqual(1, connection.SetBackgroundCount);
+        Assert.AreEqual(1, connection.GetBackgroundCount);
+    }
+
+    [TestMethod]
+    public void NonPositiveReadBackTimeoutIsRejected()
+    {
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            new WindowsAgentBackgroundSyncSettingsClient(
+                new FakeWindowsAgentControlConnection(),
+                TimeSpan.Zero));
+    }
+
 }

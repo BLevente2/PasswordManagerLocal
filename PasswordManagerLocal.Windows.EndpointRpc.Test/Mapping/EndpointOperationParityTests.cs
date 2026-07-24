@@ -13,6 +13,7 @@ public sealed class EndpointOperationParityTests
     [TestMethod]
     public void EveryEndpointMethodHasExactlyOneCompleteMapping()
     {
+        Assert.AreEqual(40, EndpointOperationManifest.All.Count);
         var methods = typeof(IEndpoints).GetMethods();
         var descriptors = EndpointOperationManifest.All;
         var operationIds = Enum.GetValues<EndpointOperationId>();
@@ -62,6 +63,10 @@ public sealed class EndpointOperationParityTests
     [TestMethod]
     public void EveryOperationHasOneCoherentMutationOutcomePolicy()
     {
+        Assert.AreEqual(
+            32,
+            EndpointOperationManifest.All.Count(descriptor =>
+                descriptor.ReplaySafety != EndpointMutationReplaySafety.NotApplicable));
         var descriptors = EndpointOperationManifest.All;
         var readOnly = descriptors.Where(descriptor => !descriptor.MutatesState).ToArray();
         var mutations = descriptors.Where(descriptor => descriptor.MutatesState).ToArray();

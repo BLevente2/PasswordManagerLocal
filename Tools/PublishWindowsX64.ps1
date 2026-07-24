@@ -1,8 +1,36 @@
+[CmdletBinding()]
+param(
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Release',
+
+    [string]$OutputPath
+)
+
 $ErrorActionPreference = 'Stop'
-
 $root = Split-Path -Parent $PSScriptRoot
-$publishScript = Join-Path $root 'publish.ps1'
+$project = Join-Path $root 'PasswordManagerLocal\PasswordManagerLocal.Windows\PasswordManagerLocal.Windows.csproj'
+$verifier = Join-Path $root 'Tools\Windows\VerifyWindowsPublishedLayout.ps1'
+if ([string]::IsNullOrWhiteSpace($OutputPath)) {
+    $OutputPath = Join-Path $root 'artifacts\publish\PasswordManagerLocal.Windows\win-x64'
+}
+$OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
 
-# Keep one Windows publishing implementation. The root command owns the
-# self-contained, trimming, output-directory, cleanup, and validation settings.
-& $publishScript -Windows
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+    throw 'The dotnet CLI is unavailable.'
+}
+
+$publishArguments = @(
+    'publish', $project,
+    '--configuration', $Configuration,
+    '--runtime', 'win-x64',
+    '--self-contained', 'true',
+    '--output', $OutputPath
+)
+& dotnet @publishArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows publish failed with exit code $LASTEXITCODE."
+}
+
+& $verifier -PublishDirectory $OutputPath -RuntimeIdentifier 'win-x64' -RepositoryRoot $root
+Write-Host "Windows x64 publish completed: $OutputPath"

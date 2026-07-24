@@ -7,12 +7,18 @@ namespace PasswordManagerLocal.Windows.Settings;
 public sealed class WindowsAgentBackgroundSyncSettingsClient : IBackgroundSyncSettingsClient
 {
     private const int MaximumReadBackAttempts = 2;
+    private static readonly TimeSpan DefaultReadBackTimeout = TimeSpan.FromSeconds(5);
     private readonly IWindowsAgentControlConnection _connection;
+    private readonly TimeSpan _readBackTimeout;
 
     public WindowsAgentBackgroundSyncSettingsClient(
-        IWindowsAgentControlConnection connection)
+        IWindowsAgentControlConnection connection,
+        TimeSpan? readBackTimeout = null)
     {
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+        _readBackTimeout = readBackTimeout ?? DefaultReadBackTimeout;
+        if (_readBackTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(readBackTimeout));
     }
 
     public async Task<BackgroundSyncClientState> GetStateAsync(
@@ -82,19 +88,24 @@ public sealed class WindowsAgentBackgroundSyncSettingsClient : IBackgroundSyncSe
 
     private async Task<BackgroundSyncChangeResult> ReadBackAfterUncertainWriteAsync()
     {
+        using var timeoutSource = new CancellationTokenSource(_readBackTimeout);
+        var readBackToken = timeoutSource.Token;
         for (var attempt = 0; attempt < MaximumReadBackAttempts; attempt++)
         {
             try
             {
-                await _connection.DisconnectAsync(CancellationToken.None);
-                if (!await _connection.EnsureConnectedAsync(CancellationToken.None))
+                await _connection.DisconnectAsync(readBackToken);
+                if (!await _connection.EnsureConnectedAsync(readBackToken))
                     continue;
 
-                var state = await _connection.GetBackgroundSyncStateAsync(
-                    CancellationToken.None);
+                var state = await _connection.GetBackgroundSyncStateAsync(readBackToken);
                 return new BackgroundSyncChangeResult(
                     Map(state),
                     WasOutcomeUncertain: true);
+            }
+            catch (OperationCanceledException) when (readBackToken.IsCancellationRequested)
+            {
+                break;
             }
             catch
             {

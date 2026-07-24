@@ -71,6 +71,13 @@ internal sealed class FakeAgentOwnedBackendRuntime : IBackendRuntime
         return ValueTask.CompletedTask;
     }
 
+    public void SetSyncSnapshot(SyncRuntimeSnapshot snapshot)
+    {
+        var previous = SyncSnapshot;
+        SyncSnapshot = snapshot;
+        SyncStateChanged?.Invoke(this, new SyncRuntimeStateChangedEventArgs(previous, snapshot));
+    }
+
     private void SetRuntimeState(BackendRuntimeState state)
     {
         var previous = Snapshot;

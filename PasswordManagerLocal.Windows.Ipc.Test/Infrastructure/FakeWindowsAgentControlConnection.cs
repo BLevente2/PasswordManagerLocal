@@ -22,6 +22,7 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
     public int SetBackgroundCount { get; private set; }
     public bool? LastRequestedEnabled { get; private set; }
     public bool MutateBeforeSetFailure { get; set; }
+    public bool StallBackgroundRead { get; set; }
 
     public Task<bool> EnsureConnectedAsync(CancellationToken cancellationToken = default)
     {
@@ -53,17 +54,20 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
         return Task.FromResult(true);
     }
 
-    public Task<WindowsBackgroundSyncStateDto> GetBackgroundSyncStateAsync(
+    public async Task<WindowsBackgroundSyncStateDto> GetBackgroundSyncStateAsync(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         GetBackgroundCount++;
+        if (StallBackgroundRead)
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
         var failure = GetBackgroundFailures.Count == 0
             ? GetBackgroundFailure
             : GetBackgroundFailures.Dequeue();
-        return failure is null
-            ? Task.FromResult(BackgroundState)
-            : Task.FromException<WindowsBackgroundSyncStateDto>(failure);
+        if (failure is not null)
+            throw failure;
+        return BackgroundState;
     }
 
     public Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
