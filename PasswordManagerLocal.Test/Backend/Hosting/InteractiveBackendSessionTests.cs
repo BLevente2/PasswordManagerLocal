@@ -14,6 +14,25 @@ namespace PasswordManagerLocal.Test.Backend.Hosting;
 public sealed class InteractiveBackendSessionTests
 {
     [TestMethod]
+    public async Task ClosingStartedCallbackRunsBeforeInteractiveStateDeactivation()
+    {
+        using var host = new BackendTestHost();
+        var state = new InteractiveSessionStateService(
+            host.Services.GetRequiredService<IServiceScopeFactory>());
+        await state.ActivateAsync();
+        var callbackSawActiveState = false;
+        var session = new InteractiveBackendSession(
+            host.Services.GetRequiredService<IEndpoints>(),
+            state,
+            _ => ValueTask.CompletedTask);
+
+        await session.BeginCloseAsync(() => callbackSawActiveState = state.IsActive);
+
+        Assert.IsTrue(callbackSawActiveState);
+        Assert.IsFalse(state.IsActive);
+    }
+
+    [TestMethod]
     public async Task ClosingRejectsNewOperationsAndWaitsForAdmittedOperation()
     {
         using var host = new BackendTestHost();

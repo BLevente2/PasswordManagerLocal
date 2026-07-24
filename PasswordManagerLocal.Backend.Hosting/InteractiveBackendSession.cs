@@ -102,21 +102,10 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
     internal Task BeginCloseAsync(Action? closingStarted = null)
     {
         Task operationDrain;
-        Task stateDrain;
 
         lock (_operationLock)
         {
             _closing = true;
-            try
-            {
-                stateDrain = _sessionState.DeactivateAsync(CancellationToken.None);
-            }
-            catch (Exception exception)
-            {
-                stateDrain = Task.FromException(exception);
-            }
-
-            closingStarted?.Invoke();
 
             if (_activeOperations == 0)
             {
@@ -131,7 +120,28 @@ internal sealed class InteractiveBackendSession : IInteractiveBackendSession
             }
         }
 
-        return Task.WhenAll(operationDrain, stateDrain);
+        Task closingStartedTask;
+        try
+        {
+            closingStarted?.Invoke();
+            closingStartedTask = Task.CompletedTask;
+        }
+        catch (Exception exception)
+        {
+            closingStartedTask = Task.FromException(exception);
+        }
+
+        Task stateDrain;
+        try
+        {
+            stateDrain = _sessionState.DeactivateAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            stateDrain = Task.FromException(exception);
+        }
+
+        return Task.WhenAll(operationDrain, closingStartedTask, stateDrain);
     }
 
     public async ValueTask DisposeAsync()

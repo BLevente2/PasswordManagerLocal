@@ -361,6 +361,17 @@ public sealed class SyncPeerProtocolHandler
                 };
             }
 
+            var enrollmentAvailability = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentAvailability>();
+            if (!enrollmentAvailability.IsEnrollmentAllowed)
+            {
+                return new GetDeviceEnrollmentInfoReply
+                {
+                    Ok = false,
+                    Error = "Device enrollment requires an active interactive session.",
+                    ErrorCode = DeviceEnrollmentErrorCode.InteractiveSessionRequired.ToString()
+                };
+            }
+
             var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
             var enrollmentState = scope.ServiceProvider.GetRequiredService<IEnrollmentRuntimeState>();
             if (!identity.IsSyncOn && !enrollmentState.IsActive)
@@ -392,6 +403,16 @@ public sealed class SyncPeerProtocolHandler
                 OriginInstanceId = result.OriginInstanceId == Guid.Empty ? string.Empty : result.OriginInstanceId.ToString("N")
             };
         }
+        catch (DeviceEnrollmentException ex)
+        {
+            DeviceEnrollmentTrace.Error($"Incoming GetDeviceEnrollmentInfo request was rejected. Session={request.SessionId}: {ex.Message}", ex);
+            return new GetDeviceEnrollmentInfoReply
+            {
+                Ok = false,
+                Error = ex.Message,
+                ErrorCode = ex.ErrorCode.ToString()
+            };
+        }
         catch (Exception ex)
         {
             DeviceEnrollmentTrace.Error($"Incoming GetDeviceEnrollmentInfo request failed. Session={request.SessionId}: {ex.Message}", ex);
@@ -408,11 +429,24 @@ public sealed class SyncPeerProtocolHandler
     public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(IAsyncEnumerable<CompleteDeviceEnrollmentChunk> chunks, PeerConnectionContext context, int sourceDatabaseVersion, CancellationToken ct)
     {
         using var scope = _root.CreateScope();
-        var enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
+        IDeviceEnrollmentService? enrollment = null;
 
         try
         {
             DeviceEnrollmentTrace.Info("Incoming streaming CompleteDeviceEnrollment request started.");
+
+            var enrollmentAvailability = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentAvailability>();
+            if (!enrollmentAvailability.IsEnrollmentAllowed)
+            {
+                return new CompleteDeviceEnrollmentReply
+                {
+                    Ok = false,
+                    Error = "Device enrollment requires an active interactive session.",
+                    ErrorCode = DeviceEnrollmentErrorCode.InteractiveSessionRequired.ToString()
+                };
+            }
+
+            enrollment = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
 
             if (!DatabaseVersionCompatibilityUtil.IsIncomingDatabaseVersionSupported(sourceDatabaseVersion))
             {
@@ -463,6 +497,16 @@ public sealed class SyncPeerProtocolHandler
 
             await foreach (var chunk in chunks.WithCancellation(ct))
             {
+                if (!enrollmentAvailability.IsEnrollmentAllowed)
+                {
+                    return new CompleteDeviceEnrollmentReply
+                    {
+                        Ok = false,
+                        Error = "Device enrollment requires an active interactive session.",
+                        ErrorCode = DeviceEnrollmentErrorCode.InteractiveSessionRequired.ToString()
+                    };
+                }
+
                 if (!string.IsNullOrWhiteSpace(chunk.SessionId))
                     sessionId = chunk.SessionId;
 
@@ -585,6 +629,16 @@ public sealed class SyncPeerProtocolHandler
                 };
             }
 
+            if (!enrollmentAvailability.IsEnrollmentAllowed)
+            {
+                return new CompleteDeviceEnrollmentReply
+                {
+                    Ok = false,
+                    Error = "Device enrollment requires an active interactive session.",
+                    ErrorCode = DeviceEnrollmentErrorCode.InteractiveSessionRequired.ToString()
+                };
+            }
+
             var result = await enrollment.CompleteIncomingEnrollmentAsync(
                 sessionId,
                 codeProof,
@@ -613,6 +667,18 @@ public sealed class SyncPeerProtocolHandler
         }
         catch (SyncProtocolException ex) when (ex.StatusCode is SyncProtocolStatusCode.InvalidArgument or SyncProtocolStatusCode.ResourceExhausted)
         {
+            var enrollmentAvailability = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentAvailability>();
+            if (!enrollmentAvailability.IsEnrollmentAllowed)
+            {
+                return new CompleteDeviceEnrollmentReply
+                {
+                    Ok = false,
+                    Error = "Device enrollment requires an active interactive session.",
+                    ErrorCode = DeviceEnrollmentErrorCode.InteractiveSessionRequired.ToString()
+                };
+            }
+
+            enrollment ??= scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentService>();
             var errorCode = ex.StatusCode == SyncProtocolStatusCode.ResourceExhausted
                 ? DeviceEnrollmentErrorCode.ProfileDataTooLarge
                 : DeviceEnrollmentErrorCode.ProfileDataInvalid;
@@ -623,6 +689,16 @@ public sealed class SyncPeerProtocolHandler
                 Ok = false,
                 Error = error,
                 ErrorCode = errorCode.ToString()
+            };
+        }
+        catch (DeviceEnrollmentException ex)
+        {
+            DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request was rejected: {ex.Message}", ex);
+            return new CompleteDeviceEnrollmentReply
+            {
+                Ok = false,
+                Error = ex.Message,
+                ErrorCode = ex.ErrorCode.ToString()
             };
         }
         catch (Exception ex)

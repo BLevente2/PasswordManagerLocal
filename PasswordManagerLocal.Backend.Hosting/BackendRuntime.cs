@@ -12,13 +12,14 @@ using SQLitePCL;
 
 namespace PasswordManagerLocal.Backend.Hosting;
 
-internal sealed class BackendRuntime : IBackendRuntime
+internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfileProviderSink
 {
     private readonly BackendRuntimeOptions _options;
     private readonly BackendStorageCleaner _storageCleaner;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly SemaphoreSlim _interactiveSessionLock = new(1, 1);
+    private IBackendExecutionProfileProvider? _executionProfileProvider;
     private BackendRuntimeSnapshot _snapshot = new(
         BackendRuntimeState.NotStarted,
         BackendRuntimeFailureKind.None,
@@ -74,6 +75,21 @@ internal sealed class BackendRuntime : IBackendRuntime
 
     public event EventHandler<BackendRuntimeStateChangedEventArgs>? StateChanged;
     public event EventHandler<SyncRuntimeStateChangedEventArgs>? SyncStateChanged;
+
+    void IBackendExecutionProfileProviderSink.SetExecutionProfileProvider(
+        IBackendExecutionProfileProvider executionProfileProvider)
+    {
+        ArgumentNullException.ThrowIfNull(executionProfileProvider);
+
+        lock (_gate)
+        {
+            ThrowIfDisposedLocked();
+            if (_executionProfileProvider is not null)
+                throw new InvalidOperationException("The backend execution-profile provider is already configured.");
+
+            _executionProfileProvider = executionProfileProvider;
+        }
+    }
 
     public async Task EnsureStartedAsync(CancellationToken cancellationToken = default)
     {
@@ -166,8 +182,20 @@ internal sealed class BackendRuntime : IBackendRuntime
             try
             {
                 await host.StartInteractiveAsync(cancellationToken);
-                var endpoints = host.Services.GetRequiredService<IEndpoints>();
                 await sessionState.ActivateAsync(cancellationToken);
+                var profileLifecycle = _executionProfileProvider as IBackendExecutionProfileProviderLifecycle;
+                if (profileLifecycle is not null)
+                {
+                    profileLifecycle.OpenEnrollmentAdmission();
+                }
+                else if (_options.ServiceHostFactory is null)
+                {
+                    throw new InvalidOperationException("The backend execution-profile provider is not configured.");
+                }
+
+                host.Services.GetService<IDeviceEnrollmentLifecycleCoordinator>()
+                    ?.OpenInteractiveAdmission();
+                var endpoints = host.Services.GetRequiredService<IEndpoints>();
                 cancellationToken.ThrowIfCancellationRequested();
                 openedSession = new InteractiveBackendSession(
                     endpoints,
@@ -358,12 +386,20 @@ internal sealed class BackendRuntime : IBackendRuntime
             _disposeRequested = true;
         }
 
-        await StopAsync(CancellationToken.None);
+        if (_executionProfileProvider is IBackendExecutionProfileProviderLifecycle profileLifecycle)
+            profileLifecycle.StopPublishing();
 
-        lock (_gate)
-            _disposed = true;
+        try
+        {
+            await StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            lock (_gate)
+                _disposed = true;
 
-        GC.SuppressFinalize(this);
+            GC.SuppressFinalize(this);
+        }
     }
 
     private async ValueTask CloseInteractiveSessionAsync(InteractiveBackendSession session)
@@ -523,7 +559,7 @@ internal sealed class BackendRuntime : IBackendRuntime
         }
     }
 
-    private static async Task StopInteractiveStateAsync(
+    private async Task StopInteractiveStateAsync(
         BackendServiceHost host,
         InteractiveBackendSession? session,
         CancellationToken cancellationToken,
@@ -532,12 +568,27 @@ internal sealed class BackendRuntime : IBackendRuntime
         var failures = new List<Exception>();
         Task? sessionDrain = null;
         Task? stateDrain = null;
+        var profileLifecycle = _executionProfileProvider as IBackendExecutionProfileProviderLifecycle;
+        var enrollmentAdmissionClosed = false;
+
+        void CloseEnrollmentAdmission()
+        {
+            if (enrollmentAdmissionClosed)
+                return;
+
+            profileLifecycle?.CloseEnrollmentAdmission();
+            enrollmentAdmissionClosed = true;
+        }
 
         if (session is not null)
         {
             try
             {
-                sessionDrain = session.BeginCloseAsync(closingStarted);
+                sessionDrain = session.BeginCloseAsync(() =>
+                {
+                    CloseEnrollmentAdmission();
+                    closingStarted?.Invoke();
+                });
             }
             catch (Exception exception)
             {
@@ -546,6 +597,7 @@ internal sealed class BackendRuntime : IBackendRuntime
         }
         else
         {
+            CloseEnrollmentAdmission();
             try
             {
                 stateDrain = host.Services
@@ -558,11 +610,28 @@ internal sealed class BackendRuntime : IBackendRuntime
             }
         }
 
+        CloseEnrollmentAdmission();
+
+        Task? enrollmentDrain = null;
+        try
+        {
+            var enrollmentLifecycle = host.Services.GetService<IDeviceEnrollmentLifecycleCoordinator>();
+            if (enrollmentLifecycle is not null)
+                enrollmentDrain = enrollmentLifecycle.CloseInteractiveAdmissionAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+
         if (sessionDrain is not null)
             await CaptureTaskFailuresAsync(sessionDrain, failures);
 
         if (stateDrain is not null)
             await CaptureTaskFailuresAsync(stateDrain, failures);
+
+        if (enrollmentDrain is not null)
+            await CaptureTaskFailuresAsync(enrollmentDrain, failures);
 
         try
         {
@@ -589,6 +658,7 @@ internal sealed class BackendRuntime : IBackendRuntime
         if (failures.Count > 1)
             throw new AggregateException(failures);
     }
+
 
     private static async Task CaptureTaskFailuresAsync(
         Task task,
@@ -733,11 +803,14 @@ internal sealed class BackendRuntime : IBackendRuntime
         }
         else
         {
+            var executionProfileProvider = _executionProfileProvider
+                ?? throw new InvalidOperationException("The backend execution-profile provider has not been configured.");
             var services = new ServiceCollection();
             services.AddPasswordManagerLocalBackend(
                 _options.StoragePaths,
                 keyProtector,
-                discoveryLease);
+                discoveryLease,
+                executionProfileProvider);
             host = new BackendServiceHost(services.BuildServiceProvider());
         }
         try

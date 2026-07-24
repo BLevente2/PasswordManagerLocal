@@ -10,10 +10,6 @@ public static class SyncConstants
     public const int LocalDiscoveryPort = 26689;
     public const int LocalDiscoveryProtocolVersion = 2;
     public const int LocalDiscoveryPeerThrottleSeconds = 20;
-    // Query often enough for the UI to notice disconnected peers promptly without
-    // treating a single lost UDP discovery round as an offline transition.
-    public const int LocalDiscoveryQueryIntervalSeconds = 15;
-    public const int LocalDiscoveryOnlineTimeoutSeconds = LocalDiscoveryQueryIntervalSeconds * 2 + 5;
     public const int LocalDiscoveryEnrollmentQueryIntervalSeconds = 2;
     public const int LocalDiscoveryMaxClockSkewSeconds = 60;
     public const int LocalDiscoveryRequestThrottleMilliseconds = 250;
@@ -24,7 +20,6 @@ public static class SyncConstants
     public const int LocalDiscoveryMacBytes = 32;
     public const int LocalDiscoveryRecentNonceCapacity = 4096;
     public const int NetworkRefreshDebounceSeconds = 3;
-    public const int NetworkConfigurationPollSeconds = 15;
     public const int DeviceEnrollmentDiscoveryTimeoutSeconds = 30;
     public const int DeviceEnrollmentConnectTimeoutSeconds = 8;
     public const int DeviceEnrollmentTransferTimeoutSeconds = 120;

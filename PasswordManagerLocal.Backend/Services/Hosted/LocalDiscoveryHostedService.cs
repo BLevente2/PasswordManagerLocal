@@ -29,6 +29,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly ILocalDiscoveryTransport _transport;
     private readonly ILocalDiscoveryNetworkLease _networkLease;
+    private readonly IBackendExecutionProfileProvider _executionProfileProvider;
+    private readonly BackendExecutionProfileChangeSignal _profileChangeSignal;
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly object _enrollmentLock = new();
@@ -53,6 +55,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         ILocalNetworkAddressService networkAddresses,
         ILocalDiscoveryTransport transport,
         ILocalDiscoveryNetworkLease networkLease,
+        IBackendExecutionProfileProvider executionProfileProvider,
         IServiceScopeFactory? scopeFactory = null)
     {
         _identity = identity;
@@ -63,6 +66,9 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         _networkAddresses = networkAddresses;
         _transport = transport;
         _networkLease = networkLease ?? throw new ArgumentNullException(nameof(networkLease));
+        _executionProfileProvider = executionProfileProvider
+            ?? throw new ArgumentNullException(nameof(executionProfileProvider));
+        _profileChangeSignal = new BackendExecutionProfileChangeSignal(_executionProfileProvider);
         _scopeFactory = scopeFactory;
     }
 
@@ -111,7 +117,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             if (_identity.IsSyncOn)
                 StartSyncQueryLoopLocked();
             else
-                await StopSyncQueryLoopLockedAsync(ct);
+                await StopSyncQueryLoopLockedAsync();
         }
         finally
         {
@@ -132,7 +138,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
             try
             {
-                await StopSyncQueryLoopLockedAsync(ct);
+                await StopSyncQueryLoopLockedAsync();
             }
             catch (Exception exception)
             {
@@ -180,6 +186,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
     public void ActivateEnrollmentSession(string sessionId, byte[] secret, DateTimeOffset expiresAt)
     {
+        EnsureEnrollmentAllowed();
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         ArgumentNullException.ThrowIfNull(secret);
 
@@ -223,6 +230,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
     public async Task<IReadOnlyList<EnrollmentEndpoint>> FindEnrollmentEndpointsAsync(DeviceEnrollmentParsedCode parsed, CancellationToken ct = default)
     {
+        EnsureEnrollmentAllowed();
         ArgumentNullException.ThrowIfNull(parsed);
 
         var pending = new PendingEnrollmentDiscovery
@@ -290,6 +298,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             pending.Dispose();
 
         _pendingEnrollmentDiscoveries.Clear();
+        _profileChangeSignal.Dispose();
         _lifecycleLock.Dispose();
     }
 
@@ -315,7 +324,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     }
 
 
-    private async Task StopSyncQueryLoopLockedAsync(CancellationToken ct)
+    private async Task StopSyncQueryLoopLockedAsync()
     {
         var cancellation = _syncQueryLoopCancellation;
         var task = _syncQueryLoopTask;
@@ -337,7 +346,10 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         {
             try
             {
-                await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(2), ct));
+                await task;
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
             }
             catch
             {
@@ -370,7 +382,15 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(LocalDiscoveryQueryIntervalSeconds), ct);
+                var version = _profileChangeSignal.Version;
+                var profile = _executionProfileProvider.Current;
+                if (profile is null)
+                    return;
+
+                await _profileChangeSignal.WaitAsync(
+                    profile.LocalDiscoveryInterval,
+                    version,
+                    ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -401,6 +421,9 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     {
         while (!ct.IsCancellationRequested && !pending.Completion.Task.IsCompleted)
         {
+            if (!_executionProfileProvider.IsEnrollmentAllowed)
+                return;
+
             try
             {
                 var now = DateTimeOffset.UtcNow;
@@ -626,7 +649,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
     private async Task HandleEnrollmentQueryAsync(LocalDiscoveryDatagram datagram, CancellationToken ct)
     {
-        if (!LocalDiscoveryPacketCodec.TryDecodeEnrollmentQuery(datagram.Payload, out var query) ||
+        if (!_executionProfileProvider.IsEnrollmentAllowed ||
+            !LocalDiscoveryPacketCodec.TryDecodeEnrollmentQuery(datagram.Payload, out var query) ||
             !LocalDiscoveryAuthenticator.IsFresh(query.UnixTimeSeconds, DateTimeOffset.UtcNow))
             return;
 
@@ -683,7 +707,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
 
     private void HandleEnrollmentResponse(LocalDiscoveryDatagram datagram)
     {
-        if (!LocalDiscoveryPacketCodec.TryDecodeEnrollmentResponse(datagram.Payload, out var response) ||
+        if (!_executionProfileProvider.IsEnrollmentAllowed ||
+            !LocalDiscoveryPacketCodec.TryDecodeEnrollmentResponse(datagram.Payload, out var response) ||
             !LocalDiscoveryAuthenticator.IsFresh(response.UnixTimeSeconds, DateTimeOffset.UtcNow) ||
             !_pendingEnrollmentDiscoveries.TryGetValue(response.SessionId, out var pending) ||
             !pending.ContainsNonce(response.QueryNonce, DateTimeOffset.UtcNow) ||
@@ -781,6 +806,17 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             if (item.Value < now)
                 _pendingSyncQueryNonces.TryRemove(item.Key, out _);
         }
+    }
+
+
+    private void EnsureEnrollmentAllowed()
+    {
+        if (_executionProfileProvider.IsEnrollmentAllowed)
+            return;
+
+        throw new DeviceEnrollmentException(
+            DeviceEnrollmentErrorCode.InteractiveSessionRequired,
+            "Device enrollment requires an active interactive session.");
     }
 
 

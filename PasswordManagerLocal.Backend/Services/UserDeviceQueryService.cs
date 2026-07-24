@@ -6,7 +6,6 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Responses;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 
 namespace PasswordManagerLocal.Backend.Services;
@@ -17,7 +16,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
     private readonly IUserDataReaderService _userDataReader;
     private readonly IDeviceIdentityService _identity;
     private readonly IUserDeviceRepository _userDevices;
-    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
+    private readonly DeviceOnlineStatusEvaluator _onlineStatusEvaluator;
     private readonly LocalUserDeviceLinkManager _localLinkManager;
     private readonly UserDeviceMetadataEditor _metadataEditor;
 
@@ -26,7 +25,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         IUserDataReaderService userDataReader,
         IDeviceIdentityService identity,
         IUserDeviceRepository userDevices,
-        IDiscoveredDeviceEndpointRegistry endpointRegistry,
+        DeviceOnlineStatusEvaluator onlineStatusEvaluator,
         LocalUserDeviceLinkManager localLinkManager,
         UserDeviceMetadataEditor metadataEditor)
     {
@@ -34,7 +33,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         _userDataReader = userDataReader;
         _identity = identity;
         _userDevices = userDevices;
-        _endpointRegistry = endpointRegistry;
+        _onlineStatusEvaluator = onlineStatusEvaluator;
         _localLinkManager = localLinkManager;
         _metadataEditor = metadataEditor;
     }
@@ -156,7 +155,5 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         !device.IsBlocked &&
         device.PublicKey.Length != 0 &&
         device.SignPublicKey.Length != 0 &&
-        _endpointRegistry.IsRecentlyDiscovered(
-            device.TlsCertFingerprint,
-            TimeSpan.FromSeconds(LocalDiscoveryOnlineTimeoutSeconds));
+        _onlineStatusEvaluator.IsRecentlyDiscovered(device.TlsCertFingerprint);
 }

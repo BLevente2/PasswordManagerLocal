@@ -71,6 +71,16 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
         sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
         sc.AddSingleton<IDiscoveredDeviceEndpointRegistry, DiscoveredDeviceEndpointRegistry>();
+        var executionProfileProvider = new FakeBackendExecutionProfileProvider();
+        executionProfileProvider.SetProfile(
+            new BackendExecutionProfile(
+                TimeSpan.FromSeconds(15),
+                TimeSpan.FromSeconds(15),
+                TimeSpan.FromSeconds(35)),
+            isInteractive: true);
+        sc.AddSingleton<IBackendExecutionProfileProvider>(executionProfileProvider);
+        sc.AddSingleton<IDeviceEnrollmentAvailability>(executionProfileProvider);
+        sc.AddSingleton<DeviceOnlineStatusEvaluator>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         sc.AddSingleton<IUserSyncSnapshotRepository, FakeUserSyncSnapshotRepository>();
         sc.AddSingleton<IUserSyncStateRepository, FakeUserSyncStateRepository>();

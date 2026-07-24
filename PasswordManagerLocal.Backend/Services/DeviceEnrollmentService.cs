@@ -23,7 +23,7 @@ namespace PasswordManagerLocal.Backend.Services;
 /// Owns enrollment session state and orchestrates the high-level enrollment protocol. Endpoint
 /// validation, device registration, snapshot handling, transfer, and import are delegated to focused services.
 /// </summary>
-public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposable
+public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceEnrollmentLifecycleCoordinator, IDisposable
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
@@ -36,9 +36,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     private readonly IDeviceEnrollmentSnapshotTransferService _snapshotTransferService;
     private readonly IDeviceEnrollmentSnapshotImporterService _snapshotImporter;
     private readonly IInteractiveUserDataStateAccessor _interactiveState;
+    private readonly IDeviceEnrollmentAvailability _enrollmentAvailability;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
     private CancellationTokenSource? _enrollmentExpirationCancellation;
+    private TaskCompletionSource? _enrollmentOperationsDrained;
+    private CancellationTokenSource? _interactiveAdmissionCancellation;
+    private int _activeEnrollmentOperations;
+    private bool _interactiveAdmissionOpen;
 
     public DeviceEnrollmentService(
         IServiceScopeFactory scopeFactory,
@@ -51,7 +56,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         IDeviceEnrollmentSnapshotService snapshotService,
         IDeviceEnrollmentSnapshotTransferService snapshotTransferService,
         IDeviceEnrollmentSnapshotImporterService snapshotImporter,
-        IInteractiveUserDataStateAccessor interactiveState)
+        IInteractiveUserDataStateAccessor interactiveState,
+        IDeviceEnrollmentAvailability enrollmentAvailability)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
@@ -64,11 +70,70 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         _snapshotTransferService = snapshotTransferService;
         _snapshotImporter = snapshotImporter;
         _interactiveState = interactiveState;
+        _enrollmentAvailability = enrollmentAvailability
+            ?? throw new ArgumentNullException(nameof(enrollmentAvailability));
     }
+
+    public void OpenInteractiveAdmission()
+    {
+        lock (_lock)
+        {
+            if (!_enrollmentAvailability.IsEnrollmentAllowed)
+            {
+                throw new InvalidOperationException(
+                    "Enrollment admission cannot open without an active interactive runtime reason.");
+            }
+
+            if (_activeEnrollmentOperations != 0)
+                throw new InvalidOperationException("Enrollment operations are still draining.");
+
+            _interactiveAdmissionCancellation?.Dispose();
+            _interactiveAdmissionCancellation = new CancellationTokenSource();
+            _interactiveAdmissionOpen = true;
+        }
+    }
+
+
+    public async Task CloseInteractiveAdmissionAsync(CancellationToken cancellationToken = default)
+    {
+        Task? operationsDrained = null;
+        CancellationTokenSource? admissionCancellation;
+        lock (_lock)
+        {
+            _interactiveAdmissionOpen = false;
+            admissionCancellation = _interactiveAdmissionCancellation;
+            if (_activeEnrollmentOperations != 0)
+            {
+                _enrollmentOperationsDrained ??= new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                operationsDrained = _enrollmentOperationsDrained.Task;
+            }
+        }
+
+        admissionCancellation?.Cancel();
+
+        if (operationsDrained is not null)
+            await operationsDrained.WaitAsync(cancellationToken);
+
+        lock (_lock)
+        {
+            if (ReferenceEquals(_interactiveAdmissionCancellation, admissionCancellation))
+                _interactiveAdmissionCancellation = null;
+        }
+        admissionCancellation?.Dispose();
+
+        await CancelEnrollmentCoreAsync(cancellationToken);
+    }
+
 
     public async Task<DeviceEnrollmentCodeResponse> StartEnrollmentAsync(CancellationToken ct = default)
     {
-        await _syncRuntime.BeginEnrollmentOnlyAsync(ct);
+        using var enrollmentOperation = EnterEnrollmentOperation();
+        using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            ct,
+            enrollmentOperation.AdmissionCancellationToken);
+        var operationToken = operationCancellation.Token;
+        await _syncRuntime.BeginEnrollmentOnlyAsync(operationToken);
         EnrollmentSession? session = null;
 
         try
@@ -95,7 +160,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
                 StartEnrollmentExpirationCountdownLocked(session);
             }
 
-            await _endpointService.VerifyLocalEnrollmentListenerAsync(session.SessionId, session.Secret, directEndpointInfo, ct);
+            await _endpointService.VerifyLocalEnrollmentListenerAsync(session.SessionId, session.Secret, directEndpointInfo, operationToken);
             return new DeviceEnrollmentCodeResponse { Code = session.Code, ExpiresAt = session.ExpiresAt };
         }
         catch
@@ -119,6 +184,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     public async Task<DeviceEnrollmentStatusResponse> GetEnrollmentStatusAsync(CancellationToken ct = default)
     {
+        using var enrollmentOperation = EnterEnrollmentOperation();
         DeviceEnrollmentStatusResponse response;
         var endTemporaryMode = false;
         lock (_lock)
@@ -143,25 +209,24 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     public async Task CancelEnrollmentAsync(CancellationToken ct = default)
     {
-        lock (_lock)
-        {
-            CancelEnrollmentExpirationLocked();
-            DeactivateEnrollmentDiscoveryLocked();
-            _currentSession?.ClearSensitiveData();
-            _currentSession = null;
-        }
-        await _syncRuntime.EndEnrollmentOnlyAsync(ct);
+        using var enrollmentOperation = EnterEnrollmentOperation();
+        await CancelEnrollmentCoreAsync(ct);
     }
 
 
     public async Task AddDeviceByCodeAsync(Guid token, string code, CancellationToken ct = default)
     {
+        using var enrollmentOperation = EnterEnrollmentOperation();
+        using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            ct,
+            enrollmentOperation.AdmissionCancellationToken);
+        var operationToken = operationCancellation.Token;
         using (var authorizationScope = _scopeFactory.CreateScope())
         {
             var users = authorizationScope.ServiceProvider.GetRequiredService<IUserLookupService>();
             var localUsers = authorizationScope.ServiceProvider.GetRequiredService<ILocalUserDeviceRepository>();
-            var user = await users.GetAndVerifyUserAsync(token, ct);
-            if (!await localUsers.IsSyncOnAsync(user.UId, ct))
+            var user = await users.GetAndVerifyUserAsync(token, operationToken);
+            if (!await localUsers.IsSyncOnAsync(user.UId, operationToken))
                 throw new DeviceEnrollmentException(DeviceEnrollmentErrorCode.SyncDisabled, "Synchronization is disabled for this profile on the current device.");
         }
 
@@ -205,7 +270,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             {
                 attemptedEndpoints.Add($"{endpoint.Host}:{endpoint.Port}");
                 DeviceEnrollmentTrace.Info($"Trying direct enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
-                await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
+                await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, enrollmentOperation, operationToken, ct);
                 DeviceEnrollmentTrace.Info($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
                 return;
             }
@@ -229,7 +294,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         try
         {
             DeviceEnrollmentTrace.Info("Trying authenticated local enrollment discovery fallback.");
-            discoveryEndpoints = await _localDiscovery.FindEnrollmentEndpointsAsync(parsed, ct);
+            discoveryEndpoints = await _localDiscovery.FindEnrollmentEndpointsAsync(parsed, operationToken);
         }
         catch (DeviceEnrollmentException ex) when (directFailures.Count > 0)
         {
@@ -249,14 +314,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             if (isAuthenticatedRediscoveryRetry)
             {
                 DeviceEnrollmentTrace.Info($"Retrying enrollment endpoint {endpointKey} because a fresh authenticated local discovery response confirmed that the same enrollment session is still active there.");
-                await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(250), operationToken);
             }
 
             try
             {
                 var attemptKind = isAuthenticatedRediscoveryRetry ? "authenticated-discovery-confirmed retry" : "authenticated local discovery endpoint";
                 DeviceEnrollmentTrace.Info($"Trying {attemptKind} {endpoint.Host}:{endpoint.Port}.");
-                await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, ct);
+                await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, enrollmentOperation, operationToken, ct);
                 DeviceEnrollmentTrace.Info($"{attemptKind} {endpoint.Host}:{endpoint.Port} completed successfully.");
                 return;
             }
@@ -333,10 +398,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
     }
 
 
-    private async Task CompleteEnrollmentWithEndpointAsync(Guid token, DeviceEnrollmentParsedCode parsed, EnrollmentEndpoint endpoint, CancellationToken ct)
+    private async Task CompleteEnrollmentWithEndpointAsync(
+        Guid token,
+        DeviceEnrollmentParsedCode parsed,
+        EnrollmentEndpoint endpoint,
+        DeviceEnrollmentOperationLease enrollmentOperation,
+        CancellationToken preCriticalToken,
+        CancellationToken ct)
     {
         DeviceEnrollmentTrace.Info($"Enrollment connection and identity check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
-        endpoint = await _endpointService.ResolveEndpointIdentityAsync(endpoint, parsed, ct);
+        endpoint = await _endpointService.ResolveEndpointIdentityAsync(endpoint, parsed, preCriticalToken);
         DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, Origin={endpoint.OriginInstanceId}, TlsFingerprintPrefix={FingerprintUtil.Normalize(endpoint.TlsCertFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(endpoint.TlsCertFingerprint).Length)]}.");
 
         Guid userId;
@@ -344,9 +415,11 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         using (var authorizationScope = _scopeFactory.CreateScope())
         {
             var users = authorizationScope.ServiceProvider.GetRequiredService<IUserLookupService>();
-            userId = (await users.GetAndVerifyUserAsync(token, ct)).UId;
+            userId = (await users.GetAndVerifyUserAsync(token, preCriticalToken)).UId;
             mergeKey = _interactiveState.GetEncryptionKeyFromToken(token);
         }
+
+        enrollmentOperation.EnterCriticalSection();
 
         Guid commitId = Guid.Empty;
         Guid additionOperationId = Guid.Empty;
@@ -648,6 +721,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     public async Task<DeviceEnrollmentInfoResponse> GetIncomingEnrollmentInfoAsync(string sessionId, byte[] codeProof, CancellationToken ct = default)
     {
+        using var enrollmentOperation = EnterEnrollmentOperation();
         DeviceEnrollmentInfoResponse response;
         var endTemporaryMode = false;
 
@@ -725,6 +799,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         string message,
         CancellationToken ct = default)
     {
+        using var enrollmentOperation = EnterEnrollmentOperation();
+        return await RegisterIncomingEnrollmentValidationFailureCoreAsync(errorCode, message, ct);
+    }
+
+
+    private async Task<string> RegisterIncomingEnrollmentValidationFailureCoreAsync(
+        DeviceEnrollmentErrorCode errorCode,
+        string message,
+        CancellationToken ct)
+    {
         var endEnrollmentOnlyMode = false;
         var responseMessage = message;
 
@@ -769,6 +853,12 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         byte[] snapshotEncryptionTag,
         CancellationToken ct = default)
     {
+        using var enrollmentOperation = EnterEnrollmentOperation();
+        using var preCriticalCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            ct,
+            enrollmentOperation.AdmissionCancellationToken);
+        var preCriticalToken = preCriticalCancellation.Token;
+        preCriticalToken.ThrowIfCancellationRequested();
         EnrollmentSession? session;
         (DeviceEnrollmentErrorCode Code, string Message)? earlyFailure = null;
         var endTemporaryMode = false;
@@ -830,6 +920,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         if (!DeviceEnrollmentCode.FixedTimeEquals(expectedProof, codeProof))
             return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.CodeProofInvalid, "The enrollment code proof is invalid.");
 
+        preCriticalToken.ThrowIfCancellationRequested();
+
         DeviceEnrollmentSnapshot snapshot;
         try
         {
@@ -855,6 +947,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
         {
             return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
+
+        preCriticalToken.ThrowIfCancellationRequested();
+        enrollmentOperation.EnterCriticalSection();
 
         try
         {
@@ -901,7 +996,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
         async Task<(bool Ok, DeviceEnrollmentErrorCode ErrorCode, string? Error)> RejectIncomingValidationAsync(DeviceEnrollmentErrorCode errorCode, string message)
         {
-            var responseMessage = await RegisterIncomingEnrollmentValidationFailureAsync(errorCode, message, CancellationToken.None);
+            var responseMessage = await RegisterIncomingEnrollmentValidationFailureCoreAsync(errorCode, message, CancellationToken.None);
             return (false, errorCode, responseMessage);
         }
     }
@@ -930,6 +1025,75 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
             ? "1 validation attempt remains."
             : $"{remainingAttempts} validation attempts remain.";
         return (false, $"{message} {suffix}");
+    }
+
+
+    internal DeviceEnrollmentOperationLease EnterEnrollmentOperation()
+    {
+        lock (_lock)
+        {
+            if (!_interactiveAdmissionOpen || !_enrollmentAvailability.IsEnrollmentAllowed)
+            {
+                throw new DeviceEnrollmentException(
+                    DeviceEnrollmentErrorCode.InteractiveSessionRequired,
+                    "Device enrollment requires an active interactive session.");
+            }
+
+            var admissionCancellation = _interactiveAdmissionCancellation
+                ?? throw new InvalidOperationException("Enrollment admission cancellation is unavailable.");
+            _activeEnrollmentOperations++;
+            return new DeviceEnrollmentOperationLease(this, admissionCancellation.Token);
+        }
+    }
+
+
+    internal void EnterCriticalEnrollmentSection()
+    {
+        lock (_lock)
+        {
+            if (!_interactiveAdmissionOpen ||
+                !_enrollmentAvailability.IsEnrollmentAllowed ||
+                _interactiveAdmissionCancellation?.IsCancellationRequested != false)
+            {
+                throw new DeviceEnrollmentException(
+                    DeviceEnrollmentErrorCode.InteractiveSessionRequired,
+                    "Device enrollment requires an active interactive session.");
+            }
+        }
+    }
+
+
+    internal void CompleteEnrollmentOperation()
+    {
+        TaskCompletionSource? operationsDrained = null;
+        lock (_lock)
+        {
+            if (_activeEnrollmentOperations == 0)
+                throw new InvalidOperationException("No enrollment operation is active.");
+
+            _activeEnrollmentOperations--;
+            if (!_interactiveAdmissionOpen && _activeEnrollmentOperations == 0)
+            {
+                operationsDrained = _enrollmentOperationsDrained;
+                _enrollmentOperationsDrained = null;
+            }
+        }
+
+        operationsDrained?.TrySetResult();
+    }
+
+
+    private async Task CancelEnrollmentCoreAsync(CancellationToken cancellationToken)
+    {
+        lock (_lock)
+        {
+            CancelEnrollmentExpirationLocked();
+            DeactivateEnrollmentDiscoveryLocked();
+            _currentSession?.ClearSensitiveData();
+            _currentSession = null;
+        }
+
+        await _syncRuntime.EndEnrollmentOnlyAsync(cancellationToken);
     }
 
 
@@ -1029,12 +1193,19 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDisposa
 
     public void Dispose()
     {
+        CancellationTokenSource? admissionCancellation;
         lock (_lock)
         {
+            _interactiveAdmissionOpen = false;
+            admissionCancellation = _interactiveAdmissionCancellation;
+            _interactiveAdmissionCancellation = null;
             CancelEnrollmentExpirationLocked();
             DeactivateEnrollmentDiscoveryLocked();
             _currentSession?.ClearSensitiveData();
             _currentSession = null;
         }
+
+        admissionCancellation?.Cancel();
+        admissionCancellation?.Dispose();
     }
 }

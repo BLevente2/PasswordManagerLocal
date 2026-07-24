@@ -29,14 +29,16 @@ public static class BackendServiceCollectionExtensions
         this IServiceCollection services,
         BackendStoragePaths storagePaths,
         IKeyProtector keyProtector,
-        ILocalDiscoveryNetworkLease discoveryNetworkLease)
+        ILocalDiscoveryNetworkLease discoveryNetworkLease,
+        IBackendExecutionProfileProvider executionProfileProvider)
     {
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddPasswordManagerLocalBackendCore(
             storagePaths,
             keyProtector,
-            discoveryNetworkLease);
+            discoveryNetworkLease,
+            executionProfileProvider);
         services.AddPasswordManagerLocalSynchronization();
         services.AddPasswordManagerLocalInteractiveServices();
         return services;
@@ -46,14 +48,18 @@ public static class BackendServiceCollectionExtensions
         this IServiceCollection services,
         BackendStoragePaths storagePaths,
         IKeyProtector keyProtector,
-        ILocalDiscoveryNetworkLease discoveryNetworkLease)
+        ILocalDiscoveryNetworkLease discoveryNetworkLease,
+        IBackendExecutionProfileProvider executionProfileProvider)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(storagePaths);
         ArgumentNullException.ThrowIfNull(keyProtector);
         ArgumentNullException.ThrowIfNull(discoveryNetworkLease);
+        ArgumentNullException.ThrowIfNull(executionProfileProvider);
 
         services.AddSingleton(storagePaths);
+        services.AddSingleton<IBackendExecutionProfileProvider>(executionProfileProvider);
+        services.AddSingleton<IDeviceEnrollmentAvailability>(executionProfileProvider);
         services.AddSingleton<IKeyProtector>(keyProtector);
         services.AddSingleton<ILocalDiscoveryNetworkLease>(discoveryNetworkLease);
         services.AddSingleton<IBackendInitializationService, BackendInitializationService>();
@@ -132,6 +138,7 @@ public static class BackendServiceCollectionExtensions
         services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
         services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
         services.AddSingleton<IDiscoveredDeviceEndpointRegistry, DiscoveredDeviceEndpointRegistry>();
+        services.AddSingleton<DeviceOnlineStatusEvaluator>();
         services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
         services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
         services.AddSingleton<ILocalNetworkAddressService, LocalNetworkAddressService>();
@@ -145,7 +152,9 @@ public static class BackendServiceCollectionExtensions
         services.AddSingleton<IDeviceEnrollmentSnapshotService, DeviceEnrollmentSnapshotService>();
         services.AddSingleton<IDeviceEnrollmentSnapshotTransferService, DeviceEnrollmentSnapshotTransferService>();
         services.AddSingleton<IDeviceEnrollmentSnapshotImporterService, DeviceEnrollmentSnapshotImporterService>();
-        services.AddSingleton<IDeviceEnrollmentService, DeviceEnrollmentService>();
+        services.AddSingleton<DeviceEnrollmentService>();
+        services.AddSingleton<IDeviceEnrollmentService>(sp => sp.GetRequiredService<DeviceEnrollmentService>());
+        services.AddSingleton<IDeviceEnrollmentLifecycleCoordinator>(sp => sp.GetRequiredService<DeviceEnrollmentService>());
 
         services.AddScoped<IUserLoginIdentityProjectionService, UserLoginIdentityProjectionService>();
         services.AddScoped<IUserLookupService, UserLookupService>();

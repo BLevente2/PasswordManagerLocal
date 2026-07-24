@@ -337,7 +337,14 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
         var networkAddresses = new FakeLocalNetworkAddressService();
         var snapshotService = new EnrollmentContractSnapshotService(new DeviceEnrollmentSnapshotService(identity));
         var localLinks = new DeviceEnrollmentLocalLinkService(identity);
-        return new DeviceEnrollmentService(
+        var executionProfileProvider = new FakeBackendExecutionProfileProvider();
+        executionProfileProvider.SetProfile(
+            new BackendExecutionProfile(
+                TimeSpan.FromSeconds(15),
+                TimeSpan.FromSeconds(15),
+                TimeSpan.FromSeconds(35)),
+            isInteractive: true);
+        var service = new DeviceEnrollmentService(
             services.GetRequiredService<IServiceScopeFactory>(),
             identity,
             endpointRegistry,
@@ -348,6 +355,9 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
             snapshotService,
             new DeviceEnrollmentSnapshotTransferService(identity, transport, snapshotService),
             new DeviceEnrollmentSnapshotImporterService(identity, localLinks),
-            services.GetRequiredService<IInteractiveUserDataStateAccessor>());
+            services.GetRequiredService<IInteractiveUserDataStateAccessor>(),
+            executionProfileProvider);
+        service.OpenInteractiveAdmission();
+        return service;
     }
 }

@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Services.Hosted;
 using PasswordManagerLocal.Backend.State;
 using PasswordManagerLocal.Backend.Sync.Discovery;
@@ -71,5 +72,19 @@ public sealed class LocalDiscoveryNetworkLeaseTests
             new EnrollmentRuntimeState(),
             new FakeLocalNetworkAddressService(),
             transport,
-            lease);
+            lease,
+            CreateBackgroundProfileProvider());
+
+    private static FakeBackendExecutionProfileProvider CreateBackgroundProfileProvider()
+    {
+        var provider = new FakeBackendExecutionProfileProvider();
+        provider.SetProfile(
+            new BackendExecutionProfile(
+                TimeSpan.FromSeconds(60),
+                TimeSpan.FromSeconds(60),
+                TimeSpan.FromSeconds(125)),
+            isInteractive: false);
+        return provider;
+    }
+
 }

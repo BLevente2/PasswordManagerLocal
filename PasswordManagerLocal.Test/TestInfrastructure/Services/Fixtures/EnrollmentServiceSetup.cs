@@ -11,7 +11,10 @@ namespace PasswordManagerLocal.Test.TestInfrastructure.Services.Fixtures;
 internal sealed record EnrollmentServiceSetup(
     DeviceEnrollmentService Service,
     ServiceProvider Provider,
-    FakeSyncRuntimeService Runtime) : IDisposable
+    FakeSyncRuntimeService Runtime,
+    FakeBackendExecutionProfileProvider ExecutionProfileProvider,
+    FakeLocalDiscoveryService LocalDiscovery,
+    FakeSyncTransportClientService Transport) : IDisposable
 {
     public void Dispose()
     {

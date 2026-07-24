@@ -19,6 +19,8 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly TcpSyncServerHostedService _tcpServer;
     private readonly LocalDiscoveryHostedService _discovery;
+    private readonly IBackendExecutionProfileProvider _executionProfileProvider;
+    private readonly BackendExecutionProfileChangeSignal _profileChangeSignal;
     private readonly object _lock = new();
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private CancellationTokenSource? _debounceCancellation;
@@ -34,7 +36,8 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         IDeviceSyncTaskService deviceSyncTasks,
         ILocalNetworkAddressService networkAddresses,
         TcpSyncServerHostedService tcpServer,
-        LocalDiscoveryHostedService discovery)
+        LocalDiscoveryHostedService discovery,
+        IBackendExecutionProfileProvider executionProfileProvider)
     {
         _identity = identity;
         _enrollmentState = enrollmentState;
@@ -43,9 +46,24 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         _networkAddresses = networkAddresses;
         _tcpServer = tcpServer;
         _discovery = discovery;
+        _executionProfileProvider = executionProfileProvider
+            ?? throw new ArgumentNullException(nameof(executionProfileProvider));
+        _profileChangeSignal = new BackendExecutionProfileChangeSignal(_executionProfileProvider);
     }
 
     public int StartOrder => 40;
+
+    internal bool HasPendingRefresh
+    {
+        get
+        {
+            lock (_lock)
+                return _debounceCancellation is not null;
+        }
+    }
+
+    internal void NotifyNetworkChange() =>
+        ScheduleRefresh(captureCurrentSignature: true);
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -103,7 +121,10 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         {
             try
             {
-                await Task.WhenAny(pollTask, Task.Delay(TimeSpan.FromSeconds(2), cancellationToken));
+                await pollTask;
+            }
+            catch (OperationCanceledException) when (pollCancellation?.IsCancellationRequested == true)
+            {
             }
             catch
             {
@@ -124,6 +145,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         {
         }
 
+        _profileChangeSignal.Dispose();
         _refreshLock.Dispose();
     }
 
@@ -131,10 +153,10 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         _identity.IsSyncOn || _enrollmentState.IsActive;
 
     private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e) =>
-        ScheduleRefresh(captureCurrentSignature: true);
+        NotifyNetworkChange();
 
     private void OnNetworkChanged(object? sender, EventArgs e) =>
-        ScheduleRefresh(captureCurrentSignature: true);
+        NotifyNetworkChange();
 
     private void ScheduleRefresh(bool captureCurrentSignature)
     {
@@ -168,7 +190,15 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         {
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(NetworkConfigurationPollSeconds), ct);
+                var version = _profileChangeSignal.Version;
+                var profile = _executionProfileProvider.Current;
+                if (profile is null)
+                    return;
+
+                await _profileChangeSignal.WaitAsync(
+                    profile.NetworkConfigurationPollInterval,
+                    version,
+                    ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

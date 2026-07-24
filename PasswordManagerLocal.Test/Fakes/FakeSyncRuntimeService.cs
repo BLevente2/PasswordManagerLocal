@@ -13,6 +13,7 @@ public sealed class FakeSyncRuntimeService : ISyncRuntimeService
     public int StartCalls { get; private set; }
     public int StopCalls { get; private set; }
     public Exception? RefreshFailure { get; set; }
+    public TaskCompletionSource<bool>? BeginEnrollmentOnlyGate { get; set; }
 
     public SyncRuntimeSnapshot Snapshot => _snapshot;
 
@@ -28,11 +29,12 @@ public sealed class FakeSyncRuntimeService : ISyncRuntimeService
         return Task.FromException(RefreshFailure);
     }
 
-    public Task BeginEnrollmentOnlyAsync(CancellationToken ct = default)
+    public async Task BeginEnrollmentOnlyAsync(CancellationToken ct = default)
     {
         BeginEnrollmentOnlyCalls++;
+        if (BeginEnrollmentOnlyGate is not null)
+            await BeginEnrollmentOnlyGate.Task.WaitAsync(ct);
         Transition(SyncRuntimeState.Running);
-        return Task.CompletedTask;
     }
 
     public Task EndEnrollmentOnlyAsync(CancellationToken ct = default)

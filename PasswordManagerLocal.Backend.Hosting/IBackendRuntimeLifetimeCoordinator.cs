@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Runtime.Abstractions;
 
 namespace PasswordManagerLocal.Backend.Hosting;
@@ -5,6 +6,7 @@ namespace PasswordManagerLocal.Backend.Hosting;
 public interface IBackendRuntimeLifetimeCoordinator
 {
     BackendLifetimeReason ActiveReasons { get; }
+    IBackendExecutionProfileProvider ExecutionProfileProvider { get; }
     event EventHandler? ActiveReasonsChanged;
 
     Task<IBackendRuntimeLease> AcquireAsync(

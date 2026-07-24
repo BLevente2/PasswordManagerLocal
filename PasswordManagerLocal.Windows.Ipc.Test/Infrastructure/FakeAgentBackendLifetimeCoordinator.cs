@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Runtime.Abstractions;
 
@@ -5,6 +6,9 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 
 internal sealed class FakeAgentBackendLifetimeCoordinator : IBackendRuntimeLifetimeCoordinator
 {
+    public IBackendExecutionProfileProvider ExecutionProfileProvider { get; } =
+        new FakeBackendExecutionProfileProvider();
+
     public BackendLifetimeReason ActiveReasons { get; set; }
     public event EventHandler? ActiveReasonsChanged;
 

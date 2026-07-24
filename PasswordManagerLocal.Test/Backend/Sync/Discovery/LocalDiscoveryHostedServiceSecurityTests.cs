@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSec.Cryptography;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
@@ -177,7 +178,7 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
         MSTestAssert.AreEqual(0, syncTasks.Starts.Count);
         MSTestAssert.IsTrue(endpointRegistry.IsRecentlyDiscovered(
             remoteDevice.TlsCertFingerprint,
-            TimeSpan.FromSeconds(SyncConstants.LocalDiscoveryOnlineTimeoutSeconds)));
+            TimeSpan.FromSeconds(35)));
     }
 
 
@@ -471,7 +472,21 @@ public sealed class LocalDiscoveryHostedServiceSecurityTests
             networkAddresses ?? new FakeLocalNetworkAddressService(),
             transport,
             new FakeLocalDiscoveryNetworkLease(),
+            CreateInteractiveProfileProvider(),
             scopeFactory);
+
+
+    private static FakeBackendExecutionProfileProvider CreateInteractiveProfileProvider()
+    {
+        var provider = new FakeBackendExecutionProfileProvider();
+        provider.SetProfile(
+            new BackendExecutionProfile(
+                TimeSpan.FromSeconds(15),
+                TimeSpan.FromSeconds(15),
+                TimeSpan.FromSeconds(35)),
+            isInteractive: true);
+        return provider;
+    }
 
 
     private static async Task WaitForAsync(Func<bool> condition)

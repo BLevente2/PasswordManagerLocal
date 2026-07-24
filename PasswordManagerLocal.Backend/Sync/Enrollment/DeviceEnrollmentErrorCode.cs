@@ -4,6 +4,7 @@ public enum DeviceEnrollmentErrorCode
 {
     Unknown,
     SyncDisabled,
+    InteractiveSessionRequired,
     InvalidCode,
     NewDeviceNotFound,
     NewDeviceConnectionFailed,

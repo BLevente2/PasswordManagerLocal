@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Runtime.Abstractions;
 
 namespace PasswordManagerLocal.Backend.Hosting;
@@ -6,6 +7,7 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
 {
     private readonly IBackendRuntime _runtime;
     private readonly SemaphoreSlim _transitionLock = new(1, 1);
+    private readonly BackendExecutionProfileProvider _executionProfileProvider;
     private readonly object _stateLock = new();
     private int _interactiveUiCount;
     private int _backgroundSyncCount;
@@ -13,9 +15,14 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
     public BackendRuntimeLifetimeCoordinator(IBackendRuntime runtime)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+        _executionProfileProvider = new BackendExecutionProfileProvider(this);
+        if (runtime is IBackendExecutionProfileProviderSink sink)
+            sink.SetExecutionProfileProvider(_executionProfileProvider);
     }
 
     public event EventHandler? ActiveReasonsChanged;
+
+    public IBackendExecutionProfileProvider ExecutionProfileProvider => _executionProfileProvider;
 
     public BackendLifetimeReason ActiveReasons
     {
@@ -32,29 +39,40 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
     {
         ValidateReason(reason);
         await _transitionLock.WaitAsync(cancellationToken);
-        var shouldStopAfterCancellation = false;
         var reasonsChanged = false;
+        var reasonAdded = false;
+        var firstLease = false;
+        var runtimeStarted = false;
 
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            firstLease = GetTotalLeaseCount() == 0;
+            reasonsChanged = Increment(reason);
+            reasonAdded = true;
 
-            if (GetTotalLeaseCount() == 0)
+            if (firstLease)
             {
-                shouldStopAfterCancellation = true;
+                ((IBackendExecutionProfileProviderLifecycle)_executionProfileProvider).InitializeCurrent();
                 await _runtime.EnsureStartedAsync(cancellationToken);
+                runtimeStarted = true;
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
-            reasonsChanged = Increment(reason);
-            shouldStopAfterCancellation = false;
             return new BackendRuntimeLease(this, reason);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch
         {
-            if (shouldStopAfterCancellation && GetTotalLeaseCount() == 0)
+            if (reasonAdded)
+            {
+                Decrement(reason);
+                ((IBackendExecutionProfileProviderLifecycle)_executionProfileProvider).InitializeCurrent();
+            }
+
+            if (runtimeStarted && GetTotalLeaseCount() == 0)
                 await _runtime.StopAsync(CancellationToken.None);
 
+            reasonsChanged = false;
             throw;
         }
         finally
@@ -71,8 +89,9 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
     {
         ValidateReason(reason);
         await _transitionLock.WaitAsync(cancellationToken);
-        var shouldStopAfterCancellation = false;
         var reasonsChanged = false;
+        var reasonAdded = false;
+        var runtimeRestarted = false;
 
         try
         {
@@ -83,19 +102,27 @@ public sealed class BackendRuntimeLifetimeCoordinator : IBackendRuntimeLifetimeC
                     "The database cannot be reset while runtime leases are active.");
             }
 
-            shouldStopAfterCancellation = true;
-            await _runtime.ResetDatabaseAndRestartAsync(cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-
             reasonsChanged = Increment(reason);
-            shouldStopAfterCancellation = false;
+            reasonAdded = true;
+            ((IBackendExecutionProfileProviderLifecycle)_executionProfileProvider).InitializeCurrent();
+
+            await _runtime.ResetDatabaseAndRestartAsync(cancellationToken);
+            runtimeRestarted = true;
+            cancellationToken.ThrowIfCancellationRequested();
             return new BackendRuntimeLease(this, reason);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch
         {
-            if (shouldStopAfterCancellation && GetTotalLeaseCount() == 0)
+            if (reasonAdded)
+            {
+                Decrement(reason);
+                ((IBackendExecutionProfileProviderLifecycle)_executionProfileProvider).InitializeCurrent();
+            }
+
+            if (runtimeRestarted && GetTotalLeaseCount() == 0)
                 await _runtime.StopAsync(CancellationToken.None);
 
+            reasonsChanged = false;
             throw;
         }
         finally

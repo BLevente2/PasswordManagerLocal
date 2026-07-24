@@ -37,6 +37,7 @@ public sealed class FakeBackendRuntime : IBackendRuntime
     public Exception? InteractiveSessionDisposeFailure { get; set; }
     public Exception? StopFailure { get; set; }
     public Action? AfterStart { get; set; }
+    public Action? BeforeReset { get; set; }
 
     public event EventHandler<BackendRuntimeStateChangedEventArgs>? StateChanged;
     public event EventHandler<SyncRuntimeStateChangedEventArgs>? SyncStateChanged;
@@ -109,6 +110,7 @@ public sealed class FakeBackendRuntime : IBackendRuntime
     {
         cancellationToken.ThrowIfCancellationRequested();
         ResetCalls++;
+        BeforeReset?.Invoke();
         SetSnapshot(new BackendRuntimeSnapshot(
             BackendRuntimeState.Ready,
             BackendRuntimeFailureKind.None,
