@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Android.Runtime;
 using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Runtime.Abstractions;
 using PasswordManagerLocal.Test.Fakes;
@@ -474,6 +475,34 @@ public sealed class AndroidRuntimeServiceHostTests
             BackendLifetimeReason.InteractiveUi | BackendLifetimeReason.BackgroundSync,
             fixture.Coordinator.ActiveReasons);
         Assert.IsInstanceOfType<AndroidAttachmentAuthorizedEndpoints>(await client.GetEndpointsAsync());
+        await client.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task DatabaseCompatibilityFailureKeepsResetCapableRecoveryAttachment()
+    {
+        using var fixture = CreateFixture(backgroundEnabled: false);
+        var compatibilityFailure = new DatabaseVersionNotSupportedException(99, 1, 1);
+        fixture.Runtime.StartupFailure = compatibilityFailure;
+        fixture.Runtime.BeforeReset = () => fixture.Runtime.StartupFailure = null;
+        await using var host = fixture.Host;
+
+        var client = await host.AttachInteractiveClientAsync();
+
+        Assert.AreEqual(
+            AndroidInteractiveAttachmentState.DatabaseRecovery,
+            client.AttachmentState);
+        await Assert.ThrowsExactlyAsync<DatabaseVersionNotSupportedException>(
+            () => client.ConnectAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.GetEndpointsAsync());
+
+        await client.ResetDatabaseAndRestartAsync();
+
+        Assert.AreEqual(AndroidInteractiveAttachmentState.Active, client.AttachmentState);
+        Assert.AreEqual(1, fixture.Runtime.ResetCalls);
+        Assert.IsInstanceOfType<AndroidAttachmentAuthorizedEndpoints>(
+            await client.GetEndpointsAsync());
         await client.DisposeAsync();
     }
 

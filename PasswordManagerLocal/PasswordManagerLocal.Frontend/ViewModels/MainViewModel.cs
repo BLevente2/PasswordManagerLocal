@@ -564,7 +564,9 @@ public sealed class MainViewModel : ViewModelBase
         try
         {
             await _backendClient.ConnectAsync();
-            if (!_backendClient.Snapshot.IsReady)
+            var snapshot = _backendClient.Snapshot;
+            ApplyBackendAvailability(snapshot.IsReady);
+            if (!snapshot.IsReady)
                 return;
         }
         catch (DatabaseVersionNotSupportedException exception)

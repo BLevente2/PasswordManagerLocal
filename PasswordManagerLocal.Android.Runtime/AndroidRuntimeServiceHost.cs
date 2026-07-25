@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Runtime.Abstractions;
 
@@ -257,6 +258,12 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
 
             if (!openResult.IsConnected)
             {
+                if (IsDatabaseCompatibilityFailure(openResult.Failure))
+                {
+                    client.ActivateDatabaseRecoveryFromHost(openResult.Failure!);
+                    return client;
+                }
+
                 _interactiveClient = null;
                 ReserveNextAttachmentGenerationLocked();
                 client.BeginClosingFromHost();
@@ -447,11 +454,13 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(client);
         await _transitionLock.WaitAsync(cancellationToken);
+        AndroidInteractiveAttachmentState? stateBeforeReset = null;
+        var replacementConnectionAdopted = false;
         try
         {
             ThrowIfDisposed();
             EnsureCurrentInteractiveClient(client);
-            client.SuspendAuthorityForResetFromHost();
+            stateBeforeReset = client.SuspendAuthorityForResetFromHost();
             var composition = _composition
                 ?? throw new InvalidOperationException("The Android runtime composition is unavailable.");
             var restoreBackground = _backgroundState.IsEnabled;
@@ -476,6 +485,7 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 await client.AdoptResetConnectionFromHostAsync(interactiveLease, interactiveSession);
                 interactiveLease = null;
                 interactiveSession = null;
+                replacementConnectionAdopted = true;
 
                 if (restoreBackground)
                     await EnsureBackgroundRuntimeLockedAsync(cancellationToken);
@@ -517,8 +527,14 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         }
         finally
         {
-            if (!_runtimeUnsafe && IsCurrentInteractiveClient(client))
-                client.ResumeAuthorityAfterResetFromHost();
+            if (stateBeforeReset.HasValue &&
+                !_runtimeUnsafe &&
+                IsCurrentInteractiveClient(client))
+            {
+                client.ResumeAuthorityAfterResetFromHost(
+                    stateBeforeReset.Value,
+                    replacementConnectionAdopted);
+            }
             _transitionLock.Release();
         }
     }
@@ -990,8 +1006,12 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
 
     private void EnsureCurrentInteractiveClient(AndroidServiceFrontendBackendClient client)
     {
-        if (!IsCurrentActiveAttachment(client))
+        if (_runtimeUnsafe ||
+            !IsCurrentInteractiveClient(client) ||
+            !client.HasConnectionAuthority)
+        {
             throw new InvalidOperationException("The Android interactive service attachment is no longer active.");
+        }
     }
 
     private bool IsCurrentInteractiveClient(AndroidServiceFrontendBackendClient client) =>
@@ -1002,6 +1022,35 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         !_runtimeUnsafe &&
         IsCurrentInteractiveClient(client) &&
         client.HasMutationAuthority;
+
+    private static bool IsDatabaseCompatibilityFailure(Exception? failure)
+    {
+        if (failure is null)
+            return false;
+
+        return IsDatabaseCompatibilityFailure(
+            failure,
+            new HashSet<Exception>(ReferenceEqualityComparer.Instance));
+    }
+
+    private static bool IsDatabaseCompatibilityFailure(
+        Exception failure,
+        ISet<Exception> visited)
+    {
+        if (!visited.Add(failure))
+            return false;
+        if (failure is DatabaseVersionNotSupportedException)
+            return true;
+
+        if (failure is AggregateException aggregateFailure)
+        {
+            return aggregateFailure.InnerExceptions.Any(
+                innerFailure => IsDatabaseCompatibilityFailure(innerFailure, visited));
+        }
+
+        return failure.InnerException is not null &&
+            IsDatabaseCompatibilityFailure(failure.InnerException, visited);
+    }
 
     private long ReserveNextAttachmentGenerationLocked() => ++_attachmentGeneration;
 

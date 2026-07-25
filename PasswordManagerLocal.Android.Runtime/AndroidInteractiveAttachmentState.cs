@@ -4,7 +4,8 @@ internal enum AndroidInteractiveAttachmentState
 {
     Initializing = 0,
     Active = 1,
-    Resetting = 2,
-    Closing = 3,
-    Disposed = 4
+    DatabaseRecovery = 2,
+    Resetting = 3,
+    Closing = 4,
+    Disposed = 5
 }

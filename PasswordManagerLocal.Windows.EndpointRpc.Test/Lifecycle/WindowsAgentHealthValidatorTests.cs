@@ -21,6 +21,17 @@ public sealed class WindowsAgentHealthValidatorTests
     }
 
     [TestMethod]
+    public void StoppedRestartableBackendIsEndpointHealthy()
+    {
+        var agent = CreateAgentStatus();
+        var backend = CreateBackendStatus(BackendRuntimeStatusState.Stopped);
+
+        Assert.IsTrue(_validator.CanRegisterUi(agent, backend));
+        Assert.IsTrue(_validator.IsHealthyForEndpoint(agent, backend));
+        Assert.IsFalse(_validator.RequiresProcessReplacement(agent, backend));
+    }
+
+    [TestMethod]
     public void FailedStoppingAndClosedAdmissionAgentsRequireReplacement()
     {
         foreach (var agent in new[]

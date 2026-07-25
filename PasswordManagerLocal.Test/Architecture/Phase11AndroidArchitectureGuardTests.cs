@@ -446,6 +446,39 @@ public sealed class Phase11AndroidArchitectureGuardTests
     }
 
     [TestMethod]
+    public void DeferredAndroidClientReplaysReadinessAndFrontendConfirmsConnectedSnapshot()
+    {
+        var root = GetRepositoryRoot();
+        var deferredClient = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Runtime",
+            "AndroidDeferredServiceFrontendBackendClient.cs"));
+        var mainViewModel = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Frontend",
+            "ViewModels",
+            "MainViewModel.cs"));
+
+        var subscription = deferredClient.IndexOf(
+            "inner.StateChanged += HandleInnerStateChanged;",
+            StringComparison.Ordinal);
+        var replay = deferredClient.IndexOf(
+            "ApplyInnerSnapshot(inner.Snapshot);",
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(subscription >= 0);
+        Assert.IsTrue(replay > subscription);
+        StringAssert.Contains(deferredClient, "private readonly object _snapshotGate = new();");
+        StringAssert.Contains(deferredClient, "sender is IBackendRuntimeClient runtimeClient");
+        StringAssert.Contains(deferredClient, "PublishStateChanged(new BackendRuntimeStateChangedEventArgs(previous, current));");
+        StringAssert.Contains(mainViewModel, "var snapshot = _backendClient.Snapshot;");
+        StringAssert.Contains(mainViewModel, "ApplyBackendAvailability(snapshot.IsReady);");
+    }
+
+    [TestMethod]
     public void NetworkingResourcesRemainRuntimeOwnedAndAbsentFromMainActivity()
     {
         var root = GetRepositoryRoot();

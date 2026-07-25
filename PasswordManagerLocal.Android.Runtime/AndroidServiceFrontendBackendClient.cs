@@ -14,6 +14,7 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
         TaskCreationOptions.RunContinuationsAsynchronously);
     private IBackendRuntimeLease? _interactiveLease;
     private IInteractiveBackendSession? _interactiveSession;
+    private Exception? _databaseRecoveryFailure;
     private int _attachmentState = (int)AndroidInteractiveAttachmentState.Initializing;
 
     internal AndroidServiceFrontendBackendClient(
@@ -37,6 +38,10 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
 
     internal bool HasMutationAuthority =>
         AttachmentState == AndroidInteractiveAttachmentState.Active;
+
+    internal bool HasConnectionAuthority =>
+        AttachmentState is AndroidInteractiveAttachmentState.Active or
+            AndroidInteractiveAttachmentState.DatabaseRecovery;
 
     public BackendRuntimeSnapshot Snapshot
     {
@@ -116,25 +121,65 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
             throw new InvalidOperationException("The Android interactive attachment can no longer become active.");
     }
 
-    internal void BeginClosingFromHost() => TryBeginClosing();
-
-    internal void SuspendAuthorityForResetFromHost()
+    internal void ActivateDatabaseRecoveryFromHost(Exception failure)
     {
+        ArgumentNullException.ThrowIfNull(failure);
+        _databaseRecoveryFailure = failure;
         var previous = Interlocked.CompareExchange(
             ref _attachmentState,
-            (int)AndroidInteractiveAttachmentState.Resetting,
-            (int)AndroidInteractiveAttachmentState.Active);
-        if (previous != (int)AndroidInteractiveAttachmentState.Active)
-            throw new InvalidOperationException("The Android interactive attachment cannot enter database reset.");
+            (int)AndroidInteractiveAttachmentState.DatabaseRecovery,
+            (int)AndroidInteractiveAttachmentState.Initializing);
+        if (previous == (int)AndroidInteractiveAttachmentState.DatabaseRecovery)
+            return;
+        if (previous != (int)AndroidInteractiveAttachmentState.Initializing)
+            throw new InvalidOperationException("The Android interactive attachment can no longer enter database recovery.");
     }
 
-    internal void ResumeAuthorityAfterResetFromHost()
+    internal void BeginClosingFromHost() => TryBeginClosing();
+
+    internal AndroidInteractiveAttachmentState SuspendAuthorityForResetFromHost()
     {
+        while (true)
+        {
+            var state = AttachmentState;
+            if (state is not AndroidInteractiveAttachmentState.Active and
+                not AndroidInteractiveAttachmentState.DatabaseRecovery)
+            {
+                throw new InvalidOperationException("The Android interactive attachment cannot enter database reset.");
+            }
+
+            if (Interlocked.CompareExchange(
+                    ref _attachmentState,
+                    (int)AndroidInteractiveAttachmentState.Resetting,
+                    (int)state) == (int)state)
+            {
+                return state;
+            }
+        }
+    }
+
+    internal void ResumeAuthorityAfterResetFromHost(
+        AndroidInteractiveAttachmentState stateBeforeReset,
+        bool replacementConnectionAdopted)
+    {
+        var targetState = replacementConnectionAdopted
+            ? AndroidInteractiveAttachmentState.Active
+            : stateBeforeReset;
+        if (targetState is not AndroidInteractiveAttachmentState.Active and
+            not AndroidInteractiveAttachmentState.DatabaseRecovery)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(stateBeforeReset),
+                stateBeforeReset,
+                "Database reset can only restore an active or recovery attachment.");
+        }
+
         var previous = Interlocked.CompareExchange(
             ref _attachmentState,
-            (int)AndroidInteractiveAttachmentState.Active,
+            (int)targetState,
             (int)AndroidInteractiveAttachmentState.Resetting);
         if (previous is (int)AndroidInteractiveAttachmentState.Active or
+            (int)AndroidInteractiveAttachmentState.DatabaseRecovery or
             (int)AndroidInteractiveAttachmentState.Closing or
             (int)AndroidInteractiveAttachmentState.Disposed)
         {
@@ -154,6 +199,11 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
             ThrowIfUnavailable();
             if (_interactiveSession is not null)
                 return new AndroidInteractiveOpenResult(true, true, null);
+            if (AttachmentState == AndroidInteractiveAttachmentState.DatabaseRecovery &&
+                _databaseRecoveryFailure is not null)
+            {
+                return new AndroidInteractiveOpenResult(false, true, _databaseRecoveryFailure);
+            }
 
             IBackendRuntimeLease lease;
             try
@@ -308,6 +358,7 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
 
             _interactiveLease = lease;
             _interactiveSession = session;
+            _databaseRecoveryFailure = null;
         }
         finally
         {

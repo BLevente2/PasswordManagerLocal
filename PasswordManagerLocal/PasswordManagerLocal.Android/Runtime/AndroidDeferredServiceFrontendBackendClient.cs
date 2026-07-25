@@ -7,7 +7,13 @@ public sealed class AndroidDeferredServiceFrontendBackendClient : IFrontendBacke
 {
     private readonly AndroidActivityServiceAttachmentHandle _attachmentHandle;
     private readonly SemaphoreSlim _resolveLock = new(1, 1);
+    private readonly object _snapshotGate = new();
     private IFrontendBackendClient<IEndpoints>? _inner;
+    private BackendRuntimeSnapshot _snapshot = new(
+        BackendRuntimeState.NotStarted,
+        BackendRuntimeFailureKind.None,
+        null,
+        DateTimeOffset.MinValue);
     private bool _disposed;
 
     public AndroidDeferredServiceFrontendBackendClient(
@@ -22,16 +28,15 @@ public sealed class AndroidDeferredServiceFrontendBackendClient : IFrontendBacke
         get
         {
             ThrowIfDisposed();
-            if (_inner is not null)
-                return _inner.Snapshot;
-            if (_attachmentHandle.TryGetCompletedAttachment(out var attachment))
-                return attachment!.BackendClient.Snapshot;
 
-            return new BackendRuntimeSnapshot(
-                BackendRuntimeState.NotStarted,
-                BackendRuntimeFailureKind.None,
-                null,
-                DateTimeOffset.UtcNow);
+            if (Volatile.Read(ref _inner) is null &&
+                _attachmentHandle.TryGetCompletedAttachment(out var attachment))
+            {
+                return attachment!.BackendClient.Snapshot;
+            }
+
+            lock (_snapshotGate)
+                return _snapshot;
         }
     }
 
@@ -55,8 +60,9 @@ public sealed class AndroidDeferredServiceFrontendBackendClient : IFrontendBacke
             return;
 
         _disposed = true;
-        if (_inner is not null)
-            _inner.StateChanged -= HandleInnerStateChanged;
+        var inner = Volatile.Read(ref _inner);
+        if (inner is not null)
+            inner.StateChanged -= HandleInnerStateChanged;
         StateChanged = null;
         await _attachmentHandle.DisposeAsync();
         GC.SuppressFinalize(this);
@@ -66,20 +72,27 @@ public sealed class AndroidDeferredServiceFrontendBackendClient : IFrontendBacke
         CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
-        if (_inner is not null)
-            return _inner;
+        var inner = Volatile.Read(ref _inner);
+        if (inner is not null)
+            return inner;
 
         await _resolveLock.WaitAsync(cancellationToken);
         try
         {
             ThrowIfDisposed();
-            if (_inner is not null)
-                return _inner;
+            inner = Volatile.Read(ref _inner);
+            if (inner is not null)
+                return inner;
 
             var attachment = await _attachmentHandle.GetAttachmentAsync(cancellationToken);
-            _inner = attachment.BackendClient;
-            _inner.StateChanged += HandleInnerStateChanged;
-            return _inner;
+            ThrowIfDisposed();
+
+            inner = attachment.BackendClient;
+            inner.StateChanged += HandleInnerStateChanged;
+            Volatile.Write(ref _inner, inner);
+
+            ApplyInnerSnapshot(inner.Snapshot);
+            return inner;
         }
         finally
         {
@@ -90,6 +103,32 @@ public sealed class AndroidDeferredServiceFrontendBackendClient : IFrontendBacke
     private void HandleInnerStateChanged(
         object? sender,
         BackendRuntimeStateChangedEventArgs args)
+    {
+        var current = sender is IBackendRuntimeClient runtimeClient
+            ? runtimeClient.Snapshot
+            : args.Current;
+        ApplyInnerSnapshot(current);
+    }
+
+    private void ApplyInnerSnapshot(BackendRuntimeSnapshot current)
+    {
+        BackendRuntimeSnapshot previous;
+        lock (_snapshotGate)
+        {
+            if (_disposed)
+                return;
+
+            previous = _snapshot;
+            if (previous == current)
+                return;
+
+            _snapshot = current;
+        }
+
+        PublishStateChanged(new BackendRuntimeStateChangedEventArgs(previous, current));
+    }
+
+    private void PublishStateChanged(BackendRuntimeStateChangedEventArgs args)
     {
         var handlers = StateChanged;
         if (handlers is null)

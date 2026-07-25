@@ -22,6 +22,19 @@ public sealed class WindowsAgentEndpointAdmissionPolicyTests
     }
 
     [TestMethod]
+    public void StoppedRestartableRuntimeAcceptsEndpointConnection()
+    {
+        var context = CreateContext();
+        context.Owner.Snapshot = FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(
+            ownerState: WindowsAgentBackendOwnerState.Ready,
+            runtimeState: BackendRuntimeState.Stopped);
+
+        Assert.IsTrue(context.Policy.CanAcceptConnection);
+        Assert.IsTrue(context.Policy.TryEnterRequest(out var lease));
+        lease!.Dispose();
+    }
+
+    [TestMethod]
     public void FailedStoppingRestartRequiredAndClosedAdmissionRejectEndpointConnection()
     {
         var failed = CreateContext();

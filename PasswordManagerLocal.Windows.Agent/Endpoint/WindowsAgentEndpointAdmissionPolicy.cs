@@ -56,8 +56,7 @@ public sealed class WindowsAgentEndpointAdmissionPolicy : IEndpointRpcAdmissionP
             _endpointHostStateProvider() == WindowsAgentEndpointHostState.Ready &&
             backend.State is WindowsAgentBackendOwnerState.Ready or WindowsAgentBackendOwnerState.Interactive &&
             backend.Runtime.State is not BackendRuntimeState.Failed and
-                not BackendRuntimeState.Stopping and
-                not BackendRuntimeState.Stopped &&
+                not BackendRuntimeState.Stopping &&
             !backend.IsResetting &&
             !backend.RequiresProcessRestart;
     }

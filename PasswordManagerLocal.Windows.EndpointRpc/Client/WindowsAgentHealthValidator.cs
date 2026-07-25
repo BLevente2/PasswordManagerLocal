@@ -13,7 +13,6 @@ public sealed class WindowsAgentHealthValidator
             !backendStatus.RequiresProcessRestart &&
             (backendStatus.RuntimeState != BackendRuntimeStatusState.Failed
                 ? backendStatus.RuntimeState is not BackendRuntimeStatusState.Stopping and
-                    not BackendRuntimeStatusState.Stopped and
                     not BackendRuntimeStatusState.Unavailable
                 : backendStatus.FailureKind == BackendRuntimeFailureStatusKind.DatabaseCompatibility);
     }
@@ -29,6 +28,7 @@ public sealed class WindowsAgentHealthValidator
                 BackendRuntimeStatusState.NotStarted or
                 BackendRuntimeStatusState.Starting or
                 BackendRuntimeStatusState.Ready or
+                BackendRuntimeStatusState.Stopped or
                 BackendRuntimeStatusState.WaitingForDeviceUnlock;
     }
 
