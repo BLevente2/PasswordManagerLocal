@@ -15,33 +15,46 @@ namespace PasswordManagerLocal.Android;
     ForegroundServiceType = ForegroundService.TypeConnectedDevice)]
 public sealed class PasswordManagerBackgroundService : Service, IAndroidRuntimeCompositionFactory
 {
+    private readonly AndroidServiceStartStateMachine _serviceStartState = new();
+    private readonly AndroidBackgroundRestorationPolicy _restorationPolicy = new();
+    private readonly object _restorationGate = new();
     private AndroidRuntimeServiceHost? _runtimeHost;
+    private Task? _restorationTask;
     private AndroidForegroundServiceController? _foregroundController;
     private AndroidSecureStorageAvailability? _secureStorageAvailability;
-    private AndroidUserUnlockedReceiver? _userUnlockedReceiver;
     private PasswordManagerBackgroundServiceBinder? _binder;
+    private AndroidDeferredUnlockReceiver? _deferredUnlockReceiver;
+    private int _isDestroying;
 
     public override void OnCreate()
     {
         base.OnCreate();
-        var applicationContext = ApplicationContext
-            ?? throw new InvalidOperationException("The Android application context is unavailable.");
-        var filesDirectory = applicationContext.FilesDir?.AbsolutePath;
-        if (string.IsNullOrWhiteSpace(filesDirectory))
-            throw new InvalidOperationException("The Android application-data directory is unavailable.");
+        try
+        {
+            var applicationContext = ApplicationContext
+                ?? throw new InvalidOperationException("The Android application context is unavailable.");
+            var filesDirectory = applicationContext.FilesDir?.AbsolutePath;
+            if (string.IsNullOrWhiteSpace(filesDirectory))
+                throw new InvalidOperationException("The Android application-data directory is unavailable.");
 
-        var applicationDataDirectory = Path.Combine(
-            filesDirectory,
-            ApplicationFileNames.AppFolderName);
-        _foregroundController = new AndroidForegroundServiceController(this);
-        _secureStorageAvailability = new AndroidSecureStorageAvailability(applicationContext);
-        _runtimeHost = new AndroidRuntimeServiceHost(
-            this,
-            new FileBackgroundSyncSettingsStore(applicationDataDirectory),
-            _foregroundController,
-            _secureStorageAvailability);
-        _binder = new PasswordManagerBackgroundServiceBinder(this);
-        RegisterUserUnlockedReceiver();
+            var applicationDataDirectory = Path.Combine(
+                filesDirectory,
+                ApplicationFileNames.AppFolderName);
+            _foregroundController = new AndroidForegroundServiceController(this);
+            _secureStorageAvailability = new AndroidSecureStorageAvailability(applicationContext);
+            _runtimeHost = new AndroidRuntimeServiceHost(
+                this,
+                new FileBackgroundSyncSettingsStore(applicationDataDirectory),
+                _foregroundController,
+                _secureStorageAvailability);
+            _binder = new PasswordManagerBackgroundServiceBinder(this);
+            RegisterDeferredUnlockReceiver();
+        }
+        catch
+        {
+            CleanupFailedCreation();
+            throw;
+        }
     }
 
     public override IBinder OnBind(Intent? intent) =>
@@ -52,27 +65,69 @@ public sealed class PasswordManagerBackgroundService : Service, IAndroidRuntimeC
         StartCommandFlags flags,
         int startId)
     {
+        var controller = _foregroundController;
         try
         {
-            _foregroundController?.MarkServiceStarted();
-            var secureStorageAvailable = _secureStorageAvailability?.IsAvailable == true;
-            _foregroundController?.EnterForeground(
-                secureStorageAvailable
-                    ? AndroidForegroundNotificationState.BackgroundSynchronizationActive
-                    : AndroidForegroundNotificationState.WaitingForDeviceUnlock);
-            if (secureStorageAvailable)
-                _ = RestoreBackgroundStateAsync();
+            if (Volatile.Read(ref _isDestroying) != 0)
+            {
+                controller?.RequestStop();
+                return StartCommandResult.NotSticky;
+            }
 
+            controller?.MarkServiceStarted();
+            var runtimeSnapshot = GetRuntimeHost().Snapshot;
+            if (runtimeSnapshot.IsRuntimeUnsafe)
+            {
+                _serviceStartState.RecordRuntimeUnsafe(
+                    "The Android runtime requires a fresh application process.");
+                controller?.ExitForeground();
+                controller?.RequestStop();
+                controller?.RequestProcessTermination();
+                return StartCommandResult.NotSticky;
+            }
+
+            if (runtimeSnapshot.IsForeground)
+            {
+                QueueBackgroundRestoration();
+                return StartCommandResult.Sticky;
+            }
+
+            _serviceStartState.RecordServiceRequested();
+            _serviceStartState.RecordServiceStarting();
+            var secureStorageAvailable = _secureStorageAvailability?.IsAvailable == true;
+            var restorationDecision = _restorationPolicy.Decide(
+                AndroidBackgroundRestorationTrigger.StickyServiceRestart,
+                secureStorageAvailable,
+                isBackgroundEnabled: null);
+            var foregroundResult = controller?.EnterForeground(
+                restorationDecision.Action == AndroidBackgroundRestorationAction.DeferUntilUnlock
+                    ? AndroidForegroundNotificationState.WaitingForDeviceUnlock
+                    : AndroidForegroundNotificationState.BackgroundSynchronizationStarting)
+                ?? new AndroidForegroundEntryResult(
+                    IsForegroundEntered: false,
+                    AndroidNotificationAvailability.Unknown,
+                    AndroidForegroundEntryFailureKind.NotificationManagerUnavailable,
+                    RequiresUserAction: false,
+                    "Android foreground-service control is unavailable.");
+            _serviceStartState.RecordForegroundEntry(foregroundResult);
+            if (!foregroundResult.IsForegroundEntered)
+            {
+                controller?.ExitForeground();
+                controller?.RequestStop();
+                return StartCommandResult.NotSticky;
+            }
+
+            QueueBackgroundRestoration();
             return StartCommandResult.Sticky;
         }
         catch
         {
-            _foregroundController?.ExitForeground();
-            _foregroundController?.RequestStop();
+            controller?.ExitForeground();
+            controller?.RequestStop();
+            _serviceStartState.RecordStopped();
             return StartCommandResult.NotSticky;
         }
     }
-
 
     BackendRuntimeComposition IAndroidRuntimeCompositionFactory.Create()
     {
@@ -81,88 +136,152 @@ public sealed class PasswordManagerBackgroundService : Service, IAndroidRuntimeC
         return AndroidBackendRuntimeFactory.Create(applicationContext);
     }
 
+    public AndroidRuntimeServiceSnapshot RuntimeSnapshot => GetRuntimeHost().Snapshot;
+    public AndroidServiceStartStatus ServiceStartStatus => _serviceStartState.Status;
+
     public Task<AndroidServiceFrontendBackendClient> AttachInteractiveClientAsync(
         CancellationToken cancellationToken = default) =>
         GetRuntimeHost().AttachInteractiveClientAsync(cancellationToken);
 
     public Task<AndroidBackgroundSyncServiceState> GetBackgroundStateAsync(
+        AndroidServiceFrontendBackendClient client,
         CancellationToken cancellationToken = default) =>
-        GetRuntimeHost().GetBackgroundStateAsync(cancellationToken);
+        GetRuntimeHost().GetBackgroundStateFromAttachmentAsync(client, cancellationToken);
 
     public Task<AndroidBackgroundSyncServiceState> SetBackgroundEnabledAsync(
+        AndroidServiceFrontendBackendClient client,
         bool isEnabled,
         CancellationToken cancellationToken = default) =>
-        GetRuntimeHost().SetBackgroundEnabledAsync(isEnabled, cancellationToken);
+        GetRuntimeHost().SetBackgroundEnabledFromAttachmentAsync(client, isEnabled, cancellationToken);
 
     public override void OnDestroy()
     {
-        var receiver = Interlocked.Exchange(ref _userUnlockedReceiver, null);
-        if (receiver is not null)
-        {
-            try
-            {
-                UnregisterReceiver(receiver);
-            }
-            catch (Java.Lang.IllegalArgumentException)
-            {
-            }
-            finally
-            {
-                receiver.Dispose();
-            }
-        }
+        Interlocked.Exchange(ref _isDestroying, 1);
+        lock (_restorationGate)
+            _restorationTask = null;
 
+        UnregisterDeferredUnlockReceiver();
         var host = Interlocked.Exchange(ref _runtimeHost, null);
         try
         {
             if (host is not null)
-            {
-                Task.Run(async () => await host.DisposeAsync())
-                    .GetAwaiter()
-                    .GetResult();
-            }
+                DisposeRuntimeHost(host);
         }
         catch
         {
         }
         finally
         {
-            _foregroundController?.ExitForeground();
+            try
+            {
+                _foregroundController?.ExitForeground();
+            }
+            catch
+            {
+            }
+
             _foregroundController = null;
             _secureStorageAvailability = null;
             _binder?.Dispose();
             _binder = null;
+            _serviceStartState.RecordStopped();
             base.OnDestroy();
         }
     }
 
-
-    private void RegisterUserUnlockedReceiver()
+    private void RegisterDeferredUnlockReceiver()
     {
-        if (_userUnlockedReceiver is not null)
-            return;
-
-        var receiver = new AndroidUserUnlockedReceiver(RestoreBackgroundStateAsync);
+        var receiver = new AndroidDeferredUnlockReceiver(QueueBackgroundRestoration);
         var filter = new IntentFilter(Intent.ActionUserUnlocked);
         if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu)
             RegisterReceiver(receiver, filter, ReceiverFlags.NotExported);
         else
             RegisterReceiver(receiver, filter);
 
-        _userUnlockedReceiver = receiver;
+        _deferredUnlockReceiver = receiver;
+    }
+
+    private void UnregisterDeferredUnlockReceiver()
+    {
+        var receiver = Interlocked.Exchange(ref _deferredUnlockReceiver, null);
+        if (receiver is null)
+            return;
+
+        try
+        {
+            UnregisterReceiver(receiver);
+        }
+        catch
+        {
+        }
+    }
+
+    private void QueueBackgroundRestoration()
+    {
+        lock (_restorationGate)
+        {
+            if (Volatile.Read(ref _isDestroying) != 0)
+                return;
+            if (_restorationTask is { IsCompleted: false })
+                return;
+
+            _restorationTask = RestoreBackgroundStateAsync();
+        }
     }
 
     private async Task RestoreBackgroundStateAsync()
     {
         try
         {
-            await GetRuntimeHost().RestoreBackgroundStateAsync();
+            var state = await GetRuntimeHost().RestoreBackgroundStateAsync();
+            if (Volatile.Read(ref _isDestroying) == 0)
+                _serviceStartState.RecordRuntimeState(state);
         }
         catch
         {
             _foregroundController?.ExitForeground();
             _foregroundController?.RequestStop();
+            if (Volatile.Read(ref _isDestroying) == 0)
+                _serviceStartState.RecordStopped();
         }
+    }
+
+    private void CleanupFailedCreation()
+    {
+        Interlocked.Exchange(ref _isDestroying, 1);
+        var host = Interlocked.Exchange(ref _runtimeHost, null);
+        if (host is not null)
+        {
+            try
+            {
+                DisposeRuntimeHost(host);
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            _foregroundController?.ExitForeground();
+            _foregroundController?.RequestStop();
+        }
+        catch
+        {
+        }
+
+        UnregisterDeferredUnlockReceiver();
+        _foregroundController = null;
+        _secureStorageAvailability = null;
+        _binder?.Dispose();
+        _binder = null;
+    }
+
+    private void DisposeRuntimeHost(AndroidRuntimeServiceHost host)
+    {
+        Task.Run(async () => await host.DisposeAsync())
+            .GetAwaiter()
+            .GetResult();
     }
 
     private AndroidRuntimeServiceHost GetRuntimeHost() =>

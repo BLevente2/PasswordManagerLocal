@@ -92,6 +92,7 @@ public sealed class Phase10AndroidArchitectureGuardTests
         Assert.AreEqual("false", service.Attribute(android + "stopWithTask")?.Value);
         Assert.AreEqual("connectedDevice", service.Attribute(android + "foregroundServiceType")?.Value);
         Assert.AreEqual("false", receiver.Attribute(android + "exported")?.Value);
+        Assert.IsNull(receiver.Attribute(android + "directBootAware"));
         Assert.IsFalse(permissions.Contains("android.permission.FOREGROUND_SERVICE_DATA_SYNC"));
         CollectionAssert.Contains(actions, "android.intent.action.BOOT_COMPLETED");
         CollectionAssert.Contains(actions, "android.intent.action.MY_PACKAGE_REPLACED");
@@ -101,27 +102,42 @@ public sealed class Phase10AndroidArchitectureGuardTests
 
 
     [TestMethod]
-    public void UserUnlockedRestorationIsDynamicAndNonExported()
+    public void UserUnlockedRestorationUsesOnlyTheRunningServicePath()
     {
         var root = GetRepositoryRoot();
+        var manifestReceiver = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Background",
+            "AndroidBackgroundRestorationReceiver.cs"));
+        var unlockReceiver = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Background",
+            "AndroidDeferredUnlockReceiver.cs"));
         var service = File.ReadAllText(Path.Combine(
             root,
             "PasswordManagerLocal",
             "PasswordManagerLocal.Android",
             "Runtime",
             "PasswordManagerBackgroundService.cs"));
-        var manifest = File.ReadAllText(Path.Combine(
+
+        Assert.IsFalse(manifestReceiver.Contains("Intent.ActionUserUnlocked", StringComparison.Ordinal));
+        StringAssert.Contains(manifestReceiver, "AndroidBackgroundRestorationPolicy");
+        StringAssert.Contains(manifestReceiver, "IsUserUnlocked");
+        StringAssert.Contains(unlockReceiver, "Intent.ActionUserUnlocked");
+        StringAssert.Contains(service, "new AndroidDeferredUnlockReceiver(QueueBackgroundRestoration)");
+        StringAssert.Contains(service, "ReceiverFlags.NotExported");
+        Assert.IsFalse(unlockReceiver.Contains("StartForegroundService", StringComparison.Ordinal));
+        Assert.IsFalse(unlockReceiver.Contains("BackgroundSyncSettingsStore", StringComparison.Ordinal));
+        Assert.IsFalse(File.Exists(Path.Combine(
             root,
             "PasswordManagerLocal",
             "PasswordManagerLocal.Android",
-            "Properties",
-            "AndroidManifest.xml"));
-
-        StringAssert.Contains(service, "Intent.ActionUserUnlocked");
-        StringAssert.Contains(service, "ReceiverFlags.NotExported");
-        StringAssert.Contains(service, "RegisterReceiver");
-        StringAssert.Contains(service, "UnregisterReceiver");
-        Assert.IsFalse(manifest.Contains("android.intent.action.USER_UNLOCKED", StringComparison.Ordinal));
+            "Background",
+            "AndroidUserUnlockedReceiver.cs")));
     }
 
     [TestMethod]
@@ -140,6 +156,26 @@ public sealed class Phase10AndroidArchitectureGuardTests
     }
 
     [TestMethod]
+    public void UnsafeServiceProcessCannotReenterForegroundOnRestartCommand()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Runtime",
+            "PasswordManagerBackgroundService.cs"));
+
+        var startMethod = source.IndexOf("OnStartCommand", StringComparison.Ordinal);
+        var unsafeCheck = source.IndexOf("runtimeSnapshot.IsRuntimeUnsafe", startMethod, StringComparison.Ordinal);
+        var enterForeground = source.IndexOf("EnterForeground(", startMethod, StringComparison.Ordinal);
+        Assert.IsTrue(startMethod >= 0);
+        Assert.IsTrue(unsafeCheck > startMethod);
+        Assert.IsTrue(enterForeground > unsafeCheck);
+        StringAssert.Contains(source, "RequestProcessTermination");
+        StringAssert.Contains(source, "StartCommandResult.NotSticky");
+    }
+
+    [TestMethod]
     public void NotificationTextAndIntentContainNoSensitiveRuntimeData()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -153,6 +189,7 @@ public sealed class Phase10AndroidArchitectureGuardTests
         StringAssert.Contains(source, "Background synchronization is waiting for device unlock");
         StringAssert.Contains(source, "typeof(MainActivity)");
         StringAssert.Contains(source, "PendingIntentFlags.Immutable");
+        StringAssert.Contains(source, "Resource.Drawable.ic_stat_password_manager");
         StringAssert.Contains(source, "GetNotificationChannel");
         StringAssert.Contains(source, "CreateNotificationChannel");
         Assert.IsFalse(source.Contains("username", StringComparison.OrdinalIgnoreCase));
@@ -200,6 +237,83 @@ public sealed class Phase10AndroidArchitectureGuardTests
             source.Contains("new InProcessFrontendBackendClient", StringComparison.Ordinal)));
         Assert.IsFalse(androidSources.Any(source =>
             source.Contains("StoreBackgroundSyncSettingsClient", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void ActivityBackgroundMutationsCarryCurrentAttachmentAuthority()
+    {
+        var root = GetRepositoryRoot();
+        var settingsClient = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Runtime",
+            "AndroidServiceBackgroundSyncSettingsClient.cs"));
+        var service = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Runtime",
+            "PasswordManagerBackgroundService.cs"));
+        var host = File.ReadAllText(Path.Combine(
+            root,
+            "PasswordManagerLocal.Android.Runtime",
+            "AndroidRuntimeServiceHost.cs"));
+
+        StringAssert.Contains(settingsClient, "_backendClient");
+        StringAssert.Contains(settingsClient, "_service.SetBackgroundEnabledAsync(");
+        StringAssert.Contains(settingsClient, "_backendClient,");
+        StringAssert.Contains(service, "SetBackgroundEnabledFromAttachmentAsync");
+        StringAssert.Contains(host, "IsCurrentActiveAttachment(client)");
+        StringAssert.Contains(host, "AttachmentGeneration == Interlocked.Read(ref _attachmentGeneration)");
+        StringAssert.Contains(host, "CreateAttachmentAuthorityRejectedState");
+        var mutationMethod = host.IndexOf("SetBackgroundEnabledCoreAsync", StringComparison.Ordinal);
+        var authorityCheck = host.IndexOf(
+            "!IsCurrentActiveAttachment(client)",
+            mutationMethod,
+            StringComparison.Ordinal);
+        var settingsRead = host.IndexOf(
+            "await LoadSettingsLockedAsync(cancellationToken);",
+            mutationMethod,
+            StringComparison.Ordinal);
+        Assert.IsTrue(mutationMethod >= 0);
+        Assert.IsTrue(authorityCheck >= mutationMethod);
+        Assert.IsTrue(settingsRead > authorityCheck);
+    }
+
+    [TestMethod]
+    public void UnsafeInteractiveCleanupClosesBackgroundAndProcessAdmission()
+    {
+        var host = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal.Android.Runtime",
+            "AndroidRuntimeServiceHost.cs"));
+        var client = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal.Android.Runtime",
+            "AndroidServiceFrontendBackendClient.cs"));
+        var handle = File.ReadAllText(Path.Combine(
+            GetRepositoryRoot(),
+            "PasswordManagerLocal",
+            "PasswordManagerLocal.Android",
+            "Runtime",
+            "AndroidActivityServiceAttachmentHandle.cs"));
+
+        StringAssert.Contains(client, "AndroidInteractiveCleanupOutcome.RuntimeUnsafe");
+        StringAssert.Contains(host, "FailClosedUnsafeRuntimeLockedAsync");
+        StringAssert.Contains(host, "ReleaseBackgroundLeaseLockedAsync");
+        StringAssert.Contains(host, "DisposeCompositionLockedAsync");
+        StringAssert.Contains(host, "RequestProcessTermination");
+        StringAssert.Contains(host, "RequiresProcessRestart = true");
+        var restoreMethod = host.IndexOf("RestoreBackgroundStateAsync", StringComparison.Ordinal);
+        var unsafeCheck = host.IndexOf("if (_runtimeUnsafe)", restoreMethod, StringComparison.Ordinal);
+        var unsafeReturn = host.IndexOf("return _backgroundState;", unsafeCheck, StringComparison.Ordinal);
+        var disposedCheck = host.IndexOf("ThrowIfDisposed();", restoreMethod, StringComparison.Ordinal);
+        Assert.IsTrue(restoreMethod >= 0);
+        Assert.IsTrue(unsafeCheck >= restoreMethod);
+        Assert.IsTrue(unsafeReturn > unsafeCheck);
+        Assert.IsTrue(disposedCheck > unsafeReturn);
+        StringAssert.Contains(handle, "catch");
     }
 
     private static string GetRepositoryRoot([CallerFilePath] string sourcePath = "") =>

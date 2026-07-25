@@ -40,6 +40,10 @@ public sealed class FakeBackendRuntime : IBackendRuntime
     public Exception? StopFailure { get; set; }
     public Action? AfterStart { get; set; }
     public Action? BeforeReset { get; set; }
+    public TaskCompletionSource? InteractiveSessionDisposeEntered { get; set; }
+    public Task? InteractiveSessionDisposeRelease { get; set; }
+    public TaskCompletionSource? ResetEntered { get; set; }
+    public Task? ResetRelease { get; set; }
 
     public event EventHandler<BackendRuntimeStateChangedEventArgs>? StateChanged;
     public event EventHandler<SyncRuntimeStateChangedEventArgs>? SyncStateChanged;
@@ -91,10 +95,14 @@ public sealed class FakeBackendRuntime : IBackendRuntime
             DateTimeOffset.UtcNow);
         return new FakeInteractiveBackendSession(
             _endpoints,
-            () =>
+            async () =>
             {
                 _interactiveSessionActive = false;
                 ClosedInteractiveSessionCalls++;
+                InteractiveSessionDisposeEntered?.TrySetResult();
+                if (InteractiveSessionDisposeRelease is not null)
+                    await InteractiveSessionDisposeRelease;
+
                 InteractiveSessionSnapshot = InteractiveSessionDisposeFailure is null
                     ? new InteractiveSessionLifecycleSnapshot(
                         InteractiveSessionLifecycleState.None,
@@ -104,15 +112,20 @@ public sealed class FakeBackendRuntime : IBackendRuntime
                         InteractiveSessionLifecycleState.CleanupFailed,
                         InteractiveSessionDisposeFailure,
                         DateTimeOffset.UtcNow);
-            },
-            () => InteractiveSessionDisposeFailure);
+
+                if (InteractiveSessionDisposeFailure is not null)
+                    throw InteractiveSessionDisposeFailure;
+            });
     }
 
-    public Task ResetDatabaseAndRestartAsync(CancellationToken cancellationToken = default)
+    public async Task ResetDatabaseAndRestartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ResetCalls++;
         BeforeReset?.Invoke();
+        ResetEntered?.TrySetResult();
+        if (ResetRelease is not null)
+            await ResetRelease.WaitAsync(cancellationToken);
         if (ResetFailure is not null)
             throw ResetFailure;
         SetSnapshot(new BackendRuntimeSnapshot(
@@ -124,7 +137,6 @@ public sealed class FakeBackendRuntime : IBackendRuntime
             InteractiveSessionLifecycleState.None,
             null,
             DateTimeOffset.UtcNow);
-        return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken = default)

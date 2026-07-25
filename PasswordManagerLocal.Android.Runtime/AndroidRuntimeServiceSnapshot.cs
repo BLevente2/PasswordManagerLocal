@@ -8,4 +8,10 @@ public sealed record AndroidRuntimeServiceSnapshot(
     bool HasBackgroundLease,
     bool IsForeground,
     bool IsDisposed,
-    BackendLifetimeReason ActiveReasons);
+    bool IsRuntimeUnsafe,
+    bool AcceptsInteractiveAttachments,
+    BackendLifetimeReason ActiveReasons,
+    AndroidServiceStartPhase ServiceStartPhase,
+    bool IsRuntimeReady,
+    bool RequiresUserAction,
+    AndroidNotificationAvailability NotificationAvailability);

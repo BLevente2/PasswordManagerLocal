@@ -1,6 +1,7 @@
 using Android.App;
 using Android.Content;
 using Android.OS;
+using PasswordManagerLocal.Android.Runtime;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Hosting;
 
@@ -17,23 +18,31 @@ namespace PasswordManagerLocal.Android;
 })]
 public sealed class AndroidBackgroundRestorationReceiver : BroadcastReceiver
 {
+    private readonly AndroidBackgroundRestorationPolicy _policy = new();
+
     public override void OnReceive(Context? context, Intent? intent)
     {
-        if (context is null || !IsSupportedAction(intent?.Action))
+        var trigger = GetTrigger(intent?.Action);
+        if (context is null || trigger == AndroidBackgroundRestorationTrigger.Unsupported)
             return;
 
         var pendingResult = GoAsync();
-        _ = RestoreAsync(context.ApplicationContext ?? context, pendingResult);
+        _ = RestoreAsync(context.ApplicationContext ?? context, trigger, pendingResult);
     }
 
-    private static async Task RestoreAsync(
+    private async Task RestoreAsync(
         Context context,
+        AndroidBackgroundRestorationTrigger trigger,
         BroadcastReceiver.PendingResult pendingResult)
     {
         try
         {
             var userManager = context.GetSystemService(Context.UserService) as UserManager;
-            if (userManager?.IsUserUnlocked == false)
+            var initialDecision = _policy.Decide(
+                trigger,
+                userManager?.IsUserUnlocked == true,
+                isBackgroundEnabled: null);
+            if (!initialDecision.ShouldReadPersistedSetting)
                 return;
 
             var filesDirectory = context.FilesDir?.AbsolutePath;
@@ -43,8 +52,13 @@ public sealed class AndroidBackgroundRestorationReceiver : BroadcastReceiver
             var store = new FileBackgroundSyncSettingsStore(Path.Combine(
                 filesDirectory,
                 ApplicationFileNames.AppFolderName));
-            var settings = await store.ReadAsync();
-            if (!settings.IsEnabled)
+            using var timeoutSource = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            var settings = await store.ReadAsync(timeoutSource.Token);
+            var finalDecision = _policy.Decide(
+                trigger,
+                isUserUnlocked: true,
+                settings.IsEnabled);
+            if (!finalDecision.ShouldRequestServiceStart)
                 return;
 
             var serviceIntent = new Intent(context, typeof(PasswordManagerBackgroundService));
@@ -59,6 +73,10 @@ public sealed class AndroidBackgroundRestorationReceiver : BroadcastReceiver
         }
     }
 
-    private static bool IsSupportedAction(string? action) =>
-        action is Intent.ActionBootCompleted or Intent.ActionMyPackageReplaced;
+    private AndroidBackgroundRestorationTrigger GetTrigger(string? action) => action switch
+    {
+        Intent.ActionBootCompleted => AndroidBackgroundRestorationTrigger.BootCompleted,
+        Intent.ActionMyPackageReplaced => AndroidBackgroundRestorationTrigger.PackageReplaced,
+        _ => AndroidBackgroundRestorationTrigger.Unsupported
+    };
 }

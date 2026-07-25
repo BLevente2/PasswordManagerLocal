@@ -10,21 +10,33 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
     private readonly IBackendRuntime _runtime;
     private readonly IBackendRuntimeLifetimeCoordinator _lifetimeCoordinator;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+    private readonly TaskCompletionSource _disposeCompletion = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
     private IBackendRuntimeLease? _interactiveLease;
     private IInteractiveBackendSession? _interactiveSession;
-    private bool _disposed;
+    private int _attachmentState = (int)AndroidInteractiveAttachmentState.Initializing;
 
     internal AndroidServiceFrontendBackendClient(
         AndroidRuntimeServiceHost owner,
         IBackendRuntime runtime,
-        IBackendRuntimeLifetimeCoordinator lifetimeCoordinator)
+        IBackendRuntimeLifetimeCoordinator lifetimeCoordinator,
+        long attachmentGeneration)
     {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _lifetimeCoordinator = lifetimeCoordinator
             ?? throw new ArgumentNullException(nameof(lifetimeCoordinator));
+        AttachmentGeneration = attachmentGeneration;
         _runtime.StateChanged += HandleRuntimeStateChanged;
     }
+
+    internal long AttachmentGeneration { get; }
+
+    internal AndroidInteractiveAttachmentState AttachmentState =>
+        (AndroidInteractiveAttachmentState)Volatile.Read(ref _attachmentState);
+
+    internal bool HasMutationAuthority =>
+        AttachmentState == AndroidInteractiveAttachmentState.Active;
 
     public BackendRuntimeSnapshot Snapshot
     {
@@ -45,7 +57,7 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfUnavailable();
             if (_interactiveSession is null)
                 throw new InvalidOperationException("The Android interactive service attachment is not connected.");
 
@@ -65,10 +77,12 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfUnavailable();
+            _owner.EnsureEndpointAuthority(this);
             cancellationToken.ThrowIfCancellationRequested();
-            return _interactiveSession?.Endpoints
+            var endpoints = _interactiveSession?.Endpoints
                 ?? throw new InvalidOperationException("The Android interactive service attachment is not connected.");
+            return new AndroidAttachmentAuthorizedEndpoints(_owner, this, endpoints);
         }
         finally
         {
@@ -78,41 +92,106 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        if (TryBeginClosing())
+        {
+            await _owner.DetachInteractiveClientAsync(this);
+            return;
+        }
+
+        if (AttachmentState == AndroidInteractiveAttachmentState.Disposed)
             return;
 
-        await _owner.DetachInteractiveClientAsync(this);
+        await _disposeCompletion.Task;
     }
 
-    internal async Task OpenFromHostAsync(CancellationToken cancellationToken)
+    internal void ActivateFromHost()
+    {
+        var previous = Interlocked.CompareExchange(
+            ref _attachmentState,
+            (int)AndroidInteractiveAttachmentState.Active,
+            (int)AndroidInteractiveAttachmentState.Initializing);
+        if (previous == (int)AndroidInteractiveAttachmentState.Active)
+            return;
+        if (previous != (int)AndroidInteractiveAttachmentState.Initializing)
+            throw new InvalidOperationException("The Android interactive attachment can no longer become active.");
+    }
+
+    internal void BeginClosingFromHost() => TryBeginClosing();
+
+    internal void SuspendAuthorityForResetFromHost()
+    {
+        var previous = Interlocked.CompareExchange(
+            ref _attachmentState,
+            (int)AndroidInteractiveAttachmentState.Resetting,
+            (int)AndroidInteractiveAttachmentState.Active);
+        if (previous != (int)AndroidInteractiveAttachmentState.Active)
+            throw new InvalidOperationException("The Android interactive attachment cannot enter database reset.");
+    }
+
+    internal void ResumeAuthorityAfterResetFromHost()
+    {
+        var previous = Interlocked.CompareExchange(
+            ref _attachmentState,
+            (int)AndroidInteractiveAttachmentState.Active,
+            (int)AndroidInteractiveAttachmentState.Resetting);
+        if (previous is (int)AndroidInteractiveAttachmentState.Active or
+            (int)AndroidInteractiveAttachmentState.Closing or
+            (int)AndroidInteractiveAttachmentState.Disposed)
+        {
+            return;
+        }
+
+        if (previous != (int)AndroidInteractiveAttachmentState.Resetting)
+            throw new InvalidOperationException("The Android interactive attachment cannot leave database reset.");
+    }
+
+    internal async Task<AndroidInteractiveOpenResult> OpenFromHostAsync(
+        CancellationToken cancellationToken)
     {
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfUnavailable();
             if (_interactiveSession is not null)
-                return;
+                return new AndroidInteractiveOpenResult(true, true, null);
 
-            var lease = await _lifetimeCoordinator.AcquireAsync(
-                BackendLifetimeReason.InteractiveUi,
-                cancellationToken);
+            IBackendRuntimeLease lease;
+            try
+            {
+                lease = await _lifetimeCoordinator.AcquireAsync(
+                    BackendLifetimeReason.InteractiveUi,
+                    cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                return new AndroidInteractiveOpenResult(false, true, exception);
+            }
+
             try
             {
                 var session = await _runtime.OpenInteractiveSessionAsync(cancellationToken);
                 _interactiveLease = lease;
                 _interactiveSession = session;
+                return new AndroidInteractiveOpenResult(true, true, null);
             }
             catch (Exception connectionException)
             {
                 Exception failure = connectionException;
+                var runtimeSafe = true;
                 if (_runtime.InteractiveSessionSnapshot.RequiresRecovery)
                 {
                     try
                     {
                         await _lifetimeCoordinator.RecoverRuntimeAsync(CancellationToken.None);
+                        if (_runtime.InteractiveSessionSnapshot.RequiresRecovery)
+                        {
+                            throw new InvalidOperationException(
+                                "The Android runtime remained unsafe after interactive recovery.");
+                        }
                     }
                     catch (Exception recoveryException)
                     {
+                        runtimeSafe = false;
                         failure = new AggregateException(failure, recoveryException);
                     }
                 }
@@ -123,10 +202,11 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
                 }
                 catch (Exception cleanupException)
                 {
+                    runtimeSafe = false;
                     failure = new AggregateException(failure, cleanupException);
                 }
 
-                throw failure;
+                return new AndroidInteractiveOpenResult(false, runtimeSafe, failure);
             }
         }
         finally
@@ -135,16 +215,19 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
         }
     }
 
-    internal async Task CloseFromHostAsync()
+    internal async Task<AndroidInteractiveCleanupResult> CloseFromHostAsync()
     {
         await _lifecycleLock.WaitAsync(CancellationToken.None);
-        Exception? failure = null;
         try
         {
             var session = _interactiveSession;
             var lease = _interactiveLease;
             _interactiveSession = null;
             _interactiveLease = null;
+
+            Exception? cleanupFailure = null;
+            Exception? recoveryFailure = null;
+            Exception? leaseFailure = null;
 
             if (session is not null)
             {
@@ -154,17 +237,19 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
                 }
                 catch (Exception exception)
                 {
-                    failure = exception;
-                    if (_runtime.InteractiveSessionSnapshot.RequiresRecovery)
+                    cleanupFailure = exception;
+                    try
                     {
-                        try
+                        await _lifetimeCoordinator.RecoverRuntimeAsync(CancellationToken.None);
+                        if (_runtime.InteractiveSessionSnapshot.RequiresRecovery)
                         {
-                            await _lifetimeCoordinator.RecoverRuntimeAsync(CancellationToken.None);
+                            throw new InvalidOperationException(
+                                "The Android runtime remained unsafe after interactive recovery.");
                         }
-                        catch (Exception recoveryException)
-                        {
-                            failure = new AggregateException(failure, recoveryException);
-                        }
+                    }
+                    catch (Exception exceptionDuringRecovery)
+                    {
+                        recoveryFailure = exceptionDuringRecovery;
                     }
                 }
             }
@@ -177,19 +262,33 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
                 }
                 catch (Exception exception)
                 {
-                    failure = failure is null
-                        ? exception
-                        : new AggregateException(failure, exception);
+                    leaseFailure = exception;
                 }
             }
+
+            var failure = CombineFailures(cleanupFailure, recoveryFailure, leaseFailure);
+            if (recoveryFailure is not null || leaseFailure is not null)
+            {
+                return new AndroidInteractiveCleanupResult(
+                    AndroidInteractiveCleanupOutcome.RuntimeUnsafe,
+                    failure);
+            }
+
+            if (cleanupFailure is not null)
+            {
+                return new AndroidInteractiveCleanupResult(
+                    AndroidInteractiveCleanupOutcome.Recovered,
+                    cleanupFailure);
+            }
+
+            return new AndroidInteractiveCleanupResult(
+                AndroidInteractiveCleanupOutcome.Succeeded,
+                null);
         }
         finally
         {
             _lifecycleLock.Release();
         }
-
-        if (failure is not null)
-            throw failure;
     }
 
     internal async Task AdoptResetConnectionFromHostAsync(
@@ -202,7 +301,8 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
         await _lifecycleLock.WaitAsync(CancellationToken.None);
         try
         {
-            ThrowIfDisposed();
+            if (AttachmentState != AndroidInteractiveAttachmentState.Resetting)
+                throw new InvalidOperationException("The Android interactive attachment is not completing a database reset.");
             if (_interactiveLease is not null || _interactiveSession is not null)
                 throw new InvalidOperationException("The Android interactive connection is already active.");
 
@@ -217,20 +317,46 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
 
     internal void CompleteDisposalFromHost()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(
+                ref _attachmentState,
+                (int)AndroidInteractiveAttachmentState.Disposed) ==
+            (int)AndroidInteractiveAttachmentState.Disposed)
+        {
             return;
+        }
 
-        _disposed = true;
         _runtime.StateChanged -= HandleRuntimeStateChanged;
         StateChanged = null;
+        _disposeCompletion.TrySetResult();
         GC.SuppressFinalize(this);
+    }
+
+    private bool TryBeginClosing()
+    {
+        while (true)
+        {
+            var state = AttachmentState;
+            if (state is AndroidInteractiveAttachmentState.Closing or
+                AndroidInteractiveAttachmentState.Disposed)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(
+                    ref _attachmentState,
+                    (int)AndroidInteractiveAttachmentState.Closing,
+                    (int)state) == (int)state)
+            {
+                return true;
+            }
+        }
     }
 
     private void HandleRuntimeStateChanged(
         object? sender,
         BackendRuntimeStateChangedEventArgs args)
     {
-        if (_disposed)
+        if (AttachmentState == AndroidInteractiveAttachmentState.Disposed)
             return;
 
         var handlers = StateChanged;
@@ -249,9 +375,32 @@ public sealed class AndroidServiceFrontendBackendClient : IFrontendBackendClient
         }
     }
 
+    private void ThrowIfUnavailable()
+    {
+        var state = AttachmentState;
+        if (state == AndroidInteractiveAttachmentState.Resetting)
+            throw new InvalidOperationException("The Android interactive attachment is temporarily unavailable during database reset.");
+        if (state is AndroidInteractiveAttachmentState.Closing or
+            AndroidInteractiveAttachmentState.Disposed)
+        {
+            throw new ObjectDisposedException(nameof(AndroidServiceFrontendBackendClient));
+        }
+    }
+
     private void ThrowIfDisposed()
     {
-        if (_disposed)
+        if (AttachmentState == AndroidInteractiveAttachmentState.Disposed)
             throw new ObjectDisposedException(nameof(AndroidServiceFrontendBackendClient));
+    }
+
+    private Exception? CombineFailures(params Exception?[] failures)
+    {
+        var present = failures.Where(static failure => failure is not null).Cast<Exception>().ToArray();
+        return present.Length switch
+        {
+            0 => null,
+            1 => present[0],
+            _ => new AggregateException(present)
+        };
     }
 }

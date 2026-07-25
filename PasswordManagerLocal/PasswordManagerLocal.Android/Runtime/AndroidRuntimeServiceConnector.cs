@@ -24,21 +24,21 @@ public sealed class AndroidRuntimeServiceConnector
 
         try
         {
-            PasswordManagerBackgroundService service;
             try
             {
-                service = await connection.WaitForServiceAsync(timeoutSource.Token);
+                var service = await connection.WaitForServiceAsync(timeoutSource.Token);
+                var backendClient = await service.AttachInteractiveClientAsync(timeoutSource.Token);
+                return new AndroidActivityServiceAttachment(
+                    bindingContext,
+                    connection,
+                    service,
+                    backendClient);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new TimeoutException("The Android runtime service did not bind in time.");
+                throw new TimeoutException(
+                    "The Android runtime service did not finish activity attachment in time.");
             }
-            var backendClient = await service.AttachInteractiveClientAsync(cancellationToken);
-            return new AndroidActivityServiceAttachment(
-                bindingContext,
-                connection,
-                service,
-                backendClient);
         }
         catch
         {

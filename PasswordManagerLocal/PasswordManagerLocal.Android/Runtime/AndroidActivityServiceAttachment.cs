@@ -24,6 +24,7 @@ public sealed class AndroidActivityServiceAttachment : IAsyncDisposable
         BackendClient = backendClient ?? throw new ArgumentNullException(nameof(backendClient));
         BackgroundSyncSettingsClient = new AndroidServiceBackgroundSyncSettingsClient(
             service,
+            backendClient,
             () => Volatile.Read(ref _disposed) != 0);
     }
 

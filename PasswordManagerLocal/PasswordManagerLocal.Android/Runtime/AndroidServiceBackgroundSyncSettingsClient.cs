@@ -6,13 +6,16 @@ namespace PasswordManagerLocal.Android;
 public sealed class AndroidServiceBackgroundSyncSettingsClient : IBackgroundSyncSettingsClient
 {
     private readonly PasswordManagerBackgroundService _service;
+    private readonly AndroidServiceFrontendBackendClient _backendClient;
     private readonly Func<bool> _isAttachmentDisposed;
 
     public AndroidServiceBackgroundSyncSettingsClient(
         PasswordManagerBackgroundService service,
+        AndroidServiceFrontendBackendClient backendClient,
         Func<bool> isAttachmentDisposed)
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
+        _backendClient = backendClient ?? throw new ArgumentNullException(nameof(backendClient));
         _isAttachmentDisposed = isAttachmentDisposed
             ?? throw new ArgumentNullException(nameof(isAttachmentDisposed));
     }
@@ -21,7 +24,7 @@ public sealed class AndroidServiceBackgroundSyncSettingsClient : IBackgroundSync
         CancellationToken cancellationToken = default)
     {
         ThrowIfDetached();
-        return Map(await _service.GetBackgroundStateAsync(cancellationToken));
+        return Map(await _service.GetBackgroundStateAsync(_backendClient, cancellationToken));
     }
 
     public async Task<BackgroundSyncChangeResult> SetEnabledAsync(
@@ -29,7 +32,10 @@ public sealed class AndroidServiceBackgroundSyncSettingsClient : IBackgroundSync
         CancellationToken cancellationToken = default)
     {
         ThrowIfDetached();
-        var state = await _service.SetBackgroundEnabledAsync(isEnabled, cancellationToken);
+        var state = await _service.SetBackgroundEnabledAsync(
+            _backendClient,
+            isEnabled,
+            cancellationToken);
         return new BackgroundSyncChangeResult(
             Map(state),
             WasOutcomeUncertain: state.FailureKind == AndroidBackgroundSyncFailureKind.Rollback);
@@ -61,6 +67,8 @@ public sealed class AndroidServiceBackgroundSyncSettingsClient : IBackgroundSync
         AndroidBackgroundSyncFailureKind.SecureStorageDeferred => BackgroundSyncClientFailureKind.Runtime,
         AndroidBackgroundSyncFailureKind.Rollback => BackgroundSyncClientFailureKind.Rollback,
         AndroidBackgroundSyncFailureKind.Shutdown => BackgroundSyncClientFailureKind.Runtime,
+        AndroidBackgroundSyncFailureKind.AttachmentAuthority => BackgroundSyncClientFailureKind.Unavailable,
+        AndroidBackgroundSyncFailureKind.RuntimeUnsafe => BackgroundSyncClientFailureKind.Runtime,
         _ => BackgroundSyncClientFailureKind.Unavailable
     };
 }

@@ -2,6 +2,7 @@ namespace PasswordManagerLocal.Android.Runtime;
 
 public enum AndroidForegroundNotificationState
 {
-    BackgroundSynchronizationActive = 0,
-    WaitingForDeviceUnlock = 1
+    BackgroundSynchronizationStarting = 0,
+    BackgroundSynchronizationActive = 1,
+    WaitingForDeviceUnlock = 2
 }

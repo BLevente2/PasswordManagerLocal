@@ -10,5 +10,7 @@ public enum AndroidBackgroundSyncFailureKind
     RuntimeLease = 5,
     SecureStorageDeferred = 6,
     Rollback = 7,
-    Shutdown = 8
+    Shutdown = 8,
+    AttachmentAuthority = 9,
+    RuntimeUnsafe = 10
 }

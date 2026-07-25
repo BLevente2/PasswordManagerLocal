@@ -20,7 +20,7 @@ public sealed class AndroidSecureStorageAvailability : IAndroidSecureStorageAvai
         get
         {
             var userManager = _applicationContext.GetSystemService(Context.UserService) as UserManager;
-            return userManager?.IsUserUnlocked ?? true;
+            return userManager?.IsUserUnlocked == true;
         }
     }
 }

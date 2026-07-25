@@ -2,9 +2,9 @@ namespace PasswordManagerLocal.Android.Runtime;
 
 public interface IAndroidForegroundServiceController
 {
-    bool AreNotificationsEnabled { get; }
     void EnsureServiceStarted();
-    void EnterForeground(AndroidForegroundNotificationState state);
+    AndroidForegroundEntryResult EnterForeground(AndroidForegroundNotificationState state);
     void ExitForeground();
     void RequestStop();
+    void RequestProcessTermination();
 }

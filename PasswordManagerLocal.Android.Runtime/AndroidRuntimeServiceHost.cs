@@ -15,7 +15,10 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
     private AndroidServiceFrontendBackendClient? _interactiveClient;
     private AndroidBackgroundSyncServiceState _backgroundState;
     private bool _settingsLoaded;
-    private bool _disposed;
+    private long _attachmentGeneration;
+    private volatile bool _runtimeUnsafe;
+    private volatile bool _disposed;
+    private AndroidNotificationAvailability _notificationAvailability = AndroidNotificationAvailability.Unknown;
 
     public AndroidRuntimeServiceHost(
         IAndroidRuntimeCompositionFactory compositionFactory,
@@ -44,21 +47,66 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 _backgroundLease is not null,
                 _backgroundState.IsForegroundActive,
                 _disposed,
-                composition?.LifetimeCoordinator.ActiveReasons ?? BackendLifetimeReason.None);
+                _runtimeUnsafe,
+                !_disposed && !_runtimeUnsafe,
+                composition?.LifetimeCoordinator.ActiveReasons ?? BackendLifetimeReason.None,
+                _backgroundState.ServiceStartPhase,
+                IsRuntimeReady: composition is not null &&
+                    (composition.LifetimeCoordinator.ActiveReasons &
+                        (BackendLifetimeReason.InteractiveUi | BackendLifetimeReason.BackgroundSync)) != 0,
+                _backgroundState.RequiresUserAction,
+                _backgroundState.NotificationAvailability);
         }
     }
 
-    public async Task RestoreBackgroundStateAsync(CancellationToken cancellationToken = default)
+    public async Task<AndroidBackgroundSyncServiceState> RestoreBackgroundStateAsync(CancellationToken cancellationToken = default)
     {
         await _transitionLock.WaitAsync(cancellationToken);
         try
         {
+            if (_runtimeUnsafe)
+                return _backgroundState;
+
             ThrowIfDisposed();
+            if (!_secureStorageAvailability.IsAvailable)
+            {
+                await EnterDeferredUntilUnlockLockedAsync();
+                return _backgroundState;
+            }
+
             await LoadSettingsLockedAsync(cancellationToken);
+            if (_backgroundState.FailureKind == AndroidBackgroundSyncFailureKind.SettingRead)
+            {
+                var settingReadFailure = _backgroundState;
+                try
+                {
+                    await DisableBackgroundRuntimeLockedAsync(requestServiceStop: true);
+                    _backgroundState = settingReadFailure with
+                    {
+                        IsBackgroundLeaseActive = false,
+                        IsForegroundActive = false,
+                        ServiceStartPhase = AndroidServiceStartPhase.RuntimeStartupFailed,
+                        IsRuntimeReady = false,
+                        NotificationAvailability = AndroidNotificationAvailability.Unknown
+                    };
+                }
+                catch
+                {
+                    _backgroundState = CreateFailureState(
+                        false,
+                        AndroidBackgroundSyncFailureKind.Shutdown,
+                        "Background synchronization settings are unavailable and cleanup did not complete cleanly.",
+                        AndroidServiceStartPhase.RuntimeStartupFailed);
+                }
+
+                return _backgroundState;
+            }
+
             if (!_backgroundState.IsEnabled)
             {
                 await DisableBackgroundRuntimeLockedAsync(requestServiceStop: true);
-                return;
+                _backgroundState = CreateOperationalState(false);
+                return _backgroundState;
             }
 
             try
@@ -71,6 +119,7 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             }
             catch
             {
+                var startupFailureState = _backgroundState;
                 var cleanupFailed = false;
                 try
                 {
@@ -81,15 +130,32 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                     cleanupFailed = true;
                 }
 
-                _backgroundState = CreateFailureState(
-                    true,
-                    cleanupFailed
-                        ? AndroidBackgroundSyncFailureKind.Shutdown
-                        : AndroidBackgroundSyncFailureKind.RuntimeLease,
-                    cleanupFailed
-                        ? "Background synchronization restoration failed and cleanup did not complete cleanly."
-                        : "Background synchronization could not be restored.");
+                if (startupFailureState.FailureKind == AndroidBackgroundSyncFailureKind.ForegroundService)
+                {
+                    _notificationAvailability = startupFailureState.NotificationAvailability;
+                    _backgroundState = startupFailureState with
+                    {
+                        IsEnabled = true,
+                        IsBackgroundLeaseActive = false,
+                        IsForegroundActive = false,
+                        IsRuntimeReady = false
+                    };
+                }
+                else
+                {
+                    _backgroundState = CreateFailureState(
+                        true,
+                        cleanupFailed
+                            ? AndroidBackgroundSyncFailureKind.Shutdown
+                            : AndroidBackgroundSyncFailureKind.RuntimeLease,
+                        cleanupFailed
+                            ? "Background synchronization restoration failed and cleanup did not complete cleanly."
+                            : "Background synchronization could not be restored.",
+                        AndroidServiceStartPhase.RuntimeStartupFailed);
+                }
             }
+
+            return _backgroundState;
         }
         finally
         {
@@ -103,24 +169,25 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         await _transitionLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfUnavailable();
+            if (!_secureStorageAvailability.IsAvailable)
+                throw new InvalidOperationException(
+                    "The Android runtime is unavailable until the device is unlocked.");
+
             await LoadSettingsLockedAsync(cancellationToken);
+
+            var reservedGeneration = ReserveNextAttachmentGenerationLocked();
             var previousClient = _interactiveClient;
+            _interactiveClient = null;
             if (previousClient is not null)
             {
-                _interactiveClient = null;
-                try
+                previousClient.BeginClosingFromHost();
+                var cleanup = await previousClient.CloseFromHostAsync();
+                previousClient.CompleteDisposalFromHost();
+                if (!cleanup.IsRuntimeSafe)
                 {
-                    await previousClient.CloseFromHostAsync();
-                }
-                catch
-                {
-                    await DisposeCompositionWhenUnownedLockedAsync();
-                    throw;
-                }
-                finally
-                {
-                    previousClient.CompleteDisposalFromHost();
+                    await FailClosedUnsafeRuntimeLockedAsync(cleanup.Failure);
+                    throw CreateUnsafeRuntimeException(cleanup.Failure);
                 }
             }
 
@@ -132,11 +199,26 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 }
                 catch when (!cancellationToken.IsCancellationRequested)
                 {
+                    var startupFailureState = _backgroundState;
                     _foregroundServiceController.ExitForeground();
-                    _backgroundState = CreateFailureState(
-                        true,
-                        AndroidBackgroundSyncFailureKind.RuntimeLease,
-                        "Background synchronization could not be restored.");
+                    if (startupFailureState.FailureKind == AndroidBackgroundSyncFailureKind.ForegroundService)
+                    {
+                        _notificationAvailability = startupFailureState.NotificationAvailability;
+                        _backgroundState = startupFailureState with
+                        {
+                            IsEnabled = true,
+                            IsBackgroundLeaseActive = false,
+                            IsForegroundActive = false,
+                            IsRuntimeReady = false
+                        };
+                    }
+                    else
+                    {
+                        _backgroundState = CreateFailureState(
+                            true,
+                            AndroidBackgroundSyncFailureKind.RuntimeLease,
+                            "Background synchronization could not be restored.");
+                    }
                 }
             }
 
@@ -144,24 +226,47 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             var client = new AndroidServiceFrontendBackendClient(
                 this,
                 composition.Runtime,
-                composition.LifetimeCoordinator);
+                composition.LifetimeCoordinator,
+                reservedGeneration);
             _interactiveClient = client;
 
+            AndroidInteractiveOpenResult openResult;
             try
             {
-                await client.OpenFromHostAsync(cancellationToken);
+                openResult = await client.OpenFromHostAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 _interactiveClient = null;
+                ReserveNextAttachmentGenerationLocked();
+                client.BeginClosingFromHost();
                 client.CompleteDisposalFromHost();
                 await DisposeCompositionWhenUnownedLockedAsync();
                 throw;
             }
-            catch
+
+            if (!openResult.IsRuntimeSafe)
             {
+                _interactiveClient = null;
+                ReserveNextAttachmentGenerationLocked();
+                client.BeginClosingFromHost();
+                client.CompleteDisposalFromHost();
+                await FailClosedUnsafeRuntimeLockedAsync(openResult.Failure);
+                throw CreateUnsafeRuntimeException(openResult.Failure);
             }
 
+            if (!openResult.IsConnected)
+            {
+                _interactiveClient = null;
+                ReserveNextAttachmentGenerationLocked();
+                client.BeginClosingFromHost();
+                client.CompleteDisposalFromHost();
+                await DisposeCompositionWhenUnownedLockedAsync();
+                throw openResult.Failure
+                    ?? new InvalidOperationException("The Android interactive attachment could not be opened.");
+            }
+
+            client.ActivateFromHost();
             return client;
         }
         finally
@@ -178,9 +283,21 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         await _transitionLock.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
+            ThrowIfUnavailable();
             EnsureCurrentInteractiveClient(client);
-            await client.OpenFromHostAsync(cancellationToken);
+            var result = await client.OpenFromHostAsync(cancellationToken);
+            if (!result.IsRuntimeSafe)
+            {
+                _interactiveClient = null;
+                ReserveNextAttachmentGenerationLocked();
+                client.BeginClosingFromHost();
+                client.CompleteDisposalFromHost();
+                await FailClosedUnsafeRuntimeLockedAsync(result.Failure);
+                throw CreateUnsafeRuntimeException(result.Failure);
+            }
+
+            if (result.Failure is not null)
+                throw result.Failure;
         }
         finally
         {
@@ -195,41 +312,40 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         Exception? failure = null;
         try
         {
-            if (!ReferenceEquals(_interactiveClient, client))
+            if (!IsCurrentInteractiveClient(client))
             {
                 client.CompleteDisposalFromHost();
                 return;
             }
 
             _interactiveClient = null;
-            try
-            {
-                await client.CloseFromHostAsync();
-            }
-            catch (Exception exception)
-            {
-                failure = exception;
-            }
-            finally
-            {
-                client.CompleteDisposalFromHost();
-            }
+            ReserveNextAttachmentGenerationLocked();
+            client.BeginClosingFromHost();
+            var cleanup = await client.CloseFromHostAsync();
+            client.CompleteDisposalFromHost();
 
-            try
+            if (!cleanup.IsRuntimeSafe)
             {
-                await DisposeCompositionWhenUnownedLockedAsync();
-                if (_composition is null && _backgroundLease is null)
-                    _foregroundServiceController.RequestStop();
+                await FailClosedUnsafeRuntimeLockedAsync(cleanup.Failure);
+                failure = cleanup.Failure ?? CreateUnsafeRuntimeException(null);
             }
-            catch (Exception exception)
+            else
             {
-                failure = failure is null
-                    ? exception
-                    : new AggregateException(failure, exception);
+                try
+                {
+                    await DisposeCompositionWhenUnownedLockedAsync();
+                    if (_composition is null && _backgroundLease is null)
+                        _foregroundServiceController.RequestStop();
+                }
+                catch (Exception exception)
+                {
+                    failure = exception;
+                }
             }
         }
         finally
         {
+            client.CompleteDisposalFromHost();
             _transitionLock.Release();
         }
 
@@ -237,13 +353,16 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             throw failure;
     }
 
-    public async Task<AndroidBackgroundSyncServiceState> GetBackgroundStateAsync(
+    internal async Task<AndroidBackgroundSyncServiceState> GetBackgroundStateAsync(
         CancellationToken cancellationToken = default)
     {
         await _transitionLock.WaitAsync(cancellationToken);
         try
         {
             ThrowIfDisposed();
+            if (!_secureStorageAvailability.IsAvailable)
+                return _backgroundState;
+
             await LoadSettingsLockedAsync(cancellationToken);
             return _backgroundState;
         }
@@ -253,14 +372,61 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         }
     }
 
-    public async Task<AndroidBackgroundSyncServiceState> SetBackgroundEnabledAsync(
+    public async Task<AndroidBackgroundSyncServiceState> GetBackgroundStateFromAttachmentAsync(
+        AndroidServiceFrontendBackendClient client,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        await _transitionLock.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            if (_runtimeUnsafe)
+                return _backgroundState;
+            if (!IsCurrentActiveAttachment(client))
+                return CreateAttachmentAuthorityRejectedState();
+            if (!_secureStorageAvailability.IsAvailable)
+                return _backgroundState;
+
+            await LoadSettingsLockedAsync(cancellationToken);
+            return _backgroundState;
+        }
+        finally
+        {
+            _transitionLock.Release();
+        }
+    }
+
+    internal Task<AndroidBackgroundSyncServiceState> SetBackgroundEnabledFromServiceAsync(
+        bool isEnabled,
+        CancellationToken cancellationToken = default) =>
+        SetBackgroundEnabledCoreAsync(null, isEnabled, cancellationToken);
+
+    public Task<AndroidBackgroundSyncServiceState> SetBackgroundEnabledFromAttachmentAsync(
+        AndroidServiceFrontendBackendClient client,
         bool isEnabled,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        return SetBackgroundEnabledCoreAsync(client, isEnabled, cancellationToken);
+    }
+
+    private async Task<AndroidBackgroundSyncServiceState> SetBackgroundEnabledCoreAsync(
+        AndroidServiceFrontendBackendClient? client,
+        bool isEnabled,
+        CancellationToken cancellationToken)
     {
         await _transitionLock.WaitAsync(cancellationToken);
         try
         {
             ThrowIfDisposed();
+            if (_runtimeUnsafe)
+                return _backgroundState;
+            if (client is not null && !IsCurrentActiveAttachment(client))
+                return CreateAttachmentAuthorityRejectedState();
+            if (!_secureStorageAvailability.IsAvailable)
+                return CreateSecureStorageUnavailableState();
+
             await LoadSettingsLockedAsync(cancellationToken);
             _backgroundState = _backgroundState with { IsTransitionInProgress = true };
 
@@ -285,11 +451,18 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         {
             ThrowIfDisposed();
             EnsureCurrentInteractiveClient(client);
+            client.SuspendAuthorityForResetFromHost();
             var composition = _composition
                 ?? throw new InvalidOperationException("The Android runtime composition is unavailable.");
             var restoreBackground = _backgroundState.IsEnabled;
 
-            await client.CloseFromHostAsync();
+            var cleanup = await client.CloseFromHostAsync();
+            if (!cleanup.IsRuntimeSafe)
+            {
+                await FailClosedUnsafeRuntimeLockedAsync(cleanup.Failure);
+                throw CreateUnsafeRuntimeException(cleanup.Failure);
+            }
+
             await ReleaseBackgroundLeaseLockedAsync();
 
             IBackendRuntimeLease? interactiveLease = null;
@@ -305,7 +478,7 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 interactiveSession = null;
 
                 if (restoreBackground)
-                    await AcquireBackgroundLeaseLockedAsync(cancellationToken);
+                    await EnsureBackgroundRuntimeLockedAsync(cancellationToken);
             }
             catch
             {
@@ -316,11 +489,27 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
 
                 if (restoreBackground && _backgroundLease is null)
                 {
+                    var restorationFailureState = _backgroundState;
                     _foregroundServiceController.ExitForeground();
-                    _backgroundState = CreateFailureState(
-                        true,
-                        AndroidBackgroundSyncFailureKind.RuntimeLease,
-                        "Background synchronization could not be restored after database reset.");
+                    if (restorationFailureState.FailureKind ==
+                        AndroidBackgroundSyncFailureKind.ForegroundService)
+                    {
+                        _notificationAvailability = restorationFailureState.NotificationAvailability;
+                        _backgroundState = restorationFailureState with
+                        {
+                            IsEnabled = true,
+                            IsBackgroundLeaseActive = false,
+                            IsForegroundActive = false,
+                            IsRuntimeReady = false
+                        };
+                    }
+                    else
+                    {
+                        _backgroundState = CreateFailureState(
+                            true,
+                            AndroidBackgroundSyncFailureKind.RuntimeLease,
+                            "Background synchronization could not be restored after database reset.");
+                    }
                 }
 
                 throw;
@@ -328,6 +517,8 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         }
         finally
         {
+            if (!_runtimeUnsafe && IsCurrentInteractiveClient(client))
+                client.ResumeAuthorityAfterResetFromHost();
             _transitionLock.Release();
         }
     }
@@ -342,45 +533,23 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 return;
 
             _disposed = true;
+            ReserveNextAttachmentGenerationLocked();
             var client = _interactiveClient;
             _interactiveClient = null;
             if (client is not null)
             {
-                try
+                client.BeginClosingFromHost();
+                var cleanup = await client.CloseFromHostAsync();
+                client.CompleteDisposalFromHost();
+                if (!cleanup.IsRuntimeSafe)
                 {
-                    await client.CloseFromHostAsync();
-                }
-                catch (Exception exception)
-                {
-                    failure = exception;
-                }
-                finally
-                {
-                    client.CompleteDisposalFromHost();
+                    await FailClosedUnsafeRuntimeLockedAsync(cleanup.Failure);
+                    failure = cleanup.Failure;
                 }
             }
 
-            try
-            {
-                await ReleaseBackgroundLeaseLockedAsync();
-            }
-            catch (Exception exception)
-            {
-                failure = failure is null
-                    ? exception
-                    : new AggregateException(failure, exception);
-            }
-
-            try
-            {
-                await DisposeCompositionLockedAsync();
-            }
-            catch (Exception exception)
-            {
-                failure = failure is null
-                    ? exception
-                    : new AggregateException(failure, exception);
-            }
+            failure = await CaptureFailureAsync(ReleaseBackgroundLeaseLockedAsync, failure);
+            failure = await CaptureFailureAsync(DisposeCompositionLockedAsync, failure);
 
             try
             {
@@ -389,20 +558,31 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                failure = failure is null
-                    ? exception
-                    : new AggregateException(failure, exception);
+                failure = CombineFailures(failure, exception);
             }
 
             _backgroundState = _backgroundState with
             {
                 IsBackgroundLeaseActive = false,
                 IsForegroundActive = false,
-                IsDegraded = failure is not null,
-                FailureKind = failure is null
-                    ? AndroidBackgroundSyncFailureKind.None
-                    : AndroidBackgroundSyncFailureKind.Shutdown,
-                SafeMessage = failure is null ? null : "Android runtime shutdown did not complete cleanly."
+                IsDegraded = _runtimeUnsafe || failure is not null,
+                FailureKind = _runtimeUnsafe
+                    ? AndroidBackgroundSyncFailureKind.RuntimeUnsafe
+                    : failure is null
+                        ? AndroidBackgroundSyncFailureKind.None
+                        : AndroidBackgroundSyncFailureKind.Shutdown,
+                SafeMessage = _runtimeUnsafe
+                    ? "Background synchronization stopped because the Android runtime could not be cleaned up safely."
+                    : failure is null
+                        ? null
+                        : "Android runtime shutdown did not complete cleanly.",
+                RequiresProcessRestart = _runtimeUnsafe,
+                ServiceStartPhase = _runtimeUnsafe
+                    ? AndroidServiceStartPhase.RuntimeUnsafe
+                    : AndroidServiceStartPhase.Stopped,
+                IsRuntimeReady = false,
+                RequiresUserAction = _runtimeUnsafe,
+                NotificationAvailability = AndroidNotificationAvailability.Unknown
             };
         }
         finally
@@ -457,6 +637,7 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         }
         catch
         {
+            var startupFailureState = _backgroundState;
             var rollbackUncertain = false;
             try
             {
@@ -482,14 +663,31 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 cleanupFailed = true;
             }
 
-            _backgroundState = CreateFailureState(
-                _backgroundState.IsEnabled,
-                rollbackUncertain || cleanupFailed
-                    ? AndroidBackgroundSyncFailureKind.Rollback
-                    : AndroidBackgroundSyncFailureKind.RuntimeLease,
-                rollbackUncertain || cleanupFailed
-                    ? "Background synchronization state is uncertain."
-                    : "Background synchronization could not be started.");
+            if (startupFailureState.FailureKind == AndroidBackgroundSyncFailureKind.ForegroundService &&
+                !rollbackUncertain &&
+                !cleanupFailed)
+            {
+                _notificationAvailability = startupFailureState.NotificationAvailability;
+                _backgroundState = startupFailureState with
+                {
+                    IsEnabled = false,
+                    IsBackgroundLeaseActive = false,
+                    IsForegroundActive = false,
+                    IsRuntimeReady = false
+                };
+            }
+            else
+            {
+                _backgroundState = CreateFailureState(
+                    _backgroundState.IsEnabled,
+                    rollbackUncertain || cleanupFailed
+                        ? AndroidBackgroundSyncFailureKind.Rollback
+                        : AndroidBackgroundSyncFailureKind.RuntimeLease,
+                    rollbackUncertain || cleanupFailed
+                        ? "Background synchronization state is uncertain."
+                        : "Background synchronization could not be started.");
+            }
+
             return _backgroundState;
         }
     }
@@ -541,26 +739,49 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
 
     private async Task EnsureBackgroundRuntimeLockedAsync(CancellationToken cancellationToken)
     {
+        ThrowIfUnavailable();
         if (!_secureStorageAvailability.IsAvailable)
         {
-            _backgroundState = new AndroidBackgroundSyncServiceState(
-                IsEnabled: true,
-                IsAvailable: true,
-                IsDegraded: true,
-                IsTransitionInProgress: false,
-                AndroidBackgroundSyncFailureKind.SecureStorageDeferred,
-                "Background synchronization is waiting for device unlock.",
-                IsBackgroundLeaseActive: false,
-                IsForegroundActive: false,
-                IsSecureStorageDeferred: true);
-            _foregroundServiceController.ExitForeground();
-            _foregroundServiceController.RequestStop();
+            await EnterDeferredUntilUnlockLockedAsync();
             return;
         }
 
+        if (_backgroundLease is not null && _backgroundState.IsForegroundActive)
+        {
+            _backgroundState = CreateOperationalState(true);
+            return;
+        }
+
+        _backgroundState = _backgroundState with
+        {
+            ServiceStartPhase = AndroidServiceStartPhase.ServiceRequested,
+            IsRuntimeReady = false,
+            RequiresUserAction = false
+        };
         _foregroundServiceController.EnsureServiceStarted();
-        _foregroundServiceController.EnterForeground(
+        var foregroundResult = _foregroundServiceController.EnterForeground(
             AndroidForegroundNotificationState.BackgroundSynchronizationActive);
+        _notificationAvailability = foregroundResult.NotificationAvailability;
+        if (!foregroundResult.IsForegroundEntered)
+        {
+            _backgroundState = CreateFailureState(
+                true,
+                AndroidBackgroundSyncFailureKind.ForegroundService,
+                foregroundResult.SafeMessage ?? "Android rejected the foreground-service start.",
+                foregroundResult.ServiceStartPhase,
+                foregroundResult.RequiresUserAction);
+            throw new InvalidOperationException(
+                "The Android foreground service could not be entered.");
+        }
+
+        _backgroundState = _backgroundState with
+        {
+            IsForegroundActive = true,
+            ServiceStartPhase = foregroundResult.ServiceStartPhase,
+            RequiresUserAction = foregroundResult.RequiresUserAction,
+            NotificationAvailability = foregroundResult.NotificationAvailability
+        };
+
         var composition = EnsureCompositionLocked();
         if (_backgroundLease is null)
         {
@@ -569,16 +790,45 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 cancellationToken);
         }
 
-        _backgroundState = CreateOperationalState(true) with
+        _backgroundState = CreateOperationalState(true);
+    }
+
+    private Task EnterDeferredUntilUnlockLockedAsync()
+    {
+        _foregroundServiceController.EnsureServiceStarted();
+        var foregroundResult = _foregroundServiceController.EnterForeground(
+            AndroidForegroundNotificationState.WaitingForDeviceUnlock);
+        _notificationAvailability = foregroundResult.NotificationAvailability;
+        if (!foregroundResult.IsForegroundEntered)
         {
-            IsDegraded = !_foregroundServiceController.AreNotificationsEnabled,
-            FailureKind = _foregroundServiceController.AreNotificationsEnabled
-                ? AndroidBackgroundSyncFailureKind.None
-                : AndroidBackgroundSyncFailureKind.ForegroundService,
-            SafeMessage = _foregroundServiceController.AreNotificationsEnabled
-                ? null
-                : "Background synchronization is active, but notifications are disabled."
-        };
+            _backgroundState = CreateFailureState(
+                isEnabled: true,
+                AndroidBackgroundSyncFailureKind.ForegroundService,
+                foregroundResult.SafeMessage ?? "Android could not enter foreground mode while waiting for device unlock.",
+                foregroundResult.ServiceStartPhase,
+                foregroundResult.RequiresUserAction);
+            throw new InvalidOperationException(
+                "The Android foreground service could not wait for device unlock.");
+        }
+
+        _backgroundState = new AndroidBackgroundSyncServiceState(
+            IsEnabled: true,
+            IsAvailable: true,
+            IsDegraded: foregroundResult.RequiresUserAction,
+            IsTransitionInProgress: false,
+            FailureKind: AndroidBackgroundSyncFailureKind.SecureStorageDeferred,
+            SafeMessage: foregroundResult.RequiresUserAction
+                ? "Background synchronization is waiting for device unlock, but its notification is unavailable."
+                : "Background synchronization is waiting for device unlock.",
+            IsBackgroundLeaseActive: false,
+            IsForegroundActive: true,
+            IsSecureStorageDeferred: true,
+            RequiresProcessRestart: false,
+            ServiceStartPhase: AndroidServiceStartPhase.DeferredUntilUnlock,
+            IsRuntimeReady: false,
+            RequiresUserAction: foregroundResult.RequiresUserAction,
+            NotificationAvailability: foregroundResult.NotificationAvailability);
+        return Task.CompletedTask;
     }
 
     private async Task DisableBackgroundRuntimeLockedAsync(bool requestServiceStop)
@@ -604,11 +854,16 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
                 : new AggregateException(failure, exception);
         }
 
+        _notificationAvailability = AndroidNotificationAvailability.Unknown;
         _backgroundState = _backgroundState with
         {
             IsBackgroundLeaseActive = false,
             IsForegroundActive = false,
-            IsSecureStorageDeferred = false
+            IsSecureStorageDeferred = false,
+            ServiceStartPhase = AndroidServiceStartPhase.Stopped,
+            IsRuntimeReady = false,
+            RequiresUserAction = false,
+            NotificationAvailability = AndroidNotificationAvailability.Unknown
         };
 
         try
@@ -663,6 +918,7 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
 
     private BackendRuntimeComposition EnsureCompositionLocked()
     {
+        ThrowIfUnavailable();
         if (_composition is not null)
             return _composition;
 
@@ -711,9 +967,13 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             _settingsLoaded = true;
             _backgroundState = CreateOperationalState(settings.IsEnabled);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
-            _settingsLoaded = true;
+            _settingsLoaded = false;
             _backgroundState = CreateFailureState(
                 false,
                 AndroidBackgroundSyncFailureKind.SettingRead,
@@ -721,10 +981,149 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         }
     }
 
+    internal void EnsureEndpointAuthority(AndroidServiceFrontendBackendClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        if (!IsCurrentActiveAttachment(client))
+            throw new InvalidOperationException("The Android interactive service attachment is no longer authoritative.");
+    }
+
     private void EnsureCurrentInteractiveClient(AndroidServiceFrontendBackendClient client)
     {
-        if (!ReferenceEquals(_interactiveClient, client))
+        if (!IsCurrentActiveAttachment(client))
             throw new InvalidOperationException("The Android interactive service attachment is no longer active.");
+    }
+
+    private bool IsCurrentInteractiveClient(AndroidServiceFrontendBackendClient client) =>
+        ReferenceEquals(Volatile.Read(ref _interactiveClient), client) &&
+        client.AttachmentGeneration == Interlocked.Read(ref _attachmentGeneration);
+
+    private bool IsCurrentActiveAttachment(AndroidServiceFrontendBackendClient client) =>
+        !_runtimeUnsafe &&
+        IsCurrentInteractiveClient(client) &&
+        client.HasMutationAuthority;
+
+    private long ReserveNextAttachmentGenerationLocked() => ++_attachmentGeneration;
+
+    private async Task FailClosedUnsafeRuntimeLockedAsync(Exception? failure)
+    {
+        if (_runtimeUnsafe)
+            return;
+
+        _runtimeUnsafe = true;
+        ReserveNextAttachmentGenerationLocked();
+        var client = _interactiveClient;
+        _interactiveClient = null;
+        client?.BeginClosingFromHost();
+
+        Exception? shutdownFailure = failure;
+        shutdownFailure = await CaptureFailureAsync(ReleaseBackgroundLeaseLockedAsync, shutdownFailure);
+        shutdownFailure = await CaptureFailureAsync(DisposeCompositionLockedAsync, shutdownFailure);
+        client?.CompleteDisposalFromHost();
+
+        try
+        {
+            _foregroundServiceController.ExitForeground();
+        }
+        catch (Exception exception)
+        {
+            shutdownFailure = CombineFailures(shutdownFailure, exception);
+        }
+
+        try
+        {
+            _foregroundServiceController.RequestStop();
+        }
+        catch (Exception exception)
+        {
+            shutdownFailure = CombineFailures(shutdownFailure, exception);
+        }
+
+        _backgroundState = _backgroundState with
+        {
+            IsAvailable = false,
+            IsDegraded = true,
+            IsTransitionInProgress = false,
+            FailureKind = AndroidBackgroundSyncFailureKind.RuntimeUnsafe,
+            SafeMessage = "Background synchronization stopped because the Android runtime could not be cleaned up safely.",
+            IsBackgroundLeaseActive = false,
+            IsForegroundActive = false,
+            IsSecureStorageDeferred = false,
+            RequiresProcessRestart = true,
+            ServiceStartPhase = AndroidServiceStartPhase.RuntimeUnsafe,
+            IsRuntimeReady = false,
+            RequiresUserAction = true,
+            NotificationAvailability = AndroidNotificationAvailability.Unknown
+        };
+
+        try
+        {
+            _foregroundServiceController.RequestProcessTermination();
+        }
+        catch
+        {
+        }
+    }
+
+    private AndroidBackgroundSyncServiceState CreateSecureStorageUnavailableState() =>
+        _backgroundState with
+        {
+            IsAvailable = false,
+            IsDegraded = true,
+            IsTransitionInProgress = false,
+            FailureKind = AndroidBackgroundSyncFailureKind.SecureStorageDeferred,
+            SafeMessage = "Background synchronization settings are unavailable until the device is unlocked.",
+            IsSecureStorageDeferred = true,
+            ServiceStartPhase = AndroidServiceStartPhase.DeferredUntilUnlock,
+            IsRuntimeReady = false,
+            RequiresUserAction = false
+        };
+
+    private AndroidBackgroundSyncServiceState CreateAttachmentAuthorityRejectedState() =>
+        _backgroundState with
+        {
+            IsAvailable = false,
+            IsDegraded = true,
+            IsTransitionInProgress = false,
+            FailureKind = AndroidBackgroundSyncFailureKind.AttachmentAuthority,
+            SafeMessage = "This activity is no longer connected to the Android runtime service.",
+            RequiresUserAction = false
+        };
+
+    private InvalidOperationException CreateUnsafeRuntimeException(Exception? failure) =>
+        new(
+            "The Android runtime cannot continue safely in this process.",
+            failure);
+
+    private async Task<Exception?> CaptureFailureAsync(
+        Func<Task> operation,
+        Exception? existingFailure)
+    {
+        try
+        {
+            await operation();
+            return existingFailure;
+        }
+        catch (Exception exception)
+        {
+            return CombineFailures(existingFailure, exception);
+        }
+    }
+
+    private Exception? CombineFailures(Exception? first, Exception? second)
+    {
+        if (first is null)
+            return second;
+        if (second is null)
+            return first;
+        return new AggregateException(first, second);
+    }
+
+    private void ThrowIfUnavailable()
+    {
+        ThrowIfDisposed();
+        if (_runtimeUnsafe)
+            throw CreateUnsafeRuntimeException(null);
     }
 
     private void ThrowIfDisposed()
@@ -733,21 +1132,42 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             throw new ObjectDisposedException(nameof(AndroidRuntimeServiceHost));
     }
 
-    private AndroidBackgroundSyncServiceState CreateOperationalState(bool isEnabled) => new(
-        isEnabled,
-        IsAvailable: true,
-        IsDegraded: false,
-        IsTransitionInProgress: false,
-        AndroidBackgroundSyncFailureKind.None,
-        SafeMessage: null,
-        IsBackgroundLeaseActive: isEnabled && _backgroundLease is not null,
-        IsForegroundActive: isEnabled && _backgroundLease is not null,
-        IsSecureStorageDeferred: false);
+    private AndroidBackgroundSyncServiceState CreateOperationalState(bool isEnabled)
+    {
+        var hasActiveBackgroundRuntime = isEnabled && _backgroundLease is not null;
+        var notificationsAvailable =
+            _notificationAvailability == AndroidNotificationAvailability.Available;
+        return new AndroidBackgroundSyncServiceState(
+            isEnabled,
+            IsAvailable: true,
+            IsDegraded: hasActiveBackgroundRuntime && !notificationsAvailable,
+            IsTransitionInProgress: false,
+            hasActiveBackgroundRuntime && !notificationsAvailable
+                ? AndroidBackgroundSyncFailureKind.ForegroundService
+                : AndroidBackgroundSyncFailureKind.None,
+            hasActiveBackgroundRuntime && !notificationsAvailable
+                ? "Background synchronization is running, but its notification is unavailable."
+                : null,
+            IsBackgroundLeaseActive: hasActiveBackgroundRuntime,
+            IsForegroundActive: hasActiveBackgroundRuntime,
+            IsSecureStorageDeferred: false,
+            RequiresProcessRestart: false,
+            hasActiveBackgroundRuntime
+                ? notificationsAvailable
+                    ? AndroidServiceStartPhase.RuntimeReady
+                    : AndroidServiceStartPhase.NotificationUnavailable
+                : AndroidServiceStartPhase.Stopped,
+            IsRuntimeReady: hasActiveBackgroundRuntime,
+            RequiresUserAction: hasActiveBackgroundRuntime && !notificationsAvailable,
+            _notificationAvailability);
+    }
 
     private AndroidBackgroundSyncServiceState CreateFailureState(
         bool isEnabled,
         AndroidBackgroundSyncFailureKind failureKind,
-        string safeMessage) => new(
+        string safeMessage,
+        AndroidServiceStartPhase serviceStartPhase = AndroidServiceStartPhase.RuntimeStartupFailed,
+        bool requiresUserAction = false) => new(
             isEnabled,
             IsAvailable: true,
             IsDegraded: true,
@@ -756,7 +1176,12 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
             safeMessage,
             IsBackgroundLeaseActive: false,
             IsForegroundActive: false,
-            IsSecureStorageDeferred: false);
+            IsSecureStorageDeferred: false,
+            RequiresProcessRestart: false,
+            serviceStartPhase,
+            IsRuntimeReady: false,
+            requiresUserAction,
+            _notificationAvailability);
 
     private AndroidBackgroundSyncServiceState CreateInitialState() => new(
         IsEnabled: false,
@@ -767,5 +1192,10 @@ public sealed class AndroidRuntimeServiceHost : IAsyncDisposable
         SafeMessage: null,
         IsBackgroundLeaseActive: false,
         IsForegroundActive: false,
-        IsSecureStorageDeferred: false);
+        IsSecureStorageDeferred: false,
+        RequiresProcessRestart: false,
+        AndroidServiceStartPhase.Stopped,
+        IsRuntimeReady: false,
+        RequiresUserAction: false,
+        AndroidNotificationAvailability.Unknown);
 }

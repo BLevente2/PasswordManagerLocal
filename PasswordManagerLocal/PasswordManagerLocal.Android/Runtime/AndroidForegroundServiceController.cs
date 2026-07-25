@@ -15,19 +15,11 @@ public sealed class AndroidForegroundServiceController : IAndroidForegroundServi
     private readonly object _gate = new();
     private bool _isForeground;
     private bool _isServiceStarted;
+    private AndroidForegroundNotificationState? _foregroundNotificationState;
 
     public AndroidForegroundServiceController(PasswordManagerBackgroundService service)
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
-    }
-
-    public bool AreNotificationsEnabled
-    {
-        get
-        {
-            var manager = _service.GetSystemService(Context.NotificationService) as NotificationManager;
-            return manager is not null && manager.AreNotificationsEnabled();
-        }
     }
 
     public void EnsureServiceStarted()
@@ -49,26 +41,100 @@ public sealed class AndroidForegroundServiceController : IAndroidForegroundServi
             _isServiceStarted = true;
     }
 
-    public void EnterForeground(AndroidForegroundNotificationState state)
+    public AndroidForegroundEntryResult EnterForeground(AndroidForegroundNotificationState state)
     {
         lock (_gate)
         {
-            EnsureNotificationChannel();
-            var notification = BuildNotification(state);
-
-            if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
+            var manager = _service.GetSystemService(Context.NotificationService) as NotificationManager;
+            if (manager is null)
             {
-                _service.StartForeground(
-                    NotificationId,
-                    notification,
-                    ForegroundService.TypeConnectedDevice);
-            }
-            else
-            {
-                _service.StartForeground(NotificationId, notification);
+                return new AndroidForegroundEntryResult(
+                    IsForegroundEntered: false,
+                    AndroidNotificationAvailability.Unknown,
+                    AndroidForegroundEntryFailureKind.NotificationManagerUnavailable,
+                    RequiresUserAction: false,
+                    "Android notification services are unavailable.");
             }
 
-            _isForeground = true;
+            NotificationChannel channel;
+            try
+            {
+                channel = EnsureNotificationChannel(manager);
+            }
+            catch
+            {
+                return new AndroidForegroundEntryResult(
+                    IsForegroundEntered: false,
+                    AndroidNotificationAvailability.Unknown,
+                    AndroidForegroundEntryFailureKind.NotificationChannelUnavailable,
+                    RequiresUserAction: true,
+                    "The background synchronization notification channel is unavailable.");
+            }
+
+            var notificationAvailability = GetNotificationAvailability(manager, channel);
+            if (_isForeground &&
+                (_foregroundNotificationState == state ||
+                    _foregroundNotificationState == AndroidForegroundNotificationState.BackgroundSynchronizationActive))
+            {
+                return new AndroidForegroundEntryResult(
+                    IsForegroundEntered: true,
+                    NotificationAvailability: notificationAvailability,
+                    FailureKind: AndroidForegroundEntryFailureKind.None,
+                    RequiresUserAction: notificationAvailability != AndroidNotificationAvailability.Available,
+                    SafeMessage: GetNotificationAvailabilityMessage(notificationAvailability));
+            }
+
+            Notification notification;
+            try
+            {
+                notification = BuildNotification(state);
+            }
+            catch
+            {
+                return new AndroidForegroundEntryResult(
+                    IsForegroundEntered: false,
+                    NotificationAvailability: notificationAvailability,
+                    FailureKind: AndroidForegroundEntryFailureKind.NotificationPostingFailed,
+                    RequiresUserAction: true,
+                    SafeMessage: "The background synchronization notification could not be created.");
+            }
+
+            var wasForeground = _isForeground;
+            var previousNotificationState = _foregroundNotificationState;
+            try
+            {
+                if (Build.VERSION.SdkInt >= BuildVersionCodes.Q)
+                {
+                    _service.StartForeground(
+                        NotificationId,
+                        notification,
+                        ForegroundService.TypeConnectedDevice);
+                }
+                else
+                {
+                    _service.StartForeground(NotificationId, notification);
+                }
+
+                _isForeground = true;
+                _foregroundNotificationState = state;
+                return new AndroidForegroundEntryResult(
+                    IsForegroundEntered: true,
+                    NotificationAvailability: notificationAvailability,
+                    FailureKind: AndroidForegroundEntryFailureKind.None,
+                    RequiresUserAction: notificationAvailability != AndroidNotificationAvailability.Available,
+                    SafeMessage: GetNotificationAvailabilityMessage(notificationAvailability));
+            }
+            catch
+            {
+                _isForeground = wasForeground;
+                _foregroundNotificationState = previousNotificationState;
+                return new AndroidForegroundEntryResult(
+                    IsForegroundEntered: false,
+                    NotificationAvailability: notificationAvailability,
+                    FailureKind: AndroidForegroundEntryFailureKind.ForegroundStartRejected,
+                    RequiresUserAction: true,
+                    SafeMessage: "Android rejected the background synchronization foreground service.");
+            }
         }
     }
 
@@ -81,6 +147,7 @@ public sealed class AndroidForegroundServiceController : IAndroidForegroundServi
 
             _service.StopForeground(StopForegroundFlags.Remove);
             _isForeground = false;
+            _foregroundNotificationState = null;
         }
     }
 
@@ -96,13 +163,16 @@ public sealed class AndroidForegroundServiceController : IAndroidForegroundServi
         }
     }
 
-    private void EnsureNotificationChannel()
+    public void RequestProcessTermination()
     {
-        var manager = _service.GetSystemService(Context.NotificationService) as NotificationManager
-            ?? throw new InvalidOperationException("The Android notification manager is unavailable.");
+        global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid());
+    }
+
+    private NotificationChannel EnsureNotificationChannel(NotificationManager manager)
+    {
         var existing = manager.GetNotificationChannel(NotificationChannelId);
         if (existing is not null)
-            return;
+            return existing;
 
         var channel = new NotificationChannel(
             NotificationChannelId,
@@ -113,6 +183,28 @@ public sealed class AndroidForegroundServiceController : IAndroidForegroundServi
         };
         channel.SetShowBadge(false);
         manager.CreateNotificationChannel(channel);
+        return manager.GetNotificationChannel(NotificationChannelId)
+            ?? throw new InvalidOperationException("The notification channel was not created.");
+    }
+
+    private AndroidNotificationAvailability GetNotificationAvailability(
+        NotificationManager manager,
+        NotificationChannel channel)
+    {
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu &&
+            _service.CheckSelfPermission(global::Android.Manifest.Permission.PostNotifications) !=
+                Permission.Granted)
+        {
+            return AndroidNotificationAvailability.PermissionDenied;
+        }
+
+        if (!manager.AreNotificationsEnabled())
+            return AndroidNotificationAvailability.ApplicationDisabled;
+
+        if (channel.Importance == NotificationImportance.None)
+            return AndroidNotificationAvailability.ChannelDisabled;
+
+        return AndroidNotificationAvailability.Available;
     }
 
     private Notification BuildNotification(AndroidForegroundNotificationState state)
@@ -126,15 +218,32 @@ public sealed class AndroidForegroundServiceController : IAndroidForegroundServi
             PendingIntentFlags.UpdateCurrent | PendingIntentFlags.Immutable);
 
         return new Notification.Builder(_service, NotificationChannelId)
-            .SetSmallIcon(Resource.Drawable.icon)
+            .SetSmallIcon(Resource.Drawable.ic_stat_password_manager)
             .SetContentTitle("Password Manager")
-            .SetContentText(state == AndroidForegroundNotificationState.WaitingForDeviceUnlock
-                ? "Background synchronization is waiting for device unlock"
-                : "Background synchronization is active")
+            .SetContentText(state switch
+            {
+                AndroidForegroundNotificationState.WaitingForDeviceUnlock =>
+                    "Background synchronization is waiting for device unlock",
+                AndroidForegroundNotificationState.BackgroundSynchronizationStarting =>
+                    "Preparing background synchronization",
+                _ => "Background synchronization is active"
+            })
             .SetContentIntent(pendingIntent)
             .SetCategory(Notification.CategoryService)
             .SetOngoing(true)
             .SetOnlyAlertOnce(true)
             .Build();
     }
+
+    private string? GetNotificationAvailabilityMessage(
+        AndroidNotificationAvailability availability) => availability switch
+    {
+        AndroidNotificationAvailability.PermissionDenied =>
+            "Background synchronization is running, but notification permission is denied.",
+        AndroidNotificationAvailability.ApplicationDisabled =>
+            "Background synchronization is running, but application notifications are disabled.",
+        AndroidNotificationAvailability.ChannelDisabled =>
+            "Background synchronization is running, but its notification channel is disabled.",
+        _ => null
+    };
 }

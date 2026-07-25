@@ -5,19 +5,16 @@ namespace PasswordManagerLocal.Test.Fakes;
 
 public sealed class FakeInteractiveBackendSession : IInteractiveBackendSession
 {
-    private readonly Action? _onDispose;
-    private readonly Func<Exception?>? _disposeFailure;
+    private readonly Func<Task>? _dispose;
     private IEndpoints? _endpoints;
     private Task? _disposeTask;
 
     public FakeInteractiveBackendSession(
         IEndpoints endpoints,
-        Action? onDispose = null,
-        Func<Exception?>? disposeFailure = null)
+        Func<Task>? dispose = null)
     {
         _endpoints = endpoints ?? throw new ArgumentNullException(nameof(endpoints));
-        _onDispose = onDispose;
-        _disposeFailure = disposeFailure;
+        _dispose = dispose;
     }
 
     public IEndpoints Endpoints => _endpoints
@@ -34,15 +31,13 @@ public sealed class FakeInteractiveBackendSession : IInteractiveBackendSession
         return new ValueTask(_disposeTask);
     }
 
-    private Task DisposeCoreAsync()
+    private async Task DisposeCoreAsync()
     {
         if (_endpoints is null)
-            return Task.CompletedTask;
+            return;
 
         _endpoints = null;
-        _onDispose?.Invoke();
-        return _disposeFailure?.Invoke() is { } failure
-            ? Task.FromException(failure)
-            : Task.CompletedTask;
+        if (_dispose is not null)
+            await _dispose();
     }
 }
