@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -14,8 +15,9 @@ using System.Security.Cryptography;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Utils;
 using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Sync.Presence;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -37,6 +39,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
     private readonly IDeviceEnrollmentSnapshotImporterService _snapshotImporter;
     private readonly IInteractiveUserDataStateAccessor _interactiveState;
     private readonly IDeviceEnrollmentAvailability _enrollmentAvailability;
+    private readonly IDevicePresenceRegistry? _presenceRegistry;
     private readonly object _lock = new();
     private EnrollmentSession? _currentSession;
     private CancellationTokenSource? _enrollmentExpirationCancellation;
@@ -57,7 +60,8 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
         IDeviceEnrollmentSnapshotTransferService snapshotTransferService,
         IDeviceEnrollmentSnapshotImporterService snapshotImporter,
         IInteractiveUserDataStateAccessor interactiveState,
-        IDeviceEnrollmentAvailability enrollmentAvailability)
+        IDeviceEnrollmentAvailability enrollmentAvailability,
+        IDevicePresenceRegistry? presenceRegistry = null)
     {
         _scopeFactory = scopeFactory;
         _identity = identity;
@@ -72,6 +76,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
         _interactiveState = interactiveState;
         _enrollmentAvailability = enrollmentAvailability
             ?? throw new ArgumentNullException(nameof(enrollmentAvailability));
+        _presenceRegistry = presenceRegistry;
     }
 
     public void OpenInteractiveAdmission()
@@ -262,22 +267,22 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
         var discoveryFailures = new List<string>();
         var attemptedEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        DeviceEnrollmentTrace.Info($"AddDeviceByCode started. Session={parsed.SessionId}, directEndpointCount={directEndpoints.Count}, authoritativeDirect={hasAuthoritativeSameSubnetDirectEndpoint}, directEndpointCandidates={string.Join(", ", directEndpointCandidates.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
+        BackendDebugLog.Info($"AddDeviceByCode started. Session={parsed.SessionId}, directEndpointCount={directEndpoints.Count}, authoritativeDirect={hasAuthoritativeSameSubnetDirectEndpoint}, directEndpointCandidates={string.Join(", ", directEndpointCandidates.Select(e => $"{e.Endpoint.Host}:{e.Endpoint.Port}/priority={e.Priority}"))}");
 
         foreach (var endpoint in directEndpoints)
         {
             try
             {
                 attemptedEndpoints.Add($"{endpoint.Host}:{endpoint.Port}");
-                DeviceEnrollmentTrace.Info($"Trying direct enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
+                BackendDebugLog.Info($"Trying direct enrollment endpoint {endpoint.Host}:{endpoint.Port}.");
                 await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, enrollmentOperation, operationToken, ct);
-                DeviceEnrollmentTrace.Info($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
+                BackendDebugLog.Info($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} completed successfully.");
                 return;
             }
             catch (DeviceEnrollmentException ex) when (ex.ErrorCode == DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
             {
                 directFailures.Add($"{endpoint.Host}:{endpoint.Port} -> {ex.Message}");
-                DeviceEnrollmentTrace.Error($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
+                BackendDebugLog.Error($"Direct enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
             }
         }
 
@@ -287,13 +292,13 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
                 ? "The same-subnet direct endpoint did not respond. Trying authenticated local discovery fallback because Wi-Fi/wired bridges can still expose another usable address."
                 : "The direct enrollment endpoints did not respond. Trying authenticated local discovery fallback.";
 
-            DeviceEnrollmentTrace.Info(reason);
+            BackendDebugLog.Info(reason);
         }
 
         IReadOnlyList<EnrollmentEndpoint> discoveryEndpoints;
         try
         {
-            DeviceEnrollmentTrace.Info("Trying authenticated local enrollment discovery fallback.");
+            BackendDebugLog.Info("Trying authenticated local enrollment discovery fallback.");
             discoveryEndpoints = await _localDiscovery.FindEnrollmentEndpointsAsync(parsed, operationToken);
         }
         catch (DeviceEnrollmentException ex) when (directFailures.Count > 0)
@@ -313,23 +318,23 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
 
             if (isAuthenticatedRediscoveryRetry)
             {
-                DeviceEnrollmentTrace.Info($"Retrying enrollment endpoint {endpointKey} because a fresh authenticated local discovery response confirmed that the same enrollment session is still active there.");
+                BackendDebugLog.Info($"Retrying enrollment endpoint {endpointKey} because a fresh authenticated local discovery response confirmed that the same enrollment session is still active there.");
                 await Task.Delay(TimeSpan.FromMilliseconds(250), operationToken);
             }
 
             try
             {
                 var attemptKind = isAuthenticatedRediscoveryRetry ? "authenticated-discovery-confirmed retry" : "authenticated local discovery endpoint";
-                DeviceEnrollmentTrace.Info($"Trying {attemptKind} {endpoint.Host}:{endpoint.Port}.");
+                BackendDebugLog.Info($"Trying {attemptKind} {endpoint.Host}:{endpoint.Port}.");
                 await CompleteEnrollmentWithEndpointAsync(token, parsed, endpoint, enrollmentOperation, operationToken, ct);
-                DeviceEnrollmentTrace.Info($"{attemptKind} {endpoint.Host}:{endpoint.Port} completed successfully.");
+                BackendDebugLog.Info($"{attemptKind} {endpoint.Host}:{endpoint.Port} completed successfully.");
                 return;
             }
             catch (DeviceEnrollmentException ex) when (ex.ErrorCode == DeviceEnrollmentErrorCode.NewDeviceConnectionFailed)
             {
                 var attemptKind = isAuthenticatedRediscoveryRetry ? "authenticated-discovery-confirmed retry" : "authenticated local discovery";
                 discoveryFailures.Add($"{endpoint.Host}:{endpoint.Port} ({attemptKind}) -> {ex.Message}");
-                DeviceEnrollmentTrace.Error($"{attemptKind} enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
+                BackendDebugLog.Error($"{attemptKind} enrollment endpoint {endpoint.Host}:{endpoint.Port} failed with a connection/transfer error: {ex.Message}", ex);
             }
         }
 
@@ -406,9 +411,9 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
         CancellationToken preCriticalToken,
         CancellationToken ct)
     {
-        DeviceEnrollmentTrace.Info($"Enrollment connection and identity check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
+        BackendDebugLog.Info($"Enrollment connection and identity check started for {endpoint.Host}:{endpoint.Port}. HasEmbeddedIdentity={endpoint.DeviceId != Guid.Empty}.");
         endpoint = await _endpointService.ResolveEndpointIdentityAsync(endpoint, parsed, preCriticalToken);
-        DeviceEnrollmentTrace.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, Origin={endpoint.OriginInstanceId}, TlsFingerprintPrefix={FingerprintUtil.Normalize(endpoint.TlsCertFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(endpoint.TlsCertFingerprint).Length)]}.");
+        BackendDebugLog.Info($"Enrollment identity resolved for {endpoint.Host}:{endpoint.Port}. DeviceId={endpoint.DeviceId}, Origin={endpoint.OriginInstanceId}, TlsFingerprintPrefix={FingerprintUtil.Normalize(endpoint.TlsCertFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(endpoint.TlsCertFingerprint).Length)]}.");
 
         Guid userId;
         PasswordManagerLocal.Backend.Security.EncryptionKey mergeKey;
@@ -601,12 +606,17 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
                 if (remoteDevice is not null)
                 {
                     syncIdentities.TryAdd(remoteDevice);
-                    _endpointRegistry.AddOrUpdate(new DiscoveredDeviceEndpoint
+                    var authenticatedEndpoint = new DiscoveredDeviceEndpoint
                     {
                         Host = endpoint.Host,
                         Port = endpoint.Port,
                         TlsCertFingerprint = endpoint.TlsCertFingerprint
-                    });
+                    };
+                    _endpointRegistry.AddOrUpdate(authenticatedEndpoint);
+                    _presenceRegistry?.RefreshAuthenticated(
+                        remoteDevice.TlsCertFingerprint,
+                        authenticatedEndpoint,
+                        DevicePresenceObservationSource.Enrollment);
                 }
                 try { await pendingSyncActivation.ActivatePendingAsync(CancellationToken.None); } catch { }
             }
@@ -918,7 +928,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
 
         if (!string.Equals(FingerprintUtil.Normalize(sourceTlsCertFingerprint), FingerprintUtil.Normalize(actualClientTlsCertFingerprint), StringComparison.OrdinalIgnoreCase))
         {
-            DeviceEnrollmentTrace.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={FingerprintUtil.Normalize(sourceTlsCertFingerprint)}, Actual={FingerprintUtil.Normalize(actualClientTlsCertFingerprint)}.");
+            BackendDebugLog.Error($"Incoming enrollment rejected because client TLS fingerprint did not match. Expected={FingerprintUtil.Normalize(sourceTlsCertFingerprint)}, Actual={FingerprintUtil.Normalize(actualClientTlsCertFingerprint)}.");
             return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.NewDeviceRejected, "The source device TLS certificate does not match the enrollment request.");
         }
 
@@ -969,7 +979,7 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            DeviceEnrollmentTrace.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
+            BackendDebugLog.Info($"Importing incoming enrollment snapshot. Users={snapshot.Users.Count}, Groups={snapshot.Groups.Count}, Devices={snapshot.Devices.Count}, UserDevices={snapshot.UserDevices.Count}.");
             // The importer performs stale-barrier and exact-idempotence checks. A partially imported
             // bootstrap must be retryable with the same immutable addition operation. Serialize the
             // bootstrap with deletion, merge, publication, and lifecycle operations for this user id.
@@ -980,16 +990,16 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
                 ct);
             await _syncRuntime.RefreshSyncEnabledAsync(ct);
             await _registrationService.RegisterIncomingEnrollmentSourceEndpointAsync(scope.ServiceProvider, sourceDeviceId, sourceTlsCertFingerprint, sourceHost, ct);
-            DeviceEnrollmentTrace.Info("Incoming enrollment snapshot import completed successfully.");
+            BackendDebugLog.Info("Incoming enrollment snapshot import completed successfully.");
         }
         catch (DeviceEnrollmentException ex)
         {
-            DeviceEnrollmentTrace.Error($"Incoming enrollment snapshot import rejected: {ex.Message}", ex);
+            BackendDebugLog.Error($"Incoming enrollment snapshot import rejected: {ex.Message}", ex);
             return await RejectIncomingValidationAsync(ex.ErrorCode, ex.Message);
         }
         catch (Exception ex)
         {
-            DeviceEnrollmentTrace.Error($"Incoming enrollment snapshot import failed: {ex.Message}", ex);
+            BackendDebugLog.Error($"Incoming enrollment snapshot import failed: {ex.Message}", ex);
             return await RejectIncomingValidationAsync(DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
 

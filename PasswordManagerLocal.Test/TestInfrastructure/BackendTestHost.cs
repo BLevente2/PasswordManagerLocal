@@ -3,6 +3,7 @@ using NSec.Cryptography;
 using PasswordManagerLocal.Backend;
 using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Security;
@@ -11,6 +12,7 @@ using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Sync.Presence;
 using PasswordManagerLocal.Backend.Internal.Devices;
 using PasswordManagerLocal.Test.Fakes;
 using System.Text;
@@ -71,6 +73,10 @@ public sealed class BackendTestHost : IDisposable
         sc.AddSingleton<ISyncRuntimeService, FakeSyncRuntimeService>();
         sc.AddSingleton<ISyncDeviceIdentityService, FakeSyncDeviceIdentityService>();
         sc.AddSingleton<IDiscoveredDeviceEndpointRegistry, DiscoveredDeviceEndpointRegistry>();
+        sc.AddSingleton(TimeProvider.System);
+        sc.AddSingleton<IDevicePresenceRegistry, DevicePresenceRegistry>();
+        sc.AddSingleton<FakeSyncTransportClientService>();
+        sc.AddSingleton<ISyncTransportClientService>(sp => sp.GetRequiredService<FakeSyncTransportClientService>());
         var executionProfileProvider = new FakeBackendExecutionProfileProvider();
         executionProfileProvider.SetProfile(
             new BackendExecutionProfile(
@@ -80,6 +86,7 @@ public sealed class BackendTestHost : IDisposable
             isInteractive: true);
         sc.AddSingleton<IBackendExecutionProfileProvider>(executionProfileProvider);
         sc.AddSingleton<IDeviceEnrollmentAvailability>(executionProfileProvider);
+        sc.AddSingleton<IDevicePresenceProbeService, DevicePresenceProbeService>();
         sc.AddSingleton<DeviceOnlineStatusEvaluator>();
         sc.AddSingleton<IUnitOfWork, FakeUnitOfWork>();
         sc.AddSingleton<IUserSyncSnapshotRepository, FakeUserSyncSnapshotRepository>();

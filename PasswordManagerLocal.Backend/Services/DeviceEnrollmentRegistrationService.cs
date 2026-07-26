@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -20,6 +21,7 @@ using System.Text.Json;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.State;
 using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Sync.Presence;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -29,17 +31,20 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
     private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly ILocalNetworkAddressService _networkAddresses;
     private readonly IDeviceEnrollmentLocalLinkService _localLinks;
+    private readonly IDevicePresenceRegistry? _presenceRegistry;
 
     public DeviceEnrollmentRegistrationService(
         IDeviceIdentityService identity,
         IDiscoveredDeviceEndpointRegistry endpointRegistry,
         ILocalNetworkAddressService networkAddresses,
-        IDeviceEnrollmentLocalLinkService localLinks)
+        IDeviceEnrollmentLocalLinkService localLinks,
+        IDevicePresenceRegistry? presenceRegistry = null)
     {
         _identity = identity;
         _endpointRegistry = endpointRegistry;
         _networkAddresses = networkAddresses;
         _localLinks = localLinks;
+        _presenceRegistry = presenceRegistry;
     }
 
     public async Task RegisterRemoteDeviceAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint endpoint, CancellationToken ct)
@@ -165,6 +170,10 @@ public sealed class DeviceEnrollmentRegistrationService : IDeviceEnrollmentRegis
         };
 
         _endpointRegistry.AddOrUpdate(endpoint);
+        _presenceRegistry?.RefreshAuthenticated(
+            device.TlsCertFingerprint,
+            endpoint,
+            DevicePresenceObservationSource.Enrollment);
         syncIdentities.TryAdd(device);
         syncTasks.TryStart(endpoint, device);
     }

@@ -21,6 +21,7 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
     private readonly IUserLifecycleCoordinator _lifecycle;
     private readonly IUnitOfWork _uow;
     private readonly IUserCanonicalHealthService? _canonicalHealth;
+    private readonly IUserLoginIdentityProjectionService? _loginIdentities;
 
     public UserControlOperationWriterService(
         IUserControlOperationRepository operations,
@@ -33,7 +34,8 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         IDeviceIdentityService identity,
         IUserLifecycleCoordinator lifecycle,
         IUnitOfWork uow,
-        IUserCanonicalHealthService? canonicalHealth = null)
+        IUserCanonicalHealthService? canonicalHealth = null,
+        IUserLoginIdentityProjectionService? loginIdentities = null)
     {
         _operations = operations;
         _states = states;
@@ -46,6 +48,7 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         _lifecycle = lifecycle;
         _uow = uow;
         _canonicalHealth = canonicalHealth;
+        _loginIdentities = loginIdentities;
     }
 
     public Task<UserControlOperationEnvelope> CreateAppliedKeyEpochReplacementAsync(User resultingCanonicalUser, long previousKeyEpoch, CancellationToken ct = default)
@@ -141,6 +144,8 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
         if (_canonicalHealth is not null)
             await _canonicalHealth.UpdateCheckpointAsync(user, ct);
+        if (_loginIdentities is not null)
+            await _loginIdentities.SetCanonicalAsync(user, user.GetGeneralUserDataVersion(), ct);
         await _uow.SaveChangesAsync(ct);
         return envelope;
     }
@@ -193,6 +198,8 @@ public sealed class UserControlOperationWriterService : IUserControlOperationWri
         state.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
         if (_canonicalHealth is not null)
             await _canonicalHealth.UpdateCheckpointAsync(user, ct);
+        if (_loginIdentities is not null)
+            await _loginIdentities.SetCanonicalAsync(user, user.GetGeneralUserDataVersion(), ct);
         await _uow.SaveChangesAsync(ct);
         return envelope;
     }

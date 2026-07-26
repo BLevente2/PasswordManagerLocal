@@ -147,6 +147,44 @@ public sealed class Phase11AndroidArchitectureGuardTests
     }
 
     [TestMethod]
+    public void AndroidLifecycleCallbacksNeverSynchronouslyWaitForRuntimeCleanup()
+    {
+        var root = GetRepositoryRoot();
+        var lifecycleSources = new[]
+        {
+            Path.Combine(
+                root,
+                "PasswordManagerLocal",
+                "PasswordManagerLocal.Android",
+                "MainActivity.cs"),
+            Path.Combine(
+                root,
+                "PasswordManagerLocal",
+                "PasswordManagerLocal.Android",
+                "Runtime",
+                "PasswordManagerBackgroundService.cs")
+        };
+
+        foreach (var sourcePath in lifecycleSources)
+        {
+            var source = File.ReadAllText(sourcePath);
+            Assert.IsFalse(
+                source.Contains(".GetAwaiter().GetResult()", StringComparison.Ordinal),
+                Path.GetRelativePath(root, sourcePath));
+            Assert.IsFalse(
+                Regex.IsMatch(source, @"\.Wait\s*\("),
+                Path.GetRelativePath(root, sourcePath));
+        }
+
+        var activity = File.ReadAllText(lifecycleSources[0]);
+        var service = File.ReadAllText(lifecycleSources[1]);
+        StringAssert.Contains(activity, "Task.Run(() => DisposeActivityRuntimeAsync");
+        StringAssert.Contains(service, "Task.Run(() => DisposeRuntimeHostAfterServiceDestructionAsync");
+        StringAssert.Contains(service, "DisposeRuntimeResourcesAsync");
+    }
+
+
+    [TestMethod]
     public void AndroidLifecycleProductionCodeDoesNotLogOrSerializeSensitiveState()
     {
         var root = GetRepositoryRoot();

@@ -164,28 +164,25 @@ public sealed class PasswordManagerBackgroundService : Service, IAndroidRuntimeC
         var host = Interlocked.Exchange(ref _runtimeHost, null);
         try
         {
-            if (host is not null)
-                DisposeRuntimeHost(host);
+            _foregroundController?.ExitForeground();
         }
         catch
         {
         }
+
+        _foregroundController = null;
+        _secureStorageAvailability = null;
+        _binder?.Dispose();
+        _binder = null;
+        _serviceStartState.RecordStopped();
+        try
+        {
+            base.OnDestroy();
+        }
         finally
         {
-            try
-            {
-                _foregroundController?.ExitForeground();
-            }
-            catch
-            {
-            }
-
-            _foregroundController = null;
-            _secureStorageAvailability = null;
-            _binder?.Dispose();
-            _binder = null;
-            _serviceStartState.RecordStopped();
-            base.OnDestroy();
+            if (host is not null)
+                _ = Task.Run(() => DisposeRuntimeHostAfterServiceDestructionAsync(host));
         }
     }
 
@@ -250,16 +247,6 @@ public sealed class PasswordManagerBackgroundService : Service, IAndroidRuntimeC
     {
         Interlocked.Exchange(ref _isDestroying, 1);
         var host = Interlocked.Exchange(ref _runtimeHost, null);
-        if (host is not null)
-        {
-            try
-            {
-                DisposeRuntimeHost(host);
-            }
-            catch
-            {
-            }
-        }
 
         try
         {
@@ -275,13 +262,24 @@ public sealed class PasswordManagerBackgroundService : Service, IAndroidRuntimeC
         _secureStorageAvailability = null;
         _binder?.Dispose();
         _binder = null;
+
+        if (host is not null)
+            _ = Task.Run(() => DisposeRuntimeHostAfterServiceDestructionAsync(host));
     }
 
-    private void DisposeRuntimeHost(AndroidRuntimeServiceHost host)
+    private static async Task DisposeRuntimeHostAfterServiceDestructionAsync(
+        AndroidRuntimeServiceHost host)
     {
-        Task.Run(async () => await host.DisposeAsync())
-            .GetAwaiter()
-            .GetResult();
+        try
+        {
+            await host.DisposeRuntimeResourcesAsync();
+        }
+        catch
+        {
+            // Android lifecycle callbacks cannot wait for asynchronous runtime cleanup.
+            // Normal stop paths drain the runtime before requesting service destruction;
+            // this is a best-effort fallback for abnormal lifecycle termination.
+        }
     }
 
     private AndroidRuntimeServiceHost GetRuntimeHost() =>

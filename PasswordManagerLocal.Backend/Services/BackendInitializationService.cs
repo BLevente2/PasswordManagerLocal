@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Diagnostics;
 using PasswordManagerLocal.Backend.Persistence;
 
 namespace PasswordManagerLocal.Backend.Services;
@@ -20,6 +21,8 @@ public sealed class BackendInitializationService : IBackendInitializationService
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        BackendDebugLog.OperationStarted("Backend database and device identity initialization", "Initialization");
+
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -37,5 +40,10 @@ public sealed class BackendInitializationService : IBackendInitializationService
 
         if (_deviceIdentity.IsSyncOn != shouldEnableSync)
             await _deviceIdentity.SetSyncOnAsync(shouldEnableSync, cancellationToken);
+
+        BackendDebugLog.Info(
+            $"Backend database and device identity initialization completed successfully. " +
+            $"DeviceId={_deviceIdentity.LocalDeviceId:N}, DeviceType={_deviceIdentity.DeviceType}, SyncEnabled={_deviceIdentity.IsSyncOn}.",
+            "Initialization");
     }
 }

@@ -1,8 +1,12 @@
 using Google.Protobuf;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Tcp;
+using PasswordManagerLocal.Backend.Sync.Presence;
+using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Security;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Security;
@@ -13,20 +17,100 @@ using System.Security.Cryptography.X509Certificates;
 
 using PasswordManagerLocal.Backend.Utils;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class TcpSyncClientService : ISyncTransportClientService
 {
     private readonly IDeviceIdentityService _identity;
+    private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
+    private readonly IDevicePresenceRegistry _presenceRegistry;
 
-    public TcpSyncClientService(IDeviceIdentityService identity)
+    public TcpSyncClientService(
+        IDeviceIdentityService identity,
+        ISyncDeviceIdentityService syncDeviceIdentities,
+        IDevicePresenceRegistry presenceRegistry)
     {
-        _identity = identity;
+        _identity = identity ?? throw new ArgumentNullException(nameof(identity));
+        _syncDeviceIdentities = syncDeviceIdentities ?? throw new ArgumentNullException(nameof(syncDeviceIdentities));
+        _presenceRegistry = presenceRegistry ?? throw new ArgumentNullException(nameof(presenceRegistry));
     }
 
 
+    public async Task<DevicePresenceProbeResult> ProbeAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        string expectedDeviceId,
+        byte[] expectedSignPublicKey,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(host) || port <= 0 ||
+            string.IsNullOrWhiteSpace(serverFingerprintHex) ||
+            string.IsNullOrWhiteSpace(expectedDeviceId) ||
+            expectedSignPublicKey is null || expectedSignPublicKey.Length == 0)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.EndpointUnavailable);
+        }
+
+        try
+        {
+            await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
+            var hello = await SendHelloAsync(connection.Stream, ct);
+            if (!IsExpectedPeerIdentity(hello, expectedDeviceId, expectedSignPublicKey))
+            {
+                BackendDebugLog.Debug(
+                    $"Authenticated presence probe rejected the peer identity returned after TLS. Target={host}:{port}, FingerprintPrefix={FingerprintPrefix(serverFingerprintHex)}.",
+                    "Presence");
+                return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.PeerIdentityMismatch);
+            }
+
+            return DevicePresenceProbeResult.Success;
+        }
+        catch (AuthenticationException)
+        {
+            BackendDebugLog.DebugRateLimited(
+                $"presence-tls-mismatch:{FingerprintUtil.NormalizeOrEmpty(serverFingerprintHex)}",
+                TimeSpan.FromSeconds(10),
+                $"Authenticated presence probe failed TLS or certificate pin validation. Target={host}:{port}, FingerprintPrefix={FingerprintPrefix(serverFingerprintHex)}.",
+                "Presence");
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.TlsOrFingerprintMismatch);
+        }
+        catch (CryptographicException)
+        {
+            BackendDebugLog.DebugRateLimited(
+                $"presence-crypto-mismatch:{FingerprintUtil.NormalizeOrEmpty(serverFingerprintHex)}",
+                TimeSpan.FromSeconds(10),
+                $"Authenticated presence probe failed cryptographic peer validation. Target={host}:{port}, FingerprintPrefix={FingerprintPrefix(serverFingerprintHex)}.",
+                "Presence");
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.TlsOrFingerprintMismatch);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.Timeout);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SocketException)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.Unreachable);
+        }
+        catch (IOException)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.Unreachable);
+        }
+        catch (InvalidDataException)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.ProtocolUnavailable);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.InvalidResponse);
+        }
+    }
 
 
     public async Task<bool> SendDeltasAsync(string host, int port, string serverFingerprintHex, IEnumerable<NetworkDelta> deltas, CancellationToken ct = default)
@@ -42,18 +126,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         {
             await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
 
-            await WriteFrameAsync(connection.Stream, SyncTcpMessageType.HelloRequest, new HelloRequest
-            {
-                DeviceId = _identity.DeviceIdHex,
-                SignPub = ByteString.CopyFrom(_identity.SignPublicKey),
-                DatabaseVersion = DatabaseConstants.CurrentDbVersion,
-                ProtocolVersion = SyncConstants.SyncProtocolVersion
-            }, ct);
-
-            var helloFrame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.HelloReply, ct);
-            var hello = helloFrame.Parse(HelloReply.Parser);
-            if (!hello.Ok || hello.ProtocolVersion != SyncConstants.SyncProtocolVersion)
-                return false;
+            var hello = await SendHelloAsync(connection.Stream, ct);
+            RefreshOutgoingPresence(host, port, serverFingerprintHex, hello);
 
             await WriteFrameAsync(connection.Stream, SyncTcpMessageType.PushDeltaStart, ct);
 
@@ -149,7 +223,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         }
 
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
-        await SendHelloAsync(connection.Stream, ct);
+        var hello = await SendHelloAsync(connection.Stream, ct);
+        RefreshOutgoingPresence(host, port, serverFingerprintHex, hello);
         await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserSnapshotInventoryRequest, request, ct);
         var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserSnapshotInventoryReply, ct);
         var reply = frame.Parse(UserSnapshotInventoryExchangeReply.Parser);
@@ -176,7 +251,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             throw new InvalidDataException("Too many user snapshots were requested.");
 
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
-        await SendHelloAsync(connection.Stream, ct);
+        var hello = await SendHelloAsync(connection.Stream, ct);
+        RefreshOutgoingPresence(host, port, serverFingerprintHex, hello);
         await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserSnapshotRequestBatch, request, ct);
         await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserSnapshotRelayStart, ct);
 
@@ -227,7 +303,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         }
 
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
-        await SendHelloAsync(connection.Stream, ct);
+        var hello = await SendHelloAsync(connection.Stream, ct);
+        RefreshOutgoingPresence(host, port, serverFingerprintHex, hello);
         await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserControlOperationInventoryRequest, request, ct);
         var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserControlOperationInventoryReply, ct);
         var reply = frame.Parse(UserControlOperationInventoryExchangeReply.Parser);
@@ -253,7 +330,8 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             throw new InvalidDataException("Too many control operations were requested.");
 
         await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
-        await SendHelloAsync(connection.Stream, ct);
+        var hello = await SendHelloAsync(connection.Stream, ct);
+        RefreshOutgoingPresence(host, port, serverFingerprintHex, hello);
         await WriteFrameAsync(connection.Stream, SyncTcpMessageType.UserControlOperationRequestBatch, request, ct);
         await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.UserControlOperationRelayStart, ct);
 
@@ -287,7 +365,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
         return deltas;
     }
 
-    private async Task SendHelloAsync(Stream stream, CancellationToken ct)
+    private async Task<HelloReply> SendHelloAsync(Stream stream, CancellationToken ct)
     {
         await WriteFrameAsync(stream, SyncTcpMessageType.HelloRequest, new HelloRequest
         {
@@ -299,8 +377,66 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
         var helloFrame = await ReadRequiredAsync(stream, SyncTcpMessageType.HelloReply, ct);
         var hello = helloFrame.Parse(HelloReply.Parser);
-        if (!hello.Ok || hello.ProtocolVersion != SyncConstants.SyncProtocolVersion)
-            throw new InvalidDataException("The remote peer rejected the synchronization hello.");
+        if (!hello.Ok ||
+            hello.ProtocolVersion != SyncConstants.SyncProtocolVersion ||
+            !hello.SyncAvailable ||
+            string.IsNullOrWhiteSpace(hello.DeviceId) ||
+            hello.SignPub.Length == 0)
+        {
+            throw new InvalidDataException("The remote peer rejected the synchronization hello or did not expose the required synchronization protocol.");
+        }
+
+        return hello;
+    }
+
+    private void RefreshOutgoingPresence(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        HelloReply hello)
+    {
+        if (!_syncDeviceIdentities.TryGetByFingerprint(serverFingerprintHex, out var device) ||
+            device is null ||
+            !IsExpectedPeerIdentity(
+                hello,
+                Convert.ToHexString(Hashing.SHA256Hash(device.SignPublicKey)),
+                device.SignPublicKey))
+        {
+            BackendDebugLog.DebugRateLimited(
+                $"outgoing-presence-identity-mismatch:{FingerprintUtil.NormalizeOrEmpty(serverFingerprintHex)}",
+                TimeSpan.FromSeconds(10),
+                $"A successful outgoing TLS/hello session was not used for presence because the peer identity did not match the cached trusted device. FingerprintPrefix={FingerprintPrefix(serverFingerprintHex)}.",
+                "Presence");
+            return;
+        }
+
+        _presenceRegistry.RefreshAuthenticated(
+            serverFingerprintHex,
+            new DiscoveredDeviceEndpoint
+            {
+                Host = host,
+                Port = port,
+                TlsCertFingerprint = serverFingerprintHex
+            },
+            DevicePresenceObservationSource.OutgoingSync);
+        BackendDebugLog.Debug(
+            $"Authenticated device presence was refreshed through outgoing synchronization. TargetDeviceId={device.Id:N}, FingerprintPrefix={FingerprintPrefix(serverFingerprintHex)}.",
+            "Presence");
+    }
+
+    private static bool IsExpectedPeerIdentity(
+        HelloReply hello,
+        string expectedDeviceId,
+        byte[] expectedSignPublicKey) =>
+        hello.SyncAvailable &&
+        hello.ProtocolVersion == SyncConstants.SyncProtocolVersion &&
+        string.Equals(hello.DeviceId, expectedDeviceId, StringComparison.OrdinalIgnoreCase) &&
+        CryptographicOperations.FixedTimeEquals(hello.SignPub.ToByteArray(), expectedSignPublicKey);
+
+    private static string FingerprintPrefix(string fingerprint)
+    {
+        var normalized = FingerprintUtil.NormalizeOrEmpty(fingerprint);
+        return normalized[..Math.Min(16, normalized.Length)];
     }
 
 
@@ -325,7 +461,17 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
     public async Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(string host, int port, string serverFingerprintHex, GetDeviceEnrollmentInfoRequest request, CancellationToken ct = default)
     {
-        await using var connection = await ConnectAsync(host, port, serverFingerprintHex, ct);
+        // Compact enrollment codes intentionally carry a 16-byte (32 hex character)
+        // certificate fingerprint prefix. This initial, code-proof-authenticated identity lookup is
+        // the only transport operation allowed to pin by that prefix. The returned enrollment
+        // identity contains the full fingerprint, which is used for the snapshot transfer and all
+        // later synchronization and presence traffic.
+        await using var connection = await ConnectAsync(
+            host,
+            port,
+            serverFingerprintHex,
+            ct,
+            allowEnrollmentFingerprintPrefix: true);
 
         await WriteFrameAsync(connection.Stream, SyncTcpMessageType.GetDeviceEnrollmentInfoRequest, request, ct);
         var frame = await ReadRequiredAsync(connection.Stream, SyncTcpMessageType.GetDeviceEnrollmentInfoReply, ct);
@@ -352,7 +498,12 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private async Task<TcpSyncClientConnection> ConnectAsync(string host, int port, string serverFingerprintHex, CancellationToken ct)
+    private async Task<TcpSyncClientConnection> ConnectAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        CancellationToken ct,
+        bool allowEnrollmentFingerprintPrefix = false)
     {
         var preferredSourceAddress = FindPreferredSourceAddress(host);
         var client = await ConnectTcpAsync(host, port, preferredSourceAddress, ct);
@@ -365,7 +516,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
 
             var localEndpoint = client.Client.LocalEndPoint?.ToString() ?? "unknown";
             var remoteEndpoint = client.Client.RemoteEndPoint?.ToString() ?? $"{host}:{port}";
-            DeviceEnrollmentTrace.Info($"TCP connection established. Local={localEndpoint}, Remote={remoteEndpoint}. Starting TLS authentication.");
+            BackendDebugLog.Info($"TCP connection established. Local={localEndpoint}, Remote={remoteEndpoint}. Starting TLS authentication.");
 
             var stream = new SslStream(client.GetStream(), false);
             using var handshakeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -377,7 +528,10 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                 ClientCertificates = new X509CertificateCollection { _identity.Certificate },
                 LocalCertificateSelectionCallback = (_, _, _, _, _) => _identity.Certificate,
-                RemoteCertificateValidationCallback = (_, cert, _, _) => ValidatePinnedServerCertificate(cert, serverFingerprintHex),
+                RemoteCertificateValidationCallback = (_, cert, _, _) => ValidatePinnedServerCertificate(
+                    cert,
+                    serverFingerprintHex,
+                    allowEnrollmentFingerprintPrefix),
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck
             }, handshakeTimeout.Token);
 
@@ -385,7 +539,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                 ? string.Empty
                 : _identity.GetFingerprintHex(new X509Certificate2(stream.RemoteCertificate));
 
-            DeviceEnrollmentTrace.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={FingerprintUtil.Normalize(serverFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(serverFingerprint).Length)]}.");
+            BackendDebugLog.Info($"TLS authentication completed. Local={localEndpoint}, Remote={remoteEndpoint}, ServerFingerprintPrefix={FingerprintUtil.Normalize(serverFingerprint)[..Math.Min(16, FingerprintUtil.Normalize(serverFingerprint).Length)]}.");
             return new TcpSyncClientConnection(client, stream);
         }
         catch
@@ -416,7 +570,7 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
                     client.Client.Bind(new IPEndPoint(sourceAddress, 0));
 
                 var sourceText = sourceAddress?.ToString() ?? "OS-selected";
-                DeviceEnrollmentTrace.Info($"TCP connection attempt started. Source={sourceText}, Target={host}:{port}.");
+                BackendDebugLog.Info($"TCP connection attempt started. Source={sourceText}, Target={host}:{port}.");
 
                 using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 connectTimeout.CancelAfter(perAttemptTimeout);
@@ -426,13 +580,13 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
             catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
             {
                 errors.Add(ex);
-                DeviceEnrollmentTrace.Error($"TCP connection attempt timed out. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}.", ex);
+                BackendDebugLog.Error($"TCP connection attempt timed out. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}.", ex);
                 client.Dispose();
             }
             catch (Exception ex) when (ex is SocketException or IOException or ArgumentException or InvalidOperationException)
             {
                 errors.Add(ex);
-                DeviceEnrollmentTrace.Error($"TCP connection attempt failed. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}: {ex.Message}", ex);
+                BackendDebugLog.Error($"TCP connection attempt failed. Source={sourceAddress?.ToString() ?? "OS-selected"}, Target={host}:{port}: {ex.Message}", ex);
                 client.Dispose();
             }
         }
@@ -587,19 +741,27 @@ public sealed class TcpSyncClientService : ISyncTransportClientService
     }
 
 
-    private bool ValidatePinnedServerCertificate(X509Certificate? cert, string serverFingerprintHex)
+    private bool ValidatePinnedServerCertificate(
+        X509Certificate? cert,
+        string serverFingerprintHex,
+        bool allowEnrollmentFingerprintPrefix)
     {
         if (cert is null)
             return false;
 
         var fingerprint = FingerprintUtil.Normalize(_identity.GetFingerprintHex(new X509Certificate2(cert)));
         var expected = FingerprintUtil.Normalize(serverFingerprintHex);
-        if (expected.Length == 0)
-            return false;
 
-        return expected.Length < 64
-            ? fingerprint.StartsWith(expected, StringComparison.OrdinalIgnoreCase)
-            : string.Equals(fingerprint, expected, StringComparison.OrdinalIgnoreCase);
+        if (expected.Length == 64)
+            return string.Equals(fingerprint, expected, StringComparison.OrdinalIgnoreCase);
+
+        // This is not a general compatibility path. The current compact enrollment-code format
+        // stores exactly the first 16 bytes of the target certificate SHA-256 fingerprint. The
+        // enrollment-info request is additionally authenticated by the high-entropy enrollment
+        // secret/code proof, and its response upgrades the endpoint to the complete fingerprint.
+        return allowEnrollmentFingerprintPrefix &&
+            expected.Length == 32 &&
+            fingerprint.StartsWith(expected, StringComparison.OrdinalIgnoreCase);
     }
 
 

@@ -7,7 +7,7 @@ using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.DependencyInjection;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 using SQLitePCL;
 
 namespace PasswordManagerLocal.Backend.Hosting;
@@ -215,10 +215,13 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
                     _interactiveSession = openedSession;
                     SetInteractiveSessionSnapshotLocked(InteractiveSessionLifecycleState.Active, null);
                 }
+
+                BackendDebugLog.OperationCompleted("Interactive backend session opening", "Runtime");
             }
             catch (Exception exception)
             {
                 openingFailure = exception;
+                BackendDebugLog.Error("Interactive backend session opening failed.", exception, "Runtime");
                 try
                 {
                     await StopInteractiveStateAsync(host, null, CancellationToken.None);
@@ -531,6 +534,7 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
             catch (Exception exception)
             {
                 failure = exception;
+                BackendDebugLog.Error("Interactive backend session shutdown failed.", exception, "Runtime");
             }
 
             lock (_gate)
@@ -695,10 +699,18 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
 
             await DisposeCurrentHostCoreAsync();
 
+            BackendDebugLog.InitializeForCurrentBuild(_options.StoragePaths.LogsDirectory);
+            BackendDebugLog.Info(
+                resetStorageFirst
+                    ? "Backend startup with storage reset started."
+                    : "Backend startup started.",
+                "Runtime");
+
             if (resetStorageFirst)
             {
                 _storageCleaner.ClearSqlitePools();
                 _storageCleaner.DeleteDatabaseFiles();
+                BackendDebugLog.OperationCompleted("Backend storage reset", "Runtime");
             }
 
             (newHost, newSyncRuntime) = await CreateAndStartHostAsync();
@@ -725,6 +737,7 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
         catch (Exception exception)
         {
             failure = exception;
+            BackendDebugLog.Error("Backend startup failed.", exception, "Runtime");
 
             if (newSyncRuntime is not null)
                 newSyncRuntime.StateChanged -= HandleSyncStateChanged;
@@ -776,19 +789,23 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
 
         if (failure is null)
         {
+            BackendDebugLog.Info(
+                $"Backend startup completed successfully. HostGeneration={generation}.",
+                "Runtime");
             completion.TrySetResult();
             _ = RunSyncStartupAsync(generation);
         }
         else
         {
+            BackendDebugLog.Error("Backend startup completed in a failed state.", failure, "Runtime");
             completion.TrySetException(failure);
         }
     }
 
     private async Task<(BackendServiceHost Host, ISyncRuntimeService SyncRuntime)> CreateAndStartHostAsync()
     {
+        BackendDebugLog.OperationStarted("Backend service host creation and startup", "Runtime");
         Batteries_V2.Init();
-        DeviceEnrollmentTrace.InitializeForCurrentBuild(_options.StoragePaths.EnrollmentLogPath);
 
         var keyProtector = _options.KeyProtectorFactory()
             ?? throw new InvalidOperationException("The platform key-protector factory returned null.");
@@ -815,22 +832,31 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
         }
         try
         {
+            BackendDebugLog.Info("Backend dependency container created successfully.", "Runtime");
             await host.Services
                 .GetRequiredService<IBackendInitializationService>()
                 .InitializeAsync(CancellationToken.None);
+            BackendDebugLog.OperationCompleted("Backend persistent-state initialization", "Runtime");
+
             await host.StartAsync(CancellationToken.None);
+            BackendDebugLog.OperationCompleted("Backend service host creation and startup", "Runtime");
 
             var syncRuntime = host.Services.GetRequiredService<ISyncRuntimeService>();
             return (host, syncRuntime);
         }
-        catch
+        catch (Exception exception)
         {
+            BackendDebugLog.Error("Backend service host creation or startup failed.", exception, "Runtime");
             try
             {
                 await host.DisposeAsync();
             }
-            catch
+            catch (Exception disposeException)
             {
+                BackendDebugLog.Error(
+                    "Backend service host cleanup after startup failure also failed.",
+                    disposeException,
+                    "Runtime");
             }
 
             throw;
@@ -861,9 +887,16 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
             try
             {
                 await syncRuntime.RefreshSyncEnabledAsync(CancellationToken.None);
+                BackendDebugLog.Info(
+                    $"Synchronization runtime startup refresh completed successfully. State={syncRuntime.Snapshot.State}.",
+                    "Runtime");
             }
             catch (Exception exception)
             {
+                BackendDebugLog.Error(
+                    "Synchronization runtime startup refresh failed and the runtime became degraded.",
+                    exception,
+                    "Runtime");
                 SyncRuntimeStateChangedEventArgs? stateChange;
                 lock (_gate)
                 {
@@ -899,6 +932,7 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
             catch (Exception exception)
             {
                 failure = exception;
+                BackendDebugLog.Error("Backend shutdown failed.", exception, "Runtime");
             }
 
             lock (_gate)
@@ -928,9 +962,15 @@ internal sealed class BackendRuntime : IBackendRuntime, IBackendExecutionProfile
         Publish(stateChange);
 
         if (failure is null)
+        {
+            BackendDebugLog.OperationCompleted("Backend shutdown", "Runtime");
             completion.TrySetResult();
+        }
         else
+        {
+            BackendDebugLog.Error("Backend shutdown completed in a failed state.", failure, "Runtime");
             completion.TrySetException(failure);
+        }
     }
 
     private async Task DisposeCurrentHostCoreAsync()

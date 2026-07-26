@@ -8,7 +8,7 @@ using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Utils;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Windows;
 
@@ -411,7 +411,7 @@ exit 0
 
         if (result.ExitCode == 0)
         {
-            DeviceEnrollmentTrace.Info($"Windows Firewall effective-policy check succeeded. {details}");
+            BackendDebugLog.Info($"Windows Firewall effective-policy check succeeded. {details}");
             return new FirewallPermissionCheckResult
             {
                 IsSupported = true,
@@ -421,7 +421,7 @@ exit 0
             };
         }
 
-        DeviceEnrollmentTrace.Error($"Windows Firewall effective-policy check failed. {details}");
+        BackendDebugLog.Error($"Windows Firewall effective-policy check failed. {details}");
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,
@@ -444,7 +444,7 @@ exit 0
         if (applyResult.ExitCode != 0)
         {
             var details = GetBestProcessDetails(applyResult);
-            DeviceEnrollmentTrace.Error($"Windows Firewall configuration failed. {details}");
+            BackendDebugLog.Error($"Windows Firewall configuration failed. {details}");
             return new FirewallPermissionCheckResult
             {
                 IsSupported = true,
@@ -464,7 +464,7 @@ exit 0
             if (verification.IsConfigured)
             {
                 var details = GetBestProcessDetails(applyResult);
-                DeviceEnrollmentTrace.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
+                BackendDebugLog.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
                 return new FirewallPermissionCheckResult
                 {
                     IsSupported = true,
@@ -481,7 +481,7 @@ exit 0
             ? $"{applyDetails} The firewall rules were created, but they are not present in the effective Windows Firewall policy."
             : $"{applyDetails} Effective-policy verification failed: {verificationDetails}";
 
-        DeviceEnrollmentTrace.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
+        BackendDebugLog.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,

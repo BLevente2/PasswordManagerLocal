@@ -19,7 +19,7 @@ using PasswordManagerLocal.Backend.Utils;
 using System.Text.Json;
 using PasswordManagerLocal.Backend.State;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -61,7 +61,7 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
         {
             try
             {
-                DeviceEnrollmentTrace.Info($"Local enrollment listener self-test started for {host}:{endpointInfo.Port}.");
+                BackendDebugLog.Info($"Local enrollment listener self-test started for {host}:{endpointInfo.Port}.");
                 var reply = await _syncTransport.GetDeviceEnrollmentInfoAsync(
                     host,
                     endpointInfo.Port,
@@ -76,13 +76,13 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
                     originInstanceId == _identity.OriginInstanceId &&
                     FingerprintUtil.Normalize(reply.TlsCertFingerprint) == FingerprintUtil.Normalize(_identity.FingerprintHex))
                 {
-                    DeviceEnrollmentTrace.Info($"Local enrollment listener self-test succeeded for {host}:{endpointInfo.Port}.");
+                    BackendDebugLog.Info($"Local enrollment listener self-test succeeded for {host}:{endpointInfo.Port}.");
                     return;
                 }
 
                 var error = string.IsNullOrWhiteSpace(reply.Error) ? "The listener returned an invalid local identity." : reply.Error;
                 failures.Add($"{host}:{endpointInfo.Port} -> {error}");
-                DeviceEnrollmentTrace.Error($"Local enrollment listener self-test failed for {host}:{endpointInfo.Port}: {error}");
+                BackendDebugLog.Error($"Local enrollment listener self-test failed for {host}:{endpointInfo.Port}: {error}");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -91,7 +91,7 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
             catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
             {
                 failures.Add($"{host}:{endpointInfo.Port} -> {ex.Message}");
-                DeviceEnrollmentTrace.Error($"Local enrollment listener self-test failed for {host}:{endpointInfo.Port}: {ex.Message}", ex);
+                BackendDebugLog.Error($"Local enrollment listener self-test failed for {host}:{endpointInfo.Port}: {ex.Message}", ex);
             }
         }
 
@@ -167,15 +167,15 @@ public sealed class DeviceEnrollmentEndpointService : IDeviceEnrollmentEndpointS
 
     public async Task<EnrollmentEndpoint> ResolveEndpointIdentityAsync(EnrollmentEndpoint endpoint, DeviceEnrollmentParsedCode parsed, CancellationToken ct = default)
     {
-        DeviceEnrollmentTrace.Info($"Fetching and verifying enrollment identity from {endpoint.Host}:{endpoint.Port}.");
+        BackendDebugLog.Info($"Fetching and verifying enrollment identity from {endpoint.Host}:{endpoint.Port}.");
         var info = await FetchEnrollmentInfoAsync(endpoint, parsed, ct);
         if (!info.Ok)
         {
-            DeviceEnrollmentTrace.Error($"Fetching enrollment identity from {endpoint.Host}:{endpoint.Port} failed with {info.ErrorCode}: {info.Error}");
+            BackendDebugLog.Error($"Fetching enrollment identity from {endpoint.Host}:{endpoint.Port} failed with {info.ErrorCode}: {info.Error}");
             throw new DeviceEnrollmentException(info.ErrorCode, info.Error ?? "The new device did not return its enrollment identity.");
         }
 
-        DeviceEnrollmentTrace.Info($"Fetched enrollment identity from {endpoint.Host}:{endpoint.Port}. DeviceId={info.DeviceId}, DeviceType={info.DeviceType}.");
+        BackendDebugLog.Info($"Fetched enrollment identity from {endpoint.Host}:{endpoint.Port}. DeviceId={info.DeviceId}, DeviceType={info.DeviceType}.");
 
         if (info.DeviceId == Guid.Empty || info.OriginInstanceId == Guid.Empty ||
             string.IsNullOrWhiteSpace(info.TlsCertFingerprint) ||

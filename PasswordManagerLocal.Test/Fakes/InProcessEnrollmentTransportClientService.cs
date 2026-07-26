@@ -1,7 +1,10 @@
 using Google.Protobuf;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Sync.Presence;
 using PasswordManagerLocal.Backend.Sync.Tcp;
 using PasswordManagerLocal.Backend.Utils;
 using System.Runtime.CompilerServices;
@@ -20,6 +23,7 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
 {
     private SyncPeerProtocolHandler? _localHandler;
     private IDeviceIdentityService? _localIdentity;
+    private IDevicePresenceRegistry? _localPresenceRegistry;
     private SyncPeerProtocolHandler? _remoteHandler;
     private IDeviceIdentityService? _remoteIdentity;
 
@@ -27,6 +31,7 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
     public bool TamperNextEnrollmentSnapshot { get; set; }
     public bool FailNextDeltaSend { get; set; }
     public string? ClientCertificateFingerprintOverride { get; set; }
+    public string? PresentedServerCertificateFingerprintOverride { get; set; }
     public int EnrollmentInfoCalls { get; private set; }
     public int EnrollmentCompletionCalls { get; private set; }
     public int DeltaSendCalls { get; private set; }
@@ -34,13 +39,16 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
     public int SnapshotRequestCalls { get; private set; }
     public int ControlOperationInventoryExchangeCalls { get; private set; }
     public int ControlOperationRequestCalls { get; private set; }
+    public int ProbeCalls { get; private set; }
 
     public void BindLocalBackend(
         SyncPeerProtocolHandler handler,
-        IDeviceIdentityService identity)
+        IDeviceIdentityService identity,
+        IDevicePresenceRegistry? presenceRegistry = null)
     {
         _localHandler = handler ?? throw new ArgumentNullException(nameof(handler));
         _localIdentity = identity ?? throw new ArgumentNullException(nameof(identity));
+        _localPresenceRegistry = presenceRegistry;
     }
 
     public void ConnectTo(SyncPeerProtocolHandler remoteHandler, IDeviceIdentityService remoteIdentity)
@@ -57,6 +65,65 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
         TamperNextEnrollmentSnapshot = false;
         FailNextDeltaSend = false;
         ClientCertificateFingerprintOverride = null;
+        PresentedServerCertificateFingerprintOverride = null;
+    }
+
+    public async Task<DevicePresenceProbeResult> ProbeAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        string expectedDeviceId,
+        byte[] expectedSignPublicKey,
+        CancellationToken ct = default)
+    {
+        ProbeCalls++;
+        try
+        {
+            var destinationHandler = ResolveHandler(serverFingerprintHex);
+            var localIdentity = GetLocalIdentity();
+            var hello = await destinationHandler.HelloAsync(
+                new HelloRequest
+                {
+                    DeviceId = localIdentity.DeviceIdHex,
+                    SignPub = ByteString.CopyFrom(localIdentity.SignPublicKey),
+                    DatabaseVersion = DatabaseConstants.CurrentDbVersion,
+                    ProtocolVersion = SyncConstants.SyncProtocolVersion
+                },
+                new PeerConnectionContext
+                {
+                    ClientCertificateFingerprint = ClientCertificateFingerprintOverride ?? localIdentity.FingerprintHex,
+                    RemoteIpAddress = "127.0.0.1"
+                },
+                ct);
+
+            if (!hello.Ok ||
+                hello.ProtocolVersion != SyncConstants.SyncProtocolVersion ||
+                !hello.SyncAvailable)
+            {
+                return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.ProtocolUnavailable);
+            }
+
+            return string.Equals(hello.DeviceId, expectedDeviceId, StringComparison.OrdinalIgnoreCase) &&
+                   CryptographicOperations.FixedTimeEquals(hello.SignPub.ToByteArray(), expectedSignPublicKey)
+                ? DevicePresenceProbeResult.Success
+                : DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.PeerIdentityMismatch);
+        }
+        catch (AuthenticationException)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.TlsOrFingerprintMismatch);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.Timeout);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or SyncProtocolException)
+        {
+            return DevicePresenceProbeResult.Failed(DevicePresenceFailureKind.Unreachable);
+        }
     }
 
     public Task<GetDeviceEnrollmentInfoReply> GetDeviceEnrollmentInfoAsync(
@@ -67,7 +134,8 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
         CancellationToken ct = default)
     {
         EnrollmentInfoCalls++;
-        return ResolveHandler(serverFingerprintHex).GetDeviceEnrollmentInfoAsync(request, ct);
+        return ResolveHandler(serverFingerprintHex, allowEnrollmentFingerprintPrefix: true)
+            .GetDeviceEnrollmentInfoAsync(request, ct);
     }
 
     public async Task<CompleteDeviceEnrollmentReply> CompleteDeviceEnrollmentStreamAsync(
@@ -263,8 +331,25 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
             context,
             ct);
 
-        if (!hello.Ok || hello.ProtocolVersion != SyncConstants.SyncProtocolVersion)
-            throw new InvalidDataException("The remote peer rejected the in-process synchronization hello.");
+        var remoteIdentity = ResolveIdentity(destinationHandler);
+        if (!hello.Ok ||
+            hello.ProtocolVersion != SyncConstants.SyncProtocolVersion ||
+            !hello.SyncAvailable ||
+            !string.Equals(hello.DeviceId, remoteIdentity.DeviceIdHex, StringComparison.OrdinalIgnoreCase) ||
+            !CryptographicOperations.FixedTimeEquals(hello.SignPub.ToByteArray(), remoteIdentity.SignPublicKey))
+        {
+            throw new InvalidDataException("The remote peer rejected the in-process synchronization hello or returned the wrong peer identity.");
+        }
+
+        _localPresenceRegistry?.RefreshAuthenticated(
+            remoteIdentity.FingerprintHex,
+            new DiscoveredDeviceEndpoint
+            {
+                Host = "127.0.0.1",
+                Port = SyncConstants.SyncPort,
+                TlsCertFingerprint = remoteIdentity.FingerprintHex
+            },
+            DevicePresenceObservationSource.OutgoingSync);
 
         context.RemoteDatabaseVersion = DatabaseConstants.CurrentDbVersion;
         context.RemoteProtocolVersion = SyncConstants.SyncProtocolVersion;
@@ -276,18 +361,45 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
         _localIdentity
         ?? throw new InvalidOperationException("The in-process transport has no local backend identity.");
 
-    private SyncPeerProtocolHandler ResolveHandler(string expectedFingerprint)
+    private IDeviceIdentityService ResolveIdentity(SyncPeerProtocolHandler handler)
     {
+        if (ReferenceEquals(handler, _localHandler) && _localIdentity is not null)
+            return _localIdentity;
+        if (ReferenceEquals(handler, _remoteHandler) && _remoteIdentity is not null)
+            return _remoteIdentity;
+
+        throw new InvalidOperationException("The in-process transport cannot resolve the destination identity.");
+    }
+
+    private SyncPeerProtocolHandler ResolveHandler(
+        string expectedFingerprint,
+        bool allowEnrollmentFingerprintPrefix = false)
+    {
+        if (!string.IsNullOrWhiteSpace(PresentedServerCertificateFingerprintOverride) &&
+            !FingerprintMatches(
+                expectedFingerprint,
+                PresentedServerCertificateFingerprintOverride,
+                allowEnrollmentFingerprintPrefix))
+        {
+            throw new AuthenticationException("The presented in-process server certificate does not match the pinned fingerprint.");
+        }
+
         if (_localHandler is not null &&
             _localIdentity is not null &&
-            FingerprintMatches(expectedFingerprint, _localIdentity.FingerprintHex))
+            FingerprintMatches(
+                expectedFingerprint,
+                _localIdentity.FingerprintHex,
+                allowEnrollmentFingerprintPrefix))
         {
             return _localHandler;
         }
 
         if (_remoteHandler is not null &&
             _remoteIdentity is not null &&
-            FingerprintMatches(expectedFingerprint, _remoteIdentity.FingerprintHex))
+            FingerprintMatches(
+                expectedFingerprint,
+                _remoteIdentity.FingerprintHex,
+                allowEnrollmentFingerprintPrefix))
         {
             return _remoteHandler;
         }
@@ -302,16 +414,20 @@ public sealed class InProcessEnrollmentTransportClientService : ISyncTransportCl
             "The pinned TLS fingerprint does not match either in-process backend identity.");
     }
 
-    private static bool FingerprintMatches(string expectedFingerprint, string actualFingerprint)
+    private static bool FingerprintMatches(
+        string expectedFingerprint,
+        string actualFingerprint,
+        bool allowEnrollmentFingerprintPrefix = false)
     {
         var expected = FingerprintUtil.Normalize(expectedFingerprint);
         var actual = FingerprintUtil.Normalize(actualFingerprint);
-        if (expected.Length == 0)
-            return false;
 
-        return expected.Length < 64
-            ? actual.StartsWith(expected, StringComparison.OrdinalIgnoreCase)
-            : string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
+        if (expected.Length == 64)
+            return string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
+
+        return allowEnrollmentFingerprintPrefix &&
+            expected.Length == 32 &&
+            actual.StartsWith(expected, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsDurableSnapshotReceipt(UserSnapshotReceiptStateProto state) =>

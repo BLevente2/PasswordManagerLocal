@@ -19,7 +19,7 @@ using System.Net;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.State;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -51,11 +51,11 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
-            DeviceEnrollmentTrace.Error($"Could not serialize enrollment snapshot for {endpoint.Host}:{endpoint.Port}: {ex.Message}", ex);
+            BackendDebugLog.Error($"Could not serialize enrollment snapshot for {endpoint.Host}:{endpoint.Port}: {ex.Message}", ex);
             return (false, DeviceEnrollmentErrorCode.ProfileDataInvalid, ex.Message);
         }
 
-        DeviceEnrollmentTrace.Info($"Enrollment snapshot prepared for {endpoint.Host}:{endpoint.Port}. Size={snapshotBytes.Length} bytes.");
+        BackendDebugLog.Info($"Enrollment snapshot prepared for {endpoint.Host}:{endpoint.Port}. Size={snapshotBytes.Length} bytes.");
 
         if (snapshotBytes.Length > SyncConstants.MaxDeviceEnrollmentSnapshotBytes)
             return (false, DeviceEnrollmentErrorCode.ProfileDataTooLarge, "The profile data is too large to transfer in one enrollment request.");
@@ -86,13 +86,13 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
 
         try
         {
-            DeviceEnrollmentTrace.Info($"Trying TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
+            BackendDebugLog.Info($"Trying TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port}.");
             var result = await SendEnrollmentSnapshotStreamAsync(endpoint, sessionId, proof, encryptedSnapshotBytes, snapshotNonce, snapshotTag, transferTimeout.Token);
 
             if (result.Ok)
-                DeviceEnrollmentTrace.Info($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
+                BackendDebugLog.Info($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} completed successfully.");
             else
-                DeviceEnrollmentTrace.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {result.ErrorCode}: {result.Error}");
+                BackendDebugLog.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} returned {result.ErrorCode}: {result.Error}");
 
             return result;
         }
@@ -102,7 +102,7 @@ public sealed class DeviceEnrollmentSnapshotTransferService : IDeviceEnrollmentS
         }
         catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or OperationCanceledException or System.Security.Authentication.AuthenticationException)
         {
-            DeviceEnrollmentTrace.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {ex.Message}", ex);
+            BackendDebugLog.Error($"TCP enrollment snapshot transfer to {endpoint.Host}:{endpoint.Port} threw: {ex.Message}", ex);
             return (false, DeviceEnrollmentErrorCode.NewDeviceConnectionFailed, ex.Message);
         }
         finally

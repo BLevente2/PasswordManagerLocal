@@ -3,6 +3,7 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Models;
 
 namespace PasswordManagerLocal.Backend.Services;
@@ -15,6 +16,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
     private readonly ISyncDeviceIdentityService _syncDeviceIdentities;
     private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
     private readonly IDeviceSyncTaskService _deviceSyncTasks;
+    private readonly IDevicePresenceRegistry? _presenceRegistry;
     private readonly IReadOnlyList<ISyncControlledHostedService> _controlledServices;
     private readonly List<ISyncControlledHostedService> _activeServices = [];
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -29,7 +31,8 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         ISyncDeviceIdentityService syncDeviceIdentities,
         IDiscoveredDeviceEndpointRegistry endpointRegistry,
         IDeviceSyncTaskService deviceSyncTasks,
-        IEnumerable<ISyncControlledHostedService> controlledServices)
+        IEnumerable<ISyncControlledHostedService> controlledServices,
+        IDevicePresenceRegistry? presenceRegistry = null)
     {
         _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _identity = identity ?? throw new ArgumentNullException(nameof(identity));
@@ -37,6 +40,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         _syncDeviceIdentities = syncDeviceIdentities ?? throw new ArgumentNullException(nameof(syncDeviceIdentities));
         _endpointRegistry = endpointRegistry ?? throw new ArgumentNullException(nameof(endpointRegistry));
         _deviceSyncTasks = deviceSyncTasks ?? throw new ArgumentNullException(nameof(deviceSyncTasks));
+        _presenceRegistry = presenceRegistry;
         ArgumentNullException.ThrowIfNull(controlledServices);
         _controlledServices = controlledServices
             .OrderBy(service => service.StartOrder)
@@ -339,6 +343,7 @@ public sealed class SyncRuntimeService : ISyncRuntimeService
         }
 
         _syncDeviceIdentities.Clear();
+        _presenceRegistry?.InvalidateAll("synchronization runtime stopped");
         _endpointRegistry.Clear();
 
         if (failures.Count == 1)

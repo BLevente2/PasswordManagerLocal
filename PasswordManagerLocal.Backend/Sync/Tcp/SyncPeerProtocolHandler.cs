@@ -11,10 +11,12 @@ using PasswordManagerLocal.Backend.Sync.Tcp;
 using PasswordManagerLocal.Backend.Utils;
 using System.Collections.Concurrent;
 using PasswordManagerLocal.Backend.Abstractions.State;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 
 using PasswordManagerLocal.Backend.Sync.Enrollment;
+using PasswordManagerLocal.Backend.Sync.Presence;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Sync.Tcp;
 
@@ -41,7 +43,23 @@ public sealed class SyncPeerProtocolHandler
             ValidateIncomingDatabaseVersionForSync(request.DatabaseVersion);
             ValidateIncomingProtocolVersion(request.ProtocolVersion);
             remoteDevice = await ValidateRemoteDeviceAsync(scope.ServiceProvider, context, request.DeviceId, request.SignPub.ToByteArray(), ct);
-            return new HelloReply { Ok = true, ProtocolVersion = SyncConstants.SyncProtocolVersion };
+            var identity = scope.ServiceProvider.GetRequiredService<IDeviceIdentityService>();
+            scope.ServiceProvider.GetService<IDevicePresenceRegistry>()?.RefreshAuthenticated(
+                remoteDevice.TlsCertFingerprint,
+                endpoint: null,
+                DevicePresenceObservationSource.IncomingSync);
+            BackendDebugLog.Debug(
+                $"Authenticated device presence was refreshed through incoming synchronization. RemoteDeviceId={remoteDevice.Id:N}.",
+                "Presence");
+
+            return new HelloReply
+            {
+                Ok = true,
+                ProtocolVersion = SyncConstants.SyncProtocolVersion,
+                DeviceId = identity.DeviceIdHex,
+                SignPub = ByteString.CopyFrom(identity.SignPublicKey),
+                SyncAvailable = identity.IsSyncOn
+            };
         }
         catch (Exception ex)
         {
@@ -350,7 +368,7 @@ public sealed class SyncPeerProtocolHandler
 
         try
         {
-            DeviceEnrollmentTrace.Info($"Incoming GetDeviceEnrollmentInfo request. Session={request.SessionId}.");
+            BackendDebugLog.Info($"Incoming GetDeviceEnrollmentInfo request. Session={request.SessionId}.");
             if (!DatabaseVersionCompatibilityUtil.IsIncomingDatabaseVersionSupported(request.SourceDatabaseVersion))
             {
                 return new GetDeviceEnrollmentInfoReply
@@ -405,7 +423,7 @@ public sealed class SyncPeerProtocolHandler
         }
         catch (DeviceEnrollmentException ex)
         {
-            DeviceEnrollmentTrace.Error($"Incoming GetDeviceEnrollmentInfo request was rejected. Session={request.SessionId}: {ex.Message}", ex);
+            BackendDebugLog.Error($"Incoming GetDeviceEnrollmentInfo request was rejected. Session={request.SessionId}: {ex.Message}", ex);
             return new GetDeviceEnrollmentInfoReply
             {
                 Ok = false,
@@ -415,7 +433,7 @@ public sealed class SyncPeerProtocolHandler
         }
         catch (Exception ex)
         {
-            DeviceEnrollmentTrace.Error($"Incoming GetDeviceEnrollmentInfo request failed. Session={request.SessionId}: {ex.Message}", ex);
+            BackendDebugLog.Error($"Incoming GetDeviceEnrollmentInfo request failed. Session={request.SessionId}: {ex.Message}", ex);
             return new GetDeviceEnrollmentInfoReply
             {
                 Ok = false,
@@ -433,7 +451,7 @@ public sealed class SyncPeerProtocolHandler
 
         try
         {
-            DeviceEnrollmentTrace.Info("Incoming streaming CompleteDeviceEnrollment request started.");
+            BackendDebugLog.Info("Incoming streaming CompleteDeviceEnrollment request started.");
 
             var enrollmentAvailability = scope.ServiceProvider.GetRequiredService<IDeviceEnrollmentAvailability>();
             if (!enrollmentAvailability.IsEnrollmentAllowed)
@@ -656,7 +674,7 @@ public sealed class SyncPeerProtocolHandler
                 snapshotEncryptionTag ?? [],
                 ct);
 
-            DeviceEnrollmentTrace.Info($"Incoming streaming CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
+            BackendDebugLog.Info($"Incoming streaming CompleteDeviceEnrollment request finished. Ok={result.Ok}, ErrorCode={result.ErrorCode}, Error={result.Error}");
 
             return new CompleteDeviceEnrollmentReply
             {
@@ -683,7 +701,7 @@ public sealed class SyncPeerProtocolHandler
                 ? DeviceEnrollmentErrorCode.ProfileDataTooLarge
                 : DeviceEnrollmentErrorCode.ProfileDataInvalid;
             var error = await enrollment.RegisterIncomingEnrollmentValidationFailureAsync(errorCode, ex.Message, ct);
-            DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request was rejected: {error}", ex);
+            BackendDebugLog.Error($"Incoming streaming CompleteDeviceEnrollment request was rejected: {error}", ex);
             return new CompleteDeviceEnrollmentReply
             {
                 Ok = false,
@@ -693,7 +711,7 @@ public sealed class SyncPeerProtocolHandler
         }
         catch (DeviceEnrollmentException ex)
         {
-            DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request was rejected: {ex.Message}", ex);
+            BackendDebugLog.Error($"Incoming streaming CompleteDeviceEnrollment request was rejected: {ex.Message}", ex);
             return new CompleteDeviceEnrollmentReply
             {
                 Ok = false,
@@ -703,7 +721,7 @@ public sealed class SyncPeerProtocolHandler
         }
         catch (Exception ex)
         {
-            DeviceEnrollmentTrace.Error($"Incoming streaming CompleteDeviceEnrollment request failed: {ex.Message}", ex);
+            BackendDebugLog.Error($"Incoming streaming CompleteDeviceEnrollment request failed: {ex.Message}", ex);
             return new CompleteDeviceEnrollmentReply
             {
                 Ok = false,
@@ -814,6 +832,10 @@ public sealed class SyncPeerProtocolHandler
 
         if (remoteDevice.Id == identity.LocalDeviceId || identity.SignPublicKey.SequenceEqual(remoteDevice.SignPublicKey))
             throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Local device cannot sync with itself.");
+
+        var routes = services.GetRequiredService<ISyncRouteRepository>();
+        if (!await routes.HasEligibleUserForDeviceAsync(remoteDevice.Id, ct))
+            throw new SyncProtocolException(SyncProtocolStatusCode.PermissionDenied, "Remote device is not linked to an enabled local user.");
 
         return remoteDevice;
     }

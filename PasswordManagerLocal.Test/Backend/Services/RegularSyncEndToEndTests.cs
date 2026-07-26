@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Test.TestInfrastructure;
 using System.Text;
@@ -15,6 +16,75 @@ public sealed class RegularSyncEndToEndTests
     private static readonly TimeSpan PhaseTimeout = TimeSpan.FromSeconds(20);
 
     public TestContext TestContext { get; set; } = null!;
+
+    [TestMethod]
+    [Timeout(TestTimeoutMilliseconds)]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    [TestCategory("EndToEnd")]
+    public async Task PostEnrollmentSyncBeforeFirstTargetLogin_BothDevicesCanAuthenticate()
+    {
+        await using var source = await ProductionSyncTestHost.CreateAsync();
+        await using var target = await ProductionSyncTestHost.CreateAsync();
+        source.ConnectTo(target);
+        target.ConnectTo(source);
+
+        var username = $"syncfirstlogin{Guid.NewGuid().ToString("N")[..12]}";
+        var sourceToken = await source.Endpoints.RegisterAsync(source.CreateRegistrationRequest(username));
+        await source.EnableSyncAsync(sourceToken);
+
+        var enrollmentCode = await RunPhaseAsync(
+            "target enrollment listener startup before realistic post-enrollment synchronization",
+            ct => target.Endpoints.StartDeviceEnrollmentAsync(ct));
+        await RunPhaseAsync(
+            "production enrollment before either device reauthenticates",
+            ct => source.Endpoints.AddDeviceByCodeAsync(sourceToken, enrollmentCode.Code, ct));
+
+        Assert.IsNotNull(
+            await target.GetOnlyCanonicalCheckpointAsync(),
+            "The imported account must be covered by a local signed checkpoint before automatic synchronization starts.");
+        Assert.AreEqual(
+            UserLoginIdentityStatus.Active,
+            (await target.GetOnlyLoginIdentityAsync()).Status);
+
+        await target.ActivateImportedSynchronizationAsync();
+        var preLoginPair = new SyncPair(source, target, sourceToken, Guid.Empty);
+        var sourceSnapshotInventoryCalls = source.Transport.SnapshotInventoryExchangeCalls;
+        var targetSnapshotInventoryCalls = target.Transport.SnapshotInventoryExchangeCalls;
+        await SynchronizeUntilAsync(
+            preLoginPair,
+            "automatic-style post-enrollment synchronization before first target login",
+            async () =>
+                source.Transport.SnapshotInventoryExchangeCalls > sourceSnapshotInventoryCalls &&
+                target.Transport.SnapshotInventoryExchangeCalls > targetSnapshotInventoryCalls &&
+                !await source.HasPendingForAsync(target.Identity.LocalDeviceId) &&
+                !await target.HasPendingForAsync(source.Identity.LocalDeviceId));
+
+        Assert.AreEqual(
+            UserLoginIdentityStatus.Active,
+            (await target.GetOnlyLoginIdentityAsync()).Status,
+            "Post-enrollment synchronization must not invalidate the imported username projection.");
+
+        await source.Endpoints.LogoutAsync(sourceToken);
+        var sourceReloginToken = await RunPhaseAsync(
+            "original device login after enrollment and post-enrollment synchronization",
+            ct => source.Endpoints.LoginAsync(source.CreateLoginRequest(username), ct));
+        var targetFirstLoginToken = await RunPhaseAsync(
+            "new device first login after post-enrollment synchronization",
+            ct => target.Endpoints.LoginAsync(target.CreateLoginRequest(username), ct));
+
+        Assert.AreEqual(username, (await source.Endpoints.GetUserProfileInfoAsync(sourceReloginToken)).Username);
+        Assert.AreEqual(username, (await target.Endpoints.GetUserProfileInfoAsync(targetFirstLoginToken)).Username);
+
+        await source.Endpoints.LogoutAsync(sourceReloginToken);
+        await target.Endpoints.LogoutAsync(targetFirstLoginToken);
+        Assert.AreNotEqual(
+            Guid.Empty,
+            await source.Endpoints.LoginAsync(source.CreateLoginRequest(username)));
+        Assert.AreNotEqual(
+            Guid.Empty,
+            await target.Endpoints.LoginAsync(target.CreateLoginRequest(username)));
+    }
 
     [TestMethod]
     [Timeout(TestTimeoutMilliseconds)]

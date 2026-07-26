@@ -17,7 +17,7 @@ public sealed class BackendStoragePaths
         DatabaseShmPath = $"{DatabasePath}-shm";
         DatabaseJournalPath = $"{DatabasePath}-journal";
         DatabaseConfigPath = Path.Combine(RootDirectory, ApplicationFileNames.DbConfigFileName);
-        EnrollmentLogPath = Path.Combine(RootDirectory, ApplicationFileNames.DeviceEnrollmentLogFileName);
+        LogsDirectory = Path.Combine(RootDirectory, ApplicationFileNames.LogsFolderName);
     }
 
     public string RootDirectory { get; }
@@ -26,7 +26,7 @@ public sealed class BackendStoragePaths
     public string DatabaseShmPath { get; }
     public string DatabaseJournalPath { get; }
     public string DatabaseConfigPath { get; }
-    public string EnrollmentLogPath { get; }
+    public string LogsDirectory { get; }
 
     public string GetTemporaryDatabaseConfigSearchPattern() =>
         $"{ApplicationFileNames.DbConfigFileName}.*.tmp";

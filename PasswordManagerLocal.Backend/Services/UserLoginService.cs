@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Backend.Constants;
+using PasswordManagerLocal.Backend.Diagnostics;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
@@ -64,7 +65,14 @@ public sealed class UserLoginService : IUserLoginService
         {
             var initialResolution = await _userLookup.ResolveUsernameAsync(usernameBytes, ct);
             if (initialResolution.State != UserLoginIdentityMatchState.Matched || !initialResolution.UserId.HasValue)
+            {
+                BackendDebugLog.Warning(
+                    $"Login username resolution failed. State={initialResolution.State}, " +
+                    $"HasProjectedUserId={initialResolution.UserId.HasValue}, " +
+                    $"Diagnostic={initialResolution.Diagnostic ?? "<none>"}.",
+                    category: "Authentication");
                 throw new UserNotFoundException();
+            }
 
             var userId = initialResolution.UserId.Value;
             return await _lifecycle.ExecuteAsync(

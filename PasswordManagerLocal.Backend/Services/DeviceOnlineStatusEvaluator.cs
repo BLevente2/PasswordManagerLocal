@@ -1,29 +1,27 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
-using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceOnlineStatusEvaluator
 {
     private readonly IBackendExecutionProfileProvider _executionProfileProvider;
-    private readonly IDiscoveredDeviceEndpointRegistry _endpointRegistry;
+    private readonly IDevicePresenceRegistry _presenceRegistry;
 
     public DeviceOnlineStatusEvaluator(
         IBackendExecutionProfileProvider executionProfileProvider,
-        IDiscoveredDeviceEndpointRegistry endpointRegistry)
+        IDevicePresenceRegistry presenceRegistry)
     {
         _executionProfileProvider = executionProfileProvider
             ?? throw new ArgumentNullException(nameof(executionProfileProvider));
-        _endpointRegistry = endpointRegistry
-            ?? throw new ArgumentNullException(nameof(endpointRegistry));
+        _presenceRegistry = presenceRegistry
+            ?? throw new ArgumentNullException(nameof(presenceRegistry));
     }
 
-    public bool IsRecentlyDiscovered(string tlsFingerprint)
+    public bool IsOnline(string tlsFingerprint)
     {
         var profile = _executionProfileProvider.Current;
         return profile is not null &&
-            _endpointRegistry.IsRecentlyDiscovered(
-                tlsFingerprint,
-                profile.DeviceOnlineTimeout);
+            _presenceRegistry.IsOnline(tlsFingerprint, profile.DeviceOnlineTimeout);
     }
 }

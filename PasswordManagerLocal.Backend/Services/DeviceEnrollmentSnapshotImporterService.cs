@@ -57,6 +57,7 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var syncIdentities = services.GetRequiredService<ISyncDeviceIdentityService>();
         var loginIdentities = services.GetRequiredService<IUserLoginIdentityProjectionService>();
+        var canonicalHealth = services.GetRequiredService<IUserCanonicalHealthService>();
         var versionClock = services.GetRequiredService<ISyncVersionClockService>();
 
         var existingState = await controlStates.GetAsync(snapshot.PrimaryUserId, ct);
@@ -291,12 +292,12 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             syncState.LastPublishedContentHash = [];
             syncState.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
 
-            // The enrollment graph has authenticated the imported canonical username metadata.
-            // Keep that canonical projection active so the first password login can locate the
-            // account. This does not mint a local signed canonical checkpoint; the first successful
-            // password/Remember-Me verification creates that checkpoint through the normal writer path.
-            // Recalculating here would mark the projection invalid solely because that intentionally
-            // deferred local checkpoint does not exist yet, making the first login impossible.
+            // Enrollment has authenticated the complete canonical graph and bound it to this exact
+            // installation identity. Create the installation-local signed checkpoint before exposing
+            // the username projection. Normal synchronization can begin immediately after import;
+            // without this checkpoint, an incoming snapshot/control operation could recalculate and
+            // invalidate the projection before the user's first password login.
+            await canonicalHealth.UpdateCheckpointAsync(user, ct);
             await loginIdentities.SetCanonicalAsync(user, validated.User.GeneralUserDataVersion, ct);
             await unitOfWork.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);

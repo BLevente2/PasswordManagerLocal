@@ -70,12 +70,6 @@
           "SQLitePCLRaw.provider.e_sqlcipher": "2.1.11"
         }
       },
-      "libsodium": {
-        "type": "CentralTransitive",
-        "requested": "[1.0.22, )",
-        "resolved": "1.0.22",
-        "contentHash": "KPD9SloJFclrsjnhABu7dzWrcyYkwPbvx5l1gRSPAX/0n+OBtSiVCKtGFv4n+ecWUHU0tCG9LSSwoZZx673zBQ=="
-      },
       "Microsoft.Data.Sqlite.Core": {
         "type": "Transitive",
         "resolved": "10.0.9",
@@ -191,6 +185,12 @@
         "dependencies": {
           "SQLitePCLRaw.core": "2.1.11"
         }
+      },
+      "libsodium": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.22, )",
+        "resolved": "1.0.22",
+        "contentHash": "KPD9SloJFclrsjnhABu7dzWrcyYkwPbvx5l1gRSPAX/0n+OBtSiVCKtGFv4n+ecWUHU0tCG9LSSwoZZx673zBQ=="
       }
     }
   }

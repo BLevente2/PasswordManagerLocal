@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
@@ -15,7 +16,7 @@ using System.Net;
 using System.Security.Cryptography;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
@@ -32,6 +33,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
     private readonly IBackendExecutionProfileProvider _executionProfileProvider;
     private readonly BackendExecutionProfileChangeSignal _profileChangeSignal;
     private readonly IServiceScopeFactory? _scopeFactory;
+    private readonly IDevicePresenceProbeService? _presenceProbeService;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly object _enrollmentLock = new();
     private readonly RecentLocalDiscoveryNonceCache _receivedNonces = new();
@@ -56,7 +58,8 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         ILocalDiscoveryTransport transport,
         ILocalDiscoveryNetworkLease networkLease,
         IBackendExecutionProfileProvider executionProfileProvider,
-        IServiceScopeFactory? scopeFactory = null)
+        IServiceScopeFactory? scopeFactory = null,
+        IDevicePresenceProbeService? presenceProbeService = null)
     {
         _identity = identity;
         _syncDeviceIdentities = syncDeviceIdentities;
@@ -70,6 +73,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             ?? throw new ArgumentNullException(nameof(executionProfileProvider));
         _profileChangeSignal = new BackendExecutionProfileChangeSignal(_executionProfileProvider);
         _scopeFactory = scopeFactory;
+        _presenceProbeService = presenceProbeService;
     }
 
 
@@ -508,6 +512,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         if (requesterEndpoint is not null)
         {
             _endpointRegistry.AddOrUpdate(requesterEndpoint);
+            _presenceProbeService?.OnEndpointDiscovered(requester, requesterEndpoint);
             if (_syncDeviceIdentities.ContainsId(requester.Id))
                 _deviceSyncTasks.TryStart(requesterEndpoint, requester);
         }
@@ -562,6 +567,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
             return;
 
         _endpointRegistry.AddOrUpdate(endpoint);
+        _presenceProbeService?.OnEndpointDiscovered(device, endpoint);
 
         if (IsSyncResponseThrottled(response.ResponderDeviceId, DateTimeOffset.UtcNow))
             return;
@@ -735,7 +741,7 @@ internal sealed class LocalDiscoveryHostedService : ISyncControlledHostedService
         if (_networkAddresses.GetRemoteEndpointPriority(host) == int.MinValue)
             return null;
 
-        DeviceEnrollmentTrace.Info($"Authenticated local discovery enrollment endpoint resolved from the UDP response source: {host}:{SyncPort}.");
+        BackendDebugLog.Info($"Authenticated local discovery enrollment endpoint resolved from the UDP response source: {host}:{SyncPort}.");
         return new EnrollmentEndpoint
         {
             Host = host,

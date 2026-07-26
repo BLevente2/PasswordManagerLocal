@@ -13,7 +13,7 @@ using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 
 using PasswordManagerLocal.Backend.Internal.Sync;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 namespace PasswordManagerLocal.Backend.Services;
 
 public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
@@ -175,6 +175,10 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
     private async Task RunAsync(DiscoveredDeviceEndpoint endpoint, Device targetDevice, CancellationToken ct)
     {
+        BackendDebugLog.Info(
+            $"Outgoing synchronization worker started. TargetDeviceId={targetDevice.Id:N}, Endpoint={endpoint.Host}:{endpoint.Port}.",
+            "Synchronization");
+
         try
         {
             // Authoritative epoch/membership barriers must arrive before ordinary snapshots that
@@ -219,7 +223,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         }
         catch (Exception ex)
         {
-            DeviceEnrollmentTrace.Error($"Outgoing synchronization worker for device {targetDevice.Id:N} failed: {ex.Message}", ex);
+            BackendDebugLog.Error($"Outgoing synchronization worker for device {targetDevice.Id:N} failed: {ex.Message}", ex);
         }
         finally
         {
@@ -238,10 +242,15 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
                     TryStart(pendingStart.Endpoint, pendingStart.Device);
                 else if (!hasPending)
                     _syncDeviceIdentities.TryRemove(targetDevice);
+
+                BackendDebugLog.Info(
+                    $"Outgoing synchronization worker session finished. TargetDeviceId={targetDevice.Id:N}, " +
+                    $"PendingWork={hasPending}, RestartScheduled={hasPending && pendingStart is not null && _identity.IsSyncOn}.",
+                    "Synchronization");
             }
             catch (Exception ex)
             {
-                DeviceEnrollmentTrace.Error($"Outgoing synchronization worker cleanup for device {targetDevice.Id:N} failed: {ex.Message}", ex);
+                BackendDebugLog.Error($"Outgoing synchronization worker cleanup for device {targetDevice.Id:N} failed: {ex.Message}", ex);
             }
             finally
             {
@@ -316,14 +325,14 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             }
             catch (InvalidOperationException ex)
             {
-                DeviceEnrollmentTrace.Error(
+                BackendDebugLog.Error(
                     $"Discarding invalid outgoing sync item {item.SyncItem.Id:N} ({item.SyncItem.ModelType}/{item.SyncItem.ChangeType}) for device {targetDevice.Id:N}: {ex.Message}",
                     ex);
                 queue.Delete(item.QueueItem);
             }
             catch (InvalidDataException ex)
             {
-                DeviceEnrollmentTrace.Error(
+                BackendDebugLog.Error(
                     $"Discarding malformed outgoing sync item {item.SyncItem.Id:N} ({item.SyncItem.ModelType}/{item.SyncItem.ChangeType}) for device {targetDevice.Id:N}: {ex.Message}",
                     ex);
                 queue.Delete(item.QueueItem);
@@ -375,6 +384,11 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
 
         foreach (var item in sendItems)
             await CleanupDetachedDeviceIfSyncCompletedAsync(scope.ServiceProvider, item.SyncItem, targetDevice.Id, ct);
+
+        BackendDebugLog.Info(
+            $"Outgoing synchronization delta batch completed successfully. TargetDeviceId={targetDevice.Id:N}, " +
+            $"DeltaCount={sendItems.Count}, PayloadBytes={totalPayloadBytes}.",
+            "Synchronization");
 
         return true;
     }

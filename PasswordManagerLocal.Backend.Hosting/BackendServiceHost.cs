@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Hosting;
 
@@ -34,16 +35,27 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 
             try
             {
+                BackendDebugLog.OperationStarted("Backend hosted services startup", "Hosting");
                 foreach (var hostedService in _services.GetServices<IBackendHostedService>())
                 {
+                    BackendDebugLog.Info(
+                        $"Starting backend hosted service {hostedService.GetType().Name}.",
+                        "Hosting");
                     _startedServices.Add(hostedService);
                     await hostedService.StartAsync(cancellationToken);
+                    BackendDebugLog.Info(
+                        $"Backend hosted service {hostedService.GetType().Name} started successfully.",
+                        "Hosting");
                 }
 
                 _started = true;
+                BackendDebugLog.Info(
+                    $"Backend hosted services startup completed successfully. StartedServiceCount={_startedServices.Count}.",
+                    "Hosting");
             }
             catch (Exception startException)
             {
+                BackendDebugLog.Error("Backend hosted services startup failed.", startException, "Hosting");
                 try
                 {
                     await StopStartedServicesAsync(CancellationToken.None);
@@ -77,16 +89,27 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 
             try
             {
+                BackendDebugLog.OperationStarted("Interactive backend hosted services startup", "Hosting");
                 foreach (var hostedService in _services.GetServices<IInteractiveBackendHostedService>())
                 {
+                    BackendDebugLog.Info(
+                        $"Starting interactive backend hosted service {hostedService.GetType().Name}.",
+                        "Hosting");
                     _startedInteractiveServices.Add(hostedService);
                     await hostedService.StartAsync(cancellationToken);
+                    BackendDebugLog.Info(
+                        $"Interactive backend hosted service {hostedService.GetType().Name} started successfully.",
+                        "Hosting");
                 }
 
                 _interactiveStarted = true;
+                BackendDebugLog.Info(
+                    $"Interactive backend hosted services startup completed successfully. StartedServiceCount={_startedInteractiveServices.Count}.",
+                    "Hosting");
             }
             catch (Exception startException)
             {
+                BackendDebugLog.Error("Interactive backend hosted services startup failed.", startException, "Hosting");
                 try
                 {
                     await StopStartedInteractiveServicesAsync(CancellationToken.None);
@@ -115,6 +138,7 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
 
             await StopStartedInteractiveServicesAsync(cancellationToken);
             _interactiveStarted = false;
+            BackendDebugLog.OperationCompleted("Interactive backend hosted services shutdown", "Hosting");
         }
         finally
         {
@@ -159,7 +183,12 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
             _started = false;
 
             if (failure is not null)
+            {
+                BackendDebugLog.Error("Backend hosted services shutdown failed.", failure, "Hosting");
                 throw failure;
+            }
+
+            BackendDebugLog.OperationCompleted("Backend hosted services shutdown", "Hosting");
         }
         finally
         {
@@ -229,7 +258,12 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
         GC.SuppressFinalize(this);
 
         if (disposeException is not null)
+        {
+            BackendDebugLog.Error("Backend service host disposal failed.", disposeException, "Hosting");
             throw disposeException;
+        }
+
+        BackendDebugLog.OperationCompleted("Backend service host disposal", "Hosting");
     }
 
     private async Task StopStartedInteractiveServicesAsync(CancellationToken cancellationToken)
@@ -241,10 +275,17 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
             try
             {
                 await _startedInteractiveServices[index].StopAsync(cancellationToken);
+                BackendDebugLog.Info(
+                    $"Interactive backend hosted service {_startedInteractiveServices[index].GetType().Name} stopped successfully.",
+                    "Hosting");
                 _startedInteractiveServices.RemoveAt(index);
             }
             catch (Exception exception)
             {
+                BackendDebugLog.Error(
+                    $"Interactive backend hosted service {_startedInteractiveServices[index].GetType().Name} failed to stop.",
+                    exception,
+                    "Hosting");
                 failures.Add(exception);
             }
         }
@@ -261,10 +302,17 @@ internal sealed class BackendServiceHost : IAsyncDisposable, IDisposable
             try
             {
                 await _startedServices[index].StopAsync(cancellationToken);
+                BackendDebugLog.Info(
+                    $"Backend hosted service {_startedServices[index].GetType().Name} stopped successfully.",
+                    "Hosting");
                 _startedServices.RemoveAt(index);
             }
             catch (Exception exception)
             {
+                BackendDebugLog.Error(
+                    $"Backend hosted service {_startedServices[index].GetType().Name} failed to stop.",
+                    exception,
+                    "Hosting");
                 failures.Add(exception);
             }
         }

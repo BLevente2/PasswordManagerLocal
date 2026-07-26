@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync.Presence;
 using System.Collections.Concurrent;
 
 namespace PasswordManagerLocal.Test.Fakes;
@@ -15,6 +16,24 @@ public sealed class FakeSyncTransportClientService : ISyncTransportClientService
     public IReadOnlyList<NetworkDelta> LastDeltas { get; private set; } = [];
     public TaskCompletionSource<bool>? SendGate { get; set; }
     public ConcurrentQueue<bool> SendResults { get; } = new();
+
+    public DevicePresenceProbeResult ProbeResult { get; set; } = DevicePresenceProbeResult.Success;
+    public int ProbeCalls { get; private set; }
+
+    public Task<DevicePresenceProbeResult> ProbeAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        string expectedDeviceId,
+        byte[] expectedSignPublicKey,
+        CancellationToken ct = default)
+    {
+        ProbeCalls++;
+        LastHost = host;
+        LastPort = port;
+        LastFingerprint = serverFingerprintHex;
+        return Task.FromResult(ProbeResult);
+    }
 
     public async Task<bool> SendDeltasAsync(string host, int port, string serverFingerprintHex, IEnumerable<NetworkDelta> deltas, CancellationToken ct = default)
     {

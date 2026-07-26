@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Internal.Devices;
@@ -17,6 +17,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
     private readonly IDeviceIdentityService _identity;
     private readonly IUserDeviceRepository _userDevices;
     private readonly DeviceOnlineStatusEvaluator _onlineStatusEvaluator;
+    private readonly IDevicePresenceProbeService _presenceProbeService;
     private readonly LocalUserDeviceLinkManager _localLinkManager;
     private readonly UserDeviceMetadataEditor _metadataEditor;
 
@@ -26,6 +27,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         IDeviceIdentityService identity,
         IUserDeviceRepository userDevices,
         DeviceOnlineStatusEvaluator onlineStatusEvaluator,
+        IDevicePresenceProbeService presenceProbeService,
         LocalUserDeviceLinkManager localLinkManager,
         UserDeviceMetadataEditor metadataEditor)
     {
@@ -34,6 +36,7 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
         _identity = identity;
         _userDevices = userDevices;
         _onlineStatusEvaluator = onlineStatusEvaluator;
+        _presenceProbeService = presenceProbeService;
         _localLinkManager = localLinkManager;
         _metadataEditor = metadataEditor;
     }
@@ -62,6 +65,18 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
             userDevicesData.Devices.Where(device => visibleDeviceIds.Contains(device.Id)));
         var result = new List<UserDeviceInfoResponse>();
         var localCanSync = localLink.IsSyncOn && _identity.IsSyncOn;
+        if (localCanSync)
+        {
+            var probeTargets = links
+                .Where(link => IsEligibleRemoteDevice(link, link.Device))
+                .Select(link => link.Device!)
+                .GroupBy(device => device.Id)
+                .Select(group => group.First())
+                .ToArray();
+
+            await Task.WhenAll(probeTargets.Select(device =>
+                _presenceProbeService.ProbeAsync(device, force: true, cancellationToken: ct)));
+        }
         if (encryptedDevices.TryGetValue(_identity.LocalDeviceId, out var localDeviceData))
             result.Add(BuildLocalResponse(
                 localLink,
@@ -149,11 +164,16 @@ public sealed class UserDeviceQueryService : IUserDeviceQueryService
 
     private bool IsRemoteDeviceOnline(bool localCanSync, UserDevice link, Device device) =>
         localCanSync &&
+        IsEligibleRemoteDevice(link, device) &&
+        _onlineStatusEvaluator.IsOnline(device.TlsCertFingerprint);
+
+    private static bool IsEligibleRemoteDevice(UserDevice link, Device? device) =>
+        device is not null &&
         link.IsSyncOn &&
         !link.IsDeleted &&
         device.IsTrusted &&
         !device.IsBlocked &&
         device.PublicKey.Length != 0 &&
         device.SignPublicKey.Length != 0 &&
-        _onlineStatusEvaluator.IsRecentlyDiscovered(device.TlsCertFingerprint);
+        !string.IsNullOrWhiteSpace(device.TlsCertFingerprint);
 }

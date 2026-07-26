@@ -4,7 +4,7 @@ package sync;
 option csharp_namespace = "PasswordManagerLocal.Backend.Sync";
 
 message HelloRequest  { string user_id = 1; string device_id = 2; bytes dataset_hash = 3; bytes sign_pub = 4; int32 database_version = 5; int32 protocol_version = 6; }
-message HelloReply    { bool ok = 1; int32 protocol_version = 2; }
+message HelloReply    { bool ok = 1; int32 protocol_version = 2; string device_id = 3; bytes sign_pub = 4; bool sync_available = 5; }
 
 message NeedSyncRequest { int64 since_ts = 1; }
 message NeedSyncReply   { bool needed = 1; int64 latest_ts = 2; }

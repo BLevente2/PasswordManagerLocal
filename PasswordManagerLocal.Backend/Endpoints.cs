@@ -1,6 +1,8 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions;
 using PasswordManagerLocal.Backend.Abstractions.Services;
+using PasswordManagerLocal.Backend.Diagnostics;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Responses;
 
@@ -207,6 +209,93 @@ public sealed class Endpoints : IEndpoints
         CancellationToken ct = default) =>
         RunAsync<IUserPasswordTagService>(service => service.UpdatePasswordTagAsync(token, request, ct));
 
+#if DEBUG
+    private async Task RunAsync<TService>(
+        Func<TService, Task> action,
+        [CallerMemberName] string operationName = "")
+        where TService : notnull
+    {
+        BackendDebugLog.OperationStarted(operationName, "Endpoint");
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<TService>();
+            await action(service);
+            BackendDebugLog.OperationCompleted(operationName, "Endpoint");
+        }
+        catch (OperationCanceledException exception)
+        {
+            BackendDebugLog.Warning(
+                $"{operationName} was canceled.",
+                exception,
+                "Endpoint");
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BackendDebugLog.Error(
+                $"{operationName} failed.",
+                exception,
+                "Endpoint");
+            throw;
+        }
+    }
+
+    private async Task<TResult> RunAsync<TService, TResult>(
+        Func<TService, Task<TResult>> action,
+        [CallerMemberName] string operationName = "")
+        where TService : notnull
+    {
+        BackendDebugLog.OperationStarted(operationName, "Endpoint");
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<TService>();
+            var result = await action(service);
+            BackendDebugLog.OperationCompleted(operationName, "Endpoint");
+            return result;
+        }
+        catch (OperationCanceledException exception)
+        {
+            BackendDebugLog.Warning(
+                $"{operationName} was canceled.",
+                exception,
+                "Endpoint");
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BackendDebugLog.Error(
+                $"{operationName} failed.",
+                exception,
+                "Endpoint");
+            throw;
+        }
+    }
+
+    private void Run<TService>(
+        Action<TService> action,
+        [CallerMemberName] string operationName = "")
+        where TService : notnull
+    {
+        BackendDebugLog.OperationStarted(operationName, "Endpoint");
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<TService>();
+            action(service);
+            BackendDebugLog.OperationCompleted(operationName, "Endpoint");
+        }
+        catch (Exception exception)
+        {
+            BackendDebugLog.Error(
+                $"{operationName} failed.",
+                exception,
+                "Endpoint");
+            throw;
+        }
+    }
+#else
     private async Task RunAsync<TService>(Func<TService, Task> action)
         where TService : notnull
     {
@@ -230,4 +319,6 @@ public sealed class Endpoints : IEndpoints
         var service = scope.ServiceProvider.GetRequiredService<TService>();
         action(service);
     }
+#endif
+
 }

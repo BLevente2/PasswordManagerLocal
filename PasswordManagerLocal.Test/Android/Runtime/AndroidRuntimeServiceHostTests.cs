@@ -361,7 +361,7 @@ public sealed class AndroidRuntimeServiceHostTests
 
 
     [TestMethod]
-    public async Task ForegroundStartFailureRollsBackEnabledSettingWithoutCreatingRuntime()
+    public async Task ForegroundStartFailurePreservesEnabledSettingWithoutCreatingRuntime()
     {
         using var fixture = CreateFixture(backgroundEnabled: false);
         fixture.Platform.EnterForegroundFailure = new InvalidOperationException("foreground denied");
@@ -369,8 +369,11 @@ public sealed class AndroidRuntimeServiceHostTests
 
         var state = await host.SetBackgroundEnabledFromServiceAsync(true);
 
-        Assert.IsFalse(state.IsEnabled);
+        Assert.IsTrue(state.IsEnabled);
+        Assert.IsTrue(fixture.Settings.Current.IsEnabled);
         Assert.IsTrue(state.IsDegraded);
+        Assert.AreEqual(AndroidBackgroundSyncFailureKind.RuntimeLease, state.FailureKind);
+        Assert.AreEqual(1, fixture.Settings.WriteCalls);
         Assert.AreEqual(0, fixture.Factory.CreateCalls);
         Assert.AreEqual(BackendLifetimeReason.None, fixture.Coordinator.ActiveReasons);
         Assert.IsFalse(fixture.Platform.IsForeground);
@@ -378,7 +381,7 @@ public sealed class AndroidRuntimeServiceHostTests
 
 
     [TestMethod]
-    public async Task RuntimeStartupFailureRollsBackAndCleansPartialComposition()
+    public async Task RuntimeStartupFailurePreservesEnabledSettingAndCleansPartialComposition()
     {
         using var fixture = CreateFixture(backgroundEnabled: false);
         fixture.Runtime.StartupFailure = new InvalidOperationException("runtime startup failed");
@@ -386,9 +389,11 @@ public sealed class AndroidRuntimeServiceHostTests
 
         var state = await host.SetBackgroundEnabledFromServiceAsync(true);
 
-        Assert.IsFalse(state.IsEnabled);
+        Assert.IsTrue(state.IsEnabled);
+        Assert.IsTrue(fixture.Settings.Current.IsEnabled);
         Assert.IsTrue(state.IsDegraded);
         Assert.AreEqual(AndroidBackgroundSyncFailureKind.RuntimeLease, state.FailureKind);
+        Assert.AreEqual(1, fixture.Settings.WriteCalls);
         Assert.AreEqual(1, fixture.Factory.CreateCalls);
         Assert.AreEqual(1, fixture.Runtime.DisposeCalls);
         Assert.AreEqual(BackendLifetimeReason.None, fixture.Coordinator.ActiveReasons);
@@ -695,6 +700,26 @@ public sealed class AndroidRuntimeServiceHostTests
         Assert.AreEqual(AndroidInteractiveAttachmentState.Disposed, client.AttachmentState);
         Assert.AreEqual(1, fixture.Runtime.DisposeCalls);
     }
+
+    [TestMethod]
+    public async Task ServiceDestructionCleanupDoesNotInvokeDestroyedServiceController()
+    {
+        using var fixture = CreateFixture(backgroundEnabled: true);
+        var host = fixture.Host;
+        await host.RestoreBackgroundStateAsync();
+        fixture.Platform.ExitForeground();
+        var exitCallsBeforeCleanup = fixture.Platform.ExitForegroundCalls;
+        var stopCallsBeforeCleanup = fixture.Platform.RequestStopCalls;
+
+        await host.DisposeRuntimeResourcesAsync();
+
+        Assert.IsTrue(host.Snapshot.IsDisposed);
+        Assert.AreEqual(exitCallsBeforeCleanup, fixture.Platform.ExitForegroundCalls);
+        Assert.AreEqual(stopCallsBeforeCleanup, fixture.Platform.RequestStopCalls);
+        Assert.AreEqual(BackendLifetimeReason.None, fixture.Coordinator.ActiveReasons);
+        Assert.AreEqual(1, fixture.Runtime.DisposeCalls);
+    }
+
 
     [TestMethod]
     public async Task SafeResetFailureRestoresCurrentAttachmentAuthorityForReconnect()
@@ -1119,7 +1144,7 @@ public sealed class AndroidRuntimeServiceHostTests
     }
 
     [TestMethod]
-    public async Task ForegroundEntryRejectionResultRollsBackWithoutCreatingRuntime()
+    public async Task ForegroundEntryRejectionResultPreservesDesiredSettingWithoutCreatingRuntime()
     {
         using var fixture = CreateFixture(backgroundEnabled: false);
         fixture.Platform.ForegroundEntryResult = new AndroidForegroundEntryResult(
@@ -1132,7 +1157,8 @@ public sealed class AndroidRuntimeServiceHostTests
 
         var state = await host.SetBackgroundEnabledFromServiceAsync(true);
 
-        Assert.IsFalse(state.IsEnabled);
+        Assert.IsTrue(state.IsEnabled);
+        Assert.IsTrue(fixture.Settings.Current.IsEnabled);
         Assert.IsFalse(state.IsOperational);
         Assert.IsTrue(state.RequiresUserAction);
         Assert.AreEqual(AndroidBackgroundSyncFailureKind.ForegroundService, state.FailureKind);

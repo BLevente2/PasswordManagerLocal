@@ -8,6 +8,7 @@ using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Configuration;
 using PasswordManagerLocal.Backend.Internal.Devices;
 using PasswordManagerLocal.Backend.Persistence;
@@ -18,6 +19,7 @@ using PasswordManagerLocal.Backend.Services.Discovery;
 using PasswordManagerLocal.Backend.Services.Hosted;
 using PasswordManagerLocal.Backend.State;
 using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Sync.Presence;
 using PasswordManagerLocal.Backend.Sync.Tcp;
 using PasswordManagerLocal.Backend.Utils;
 
@@ -135,9 +137,11 @@ public static class BackendServiceCollectionExtensions
 
         services.AddSingleton<ISyncVersionClockService, SyncVersionClockService>();
         services.AddSingleton<IDeviceIdentityService, DeviceIdentityService>();
-        services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
         services.AddSingleton<ISyncDeviceIdentityService, SyncDeviceIdentityService>();
         services.AddSingleton<IDiscoveredDeviceEndpointRegistry, DiscoveredDeviceEndpointRegistry>();
+        services.AddSingleton<IDevicePresenceRegistry, DevicePresenceRegistry>();
+        services.AddSingleton<ISyncTransportClientService, TcpSyncClientService>();
+        services.AddSingleton<IDevicePresenceProbeService, DevicePresenceProbeService>();
         services.AddSingleton<DeviceOnlineStatusEvaluator>();
         services.AddSingleton<IDeviceSyncTaskService, DeviceSyncTaskService>();
         services.AddSingleton<IEnrollmentRuntimeState, EnrollmentRuntimeState>();
@@ -253,6 +257,8 @@ public static class BackendServiceCollectionExtensions
         services.AddSingleton<IDataCachingService, DataCachingService>();
         services.AddSingleton<IInteractiveSensitiveStateResetter, InteractiveSensitiveStateResetter>();
 
+        services.AddSingleton<DevicePresencePollingHostedService>();
+        services.AddSingleton<IInteractiveBackendHostedService>(sp => sp.GetRequiredService<DevicePresencePollingHostedService>());
         services.AddSingleton<ExpiredEntriesPurgeHostedService>();
         services.AddSingleton<IInteractiveBackendHostedService>(sp => sp.GetRequiredService<ExpiredEntriesPurgeHostedService>());
 

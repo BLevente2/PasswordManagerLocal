@@ -5,6 +5,7 @@ using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Configuration;
 using PasswordManagerLocal.Backend.DependencyInjection;
 using PasswordManagerLocal.Backend.Models;
@@ -12,6 +13,7 @@ using PasswordManagerLocal.Backend.Persistence;
 using PasswordManagerLocal.Backend.Requests;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync.Discovery;
+using PasswordManagerLocal.Backend.Sync.Presence;
 using PasswordManagerLocal.Backend.Sync.Tcp;
 using PasswordManagerLocal.Test.Fakes;
 using SQLitePCL;
@@ -29,17 +31,20 @@ public sealed class ProductionSyncTestHost : IAsyncDisposable
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(2);
     private readonly ServiceProvider _services;
     private readonly string _rootDirectory;
+    private readonly FakeBackendExecutionProfileProvider _executionProfiles;
 
     static ProductionSyncTestHost() => Batteries_V2.Init();
 
     private ProductionSyncTestHost(
         ServiceProvider services,
         string rootDirectory,
-        InProcessEnrollmentTransportClientService transport)
+        InProcessEnrollmentTransportClientService transport,
+        FakeBackendExecutionProfileProvider executionProfiles)
     {
         _services = services;
         _rootDirectory = rootDirectory;
         Transport = transport;
+        _executionProfiles = executionProfiles;
     }
 
     public IServiceProvider Services => _services;
@@ -48,6 +53,9 @@ public sealed class ProductionSyncTestHost : IAsyncDisposable
     public IDeviceIdentityService Identity => _services.GetRequiredService<IDeviceIdentityService>();
     public IDeviceSyncTaskService SyncTasks => _services.GetRequiredService<IDeviceSyncTaskService>();
     public SyncPeerProtocolHandler ProtocolHandler => _services.GetRequiredService<SyncPeerProtocolHandler>();
+    public IDevicePresenceRegistry Presence => _services.GetRequiredService<IDevicePresenceRegistry>();
+    public IDevicePresenceProbeService PresenceProbe => _services.GetRequiredService<IDevicePresenceProbeService>();
+    public IDiscoveredDeviceEndpointRegistry EndpointsCache => _services.GetRequiredService<IDiscoveredDeviceEndpointRegistry>();
 
     public static async Task<ProductionSyncTestHost> CreateAsync()
     {
@@ -99,7 +107,7 @@ public sealed class ProductionSyncTestHost : IAsyncDisposable
             ValidateOnBuild = true,
             ValidateScopes = true
         });
-        var host = new ProductionSyncTestHost(provider, rootDirectory, transport);
+        var host = new ProductionSyncTestHost(provider, rootDirectory, transport, executionProfiles);
 
         try
         {
@@ -108,7 +116,8 @@ public sealed class ProductionSyncTestHost : IAsyncDisposable
             provider.GetRequiredService<DeviceEnrollmentService>().OpenInteractiveAdmission();
             transport.BindLocalBackend(
                 provider.GetRequiredService<SyncPeerProtocolHandler>(),
-                provider.GetRequiredService<IDeviceIdentityService>());
+                provider.GetRequiredService<IDeviceIdentityService>(),
+                provider.GetRequiredService<IDevicePresenceRegistry>());
             return host;
         }
         catch
@@ -120,6 +129,52 @@ public sealed class ProductionSyncTestHost : IAsyncDisposable
 
     public void ConnectTo(ProductionSyncTestHost remote) =>
         Transport.ConnectTo(remote.ProtocolHandler, remote.Identity);
+
+    public async Task EnterBackgroundOnlyAsync(CancellationToken ct = default)
+    {
+        var enrollment = _services.GetService<DeviceEnrollmentService>();
+        if (enrollment is not null)
+            await enrollment.CloseInteractiveAdmissionAsync(ct);
+
+        var interactive = _services.GetRequiredService<IInteractiveSessionStateService>();
+        if (interactive.IsActive)
+            await interactive.DeactivateAsync(ct);
+
+        _executionProfiles.SetProfile(
+            new BackendExecutionProfile(
+                TimeSpan.FromSeconds(60),
+                TimeSpan.FromSeconds(60),
+                TimeSpan.FromSeconds(125)),
+            isInteractive: false);
+    }
+
+    public async Task<Device> CacheEndpointForAsync(
+        ProductionSyncTestHost remote,
+        string host = "127.0.0.1",
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(remote);
+        using var scope = _services.CreateScope();
+        var device = await scope.ServiceProvider
+            .GetRequiredService<IDeviceRepository>()
+            .GetByIdWithUserDevicesAsync(remote.Identity.LocalDeviceId, ct)
+            ?? throw new InvalidOperationException("The remote enrolled device is missing from the local database.");
+
+        EndpointsCache.AddOrUpdate(new DiscoveredDeviceEndpoint
+        {
+            Host = host,
+            Port = 26688,
+            TlsCertFingerprint = remote.Identity.FingerprintHex
+        });
+        _services.GetRequiredService<ISyncDeviceIdentityService>().TryAdd(device);
+        return device;
+    }
+
+    public Task<DevicePresenceProbeResult> ProbeAsync(Device remoteDevice, bool force = true, CancellationToken ct = default) =>
+        PresenceProbe.ProbeAsync(remoteDevice, force, ct);
+
+    public bool IsOnline(ProductionSyncTestHost remote) =>
+        _services.GetRequiredService<DeviceOnlineStatusEvaluator>().IsOnline(remote.Identity.FingerprintHex);
 
     public RegistrationRequest CreateRegistrationRequest(string username) =>
         new()
@@ -149,6 +204,38 @@ public sealed class ProductionSyncTestHost : IAsyncDisposable
         // exercise their normal synchronization-enabled checks.
         if (!Identity.IsSyncOn)
             await Identity.SetSyncOnAsync(true, ct);
+    }
+
+    public async Task ActivateImportedSynchronizationAsync(CancellationToken ct = default)
+    {
+        // Enrollment imports the local user-device link as synchronization-enabled. The production
+        // runtime refreshes the device identity immediately after import; the test runtime has no OS
+        // hosted services, so mirror that refresh without requiring a password login.
+        if (!Identity.IsSyncOn)
+            await Identity.SetSyncOnAsync(true, ct);
+    }
+
+    public async Task<UserCanonicalCheckpoint?> GetOnlyCanonicalCheckpointAsync(CancellationToken ct = default)
+    {
+        using var scope = _services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+        var userIds = await users.ListUserIdsAsync(ct);
+        if (userIds.Count != 1)
+            throw new InvalidOperationException("The regular-sync test host must contain exactly one user.");
+        return await scope.ServiceProvider
+            .GetRequiredService<IUserCanonicalCheckpointRepository>()
+            .GetAsync(userIds[0], ct);
+    }
+
+    public async Task<UserLoginIdentityState> GetOnlyLoginIdentityAsync(CancellationToken ct = default)
+    {
+        using var scope = _services.CreateScope();
+        var identities = await scope.ServiceProvider
+            .GetRequiredService<IUserRepository>()
+            .ListLoginIdentityStatesAsync(ct);
+        if (identities.Count != 1)
+            throw new InvalidOperationException("The regular-sync test host must contain exactly one login projection.");
+        return identities[0];
     }
 
     public async Task<bool> StartSyncToAsync(

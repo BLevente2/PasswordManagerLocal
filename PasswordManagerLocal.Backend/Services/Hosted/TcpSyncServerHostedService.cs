@@ -12,7 +12,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using PasswordManagerLocal.Backend.Abstractions.State;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
@@ -21,6 +21,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     private readonly IDeviceIdentityService _identity;
     private readonly SyncPeerProtocolHandler _handler;
     private readonly IEnrollmentRuntimeState _enrollmentState;
+    private readonly IBackendExecutionProfileProvider? _executionProfileProvider;
     private readonly SemaphoreSlim _connectionSlots = new(SyncConstants.MaxConcurrentSyncConnections, SyncConstants.MaxConcurrentSyncConnections);
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly ConcurrentDictionary<string, int> _connectionsByRemoteIp = new(StringComparer.OrdinalIgnoreCase);
@@ -28,11 +29,16 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
 
-    public TcpSyncServerHostedService(IDeviceIdentityService identity, SyncPeerProtocolHandler handler, IEnrollmentRuntimeState enrollmentState)
+    public TcpSyncServerHostedService(
+        IDeviceIdentityService identity,
+        SyncPeerProtocolHandler handler,
+        IEnrollmentRuntimeState enrollmentState,
+        IBackendExecutionProfileProvider? executionProfileProvider = null)
     {
         _identity = identity;
         _handler = handler;
         _enrollmentState = enrollmentState;
+        _executionProfileProvider = executionProfileProvider;
     }
 
 
@@ -50,7 +56,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
         {
             if (!_identity.IsSyncOn && !_enrollmentState.IsActive)
             {
-                DeviceEnrollmentTrace.Info("TCP sync server was not started because synchronization is disabled on this device.");
+                BackendDebugLog.Info("TCP sync server was not started because synchronization is disabled on this device.");
                 return;
             }
 
@@ -70,13 +76,19 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                 _cts = lifetime;
                 _acceptLoopTask = Task.Run(() => AcceptLoopAsync(listener, lifetime.Token), CancellationToken.None);
                 var localEndpoint = listener.LocalEndpoint?.ToString() ?? $"0.0.0.0:{SyncConstants.SyncPort}";
-                DeviceEnrollmentTrace.Info($"TCP sync server listening on {localEndpoint}. ProcessId={Environment.ProcessId}, ExclusiveAddressUse={listener.ExclusiveAddressUse}.");
+                BackendDebugLog.Info($"TCP sync server listening on {localEndpoint}. ProcessId={Environment.ProcessId}, ExclusiveAddressUse={listener.ExclusiveAddressUse}.");
+                if (_identity.IsSyncOn && _executionProfileProvider?.IsInteractive == false)
+                {
+                    BackendDebugLog.Debug(
+                        "The synchronization listener is available while the backend is running in background-only mode.",
+                        "Presence");
+                }
             }
             catch (Exception ex)
             {
                 listener.Stop();
                 lifetime.Dispose();
-                DeviceEnrollmentTrace.Error($"TCP sync server could not start on 0.0.0.0:{SyncConstants.SyncPort}: {ex.Message}", ex);
+                BackendDebugLog.Error($"TCP sync server could not start on 0.0.0.0:{SyncConstants.SyncPort}: {ex.Message}", ex);
                 throw;
             }
         }
@@ -109,7 +121,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
             lifetime?.Dispose();
 
             if (listener is not null)
-                DeviceEnrollmentTrace.Info($"TCP sync server stopped on port {SyncConstants.SyncPort}.");
+                BackendDebugLog.Info($"TCP sync server stopped on port {SyncConstants.SyncPort}.");
         }
         finally
         {
@@ -138,7 +150,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
             }
             catch (Exception ex)
             {
-                DeviceEnrollmentTrace.Error($"TCP sync server accept failed: {ex.Message}", ex);
+                BackendDebugLog.Error($"TCP sync server accept failed: {ex.Message}", ex);
                 try
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(250), ct);
@@ -152,12 +164,12 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
 
             if (!TryBeginConnection(client, out var remoteIp))
             {
-                DeviceEnrollmentTrace.Info("TCP sync server rejected an incoming connection because the connection limit was reached.");
+                BackendDebugLog.Info("TCP sync server rejected an incoming connection because the connection limit was reached.");
                 client.Dispose();
                 continue;
             }
 
-            DeviceEnrollmentTrace.Info($"TCP sync server accepted an incoming connection from {remoteIp}.");
+            BackendDebugLog.Info($"TCP sync server accepted an incoming connection from {remoteIp}.");
             _ = Task.Run(() => HandleClientAsync(client, remoteIp, ct), CancellationToken.None);
         }
     }
@@ -187,7 +199,7 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
                     RemoteCertificateValidationCallback = (_, cert, _, _) => cert is not null
                 }, handshakeTimeout.Token);
 
-                DeviceEnrollmentTrace.Info($"TLS authentication completed for incoming connection from {remoteIp}.");
+                BackendDebugLog.Info($"TLS authentication completed for incoming connection from {remoteIp}.");
 
                 var context = new PeerConnectionContext
                 {
@@ -203,15 +215,15 @@ public sealed class TcpSyncServerHostedService : ISyncControlledHostedService
         }
         catch (AuthenticationException ex)
         {
-            DeviceEnrollmentTrace.Error($"TLS authentication failed for incoming connection from {remoteIp}: {ex.Message}", ex);
+            BackendDebugLog.Error($"TLS authentication failed for incoming connection from {remoteIp}: {ex.Message}", ex);
         }
         catch (IOException ex)
         {
-            DeviceEnrollmentTrace.Error($"TCP sync connection from {remoteIp} ended with an I/O error: {ex.Message}", ex);
+            BackendDebugLog.Error($"TCP sync connection from {remoteIp} ended with an I/O error: {ex.Message}", ex);
         }
         catch (Exception ex)
         {
-            DeviceEnrollmentTrace.Error($"TCP sync connection from {remoteIp} failed: {ex.Message}", ex);
+            BackendDebugLog.Error($"TCP sync connection from {remoteIp} failed: {ex.Message}", ex);
         }
         finally
         {

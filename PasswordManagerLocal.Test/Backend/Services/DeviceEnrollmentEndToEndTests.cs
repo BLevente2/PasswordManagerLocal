@@ -81,14 +81,27 @@ public sealed class DeviceEnrollmentEndToEndTests
         var targetStatus = await target.Endpoints.GetDeviceEnrollmentStatusAsync();
         Assert.AreEqual(DeviceEnrollmentState.Completed, targetStatus.State);
         Assert.AreEqual(1, (await GetUserIdsAsync(target)).Count);
-        Assert.AreEqual(
-            UserLoginIdentityStatus.Active,
-            (await GetOnlyLoginIdentityAsync(target)).Status);
+
+        var sourceIdentity = await GetOnlyLoginIdentityAsync(source);
+        var sourceUser = await GetOnlyUserAsync(source);
+        Assert.AreEqual(sourceUser.MembershipEpoch, sourceIdentity.MembershipEpoch);
+        Assert.AreEqual(UserLoginIdentityStatus.Active, sourceIdentity.Status);
+
+        await source.Endpoints.LogoutAsync(sourceToken);
+        var sourceReloginToken = await RunPhaseAsync(
+            "original device login after authoritative enrollment membership transition",
+            ct => source.Endpoints.LoginAsync(source.CreateLoginRequest(username), ct));
+        Assert.AreNotEqual(Guid.Empty, sourceReloginToken);
+
+        var targetIdentity = await GetOnlyLoginIdentityAsync(target);
+        Assert.AreEqual(UserLoginIdentityStatus.Active, targetIdentity.Status);
+        Assert.IsNotNull(
+            await GetOnlyCanonicalCheckpointAsync(target),
+            "Enrollment import must create the target installation's canonical checkpoint before first login.");
 
         var targetToken = await RunPhaseAsync(
             "first login on the newly enrolled backend",
             ct => target.Endpoints.LoginAsync(target.CreateLoginRequest(username), ct));
-        Assert.IsNotNull(await GetOnlyCanonicalCheckpointAsync(target));
         var profile = await target.Endpoints.GetUserProfileInfoAsync(targetToken);
         var devices = await target.Endpoints.GetUserDevicesAsync(targetToken);
         var targetData = await target.Endpoints.GetSavedPasswordsAsync(targetToken);
@@ -437,6 +450,17 @@ public sealed class DeviceEnrollmentEndToEndTests
             .ListLoginIdentityStatesAsync();
         Assert.AreEqual(1, identities.Count);
         return identities[0];
+    }
+
+    private static async Task<User> GetOnlyUserAsync(
+        ProductionEnrollmentTestHost host)
+    {
+        using var scope = host.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+        var userIds = await users.ListUserIdsAsync();
+        Assert.AreEqual(1, userIds.Count);
+        return await users.GetByIdAsync(userIds[0])
+            ?? throw new AssertFailedException("The expected canonical user could not be loaded.");
     }
 
     private static async Task<IReadOnlyList<Guid>> GetUserIdsAsync(

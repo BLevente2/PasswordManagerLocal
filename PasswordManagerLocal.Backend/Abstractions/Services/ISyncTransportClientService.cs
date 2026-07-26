@@ -1,9 +1,18 @@
 using PasswordManagerLocal.Backend.Sync;
+using PasswordManagerLocal.Backend.Sync.Presence;
 
 namespace PasswordManagerLocal.Backend.Abstractions.Services;
 
 public interface ISyncTransportClientService
 {
+    Task<DevicePresenceProbeResult> ProbeAsync(
+        string host,
+        int port,
+        string serverFingerprintHex,
+        string expectedDeviceId,
+        byte[] expectedSignPublicKey,
+        CancellationToken ct = default);
+
     Task<bool> SendDeltasAsync(string host, int port, string serverFingerprintHex, IEnumerable<NetworkDelta> deltas, CancellationToken ct = default);
 
     Task<UserSnapshotInventoryExchangeReply> ExchangeUserSnapshotInventoryAsync(

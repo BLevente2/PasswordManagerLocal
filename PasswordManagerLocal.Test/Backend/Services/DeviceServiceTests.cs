@@ -106,7 +106,7 @@ public sealed class DeviceServiceTests
     [TestMethod]
     [TestCategory("Backend")]
     [TestCategory("Integration")]
-    public async Task GetUserDevices_ReportsRemoteOnlineOnlyWhenRecentlyDiscoveredAndSyncEligible()
+    public async Task GetUserDevices_RequiresAuthenticatedProbeAndSyncEligibilityForRemoteOnline()
     {
         using var host = new BackendTestHost();
         var auth = host.Services.GetRequiredService<IAuthService>();
@@ -115,6 +115,7 @@ public sealed class DeviceServiceTests
         var userDevices = (FakeUserDeviceRepository)host.Services.GetRequiredService<IUserDeviceRepository>();
         var devices = (FakeDeviceRepository)host.Services.GetRequiredService<IDeviceRepository>();
         var endpoints = host.Services.GetRequiredService<IDiscoveredDeviceEndpointRegistry>();
+        var transport = host.Services.GetRequiredService<FakeSyncTransportClientService>();
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("device_online_status"));
         var userId = users.GetUidFromToken(token);
         var remote = CreateRemoteDevice();
@@ -131,8 +132,14 @@ public sealed class DeviceServiceTests
             TlsCertFingerprint = remote.TlsCertFingerprint
         });
 
-        var discovered = await service.GetUserDevicesAsync(token);
-        MSTestAssert.IsTrue(discovered.Single(item => item.DeviceId == remote.Id).IsOnline);
+        transport.ProbeResult = PasswordManagerLocal.Backend.Sync.Presence.DevicePresenceProbeResult.Failed(
+            PasswordManagerLocal.Backend.Sync.Presence.DevicePresenceFailureKind.TlsOrFingerprintMismatch);
+        var discoveryOnly = await service.GetUserDevicesAsync(token);
+        MSTestAssert.IsFalse(discoveryOnly.Single(item => item.DeviceId == remote.Id).IsOnline);
+
+        transport.ProbeResult = PasswordManagerLocal.Backend.Sync.Presence.DevicePresenceProbeResult.Success;
+        var authenticated = await service.GetUserDevicesAsync(token);
+        MSTestAssert.IsTrue(authenticated.Single(item => item.DeviceId == remote.Id).IsOnline);
 
         await service.SetUserDeviceSyncOnAsync(token, remote.Id, false);
 

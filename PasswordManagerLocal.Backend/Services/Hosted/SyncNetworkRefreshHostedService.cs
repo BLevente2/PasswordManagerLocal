@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
+using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Abstractions.State;
 using PasswordManagerLocal.Backend.Utils;
@@ -6,7 +7,7 @@ using System.Net.NetworkInformation;
 using static PasswordManagerLocal.Backend.Constants.SyncConstants;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment.Diagnostics;
+using PasswordManagerLocal.Backend.Diagnostics;
 
 namespace PasswordManagerLocal.Backend.Services.Hosted;
 
@@ -21,6 +22,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
     private readonly LocalDiscoveryHostedService _discovery;
     private readonly IBackendExecutionProfileProvider _executionProfileProvider;
     private readonly BackendExecutionProfileChangeSignal _profileChangeSignal;
+    private readonly IDevicePresenceRegistry? _presenceRegistry;
     private readonly object _lock = new();
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private CancellationTokenSource? _debounceCancellation;
@@ -37,7 +39,8 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         ILocalNetworkAddressService networkAddresses,
         TcpSyncServerHostedService tcpServer,
         LocalDiscoveryHostedService discovery,
-        IBackendExecutionProfileProvider executionProfileProvider)
+        IBackendExecutionProfileProvider executionProfileProvider,
+        IDevicePresenceRegistry? presenceRegistry = null)
     {
         _identity = identity;
         _enrollmentState = enrollmentState;
@@ -49,6 +52,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         _executionProfileProvider = executionProfileProvider
             ?? throw new ArgumentNullException(nameof(executionProfileProvider));
         _profileChangeSignal = new BackendExecutionProfileChangeSignal(_executionProfileProvider);
+        _presenceRegistry = presenceRegistry;
     }
 
     public int StartOrder => 40;
@@ -87,7 +91,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
             () => PollNetworkConfigurationAsync(pollCancellation.Token),
             CancellationToken.None);
 
-        DeviceEnrollmentTrace.Info("Network-change monitoring started for synchronization/enrollment.");
+        BackendDebugLog.Info("Network-change monitoring started for synchronization/enrollment.");
         return Task.CompletedTask;
     }
 
@@ -132,7 +136,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         }
 
         pollCancellation?.Dispose();
-        DeviceEnrollmentTrace.Info("Network-change monitoring stopped for synchronization/enrollment.");
+        BackendDebugLog.Info("Network-change monitoring stopped for synchronization/enrollment.");
     }
 
     public void Dispose()
@@ -225,7 +229,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
 
             if (changed)
             {
-                DeviceEnrollmentTrace.Info("A network-interface change was detected by the synchronization fallback poller.");
+                BackendDebugLog.Info("A network-interface change was detected by the synchronization fallback poller.");
                 ScheduleRefresh(captureCurrentSignature: false);
             }
         }
@@ -255,7 +259,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
         }
         catch (Exception ex)
         {
-            DeviceEnrollmentTrace.Error($"Network refresh failed: {ex.Message}", ex);
+            BackendDebugLog.Error($"Network refresh failed: {ex.Message}", ex);
         }
         finally
         {
@@ -271,9 +275,10 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
             if (!IsNetworkRuntimeActive())
                 return;
 
-            DeviceEnrollmentTrace.Info("Network configuration changed. Restarting local synchronization/enrollment networking.");
+            BackendDebugLog.Info("Network configuration changed. Restarting local synchronization/enrollment networking.");
 
             await _deviceSyncTasks.StopAllAsync(ct);
+            _presenceRegistry?.InvalidateAll("network configuration changed");
             _endpointRegistry.Clear();
 
             await _discovery.StopAsync(ct);
@@ -291,7 +296,7 @@ internal sealed class SyncNetworkRefreshHostedService : ISyncControlledHostedSer
                     _lastNetworkSignature = BuildNetworkSignature();
             }
 
-            DeviceEnrollmentTrace.Info("Local synchronization/enrollment networking was refreshed after the network change.");
+            BackendDebugLog.Info("Local synchronization/enrollment networking was refreshed after the network change.");
         }
         finally
         {

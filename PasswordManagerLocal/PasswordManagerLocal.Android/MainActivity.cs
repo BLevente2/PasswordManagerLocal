@@ -137,24 +137,33 @@ public class MainActivity : AvaloniaMainActivity
 
         var backendClient = Interlocked.Exchange(ref _backendClient, null);
         var serviceAttachment = Interlocked.Exchange(ref _serviceAttachment, null);
+
         try
         {
-            if (backendClient is not null)
-            {
-                Task.Run(async () => await backendClient.DisposeAsync())
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            else if (serviceAttachment is not null)
-            {
-                Task.Run(async () => await serviceAttachment.DisposeAsync())
-                    .GetAwaiter()
-                    .GetResult();
-            }
+            base.OnDestroy();
         }
         finally
         {
-            base.OnDestroy();
+            _ = Task.Run(() => DisposeActivityRuntimeAsync(backendClient, serviceAttachment));
+        }
+    }
+
+
+    private static async Task DisposeActivityRuntimeAsync(
+        IFrontendBackendClient<IEndpoints>? backendClient,
+        AndroidActivityServiceAttachmentHandle? serviceAttachment)
+    {
+        try
+        {
+            if (backendClient is not null)
+                await backendClient.DisposeAsync();
+            else if (serviceAttachment is not null)
+                await serviceAttachment.DisposeAsync();
+        }
+        catch
+        {
+            // Activity destruction must remain non-blocking. The service host owns
+            // authoritative runtime cleanup and preserves any active background lease.
         }
     }
 
