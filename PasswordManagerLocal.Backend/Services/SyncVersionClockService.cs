@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -11,11 +12,13 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class SyncVersionClockService : ISyncVersionClockService
 {
     private const int MaxPersistenceAttempts = 8;
+    private const int ObservationCommandTimeoutSeconds = 1;
     private static readonly object Gate = new();
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDeviceIdentityService _identity;
     private readonly TimeProvider _timeProvider;
+    private SyncVersionStamp? _pendingObservedMaximum;
 
     public SyncVersionClockService(
         IServiceScopeFactory scopeFactory,
@@ -37,6 +40,8 @@ public sealed class SyncVersionClockService : ISyncVersionClockService
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 var state = GetOrCreateState(db);
+                ApplyPendingObservedFloor(state);
+
                 var now = _timeProvider.GetUtcNow();
                 var nowMilliseconds = now.ToUnixTimeMilliseconds();
 
@@ -55,6 +60,7 @@ public sealed class SyncVersionClockService : ISyncVersionClockService
                 try
                 {
                     db.SaveChanges();
+                    ClearPersistedPendingObservation(state);
                     return new SyncVersionStamp
                     {
                         PhysicalTimeUnixMilliseconds = state.LastPhysicalTimeUnixMilliseconds,
@@ -93,32 +99,48 @@ public sealed class SyncVersionClockService : ISyncVersionClockService
 
         lock (Gate)
         {
+            RememberObservedMaximum(maximum);
+
             for (var attempt = 0; attempt < MaxPersistenceAttempts; attempt++)
             {
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var state = GetOrCreateState(db);
+                var databaseKey = AppDatabaseTransactionRegistry.GetDatabaseKey(db);
 
-                if (maximum.PhysicalTimeUnixMilliseconds > state.LastPhysicalTimeUnixMilliseconds)
-                {
-                    state.LastPhysicalTimeUnixMilliseconds = maximum.PhysicalTimeUnixMilliseconds;
-                    state.LastLogicalCounter = maximum.LogicalCounter;
-                }
-                else if (maximum.PhysicalTimeUnixMilliseconds == state.LastPhysicalTimeUnixMilliseconds &&
-                         maximum.LogicalCounter > state.LastLogicalCounter)
-                {
-                    state.LastLogicalCounter = maximum.LogicalCounter;
-                }
-                else
-                {
+                // Verification and merge services legitimately observe authenticated item versions
+                // while their caller owns a transaction on the same SQLite database. Persisting the
+                // clock through this service's separate DbContext at that point would self-deadlock:
+                // the outer transaction waits for Observe, while Observe waits for that transaction.
+                // Retain the maximum in memory and let the next post-transaction Observe/Next call
+                // make it durable.
+                if (AppDatabaseTransactionRegistry.HasActiveTransaction(databaseKey))
                     return;
-                }
 
-                state.LastUpdatedAtUtc = _timeProvider.GetUtcNow();
-                checked { state.Version++; }
+                var originalCommandTimeout = db.Database.GetCommandTimeout();
+                db.Database.SetCommandTimeout(ObservationCommandTimeoutSeconds);
                 try
                 {
+                    var state = GetOrCreateState(db);
+                    var pending = _pendingObservedMaximum;
+                    if (pending is null || CompareClockPosition(pending, state) <= 0)
+                    {
+                        _pendingObservedMaximum = null;
+                        return;
+                    }
+
+                    state.LastPhysicalTimeUnixMilliseconds = pending.PhysicalTimeUnixMilliseconds;
+                    state.LastLogicalCounter = pending.LogicalCounter;
+                    state.LastUpdatedAtUtc = _timeProvider.GetUtcNow();
+                    checked { state.Version++; }
+
                     db.SaveChanges();
+                    ClearPersistedPendingObservation(state);
+                    return;
+                }
+                catch (Exception ex) when (IsSqliteBusy(ex))
+                {
+                    // Another process or a narrow transaction-start race may still own SQLite.
+                    // Keep the authenticated floor in memory rather than blocking the caller.
                     return;
                 }
                 catch (DbUpdateConcurrencyException) when (attempt + 1 < MaxPersistenceAttempts)
@@ -128,10 +150,67 @@ public sealed class SyncVersionClockService : ISyncVersionClockService
                 {
                     // A second process may have inserted the singleton row first.
                 }
+                finally
+                {
+                    db.Database.SetCommandTimeout(originalCommandTimeout);
+                }
             }
         }
 
         throw new InvalidOperationException("The synchronization item clock could not observe a remote version atomically.");
+    }
+
+    private void RememberObservedMaximum(SyncVersionStamp maximum)
+    {
+        if (_pendingObservedMaximum is not null &&
+            SyncVersionStampComparer.Instance.Compare(maximum, _pendingObservedMaximum) <= 0)
+        {
+            return;
+        }
+
+        _pendingObservedMaximum = new SyncVersionStamp
+        {
+            PhysicalTimeUnixMilliseconds = maximum.PhysicalTimeUnixMilliseconds,
+            LogicalCounter = maximum.LogicalCounter,
+            OriginDeviceId = maximum.OriginDeviceId,
+            OriginInstanceId = maximum.OriginInstanceId
+        };
+    }
+
+    private void ApplyPendingObservedFloor(SyncVersionClockState state)
+    {
+        var pending = _pendingObservedMaximum;
+        if (pending is null || CompareClockPosition(pending, state) <= 0)
+            return;
+
+        state.LastPhysicalTimeUnixMilliseconds = pending.PhysicalTimeUnixMilliseconds;
+        state.LastLogicalCounter = pending.LogicalCounter;
+    }
+
+    private void ClearPersistedPendingObservation(SyncVersionClockState state)
+    {
+        if (_pendingObservedMaximum is not null &&
+            CompareClockPosition(_pendingObservedMaximum, state) <= 0)
+        {
+            _pendingObservedMaximum = null;
+        }
+    }
+
+    private static int CompareClockPosition(SyncVersionStamp stamp, SyncVersionClockState state)
+    {
+        var physical = stamp.PhysicalTimeUnixMilliseconds.CompareTo(state.LastPhysicalTimeUnixMilliseconds);
+        return physical != 0 ? physical : stamp.LogicalCounter.CompareTo(state.LastLogicalCounter);
+    }
+
+    private static bool IsSqliteBusy(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException sqlite && sqlite.SqliteErrorCode is 5 or 6)
+                return true;
+        }
+
+        return false;
     }
 
     private void EnsureIdentityInitialized()

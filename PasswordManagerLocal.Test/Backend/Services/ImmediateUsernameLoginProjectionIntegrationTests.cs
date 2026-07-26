@@ -131,7 +131,6 @@ public sealed class ImmediateUsernameLoginProjectionIntegrationTests
         var users = host.Services.GetRequiredService<IUserRepository>();
         var unitOfWork = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.Persistence.IUnitOfWork>();
         var identity = host.Services.GetRequiredService<IDeviceIdentityService>();
-        var versionClock = host.Services.GetRequiredService<ISyncVersionClockService>();
         var token = await auth.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-projection-user"));
         var userId = sessions.GetUidFromToken(token);
         var user = await users.GetByIdAsync(userId)
@@ -152,7 +151,7 @@ public sealed class ImmediateUsernameLoginProjectionIntegrationTests
             CryptographicOperations.ZeroMemory(inconsistentUsername);
         }
 
-        var snapshotService = new DeviceEnrollmentSnapshotService(identity, versionClock);
+        var snapshotService = new DeviceEnrollmentSnapshotService(identity);
         await MSTestAssert.ThrowsExactlyAsync<InvalidDataException>(() =>
             snapshotService.BuildAsync(
                 host.Services,

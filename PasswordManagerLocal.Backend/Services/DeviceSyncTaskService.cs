@@ -26,6 +26,7 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
     private readonly ConcurrentDictionary<Guid, byte> _runningDeviceIds = new();
     private readonly ConcurrentDictionary<Guid, Task> _runningTasks = new();
     private readonly Dictionary<Guid, PendingDeviceSyncStart> _pendingStarts = new();
+    private readonly Dictionary<Guid, TaskCompletionSource<bool>> _idleSignals = new();
     private readonly object _runtimeLock = new();
     private CancellationTokenSource _runtimeCancellation = new();
 
@@ -81,6 +82,12 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             }
 
             _runningDeviceIds[device.Id] = 0;
+            if (!_idleSignals.ContainsKey(device.Id))
+            {
+                _idleSignals[device.Id] = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
             token = _runtimeCancellation.Token;
             targetDevice = CloneDevice(device);
             var task = Task.Run(() => RunAsync(CloneEndpoint(endpoint), targetDevice, token), CancellationToken.None);
@@ -88,6 +95,26 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
         }
 
         return true;
+    }
+
+
+    public Task WaitForIdleAsync(Guid deviceId, CancellationToken ct = default)
+    {
+        if (deviceId == Guid.Empty)
+            return Task.CompletedTask;
+
+        Task idleTask;
+        lock (_runtimeLock)
+        {
+            if (!_idleSignals.TryGetValue(deviceId, out var signal))
+                return Task.CompletedTask;
+
+            idleTask = signal.Task;
+        }
+
+        return ct.CanBeCanceled
+            ? idleTask.WaitAsync(ct)
+            : idleTask;
     }
 
 
@@ -112,25 +139,37 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             }
         }
 
+        TaskCompletionSource<bool>[] idleSignals;
         lock (_runtimeLock)
         {
             _runningDeviceIds.Clear();
             _runningTasks.Clear();
             _pendingStarts.Clear();
+            idleSignals = _idleSignals.Values.ToArray();
+            _idleSignals.Clear();
             _runtimeCancellation.Dispose();
             _runtimeCancellation = new CancellationTokenSource();
         }
+
+        foreach (var signal in idleSignals)
+            signal.TrySetResult(true);
     }
 
 
     public void Dispose()
     {
+        TaskCompletionSource<bool>[] idleSignals;
         lock (_runtimeLock)
         {
             _runtimeCancellation.Cancel();
             _pendingStarts.Clear();
+            idleSignals = _idleSignals.Values.ToArray();
+            _idleSignals.Clear();
             _runtimeCancellation.Dispose();
         }
+
+        foreach (var signal in idleSignals)
+            signal.TrySetResult(true);
     }
 
 
@@ -203,6 +242,23 @@ public sealed class DeviceSyncTaskService : IDeviceSyncTaskService, IDisposable
             catch (Exception ex)
             {
                 DeviceEnrollmentTrace.Error($"Outgoing synchronization worker cleanup for device {targetDevice.Id:N} failed: {ex.Message}", ex);
+            }
+            finally
+            {
+                TaskCompletionSource<bool>? idleSignal = null;
+                lock (_runtimeLock)
+                {
+                    // An external start or a remembered kick may already have launched the next
+                    // session. Keep the same signal alive until the complete per-device chain is idle.
+                    if (!_runningDeviceIds.ContainsKey(targetDevice.Id) &&
+                        !_pendingStarts.ContainsKey(targetDevice.Id) &&
+                        _idleSignals.Remove(targetDevice.Id, out var signal))
+                    {
+                        idleSignal = signal;
+                    }
+                }
+
+                idleSignal?.TrySetResult(true);
             }
         }
     }

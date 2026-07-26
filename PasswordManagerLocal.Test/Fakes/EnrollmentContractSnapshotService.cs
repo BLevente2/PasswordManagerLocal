@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 
@@ -36,8 +37,9 @@ internal sealed class EnrollmentContractSnapshotService : IDeviceEnrollmentSnaps
         User user,
         Guid token,
         Guid deviceId,
+        SyncVersionStamp version,
         CancellationToken ct = default) =>
-        _inner.EnsureEncryptedDeviceDataAsync(reader, writer, user, token, deviceId, ct);
+        _inner.EnsureEncryptedDeviceDataAsync(reader, writer, user, token, deviceId, version, ct);
 
     public (byte[] Ciphertext, byte[] Nonce, byte[] Tag) Encrypt(
         string sessionId,

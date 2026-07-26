@@ -172,6 +172,10 @@ public sealed class UserDeviceDisconnectionService : IUserDeviceDisconnectionSer
                 };
                 UserControlOperationEnvelopeUtil.FinalizeDeviceRemovalPayload(payload);
 
+                // The durable version clock writes through a separate DbContext. Reserve the
+                // tombstone version before this SQLite transaction acquires the write lock.
+                var encryptedDeviceRemovalVersion = _versionClock.Next();
+
                 await using var transaction = await _uow.BeginTransactionAsync(lifecycleToken);
                 try
                 {
@@ -180,7 +184,7 @@ public sealed class UserDeviceDisconnectionService : IUserDeviceDisconnectionSer
                     var encryptedDevice = bundle.UserDevicesData.Devices.FirstOrDefault(item => item.Id == deviceId);
                     if (encryptedDevice is not null)
                     {
-                        TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(bundle.UserDevicesData, encryptedDevice.Id, now, _versionClock.Next());
+                        TombstoneCleanupUtil.AddOrUpdateDeletedUserDevice(bundle.UserDevicesData, encryptedDevice.Id, now, encryptedDeviceRemovalVersion);
                         encryptedDevice.Dispose();
                         bundle.UserDevicesData.Devices.Remove(encryptedDevice);
                         await _userDataWriter.UpdateUserDataBundleAsync(bundle, token, UserDataBlobKind.Devices, false, lifecycleToken);

@@ -11,8 +11,13 @@ public sealed class AppUnitOfWork : IUnitOfWork
         _db = db;
     }
 
-    public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken ct = default) =>
-        new AppUnitOfWorkTransaction(await _db.Database.BeginTransactionAsync(ct));
+    public async Task<IUnitOfWorkTransaction> BeginTransactionAsync(CancellationToken ct = default)
+    {
+        var transaction = await _db.Database.BeginTransactionAsync(ct);
+        return new AppUnitOfWorkTransaction(
+            transaction,
+            AppDatabaseTransactionRegistry.GetDatabaseKey(_db));
+    }
 
     public Task<int> SaveChangesAsync(CancellationToken ct = default) =>
         _db.SaveChangesAsync(ct);

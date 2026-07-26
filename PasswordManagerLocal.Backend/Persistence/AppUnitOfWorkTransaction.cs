@@ -6,18 +6,38 @@ namespace PasswordManagerLocal.Backend.Persistence;
 internal sealed class AppUnitOfWorkTransaction : IUnitOfWorkTransaction
 {
     private readonly IDbContextTransaction _transaction;
+    private IDisposable? _registryLease;
 
-    public AppUnitOfWorkTransaction(IDbContextTransaction transaction)
+    public AppUnitOfWorkTransaction(IDbContextTransaction transaction, string databaseKey)
     {
         _transaction = transaction;
+        _registryLease = AppDatabaseTransactionRegistry.Enter(databaseKey);
     }
 
-    public Task CommitAsync(CancellationToken ct = default) =>
-        _transaction.CommitAsync(ct);
+    public async Task CommitAsync(CancellationToken ct = default)
+    {
+        await _transaction.CommitAsync(ct);
+        ReleaseRegistryLease();
+    }
 
-    public Task RollbackAsync(CancellationToken ct = default) =>
-        _transaction.RollbackAsync(ct);
+    public async Task RollbackAsync(CancellationToken ct = default)
+    {
+        await _transaction.RollbackAsync(ct);
+        ReleaseRegistryLease();
+    }
 
-    public ValueTask DisposeAsync() =>
-        _transaction.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await _transaction.DisposeAsync();
+        }
+        finally
+        {
+            ReleaseRegistryLease();
+        }
+    }
+
+    private void ReleaseRegistryLease() =>
+        Interlocked.Exchange(ref _registryLease, null)?.Dispose();
 }

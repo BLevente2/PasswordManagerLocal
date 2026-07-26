@@ -93,7 +93,6 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
                 await users.AddAsync(user, ct);
             }
             ApplyUser(validated.User, user);
-            await loginIdentities.SetCanonicalAsync(user, validated.User.GeneralUserDataVersion, ct);
 
             foreach (var groupSnapshot in snapshot.Groups)
             {
@@ -292,11 +291,13 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
             syncState.LastPublishedContentHash = [];
             syncState.LastUpdatedAtUtc = DateTimeOffset.UtcNow;
 
-            // The imported canonical bytes are authenticated by the enrollment graph but have not
-            // yet been decrypted on this installation. Do not mint a new local-origin signature for
-            // them. The first successful password/Remember-Me verification creates the local signed
-            // canonical checkpoint and queues publication through the normal user-data writer path.
-            await loginIdentities.RecalculateUnderLifecycleAsync(snapshot.PrimaryUserId, ct);
+            // The enrollment graph has authenticated the imported canonical username metadata.
+            // Keep that canonical projection active so the first password login can locate the
+            // account. This does not mint a local signed canonical checkpoint; the first successful
+            // password/Remember-Me verification creates that checkpoint through the normal writer path.
+            // Recalculating here would mark the projection invalid solely because that intentionally
+            // deferred local checkpoint does not exist yet, making the first login impossible.
+            await loginIdentities.SetCanonicalAsync(user, validated.User.GeneralUserDataVersion, ct);
             await unitOfWork.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
@@ -435,9 +436,18 @@ public sealed class DeviceEnrollmentSnapshotImporterService : IDeviceEnrollmentS
                     throw new InvalidDataException("Quarantined snapshot evidence contains invalid diagnostics.");
                 }
             }
-            else if (pending.QuarantineReason is not null || pending.ConflictingSnapshotHash is not null)
+            else
             {
-                throw new InvalidDataException("Non-quarantined snapshot evidence contains quarantine metadata.");
+                var hasQuarantineReason = !string.IsNullOrWhiteSpace(pending.QuarantineReason);
+                var hasConflictingSnapshotHash = pending.ConflictingSnapshotHash is { Length: > 0 };
+                if (hasQuarantineReason || hasConflictingSnapshotHash)
+                    throw new InvalidDataException("Non-quarantined snapshot evidence contains quarantine metadata.");
+
+                // Treat empty strings and zero-length byte arrays as the same absence value as null.
+                // This keeps the imported persistence state canonical without accepting meaningful
+                // quarantine diagnostics on a healthy snapshot status.
+                pending.QuarantineReason = null;
+                pending.ConflictingSnapshotHash = null;
             }
 
             var envelope = JsonSerializer.Deserialize(pending.EnvelopePayload, BackendJsonSerializerContext.Default.UserSnapshotEnvelope)

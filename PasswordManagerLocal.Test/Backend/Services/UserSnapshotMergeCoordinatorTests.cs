@@ -184,7 +184,69 @@ public sealed class UserSnapshotMergeCoordinatorTests
             snapshot.OriginDeviceId == validOrigin.DeviceId && snapshot.Status == UserSyncSnapshotStatus.Pending));
         MSTestAssert.IsTrue(rows.Any(snapshot =>
             snapshot.OriginDeviceId == validOrigin.DeviceId && snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
-        MSTestAssert.IsTrue(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
+        MSTestAssert.IsFalse(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
+    }
+
+    [TestMethod]
+    [TestCategory("Backend")]
+    [TestCategory("Integration")]
+    public async Task TryMergePendingAsync_VerifiedCoverageOnlyMerge_DoesNotPublishOrQueueAcknowledgementEcho()
+    {
+        await using var database = await SqliteIntegrationTestDatabase.CreateAsync();
+        using var localSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        using var originSigningKey = Key.Create(SignatureAlgorithm.Ed25519, new KeyCreationParameters());
+        var localIdentity = CreateIdentity(Guid.NewGuid(), Guid.NewGuid(), localSigningKey);
+        var origin = (DeviceId: Guid.NewGuid(), InstanceId: Guid.NewGuid());
+        var user = await AddUserAndMembershipAsync(
+            database,
+            localIdentity,
+            (origin.DeviceId, origin.InstanceId, originSigningKey));
+        await AddPendingAsync(database, CreateEnvelope(user, origin.DeviceId, origin.InstanceId, 6, originSigningKey, 0x66));
+        await database.UnitOfWork.SaveChangesAsync();
+
+        var lifecycle = new UserLifecycleCoordinator();
+        var queue = new FakeSyncQueueWriterService();
+        var activation = new FakeSyncQueueService();
+        var coordinator = new UserSnapshotMergeCoordinator(
+            database.Users,
+            CreateMembershipAuthorizationService(database, localIdentity),
+            database.UserSyncSnapshots,
+            database.UserRevisionKnowledge,
+            new FakeUserDataBundleSyncService(),
+            new UserSnapshotPublisherService(
+                database.UserSyncSnapshots,
+                database.UserSyncStates,
+                database.UserRevisionKnowledge,
+                localIdentity,
+                database.UnitOfWork,
+                lifecycle),
+            queue,
+            activation,
+            database.UnitOfWork,
+            lifecycle);
+
+        using var key = EncryptionKey.Create();
+        var merged = await coordinator.TryMergePendingAsync(user.UId, key);
+
+        database.Db.ChangeTracker.Clear();
+        var rows = await database.Db.UserSyncSnapshots
+            .Where(snapshot => snapshot.UserId == user.UId)
+            .ToListAsync();
+        var knowledge = await database.UserRevisionKnowledge.GetAsync(
+            user.UId,
+            origin.DeviceId,
+            origin.InstanceId,
+            user.KeyEpoch);
+
+        MSTestAssert.IsTrue(merged);
+        MSTestAssert.IsTrue(rows.Any(snapshot =>
+            snapshot.OriginDeviceId == origin.DeviceId &&
+            snapshot.Status == UserSyncSnapshotStatus.MergedReceipt));
+        MSTestAssert.IsFalse(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
+        MSTestAssert.IsNotNull(knowledge);
+        MSTestAssert.AreEqual(6L, knowledge.HighestMergedRevision);
+        MSTestAssert.HasCount(0, queue.EnqueuedItems);
+        MSTestAssert.AreEqual(1, activation.ActivatePendingSyncsCalls);
     }
 
     [TestMethod]
@@ -396,7 +458,7 @@ public sealed class UserSnapshotMergeCoordinatorTests
         MSTestAssert.IsTrue(rows.Any(snapshot =>
             snapshot.OriginDeviceId == badOrigin.DeviceId &&
             snapshot.Status == UserSyncSnapshotStatus.IsolatedCorrupt));
-        MSTestAssert.IsTrue(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
+        MSTestAssert.IsFalse(rows.Any(snapshot => snapshot.Status == UserSyncSnapshotStatus.LocalPublished));
         MSTestAssert.HasCount(1, faults);
         MSTestAssert.AreEqual(UserSyncFaultScope.SnapshotOrigin, faults[0].Scope);
         MSTestAssert.AreEqual(badOrigin.DeviceId, faults[0].OriginDeviceId);

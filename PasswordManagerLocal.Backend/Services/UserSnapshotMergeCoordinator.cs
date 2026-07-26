@@ -296,21 +296,33 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
             return false;
         }
 
-        var localSnapshot = await _publisher.GetOrCreateAsync(user, ct);
+        // A verified snapshot can advance authenticated revision knowledge without changing any
+        // canonical user-data blob. Publishing that coverage-only change as a new local origin
+        // revision causes an acknowledgement loop between peers: A acknowledges B's revision, B
+        // acknowledges A's acknowledgement, and both durable queues remain permanently non-empty.
+        //
+        // Publish and relay a fresh local snapshot only when the merge changed canonical data. The
+        // incoming row and merged-revision knowledge are still committed below, so duplicate and
+        // anti-entropy handling remain durable. A later real local or merged canonical change will
+        // naturally publish the accumulated coverage without creating acknowledgement-of-ack traffic.
+        if (mergeResult.CanonicalChanged)
+        {
+            var localSnapshot = await _publisher.GetOrCreateAsync(user, ct);
 
-        await _queueWriter.EnqueueAsync(
-            new SyncItem
-            {
-                ModelId = user.UId,
-                ModelType = SyncModelType.User,
-                ChangeType = SyncChangeType.Updated,
-                ChangedAtTs = localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds()
-            },
-            localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds(),
-            [],
-            touchLocalSyncState: true,
-            activateTargets: false,
-            ct);
+            await _queueWriter.EnqueueAsync(
+                new SyncItem
+                {
+                    ModelId = user.UId,
+                    ModelType = SyncModelType.User,
+                    ChangeType = SyncChangeType.Updated,
+                    ChangedAtTs = localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds()
+                },
+                localSnapshot.CreatedAtUtc.ToUnixTimeMilliseconds(),
+                [],
+                touchLocalSyncState: true,
+                activateTargets: false,
+                ct);
+        }
 
         foreach (var mergedRow in mergedRows)
         {

@@ -16,6 +16,12 @@ public sealed class FakeDeviceSyncTaskService : IDeviceSyncTaskService
         return true;
     }
 
+    public Task WaitForIdleAsync(Guid deviceId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
     public Task StopAllAsync(CancellationToken ct = default)
     {
         StopAllCalls++;

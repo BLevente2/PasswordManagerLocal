@@ -57,8 +57,10 @@ public sealed class DeviceSyncTaskServiceTests
         setup.Queue.Seed(CreateQueueItem(setup.Device.Id));
 
         MSTestAssert.IsTrue(setup.Service.TryStart(setup.Endpoint, setup.Device));
-        await WaitUntilAsync(() => setup.Transport.SendCalls == 1 && setup.Queue.Items.Count == 0);
+        await setup.Service.WaitForIdleAsync(setup.Device.Id).WaitAsync(TimeSpan.FromSeconds(10));
 
+        MSTestAssert.AreEqual(1, setup.Transport.SendCalls);
+        MSTestAssert.AreEqual(0, setup.Queue.Items.Count);
         MSTestAssert.AreEqual("192.168.1.25", setup.Transport.LastHost);
         MSTestAssert.AreEqual(26688, setup.Transport.LastPort);
         MSTestAssert.AreEqual("AABBCC", setup.Transport.LastFingerprint);
@@ -76,9 +78,11 @@ public sealed class DeviceSyncTaskServiceTests
         setup.EndpointRegistry.AddOrUpdate(setup.Endpoint);
 
         MSTestAssert.IsTrue(setup.Service.TryStart(setup.Endpoint, setup.Device));
-        await WaitUntilAsync(() => setup.Transport.SendCalls == 1 &&
-            !setup.EndpointRegistry.TryGetByFingerprint(setup.Endpoint.TlsCertFingerprint, out _));
+        await setup.Service.WaitForIdleAsync(setup.Device.Id).WaitAsync(TimeSpan.FromSeconds(10));
 
+        MSTestAssert.AreEqual(1, setup.Transport.SendCalls);
+        MSTestAssert.IsFalse(
+            setup.EndpointRegistry.TryGetByFingerprint(setup.Endpoint.TlsCertFingerprint, out _));
         MSTestAssert.AreEqual(1, setup.Queue.Items.Count);
         MSTestAssert.AreEqual(0, setup.UnitOfWork.SaveCalls);
     }
@@ -97,7 +101,8 @@ public sealed class DeviceSyncTaskServiceTests
         MSTestAssert.IsFalse(setup.Service.TryStart(setup.Endpoint, setup.Device));
 
         gate.SetResult(true);
-        await WaitUntilAsync(() => setup.Queue.Items.Count == 0);
+        await setup.Service.WaitForIdleAsync(setup.Device.Id).WaitAsync(TimeSpan.FromSeconds(10));
+        MSTestAssert.AreEqual(0, setup.Queue.Items.Count);
     }
 
     [TestMethod]
@@ -117,7 +122,9 @@ public sealed class DeviceSyncTaskServiceTests
 
         gate.SetResult(true);
 
-        await WaitUntilAsync(() => setup.Transport.SendCalls == 2 && setup.Queue.Items.Count == 0);
+        await setup.Service.WaitForIdleAsync(setup.Device.Id).WaitAsync(TimeSpan.FromSeconds(10));
+        MSTestAssert.AreEqual(2, setup.Transport.SendCalls);
+        MSTestAssert.AreEqual(0, setup.Queue.Items.Count);
     }
 
     private static DeviceSyncTaskSetup CreateSetup(bool sendResult = true, TaskCompletionSource<bool>? sendGate = null)

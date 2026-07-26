@@ -457,6 +457,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
                     await snapshotMerge.TryMergePendingUnderLifecycleAsync(userId, mergeKey, UserSyncKeyConfidence.AuthenticatedSession, lifecycleToken);
                     canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
 
+                    // Reserve the encrypted-device item version before opening the authoritative SQLite
+                    // transaction. The durable clock persists through a separate DbContext, so advancing it
+                    // while this transaction owns the SQLite write lock would deadlock enrollment. Version
+                    // stamps may have gaps, therefore reserving one for a recoverable enrollment is safe.
+                    var encryptedDeviceVersion = scope.ServiceProvider
+                        .GetRequiredService<ISyncVersionClockService>()
+                        .Next();
+
                     await using var transaction = await unitOfWork.BeginTransactionAsync(lifecycleToken);
                     try
                     {
@@ -495,7 +503,14 @@ public sealed class DeviceEnrollmentService : IDeviceEnrollmentService, IDeviceE
                             canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
 
                             // Encrypted device metadata is derived only after the signed addition has been applied.
-                            await _snapshotService.EnsureEncryptedDeviceDataAsync(userDataReader, userDataWriter, canonicalUser, token, endpoint.DeviceId, lifecycleToken);
+                            await _snapshotService.EnsureEncryptedDeviceDataAsync(
+                                userDataReader,
+                                userDataWriter,
+                                canonicalUser,
+                                token,
+                                endpoint.DeviceId,
+                                encryptedDeviceVersion,
+                                lifecycleToken);
                             canonicalUser = await users.GetAndVerifyUserAsync(token, lifecycleToken);
                             await publisher.GetOrCreateAsync(canonicalUser, lifecycleToken);
                             await _registrationService.QueueInitialSyncAsync(scope.ServiceProvider, userId, endpoint.DeviceId, lifecycleToken);

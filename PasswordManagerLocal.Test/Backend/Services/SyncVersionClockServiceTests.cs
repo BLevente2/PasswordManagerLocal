@@ -1,6 +1,8 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Persistence;
 using PasswordManagerLocal.Backend.Services;
@@ -59,6 +61,93 @@ public sealed class SyncVersionClockServiceTests
         var next = fixture.Clock.Next();
         MSTestAssert.AreEqual(50_000, next.PhysicalTimeUnixMilliseconds);
         MSTestAssert.AreEqual(8, next.LogicalCounter);
+    }
+
+    [TestMethod]
+    [Timeout(10_000)]
+    public async Task Observe_InsideActiveUnitOfWorkTransaction_DefersWithoutBlockingAndNextPersistsFloor()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "PasswordManagerLocal.ClockTests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var databasePath = Path.Combine(root, "clock.db");
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath
+        }.ToString();
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(options => options.UseSqlite(connectionString));
+        services.AddScoped<IUnitOfWork, AppUnitOfWork>();
+        var provider = services.BuildServiceProvider();
+
+        try
+        {
+            await using (var initializationScope = provider.CreateAsyncScope())
+            {
+                await initializationScope.ServiceProvider
+                    .GetRequiredService<AppDbContext>()
+                    .Database
+                    .EnsureCreatedAsync();
+            }
+
+            var identity = new FakeDeviceIdentityService();
+            var time = new ManualTimeProvider
+            {
+                UtcNow = DateTimeOffset.FromUnixTimeMilliseconds(10_000)
+            };
+            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+            var clock = new SyncVersionClockService(scopeFactory, identity, time);
+            _ = clock.Next();
+
+            var observed = new PasswordManagerLocal.Backend.Models.Encrypted.SyncVersionStamp
+            {
+                PhysicalTimeUnixMilliseconds = 50_000,
+                LogicalCounter = 7,
+                OriginDeviceId = Guid.NewGuid(),
+                OriginInstanceId = Guid.NewGuid()
+            };
+
+            await using (var lockScope = provider.CreateAsyncScope())
+            {
+                var db = lockScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var unitOfWork = lockScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                var databaseKey = AppDatabaseTransactionRegistry.GetDatabaseKey(db);
+                await using var transaction = await unitOfWork.BeginTransactionAsync();
+                _ = await db.SyncVersionClockStates.AsNoTracking().SingleAsync();
+                MSTestAssert.IsTrue(AppDatabaseTransactionRegistry.HasActiveTransaction(databaseKey));
+
+                await Task.Run(() => clock.Observe([observed]))
+                    .WaitAsync(TimeSpan.FromSeconds(2));
+
+                await transaction.RollbackAsync();
+                MSTestAssert.IsFalse(AppDatabaseTransactionRegistry.HasActiveTransaction(databaseKey));
+            }
+
+            var next = clock.Next();
+            MSTestAssert.AreEqual(observed.PhysicalTimeUnixMilliseconds, next.PhysicalTimeUnixMilliseconds);
+            MSTestAssert.AreEqual(observed.LogicalCounter + 1, next.LogicalCounter);
+
+            var restarted = new SyncVersionClockService(scopeFactory, identity, time);
+            var afterRestart = restarted.Next();
+            MSTestAssert.IsTrue(
+                afterRestart.PhysicalTimeUnixMilliseconds > next.PhysicalTimeUnixMilliseconds ||
+                (afterRestart.PhysicalTimeUnixMilliseconds == next.PhysicalTimeUnixMilliseconds &&
+                 afterRestart.LogicalCounter > next.LogicalCounter));
+        }
+        finally
+        {
+            await provider.DisposeAsync();
+            try
+            {
+                Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
     }
 
     private static string Format(PasswordManagerLocal.Backend.Models.Encrypted.SyncVersionStamp stamp) =>

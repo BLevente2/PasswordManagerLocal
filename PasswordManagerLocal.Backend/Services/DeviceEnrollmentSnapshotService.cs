@@ -24,7 +24,6 @@ namespace PasswordManagerLocal.Backend.Services;
 public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotService
 {
     private readonly IDeviceIdentityService _identity;
-    private readonly ISyncVersionClockService _versionClock;
 
     private static readonly string[] SensitiveLocalOnlySnapshotPropertyNames =
     [
@@ -40,12 +39,9 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
         "PrivateKeyBlob"
     ];
 
-    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity) : this(identity, new EphemeralSyncVersionClockService(identity)) { }
-
-    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity, ISyncVersionClockService versionClock)
+    public DeviceEnrollmentSnapshotService(IDeviceIdentityService identity)
     {
         _identity = identity;
-        _versionClock = versionClock;
     }
 
     public DeviceEnrollmentSnapshot DecryptAndDeserialize(
@@ -353,11 +349,27 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
                 HighestStoredSnapshotHash = row.HighestStoredSnapshotHash.ToArray(), HighestMergedRevision = row.HighestMergedRevision,
                 LastUpdatedAtUtc = row.LastUpdatedAtUtc
             }).ToList(),
-            PendingSnapshots = retainedSnapshots.Select(row => new DeviceEnrollmentPendingSnapshot
-            {
-                EnvelopePayload = row.EnvelopePayload.ToArray(), Status = row.Status, QuarantineReason = row.QuarantineReason,
-                ConflictingSnapshotHash = row.ConflictingSnapshotHash?.ToArray(), ReceivedAtUtc = row.ReceivedAtUtc
-            }).ToList()
+            PendingSnapshots = retainedSnapshots.Select(ToPendingSnapshot).ToList()
+        };
+    }
+
+    private static DeviceEnrollmentPendingSnapshot ToPendingSnapshot(UserSyncSnapshot row)
+    {
+        var isQuarantined = row.Status == UserSyncSnapshotStatus.IsolatedFork;
+        return new DeviceEnrollmentPendingSnapshot
+        {
+            EnvelopePayload = row.EnvelopePayload.ToArray(),
+            Status = row.Status,
+            // Empty diagnostic values are an absence representation used by some persistence/
+            // serialization paths. Export only meaningful quarantine metadata, and never attach
+            // stale diagnostics to healthy retained evidence.
+            QuarantineReason = isQuarantined && !string.IsNullOrWhiteSpace(row.QuarantineReason)
+                ? row.QuarantineReason
+                : null,
+            ConflictingSnapshotHash = isQuarantined && row.ConflictingSnapshotHash is { Length: > 0 }
+                ? row.ConflictingSnapshotHash.ToArray()
+                : null,
+            ReceivedAtUtc = row.ReceivedAtUtc
         };
     }
 
@@ -387,15 +399,23 @@ public sealed class DeviceEnrollmentSnapshotService : IDeviceEnrollmentSnapshotS
     }
 
 
-    public async Task EnsureEncryptedDeviceDataAsync(IUserDataReaderService reader, IUserDataWriterService writer, User user, Guid token, Guid deviceId, CancellationToken ct = default)
+    public async Task EnsureEncryptedDeviceDataAsync(
+        IUserDataReaderService reader,
+        IUserDataWriterService writer,
+        User user,
+        Guid token,
+        Guid deviceId,
+        SyncVersionStamp version,
+        CancellationToken ct = default)
     {
+        SyncVersionStampComparer.Validate(version);
+
         using var bundle = await reader.GetAndVerifyUserDataBundleAsync(user, token, ct);
         if (bundle.UserDevicesData.Devices.Any(device => device.Id == deviceId))
             return;
 
         var baseName = DeviceNameUtil.BuildDefaultDeviceName(deviceId);
         var name = BuildUniqueEncryptedDeviceName(bundle.UserDevicesData, baseName, deviceId);
-        var version = _versionClock.Next();
         var deviceData = new UserDeviceData
         {
             Id = deviceId,

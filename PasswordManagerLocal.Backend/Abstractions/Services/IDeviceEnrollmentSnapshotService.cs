@@ -1,4 +1,5 @@
 using PasswordManagerLocal.Backend.Models;
+using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 
@@ -7,7 +8,14 @@ namespace PasswordManagerLocal.Backend.Abstractions.Services;
 public interface IDeviceEnrollmentSnapshotService
 {
     Task<DeviceEnrollmentSnapshot> BuildAsync(IServiceProvider services, Guid userId, EnrollmentEndpoint target, Guid authorizingAdditionOperationId, CancellationToken ct = default);
-    Task EnsureEncryptedDeviceDataAsync(IUserDataReaderService reader, IUserDataWriterService writer, User user, Guid token, Guid deviceId, CancellationToken ct = default);
+    Task EnsureEncryptedDeviceDataAsync(
+        IUserDataReaderService reader,
+        IUserDataWriterService writer,
+        User user,
+        Guid token,
+        Guid deviceId,
+        SyncVersionStamp version,
+        CancellationToken ct = default);
     (byte[] Ciphertext, byte[] Nonce, byte[] Tag) Encrypt(
         string sessionId,
         byte[] secret,
