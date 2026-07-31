@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Background;
 using PasswordManagerLocal.Windows.Agent.DatabaseReset;

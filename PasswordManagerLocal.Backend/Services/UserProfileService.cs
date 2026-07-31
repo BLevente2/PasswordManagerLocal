@@ -1,13 +1,15 @@
+using PasswordManagerLocal.Backend.Mapping;
+using PasswordManagerLocal.Contracts.Errors;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
 using System.Text;
-using static PasswordManagerLocal.Backend.Validation.DataValidation;
+using static PasswordManagerLocal.Contracts.Validation.DataValidation;
 
 namespace PasswordManagerLocal.Backend.Services;
 
@@ -48,7 +50,7 @@ public class UserProfileService : IUserProfileService
     {
         var user = await _lookup.GetAndVerifyUserAsync(token, ct);
         var bundle = await _reader.GetLoadAndVerifyUserDataBundleAsync(token, ct, user);
-        return UserProfileInfoResponse.ConvertToUserProfileInfoResponse(
+        return EndpointResponseMapper.ToUserProfileInfoResponse(
             bundle.UserData,
             bundle.GeneralUserData,
             user.SavedKey is not null);

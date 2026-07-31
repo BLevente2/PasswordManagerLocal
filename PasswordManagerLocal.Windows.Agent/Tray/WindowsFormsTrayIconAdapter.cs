@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Contracts.Preferences;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -6,16 +7,20 @@ namespace PasswordManagerLocal.Windows.Agent.Tray;
 public sealed class WindowsFormsTrayIconAdapter : ITrayIconAdapter
 {
     private readonly string _iconPath;
+    private readonly AppLanguage _language;
     private readonly Control _dispatcher = new();
     private NotifyIcon? _notifyIcon;
     private ContextMenuStrip? _menu;
     private Icon? _icon;
     private int _disposed;
 
-    public WindowsFormsTrayIconAdapter(string iconPath)
+    public WindowsFormsTrayIconAdapter(string iconPath, AppLanguage language)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(iconPath);
+        if (language is not AppLanguage.English and not AppLanguage.Hungarian)
+            throw new ArgumentOutOfRangeException(nameof(language));
         _iconPath = Path.GetFullPath(iconPath);
+        _language = language;
         _dispatcher.CreateControl();
     }
 
@@ -31,8 +36,14 @@ public sealed class WindowsFormsTrayIconAdapter : ITrayIconAdapter
                 throw new FileNotFoundException("The tray icon resource was not found.", _iconPath);
 
             _icon = new Icon(_iconPath);
-            var openItem = new ToolStripMenuItem("Open PasswordManagerLocal");
-            var exitItem = new ToolStripMenuItem("Exit");
+            var openItem = new ToolStripMenuItem(
+                _language == AppLanguage.Hungarian
+                    ? "PasswordManagerLocal megnyitása"
+                    : "Open PasswordManagerLocal");
+            var exitItem = new ToolStripMenuItem(
+                _language == AppLanguage.Hungarian
+                    ? "Kilépés"
+                    : "Exit");
             openItem.Click += (_, _) => OpenCommandSelected?.Invoke(this, EventArgs.Empty);
             exitItem.Click += (_, _) => ExitCommandSelected?.Invoke(this, EventArgs.Empty);
             _menu = new ContextMenuStrip();

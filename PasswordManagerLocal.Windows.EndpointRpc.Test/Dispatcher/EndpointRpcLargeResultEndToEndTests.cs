@@ -1,5 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Windows.EndpointRpc.Client;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.LargeTransfer;

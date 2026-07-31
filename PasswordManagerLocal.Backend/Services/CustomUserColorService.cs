@@ -1,9 +1,12 @@
+using PasswordManagerLocal.Backend.Mapping;
+using PasswordManagerLocal.Contracts.Errors;
+using PasswordManagerLocal.Contracts.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
-using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
+using static PasswordManagerLocal.Contracts.Constants.PasswordConstants;
 using PasswordManagerLocal.Backend.Utils;
 
 using PasswordManagerLocal.Backend.Sync.Tombstones;
@@ -29,7 +32,7 @@ public sealed class CustomUserColorService : ICustomUserColorService
             .OrderBy(color => color.ColorName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ThenBy(color => color.ColorCode, StringComparer.OrdinalIgnoreCase)
             .ThenBy(color => color.Id)
-            .Select(CustomUserColorInfoResponse.ConvertToCustomUserColorInfoResponse)
+            .Select(EndpointResponseMapper.ToCustomUserColorInfoResponse)
             .ToList();
     }
 

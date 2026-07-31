@@ -340,7 +340,7 @@ public sealed class Phase6DependencyBoundaryTests
             .ToArray();
 
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Frontend"));
-        Assert.IsTrue(references.Contains("PasswordManagerLocal.Runtime.Abstractions"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Contracts"));
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc"));
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.Ipc"));
         Assert.IsFalse(references.Contains("PasswordManagerLocal.Backend.Hosting"));
@@ -533,10 +533,24 @@ public sealed class Phase6DependencyBoundaryTests
             "mainWindow.Closed += (_, _) =>");
         StringAssert.Contains(
             appSource,
-            "_context.DesktopExitRequested?.Invoke();");
+            "DesktopExitRequested?.Invoke();");
         StringAssert.Contains(
             appSource,
             "desktop.TryShutdown();");
+
+        var closeHandler = appSource.IndexOf(
+            "mainWindow.Closed += (_, _) =>",
+            StringComparison.Ordinal);
+        var exitRequest = appSource.IndexOf(
+            "DesktopExitRequested?.Invoke();",
+            StringComparison.Ordinal);
+        var desktopShutdown = appSource.IndexOf(
+            "TryShutdownDesktop(desktop);",
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(closeHandler >= 0);
+        Assert.IsTrue(exitRequest > closeHandler);
+        Assert.IsTrue(desktopShutdown > exitRequest);
         StringAssert.Contains(
             programSource,
             "ShutdownMode.OnExplicitShutdown");
@@ -582,7 +596,7 @@ public sealed class Phase6DependencyBoundaryTests
 
         StringAssert.Contains(contextSource, "Action? desktopExitRequested = null");
         StringAssert.Contains(contextSource, "DesktopExitRequested = desktopExitRequested;");
-        StringAssert.Contains(appSource, "_context.DesktopExitRequested?.Invoke();");
+        StringAssert.Contains(appSource, "DesktopExitRequested?.Invoke();");
         StringAssert.Contains(programSource, "() => exitController.RequestExit()");
         StringAssert.Contains(exitControllerSource, "IsBackground = false");
         StringAssert.Contains(exitControllerSource, "_terminateProcess(exitCode);");

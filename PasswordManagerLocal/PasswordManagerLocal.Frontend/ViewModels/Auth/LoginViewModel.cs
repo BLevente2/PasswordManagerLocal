@@ -2,13 +2,13 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PasswordManagerLocal.Frontend.Helpers;
 using PasswordManagerLocal.Frontend.Services;
-using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Endpoints;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using ReactiveUI;
 using System.Reactive;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment;
+using PasswordManagerLocal.Contracts.Enrollment;
 
 namespace PasswordManagerLocal.Frontend.ViewModels.Auth;
 
@@ -645,7 +645,7 @@ public sealed class LoginViewModel : ViewModelBase
         {
             _deviceTransferPolling?.Cancel();
             IsDeviceTransferSuccess = false;
-            DeviceTransferStatus.ShowError(status.ErrorCode == PasswordManagerLocal.Backend.Sync.Enrollment.DeviceEnrollmentErrorCode.Unknown
+            DeviceTransferStatus.ShowError(status.ErrorCode == PasswordManagerLocal.Contracts.Enrollment.DeviceEnrollmentErrorCode.Unknown
                 ? GetTranslation("Login_DeviceTransfer_ErrorMessage")
                 : GetDeviceEnrollmentErrorMessage(status.ErrorCode));
             IsDeviceTransferCodeVisible = false;

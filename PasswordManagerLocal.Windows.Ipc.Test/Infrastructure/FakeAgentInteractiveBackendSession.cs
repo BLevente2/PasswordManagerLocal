@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Hosting;
 
 namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;

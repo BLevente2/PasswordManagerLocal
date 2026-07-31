@@ -1,10 +1,12 @@
 using PasswordManagerLocal.Frontend.Helpers;
 using PasswordManagerLocal.Frontend.Security;
 using PasswordManagerLocal.Frontend.Services;
-using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Endpoints;
+using PasswordManagerLocal.Contracts.Devices;
+using PasswordManagerLocal.Contracts.Authentication;
+using PasswordManagerLocal.Contracts.Security;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using ReactiveUI;
 using System.Collections.ObjectModel;
 using System.Reactive;

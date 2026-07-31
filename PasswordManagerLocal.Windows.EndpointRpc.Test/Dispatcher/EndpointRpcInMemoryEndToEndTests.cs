@@ -1,5 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 using PasswordManagerLocal.Windows.EndpointRpc.Client;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 using PasswordManagerLocal.Windows.EndpointRpc.Server;

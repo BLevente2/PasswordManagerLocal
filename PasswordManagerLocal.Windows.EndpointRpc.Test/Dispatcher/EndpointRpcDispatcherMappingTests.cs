@@ -149,7 +149,7 @@ public sealed class EndpointRpcDispatcherMappingTests
     {
         const string secret = "unknown-user-and-password";
         await using var dispatcher = CreateDispatcher(new ExceptionEndpointAdapter(
-            new PasswordManagerLocal.Backend.Exceptions.UserNotFoundException(secret)));
+            new UserNotFoundException(secret)));
         var descriptor = EndpointOperationManifest.Get(EndpointOperationId.Login);
         var payload = SerializeRequest(descriptor);
 

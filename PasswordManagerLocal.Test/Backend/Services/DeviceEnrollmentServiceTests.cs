@@ -4,7 +4,7 @@ using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Sync.Enrollment;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Abstractions.Services;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Test.Fakes;
 

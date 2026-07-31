@@ -10,7 +10,7 @@ using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
+using static PasswordManagerLocal.Contracts.Constants.DataLengthConstants;
 using System.Security.Cryptography;
 using System.Text.Json;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;

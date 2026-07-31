@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 
 namespace PasswordManagerLocal.Backend.Abstractions.Services;
 

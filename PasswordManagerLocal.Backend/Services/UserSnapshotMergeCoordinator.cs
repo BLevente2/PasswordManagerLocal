@@ -560,7 +560,7 @@ public sealed class UserSnapshotMergeCoordinator : IUserSnapshotMergeCoordinator
         ex is InvalidDataException or
             UnauthorizedAccessException or
             System.Security.Cryptography.CryptographicException or
-            PasswordManagerLocal.Backend.Exceptions.InvalidDataIntegrityException or
+            InvalidDataIntegrityException or
             JsonException;
 
 

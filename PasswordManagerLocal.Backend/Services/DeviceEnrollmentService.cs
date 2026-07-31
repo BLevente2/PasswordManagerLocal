@@ -6,7 +6,7 @@ using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.State;
 using PasswordManagerLocal.Backend.Sync;

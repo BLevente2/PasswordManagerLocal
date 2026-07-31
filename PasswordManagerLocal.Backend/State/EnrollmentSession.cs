@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using System.Security.Cryptography;
 
 using PasswordManagerLocal.Backend.Sync.Enrollment;

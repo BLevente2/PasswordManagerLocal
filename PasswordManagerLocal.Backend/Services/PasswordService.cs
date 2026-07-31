@@ -1,11 +1,14 @@
+using PasswordManagerLocal.Backend.Mapping;
+using PasswordManagerLocal.Contracts.Errors;
+using PasswordManagerLocal.Contracts.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Security;
 using System.Security.Cryptography;
-using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
+using static PasswordManagerLocal.Contracts.Constants.PasswordConstants;
 using PasswordManagerLocal.Backend.Utils;
 
 using PasswordManagerLocal.Backend.Sync.Tombstones;
@@ -33,7 +36,7 @@ public sealed class PasswordService : IPasswordService
             .ThenBy(password => password.Id)
             .Select(password =>
             {
-                var response = PasswordInfoResponse.ConvertToPasswordInfoResponse(password);
+                var response = EndpointResponseMapper.ToPasswordInfoResponse(password);
                 response.TagIds = response.TagIds.Where(validTagIds.Contains).Distinct().Order().ToList();
                 return response;
             })

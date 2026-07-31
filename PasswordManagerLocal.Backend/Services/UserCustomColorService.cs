@@ -1,7 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 
 namespace PasswordManagerLocal.Backend.Services;
 

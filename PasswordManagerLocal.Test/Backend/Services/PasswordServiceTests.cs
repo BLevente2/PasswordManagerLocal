@@ -1,11 +1,11 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 using PasswordManagerLocal.Backend.Services;
 using System.Security.Cryptography;
 using System.Text;
-using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
+using static PasswordManagerLocal.Contracts.Constants.PasswordConstants;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
 

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Services;
@@ -10,7 +10,7 @@ using PasswordManagerLocal.Backend.Configuration;
 using PasswordManagerLocal.Backend.DependencyInjection;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Persistence;
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 using PasswordManagerLocal.Backend.Sync.Presence;

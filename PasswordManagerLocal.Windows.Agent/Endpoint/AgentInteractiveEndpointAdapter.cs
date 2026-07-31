@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.EndpointRpc.Server;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;

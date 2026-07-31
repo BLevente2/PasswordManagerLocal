@@ -1,11 +1,11 @@
 using PasswordManagerLocal.Frontend.Exceptions;
 using PasswordManagerLocal.Frontend.Localization;
 using PasswordManagerLocal.Frontend.Services;
-using PasswordManagerLocal.Backend.Exceptions;
+using PasswordManagerLocal.Contracts.Errors;
 using ReactiveUI;
 using System.ComponentModel;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment;
+using PasswordManagerLocal.Contracts.Enrollment;
 
 namespace PasswordManagerLocal.Frontend.ViewModels;
 

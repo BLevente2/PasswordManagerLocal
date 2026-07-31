@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;
 

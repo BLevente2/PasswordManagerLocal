@@ -1,8 +1,8 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Validation;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Validation;
 using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;

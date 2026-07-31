@@ -1,7 +1,7 @@
 using PasswordManagerLocal.Frontend.Abstractions.Services;
 using PasswordManagerLocal.Frontend.Services;
-using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Endpoints;
+using PasswordManagerLocal.Contracts.Responses;
 using ReactiveUI;
 using System.Collections.ObjectModel;
 using System.Linq;

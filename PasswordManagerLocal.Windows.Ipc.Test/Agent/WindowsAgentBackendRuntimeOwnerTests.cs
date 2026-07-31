@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Hosting;
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 

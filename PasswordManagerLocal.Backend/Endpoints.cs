@@ -1,10 +1,10 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Diagnostics;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 
 namespace PasswordManagerLocal.Backend;
 

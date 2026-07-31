@@ -12,7 +12,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Google.Protobuf;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Sync;
 using System.Net;
 using System.Net.Sockets;

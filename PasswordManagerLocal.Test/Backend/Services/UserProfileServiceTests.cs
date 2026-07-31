@@ -4,7 +4,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 using System.Text;
 
 using MSTestAssert = Microsoft.VisualStudio.TestTools.UnitTesting.Assert;

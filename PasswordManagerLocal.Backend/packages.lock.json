@@ -186,6 +186,9 @@
           "SQLitePCLRaw.core": "2.1.11"
         }
       },
+      "passwordmanagerlocal.contracts": {
+        "type": "Project"
+      },
       "libsodium": {
         "type": "CentralTransitive",
         "requested": "[1.0.22, )",

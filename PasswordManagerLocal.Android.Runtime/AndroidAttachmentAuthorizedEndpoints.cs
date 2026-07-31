@@ -1,6 +1,6 @@
-using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Endpoints;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 
 namespace PasswordManagerLocal.Android.Runtime;
 

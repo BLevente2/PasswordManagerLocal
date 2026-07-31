@@ -1,4 +1,5 @@
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using Avalonia.Media;
 using Avalonia.Threading;
 using PasswordManagerLocal.Frontend.Abstractions.Services;
@@ -6,10 +7,13 @@ using PasswordManagerLocal.Frontend.Exceptions;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels.Auth;
 using PasswordManagerLocal.Frontend.ViewModels.Pages;
-using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Endpoints;
+using PasswordManagerLocal.Contracts.Errors;
+using PasswordManagerLocal.Contracts.Devices;
+using PasswordManagerLocal.Contracts.Authentication;
+using PasswordManagerLocal.Contracts.Security;
+using PasswordManagerLocal.Contracts.Responses;
+using PasswordManagerLocal.Preferences;
 using ReactiveUI;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -69,12 +73,13 @@ public sealed class MainViewModel : ViewModelBase
     public MainViewModel(
         IEndpoints endpoints,
         IBackendRuntimeClient backendClient,
-        IBackgroundSyncSettingsClient backgroundSyncSettingsClient)
+        IBackgroundSyncSettingsClient backgroundSyncSettingsClient,
+        IApplicationPreferencesStore applicationPreferencesStore)
         : this(
             endpoints,
             backendClient,
             App.AuthSessionRegistry,
-            new UiPreferencesService(),
+            new UiPreferencesService(applicationPreferencesStore),
             new DeviceAppPreferencesService(backgroundSyncSettingsClient))
     {
     }

@@ -1,14 +1,14 @@
 using Microsoft.Extensions.Caching.Memory;
 using NSec.Cryptography;
 using PasswordManagerLocal.Backend;
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Discovery;
 using PasswordManagerLocal.Backend.Abstractions.Sync.Presence;
 using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Repositories;
 using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Abstractions.Services;
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Services;
 using PasswordManagerLocal.Backend.Sync.Discovery;

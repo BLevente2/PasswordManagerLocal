@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Frontend.Abstractions.Services;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels;
@@ -13,13 +13,23 @@ namespace PasswordManagerLocal.Frontend;
 
 public partial class App : Application
 {
-    private readonly FrontendApplicationContext _context;
+    private readonly FrontendApplicationContext? _context;
+
+    // Required by Avalonia's XAML resource loader and design-time tooling.
+    // Production hosts construct App through the explicit context factory below.
+    public App()
+    {
+    }
 
     public App(FrontendApplicationContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        AppConfigurationManager.Initialize(context.ApplicationDataDirectory);
+        if (OperatingSystem.IsWindows())
+            WindowsFirewallConfigurationStore.Initialize(context.ApplicationDataDirectory);
     }
+
+    private FrontendApplicationContext Context => _context ?? throw new InvalidOperationException(
+        "The frontend application context was not supplied by the platform host.");
 
     public static IAuthSessionRegistry AuthSessionRegistry { get; } = new AuthSessionRegistry();
 
@@ -30,11 +40,13 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        var endpoints = new DeferredEndpoints(_context.BackendClient);
+        var context = Context;
+        var endpoints = new DeferredEndpoints(context.BackendClient);
         var mainViewModel = new MainViewModel(
             endpoints,
-            _context.BackendClient,
-            _context.BackgroundSyncSettingsClient);
+            context.BackendClient,
+            context.BackgroundSyncSettingsClient,
+            context.ApplicationPreferencesStore);
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -49,7 +61,7 @@ public partial class App : Application
 
             mainWindow.Closed += (_, _) =>
             {
-                _context.DesktopExitRequested?.Invoke();
+                context.DesktopExitRequested?.Invoke();
                 TryShutdownDesktop(desktop);
             };
             desktop.MainWindow = mainWindow;
@@ -97,7 +109,7 @@ public partial class App : Application
 
         try
         {
-            await _context.BackendClient.WaitUntilReadyAsync();
+            await Context.BackendClient.WaitUntilReadyAsync();
 
             var localDevice = await endpoints.GetLocalDeviceInfoAsync();
             if (!localDevice.IsSyncOn)

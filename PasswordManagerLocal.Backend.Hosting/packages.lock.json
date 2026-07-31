@@ -135,10 +135,11 @@
           "Microsoft.Extensions.Caching.Memory": "[10.0.9, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
           "NSec.Cryptography": "[26.4.0, )",
+          "PasswordManagerLocal.Contracts": "[1.0.0, )",
           "SQLitePCLRaw.bundle_e_sqlcipher": "[2.1.11, )"
         }
       },
-      "passwordmanagerlocal.runtime.abstractions": {
+      "passwordmanagerlocal.contracts": {
         "type": "Project"
       },
       "Google.Protobuf": {

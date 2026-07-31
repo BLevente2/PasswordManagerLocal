@@ -1,7 +1,10 @@
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Background;
 using PasswordManagerLocal.Windows.Agent.Lifecycle;
+using PasswordManagerLocal.Windows.Agent.Preferences;
 using PasswordManagerLocal.Backend.Hosting;
+using PasswordManagerLocal.Contracts.Preferences;
+using PasswordManagerLocal.Preferences;
 using PasswordManagerLocal.Windows.Agent.DatabaseReset;
 using PasswordManagerLocal.Windows.Agent.Endpoint;
 using PasswordManagerLocal.Windows.Agent.Hosting;
@@ -44,6 +47,7 @@ internal sealed class Program
             "PasswordManagerLocal",
             applicationDataDirectory,
             new WindowsUserIdentityProvider()).GetNames();
+        var selectedLanguage = ReadSelectedLanguage(applicationDataDirectory);
 
         FileProcessInstanceLock processLock;
         try
@@ -188,7 +192,8 @@ internal sealed class Program
                 new WindowsIpcServerHostOptions(maximumActiveConnections: 8));
             var trayController = new WindowsTrayIconController(
                 new WindowsFormsTrayIconAdapter(
-                    Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico")));
+                    Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"),
+                    selectedLanguage));
             var uiProcessLockProbe = new FileProcessInstanceLockProbe(names.UiLockFilePath);
             var processLifetimeCoordinator = new WindowsAgentProcessLifetimeCoordinator(
                 commandLine.LaunchMode,
@@ -252,6 +257,23 @@ internal sealed class Program
         }
 
         return (int)exitCode;
+    }
+
+
+    private static AppLanguage ReadSelectedLanguage(string applicationDataDirectory)
+    {
+        try
+        {
+            return new WindowsAgentApplicationPreferencesReader(
+                new FileApplicationPreferencesStore(applicationDataDirectory))
+                .ReadLanguageAsync()
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch
+        {
+            return ApplicationPreferencesDefaults.Create().Language;
+        }
     }
 
     private static void ShowStartupFailure() =>

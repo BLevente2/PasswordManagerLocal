@@ -1,7 +1,7 @@
-using PasswordManagerLocal.Backend.Exceptions;
+using PasswordManagerLocal.Contracts.Errors;
 using System.Net.Sockets;
 
-using PasswordManagerLocal.Backend.Sync.Enrollment;
+using PasswordManagerLocal.Contracts.Enrollment;
 
 namespace PasswordManagerLocal.Frontend.Services;
 

@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 
 namespace PasswordManagerLocal.Backend.Hosting;

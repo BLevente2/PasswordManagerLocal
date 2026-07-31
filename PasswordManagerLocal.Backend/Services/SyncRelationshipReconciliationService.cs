@@ -9,7 +9,7 @@ using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
+using static PasswordManagerLocal.Contracts.Constants.DataLengthConstants;
 using System.Security.Cryptography;
 using System.Text.Json;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;

@@ -4,7 +4,7 @@ using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Internal.Devices;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Utils;
 using PasswordManagerLocal.Backend.Sync.Discovery;
 

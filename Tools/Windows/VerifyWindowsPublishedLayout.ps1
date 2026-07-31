@@ -36,7 +36,7 @@ $requiredFiles = @(
     'PasswordManagerLocal.Backend.dll',
     'PasswordManagerLocal.Backend.Hosting.dll',
     'PasswordManagerLocal.Backend.Windows.dll',
-    'PasswordManagerLocal.Runtime.Abstractions.dll',
+    'PasswordManagerLocal.Contracts.dll',
     'PasswordManagerLocal.Windows.Ipc.dll',
     'PasswordManagerLocal.Windows.EndpointRpc.dll',
     'Microsoft.EntityFrameworkCore.dll',

@@ -641,7 +641,7 @@ public sealed class EndpointRpcInvocationOutcomeTests
     }
 
     private static EndpointRpcDispatcher CreateDispatcher(
-        PasswordManagerLocal.Backend.Abstractions.IEndpoints endpoints,
+        PasswordManagerLocal.Contracts.Endpoints.IEndpoints endpoints,
         EndpointRpcSerializer serializer) =>
         new(
             new FixedEndpointRpcEndpointAdapter(endpoints),

@@ -1,7 +1,7 @@
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Security;
 
 namespace PasswordManagerLocal.Backend.Services;

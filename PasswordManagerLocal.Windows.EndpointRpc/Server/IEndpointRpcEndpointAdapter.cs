@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Server;
 

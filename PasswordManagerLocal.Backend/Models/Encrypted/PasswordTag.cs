@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Backend.Security;
-using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
+using static PasswordManagerLocal.Contracts.Constants.PasswordConstants;
 using System.Security.Cryptography;
 using PasswordManagerLocal.Backend.Utils;
 

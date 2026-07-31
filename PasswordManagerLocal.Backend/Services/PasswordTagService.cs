@@ -1,10 +1,13 @@
+using PasswordManagerLocal.Backend.Mapping;
+using PasswordManagerLocal.Contracts.Errors;
+using PasswordManagerLocal.Contracts.Constants;
 using PasswordManagerLocal.Backend.Abstractions.Services;
 using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
+using static PasswordManagerLocal.Contracts.Constants.PasswordConstants;
 
 using PasswordManagerLocal.Backend.Sync.Tombstones;
 
@@ -28,7 +31,7 @@ public sealed class PasswordTagService : IPasswordTagService
         return passwords.Tags
             .OrderBy(tag => tag.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(tag => tag.Id)
-            .Select(PasswordTagInfoResponse.ConvertToPasswordTagInfoResponse)
+            .Select(EndpointResponseMapper.ToPasswordTagInfoResponse)
             .ToList();
     }
 

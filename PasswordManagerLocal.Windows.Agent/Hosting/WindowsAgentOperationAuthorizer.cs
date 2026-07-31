@@ -4,7 +4,8 @@ using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Server;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Agent.Backend;
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 
 namespace PasswordManagerLocal.Windows.Agent.Hosting;
 

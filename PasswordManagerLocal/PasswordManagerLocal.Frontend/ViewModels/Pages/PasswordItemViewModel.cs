@@ -1,5 +1,5 @@
 using Avalonia.Media;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Frontend.Services;
 using ReactiveUI;
 using System.Reactive;

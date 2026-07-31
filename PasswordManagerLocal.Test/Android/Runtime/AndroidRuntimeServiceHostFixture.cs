@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Android.Runtime;
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Hosting;
 using PasswordManagerLocal.Test.Fakes;
 using PasswordManagerLocal.Test.TestInfrastructure;

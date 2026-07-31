@@ -267,8 +267,12 @@
           "Microsoft.Extensions.Caching.Memory": "[10.0.9, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.9, )",
           "NSec.Cryptography": "[26.4.0, )",
+          "PasswordManagerLocal.Contracts": "[1.0.0, )",
           "SQLitePCLRaw.bundle_e_sqlcipher": "[2.1.11, )"
         }
+      },
+      "passwordmanagerlocal.contracts": {
+        "type": "Project"
       },
       "passwordmanagerlocal.frontend": {
         "type": "Project",
@@ -278,21 +282,24 @@
           "Avalonia.Fonts.Inter": "[11.3.18, )",
           "Avalonia.ReactiveUI": "[11.3.8, )",
           "Avalonia.Themes.Fluent": "[11.3.18, )",
-          "PasswordManagerLocal.Backend": "[1.0.0, )",
-          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )",
+          "PasswordManagerLocal.Contracts": "[1.0.0, )",
+          "PasswordManagerLocal.Preferences": "[1.0.0, )",
           "SkiaSharp": "[3.119.1, )",
           "ZXing.Net": "[0.16.11, )",
           "ZXing.Net.Bindings.SkiaSharp": "[0.16.22, )"
         }
       },
-      "passwordmanagerlocal.runtime.abstractions": {
-        "type": "Project"
+      "passwordmanagerlocal.preferences": {
+        "type": "Project",
+        "dependencies": {
+          "PasswordManagerLocal.Contracts": "[1.0.0, )"
+        }
       },
       "passwordmanagerlocal.windows.endpointrpc": {
         "type": "Project",
         "dependencies": {
           "PasswordManagerLocal.Backend": "[1.0.0, )",
-          "PasswordManagerLocal.Runtime.Abstractions": "[1.0.0, )",
+          "PasswordManagerLocal.Contracts": "[1.0.0, )",
           "PasswordManagerLocal.Windows.Ipc": "[1.0.0, )"
         }
       },

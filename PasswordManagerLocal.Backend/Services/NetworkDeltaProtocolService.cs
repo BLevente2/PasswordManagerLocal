@@ -11,7 +11,7 @@ using PasswordManagerLocal.Backend.Abstractions.Persistence;
 using PasswordManagerLocal.Backend.Abstractions.Security;
 using PasswordManagerLocal.Backend.Models.Projections;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
+using static PasswordManagerLocal.Contracts.Constants.DataLengthConstants;
 using static PasswordManagerLocal.Backend.Utils.DataCodec;
 
 namespace PasswordManagerLocal.Backend.Services;

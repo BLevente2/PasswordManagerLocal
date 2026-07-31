@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Requests;
+using PasswordManagerLocal.Contracts.Requests;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Test.Infrastructure;
 

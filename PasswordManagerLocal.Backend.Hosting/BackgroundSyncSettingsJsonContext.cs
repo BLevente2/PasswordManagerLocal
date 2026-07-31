@@ -1,4 +1,5 @@
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using System.Text.Json.Serialization;
 
 namespace PasswordManagerLocal.Backend.Hosting;

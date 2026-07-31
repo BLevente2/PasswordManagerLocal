@@ -9,12 +9,12 @@ namespace PasswordManagerLocal.Windows.Ipc.Test.Dependency;
 public sealed class Phase9ArchitectureGuardTests
 {
     [TestMethod]
-    public void RuntimeAbstractionsRemainsPlatformIndependentAndDependencyFree()
+    public void ContractsRemainsPlatformIndependentAndDependencyFree()
     {
         var projectPath = Path.Combine(
             GetRepositoryRoot(),
-            "PasswordManagerLocal.Runtime.Abstractions",
-            "PasswordManagerLocal.Runtime.Abstractions.csproj");
+            "PasswordManagerLocal.Contracts",
+            "PasswordManagerLocal.Contracts.csproj");
         var project = XDocument.Load(projectPath);
 
         Assert.AreEqual("net10.0", Property(project, "TargetFramework"));

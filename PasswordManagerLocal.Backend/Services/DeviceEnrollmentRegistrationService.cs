@@ -11,7 +11,7 @@ using PasswordManagerLocal.Backend.Sync.Enrollment;
 using Google.Protobuf;
 using PasswordManagerLocal.Backend.Constants;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Utils;
 using System.Net;

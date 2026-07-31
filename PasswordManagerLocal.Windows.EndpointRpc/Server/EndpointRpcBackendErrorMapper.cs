@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Backend.Sync.Enrollment;
+using PasswordManagerLocal.Contracts.Enrollment;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Metadata;
 using System.Security.Cryptography;

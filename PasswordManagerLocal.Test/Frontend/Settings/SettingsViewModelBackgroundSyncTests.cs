@@ -1,4 +1,5 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using PasswordManagerLocal.Contracts.Preferences;
 using PasswordManagerLocal.Frontend.Services;
 using PasswordManagerLocal.Frontend.ViewModels;
 using PasswordManagerLocal.Test.Fakes;
@@ -8,14 +9,6 @@ namespace PasswordManagerLocal.Test.Frontend.Settings;
 [TestClass]
 public sealed class SettingsViewModelBackgroundSyncTests
 {
-    [ClassInitialize]
-    public static void InitializeApplicationConfiguration(TestContext testContext)
-    {
-        AppConfigurationManager.Initialize(Path.Combine(
-            testContext.TestRunDirectory,
-            nameof(SettingsViewModelBackgroundSyncTests)));
-    }
-
     [TestMethod]
     public async Task SettingsPageLoadsAuthoritativeState()
     {
@@ -123,7 +116,12 @@ public sealed class SettingsViewModelBackgroundSyncTests
     private static SettingsViewModel CreateViewModel(
         FakeBackgroundSyncSettingsClient client) =>
         new(
-            new UiPreferencesService(),
+            new UiPreferencesService(new InMemoryApplicationPreferencesStore(new ApplicationPreferences
+            {
+                SchemaVersion = ApplicationPreferences.CurrentSchemaVersion,
+                Language = AppLanguage.English,
+                Theme = AppThemeMode.Dark
+            })),
             new DeviceAppPreferencesService(client),
             () => { });
 

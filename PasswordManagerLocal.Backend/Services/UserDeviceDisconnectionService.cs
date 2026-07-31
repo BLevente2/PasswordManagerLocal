@@ -5,11 +5,11 @@ using PasswordManagerLocal.Backend.Exceptions;
 using PasswordManagerLocal.Backend.Internal.Devices;
 using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Sync;
 using PasswordManagerLocal.Backend.Utils;
-using static PasswordManagerLocal.Backend.Validation.DataValidation;
+using static PasswordManagerLocal.Contracts.Validation.DataValidation;
 using PasswordManagerLocal.Backend.Sync.Tombstones;
 
 namespace PasswordManagerLocal.Backend.Services;

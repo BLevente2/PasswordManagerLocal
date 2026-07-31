@@ -1,7 +1,8 @@
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Endpoints;
 using PasswordManagerLocal.Backend.Constants;
-using PasswordManagerLocal.Backend.Exceptions;
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Errors;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using PasswordManagerLocal.Windows.EndpointRpc.Serialization;
 using PasswordManagerLocal.Windows.EndpointRpc.Validation;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
@@ -818,7 +819,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
                      BackendRuntimeFailureKind.DatabaseCompatibility),
                 BackendRuntimeFailureStatusKind.PlatformKeyUnavailable =>
                     (new KeyProtectorUnavailableException(
-                        PasswordManagerLocal.Backend.Models.KeyProtectorUnavailableReason.PlatformKeyStoreUnavailable,
+                        PasswordManagerLocal.Contracts.Security.KeyProtectorUnavailableReason.PlatformKeyStoreUnavailable,
                         original),
                      BackendRuntimeFailureKind.PlatformKeyUnavailable),
                 BackendRuntimeFailureStatusKind.StorageUnavailable =>

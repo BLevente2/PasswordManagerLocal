@@ -1,5 +1,6 @@
-using PasswordManagerLocal.Runtime.Abstractions;
-using PasswordManagerLocal.Backend.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
+using PasswordManagerLocal.Contracts.Endpoints;
 using System.Diagnostics;
 using Android.App;
 using Android.Content;

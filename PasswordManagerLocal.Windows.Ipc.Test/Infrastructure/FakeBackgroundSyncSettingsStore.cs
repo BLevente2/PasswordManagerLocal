@@ -1,4 +1,5 @@
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 
 namespace PasswordManagerLocal.Windows.Ipc.Test.Infrastructure;
 

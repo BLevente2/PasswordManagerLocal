@@ -1,8 +1,7 @@
-using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
-using PasswordManagerLocal.Backend.Sync.Enrollment;
-using PasswordManagerLocal.Backend.Validation;
+using PasswordManagerLocal.Contracts.Devices;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
+using PasswordManagerLocal.Contracts.Validation;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Requests;
 using PasswordManagerLocal.Windows.EndpointRpc.Contracts.Responses;

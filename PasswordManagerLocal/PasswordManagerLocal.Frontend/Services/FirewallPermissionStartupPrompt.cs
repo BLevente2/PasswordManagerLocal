@@ -67,13 +67,13 @@ public static class FirewallPermissionStartupPrompt
         if (!OperatingSystem.IsWindows())
             return true;
 
-        if (!forceVerification && AppConfigurationManager.IsWindowsFirewallConfigured())
+        if (!forceVerification && WindowsFirewallConfigurationStore.IsConfigured())
             return true;
 
         await PromptLock.WaitAsync(ct);
         try
         {
-            if (!forceVerification && AppConfigurationManager.IsWindowsFirewallConfigured())
+            if (!forceVerification && WindowsFirewallConfigurationStore.IsConfigured())
                 return true;
 
             var check = await CheckFirewallAsync(ct);
@@ -82,11 +82,11 @@ public static class FirewallPermissionStartupPrompt
 
             if (check.IsConfigured)
             {
-                AppConfigurationManager.SetWindowsFirewallConfigured(true);
+                WindowsFirewallConfigurationStore.SetConfigured(true);
                 return true;
             }
 
-            AppConfigurationManager.SetWindowsFirewallConfigured(false);
+            WindowsFirewallConfigurationStore.SetConfigured(false);
 
             if (!check.CanRequestPermission || owner is null)
                 return false;
@@ -96,7 +96,7 @@ public static class FirewallPermissionStartupPrompt
                 return false;
 
             var result = await RequestFirewallPermissionAsync(ct);
-            AppConfigurationManager.SetWindowsFirewallConfigured(result.IsConfigured);
+            WindowsFirewallConfigurationStore.SetConfigured(result.IsConfigured);
 
             if (!result.IsConfigured)
                 await RunOnUiThreadAsync(() => ShowErrorDialogAsync(owner, language, result.Details));

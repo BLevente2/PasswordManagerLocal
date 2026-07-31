@@ -1,7 +1,8 @@
-using PasswordManagerLocal.Backend.Abstractions;
-using PasswordManagerLocal.Runtime.Abstractions;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Endpoints;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 
 namespace PasswordManagerLocal.Frontend.Services;
 

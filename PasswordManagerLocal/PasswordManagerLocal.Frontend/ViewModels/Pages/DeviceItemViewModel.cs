@@ -1,6 +1,8 @@
 using Avalonia.Media;
-using PasswordManagerLocal.Backend.Models;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Devices;
+using PasswordManagerLocal.Contracts.Authentication;
+using PasswordManagerLocal.Contracts.Security;
+using PasswordManagerLocal.Contracts.Responses;
 using PasswordManagerLocal.Frontend.Services;
 using ReactiveUI;
 using System.Reactive;
@@ -183,8 +185,8 @@ public sealed class DeviceItemViewModel : ReactiveObject
 
     public string DeviceTypeText => DeviceType switch
     {
-        PasswordManagerLocal.Backend.Models.DeviceType.WindowsPc => _windowsPcLabel,
-        PasswordManagerLocal.Backend.Models.DeviceType.AndroidMobile => _androidMobileLabel,
+        PasswordManagerLocal.Contracts.Devices.DeviceType.WindowsPc => _windowsPcLabel,
+        PasswordManagerLocal.Contracts.Devices.DeviceType.AndroidMobile => _androidMobileLabel,
         _ => _unknownDeviceTypeLabel
     };
 

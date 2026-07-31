@@ -1,4 +1,5 @@
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using PasswordManagerLocal.Backend.Models;
 
 namespace PasswordManagerLocal.Backend.Hosting;

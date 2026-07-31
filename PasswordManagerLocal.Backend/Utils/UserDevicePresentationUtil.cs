@@ -1,5 +1,5 @@
 using PasswordManagerLocal.Backend.Models.Encrypted;
-using static PasswordManagerLocal.Backend.Constants.DataLengthConstants;
+using static PasswordManagerLocal.Contracts.Constants.DataLengthConstants;
 
 namespace PasswordManagerLocal.Backend.Utils;
 

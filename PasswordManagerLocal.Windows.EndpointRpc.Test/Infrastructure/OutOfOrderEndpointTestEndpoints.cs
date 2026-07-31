@@ -1,4 +1,4 @@
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Responses;
 
 namespace PasswordManagerLocal.Windows.EndpointRpc.Test.Infrastructure;
 
@@ -23,7 +23,7 @@ internal sealed class OutOfOrderEndpointTestEndpoints : ThrowingRecordingEndpoin
         {
             DeviceId = EndpointRpcTestData.ItemId,
             TlsCertFingerprint = "phase9-real-pipe",
-            DeviceType = PasswordManagerLocal.Backend.Models.DeviceType.WindowsPc,
+            DeviceType = PasswordManagerLocal.Contracts.Devices.DeviceType.WindowsPc,
             CreatedAt = DateTimeOffset.UnixEpoch
         });
 

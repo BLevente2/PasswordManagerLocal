@@ -3,9 +3,9 @@ using PasswordManagerLocal.Backend.Models;
 using PasswordManagerLocal.Backend.Models.Encrypted;
 using PasswordManagerLocal.Backend.Security;
 using PasswordManagerLocal.Backend.Constants;
-using static PasswordManagerLocal.Backend.Constants.PasswordConstants;
+using static PasswordManagerLocal.Contracts.Constants.PasswordConstants;
 using static PasswordManagerLocal.Backend.Constants.TombstoneConstants;
-using static PasswordManagerLocal.Backend.Validation.DataValidation;
+using static PasswordManagerLocal.Contracts.Validation.DataValidation;
 
 namespace PasswordManagerLocal.Backend.Services;
 

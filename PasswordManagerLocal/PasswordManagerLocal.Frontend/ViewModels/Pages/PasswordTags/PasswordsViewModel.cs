@@ -1,7 +1,7 @@
 using Avalonia.Media;
-using PasswordManagerLocal.Backend.Constants;
-using PasswordManagerLocal.Backend.Requests;
-using PasswordManagerLocal.Backend.Responses;
+using PasswordManagerLocal.Contracts.Constants;
+using PasswordManagerLocal.Contracts.Requests;
+using PasswordManagerLocal.Contracts.Responses;
 using ReactiveUI;
 using System.Collections.ObjectModel;
 using System.ComponentModel;

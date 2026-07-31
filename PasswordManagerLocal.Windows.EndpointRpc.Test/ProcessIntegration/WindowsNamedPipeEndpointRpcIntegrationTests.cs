@@ -44,7 +44,7 @@ public sealed class WindowsNamedPipeEndpointRpcIntegrationTests
             new EndpointRpcContractValidator());
 
         var blocked = proxy.LogoutAsync(EndpointRpcTestData.Token);
-        PasswordManagerLocal.Backend.Responses.LocalDeviceInfoResponse device;
+        PasswordManagerLocal.Contracts.Responses.LocalDeviceInfoResponse device;
         try
         {
             await endpoints.LogoutStarted.WaitAsync(TimeSpan.FromSeconds(5));

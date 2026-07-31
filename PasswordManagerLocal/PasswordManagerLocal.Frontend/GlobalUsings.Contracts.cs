@@ -1,0 +1,12 @@
+global using PasswordManagerLocal.Contracts.Authentication;
+global using PasswordManagerLocal.Contracts.BackgroundSync;
+global using PasswordManagerLocal.Contracts.Constants;
+global using PasswordManagerLocal.Contracts.Devices;
+global using PasswordManagerLocal.Contracts.Endpoints;
+global using PasswordManagerLocal.Contracts.Enrollment;
+global using PasswordManagerLocal.Contracts.Errors;
+global using PasswordManagerLocal.Contracts.Preferences;
+global using PasswordManagerLocal.Contracts.Requests;
+global using PasswordManagerLocal.Contracts.Responses;
+global using PasswordManagerLocal.Contracts.Runtime;
+global using PasswordManagerLocal.Contracts.Validation;

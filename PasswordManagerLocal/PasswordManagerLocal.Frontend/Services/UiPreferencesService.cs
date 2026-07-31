@@ -1,65 +1,66 @@
 using Avalonia;
 using Avalonia.Styling;
+using PasswordManagerLocal.Contracts.Preferences;
 using PasswordManagerLocal.Frontend.Localization;
+using PasswordManagerLocal.Preferences;
 
 namespace PasswordManagerLocal.Frontend.Services;
 
 public sealed class UiPreferencesService
 {
-    public event EventHandler<UiPreferencesChangedEventArgs>? PreferencesChanged;
+    private readonly IApplicationPreferencesStore _store;
+    private ApplicationPreferences _current;
 
-    private AppLanguage _currentLanguage;
-    private AppThemeMode _currentThemeMode;
-
-    public UiPreferencesService()
+    public UiPreferencesService(IApplicationPreferencesStore store)
     {
-        var preferences = AppConfigurationManager.GetUiPreferences();
-        _currentLanguage = preferences.Language;
-        _currentThemeMode = preferences.Theme;
-        ApplyTheme(_currentThemeMode);
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _current = _store.ReadAsync().GetAwaiter().GetResult();
+        ApplyTheme(_current.Theme);
     }
+
+    public event EventHandler<UiPreferencesChangedEventArgs>? PreferencesChanged;
 
     public AppLanguage CurrentLanguage
     {
-        get => _currentLanguage;
+        get => _current.Language;
         set
         {
-            if (value == _currentLanguage)
-            {
+            if (value == _current.Language)
                 return;
-            }
 
-            _currentLanguage = value;
-            AppConfigurationManager.SaveUiPreferences(_currentLanguage, _currentThemeMode);
-            PreferencesChanged?.Invoke(this, new UiPreferencesChangedEventArgs(true, false, value, _currentThemeMode));
+            var updated = _current with { Language = value };
+            _store.WriteAsync(updated).GetAwaiter().GetResult();
+            _current = updated;
+            PreferencesChanged?.Invoke(
+                this,
+                new UiPreferencesChangedEventArgs(true, false, value, _current.Theme));
         }
     }
 
     public AppThemeMode CurrentThemeMode
     {
-        get => _currentThemeMode;
+        get => _current.Theme;
         set
         {
-            if (value == _currentThemeMode)
-            {
+            if (value == _current.Theme)
                 return;
-            }
 
-            _currentThemeMode = value;
+            var updated = _current with { Theme = value };
+            _store.WriteAsync(updated).GetAwaiter().GetResult();
+            _current = updated;
             ApplyTheme(value);
-            AppConfigurationManager.SaveUiPreferences(_currentLanguage, _currentThemeMode);
-            PreferencesChanged?.Invoke(this, new UiPreferencesChangedEventArgs(false, true, _currentLanguage, value));
+            PreferencesChanged?.Invoke(
+                this,
+                new UiPreferencesChangedEventArgs(false, true, _current.Language, value));
         }
     }
 
-    public string GetString(string key) => LocalizationManager.GetString(_currentLanguage, key);
+    public string GetString(string key) => LocalizationManager.GetString(_current.Language, key);
 
     private static void ApplyTheme(AppThemeMode mode)
     {
         if (Application.Current is not Application app)
-        {
             return;
-        }
 
         app.RequestedThemeVariant = mode switch
         {

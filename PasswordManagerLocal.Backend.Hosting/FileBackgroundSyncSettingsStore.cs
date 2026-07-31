@@ -1,5 +1,6 @@
 using PasswordManagerLocal.Backend.Constants;
-using PasswordManagerLocal.Runtime.Abstractions;
+using PasswordManagerLocal.Contracts.Runtime;
+using PasswordManagerLocal.Contracts.BackgroundSync;
 using System.Text.Json;
 
 namespace PasswordManagerLocal.Backend.Hosting;

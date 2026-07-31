@@ -9,7 +9,7 @@ public sealed class FakeDeviceIdentityService : IDeviceIdentityService
     public bool IsInitialized { get; set; } = true;
     public bool IsSyncOn { get; set; } = true;
     public int SetSyncOnCalls { get; private set; }
-    public DeviceType DeviceType { get; set; } = PasswordManagerLocal.Backend.Models.DeviceType.WindowsPc;
+    public DeviceType DeviceType { get; set; } = PasswordManagerLocal.Contracts.Devices.DeviceType.WindowsPc;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public byte[] AgreementPublicKey { get; set; } = [];
     public byte[] SignPublicKey { get; set; } = [];

@@ -14,8 +14,8 @@ public sealed class Phase11AndroidArchitectureGuardTests
         var root = GetRepositoryRoot();
         var contract = File.ReadAllText(Path.Combine(
             root,
-            "PasswordManagerLocal.Backend",
-            "Abstractions",
+            "PasswordManagerLocal.Contracts",
+            "Endpoints",
             "IEndpoints.cs"));
         var wrapper = File.ReadAllText(Path.Combine(
             root,

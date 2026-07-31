@@ -30,7 +30,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task InvalidEnrollmentCodeIsRejectedBeforeAnyEnrollmentCommitExists()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-invalid-code"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
@@ -54,7 +54,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task TargetMissingBeforeCommitLeavesNoDurableEnrollmentCommit()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-target-missing"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
@@ -88,7 +88,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task IdentityMismatchBeforeCommitLeavesNoDurableEnrollmentCommit()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-identity-mismatch"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
@@ -117,7 +117,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task FullEnrollmentSuccessMarksTheAuthoritativeCommitTransferred()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-full-success"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
@@ -147,7 +147,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task SnapshotTransferFailurePreservesARecoverablePartialCommit()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-transfer-failure"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
@@ -181,7 +181,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task TargetIdentityConflictAfterCommitRequiresRecoveryInsteadOfOrdinaryConflict()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-target-conflict"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
@@ -212,7 +212,7 @@ public sealed class DeviceEnrollmentPartialCommitContractTests
     public async Task UnsupportedDatabaseAfterCommitRequiresRecoveryAndProcessRestart()
     {
         using var host = new BackendTestHost();
-        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Backend.Abstractions.IEndpoints>();
+        var endpoints = host.Services.GetRequiredService<PasswordManagerLocal.Contracts.Endpoints.IEndpoints>();
         var token = await endpoints.RegisterAsync(host.CreateValidRegistrationRequest("enrollment-unsupported-db"));
         await endpoints.SetLocalUserSyncOnAsync(token, true);
         var user = await host.Services.GetRequiredService<IUserLookupService>()
