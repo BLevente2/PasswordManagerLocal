@@ -8,10 +8,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $root 'PasswordManagerLocal\PasswordManagerLocal.Windows\PasswordManagerLocal.Windows.csproj'
+$project = Join-Path $root 'Windows\Frontend\PasswordManagerLocal.Windows.Frontend.csproj'
 $verifier = Join-Path $root 'Tools\Windows\VerifyWindowsPublishedLayout.ps1'
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $root 'artifacts\publish\PasswordManagerLocal.Windows\win-x64'
+    $OutputPath = Join-Path $root 'artifacts\publish\PasswordManagerLocal.Windows.Frontend\win-x64'
 }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null

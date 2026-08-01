@@ -12,6 +12,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -25,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -41,10 +44,10 @@ jobs:
           dotnet --info
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.NUGET_PACKAGES }}
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json', '**/*.csproj', '**/*.sln', '**/Directory.Packages.props', 'global.json') }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json', '**/*.csproj', '**/*.sln', '**/Directory.Packages.props', '**/Directory.Build.props', 'global.json') }}
           restore-keys: |
             nuget-${{ runner.os }}-
 
@@ -81,17 +84,17 @@ jobs:
             fi
           }
 
-          restore_one ./PasswordManagerLocal.Backend/PasswordManagerLocal.Backend.csproj
-          restore_one ./PasswordManagerLocal/PasswordManagerLocal.Frontend/PasswordManagerLocal.Frontend.csproj
-          restore_one ./PasswordManagerLocal.Test/PasswordManagerLocal.Test.csproj
+          restore_one ./Common/Backend/PasswordManagerLocal.Common.Backend.csproj
+          restore_one ./Common/Frontend/PasswordManagerLocal.Common.Frontend.csproj
+          restore_one ./Common/Tests/PasswordManagerLocal.Common.Tests.csproj
 
       - name: Build (only required projects)
         shell: bash
         run: |
           set -euo pipefail
-          dotnet build ./PasswordManagerLocal.Backend/PasswordManagerLocal.Backend.csproj -c Release --no-restore
-          dotnet build ./PasswordManagerLocal/PasswordManagerLocal.Frontend/PasswordManagerLocal.Frontend.csproj -c Release --no-restore
-          dotnet build ./PasswordManagerLocal.Test/PasswordManagerLocal.Test.csproj -c Release --no-restore
+          dotnet build ./Common/Backend/PasswordManagerLocal.Common.Backend.csproj -c Release --no-restore
+          dotnet build ./Common/Frontend/PasswordManagerLocal.Common.Frontend.csproj -c Release --no-restore
+          dotnet build ./Common/Tests/PasswordManagerLocal.Common.Tests.csproj -c Release --no-restore
 
       - name: Test (log + TRX)
         id: test
@@ -102,7 +105,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
 
           $logPath = Join-Path $resultsDir "dotnet-test.log"
-          dotnet test ./PasswordManagerLocal.Test/PasswordManagerLocal.Test.csproj `
+          dotnet test ./Common/Tests/PasswordManagerLocal.Common.Tests.csproj `
             -c Release `
             --no-build `
             --logger "trx;LogFileName=tests.trx" `
@@ -116,7 +119,7 @@ jobs:
 
       - name: Upload TestResults
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: testresults-ubuntu
           path: TestResults/**

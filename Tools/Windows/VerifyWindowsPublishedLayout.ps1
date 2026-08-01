@@ -24,19 +24,19 @@ if (-not (Test-Path -LiteralPath $publish -PathType Container)) {
 }
 
 $requiredFiles = @(
-    'PasswordManagerLocal.Windows.exe',
-    'PasswordManagerLocal.Windows.dll',
+    'PasswordManagerLocal.exe',
+    'PasswordManagerLocal.Windows.Frontend.dll',
     'PasswordManagerLocal.Windows.Agent.exe',
     'PasswordManagerLocal.Windows.Agent.dll',
-    'PasswordManagerLocal.Windows.deps.json',
-    'PasswordManagerLocal.Windows.runtimeconfig.json',
+    'PasswordManagerLocal.Windows.Frontend.deps.json',
+    'PasswordManagerLocal.Windows.Frontend.runtimeconfig.json',
     'PasswordManagerLocal.Windows.Agent.deps.json',
     'PasswordManagerLocal.Windows.Agent.runtimeconfig.json',
-    'PasswordManagerLocal.Frontend.dll',
-    'PasswordManagerLocal.Backend.dll',
-    'PasswordManagerLocal.Backend.Hosting.dll',
-    'PasswordManagerLocal.Backend.Windows.dll',
-    'PasswordManagerLocal.Contracts.dll',
+    'PasswordManagerLocal.Common.Frontend.dll',
+    'PasswordManagerLocal.Common.Backend.dll',
+    'PasswordManagerLocal.Common.Backend.Hosting.dll',
+    'PasswordManagerLocal.Windows.Backend.dll',
+    'PasswordManagerLocal.Common.Contracts.dll',
     'PasswordManagerLocal.Windows.Ipc.dll',
     'PasswordManagerLocal.Windows.EndpointRpc.dll',
     'Microsoft.EntityFrameworkCore.dll',
@@ -59,8 +59,18 @@ if ($missing.Count -ne 0) {
     Fail-Layout "Missing required artifacts:$([Environment]::NewLine)$($missing -join [Environment]::NewLine)"
 }
 
+$forbiddenFrontendExecutables = @(
+    'PasswordManagerLocal.Windows.Frontend.exe',
+    'PasswordManagerLocal.Windows.exe'
+)
+foreach ($name in $forbiddenFrontendExecutables) {
+    if (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf) {
+        Fail-Layout "Unexpected frontend executable name is present: $name"
+    }
+}
+
 foreach ($executableName in @(
-    'PasswordManagerLocal.Windows.exe',
+    'PasswordManagerLocal.exe',
     'PasswordManagerLocal.Windows.Agent.exe'
 )) {
     $executableMatches = @(Get-ChildItem -LiteralPath $publish -Recurse -File -Filter $executableName)
@@ -118,8 +128,8 @@ if ($StartupCommand -match '(?i)PasswordManagerLocal\.Windows\.exe') {
     Fail-Layout 'The startup command points to the UI executable instead of the agent.'
 }
 
-$frontendProject = Join-Path $RepositoryRoot 'PasswordManagerLocal\PasswordManagerLocal.Frontend\PasswordManagerLocal.Frontend.csproj'
-$localizationDirectory = Join-Path $RepositoryRoot 'PasswordManagerLocal\PasswordManagerLocal.Frontend\Assets\Localization'
+$frontendProject = Join-Path $RepositoryRoot 'Common\Frontend\PasswordManagerLocal.Common.Frontend.csproj'
+$localizationDirectory = Join-Path $RepositoryRoot 'Common\Frontend\Assets\Localization'
 if (-not (Test-Path -LiteralPath $frontendProject -PathType Leaf) -or
     -not (Test-Path -LiteralPath (Join-Path $localizationDirectory 'en_us.json') -PathType Leaf) -or
     -not (Test-Path -LiteralPath (Join-Path $localizationDirectory 'hu.json') -PathType Leaf)) {

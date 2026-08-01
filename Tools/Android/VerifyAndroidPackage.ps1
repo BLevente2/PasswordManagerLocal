@@ -233,8 +233,9 @@ if (-not [string]::IsNullOrWhiteSpace($ManagedAssemblyInventoryPath)) {
 }
 
 foreach ($assemblyName in @(
+    'PasswordManagerLocal.Android.Frontend.dll',
     'PasswordManagerLocal.Android.Runtime.dll',
-    'PasswordManagerLocal.Backend.Android.dll')) {
+    'PasswordManagerLocal.Android.Backend.dll')) {
     Assert-Package ($managedInventoryText -match [regex]::Escape($assemblyName)) `
         "Managed assembly is not verifiably packaged: $assemblyName"
 }

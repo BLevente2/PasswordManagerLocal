@@ -105,7 +105,7 @@ function Update-DependencyManifest {
         [string]$PublishDirectory
     )
 
-    $depsPath = Join-Path $PublishDirectory 'PasswordManagerLocal.Windows.deps.json'
+    $depsPath = Join-Path $PublishDirectory 'PasswordManagerLocal.Windows.Frontend.deps.json'
     if (-not (Test-Path -LiteralPath $depsPath)) {
         throw "Windows dependency manifest was not found: $depsPath"
     }

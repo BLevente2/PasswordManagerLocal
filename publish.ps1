@@ -241,10 +241,10 @@ function Test-WindowsPublish {
     )
 
     $requiredFiles = @(
-        'PasswordManagerLocal.Windows.exe',
-        'PasswordManagerLocal.Windows.dll',
-        'PasswordManagerLocal.Windows.deps.json',
-        'PasswordManagerLocal.Windows.runtimeconfig.json',
+        'PasswordManagerLocal.exe',
+        'PasswordManagerLocal.Windows.Frontend.dll',
+        'PasswordManagerLocal.Windows.Frontend.deps.json',
+        'PasswordManagerLocal.Windows.Frontend.runtimeconfig.json',
         'coreclr.dll',
         'hostfxr.dll',
         'hostpolicy.dll',
@@ -285,7 +285,7 @@ function Test-WindowsPublish {
         throw "Windows publish validation failed. Crash-dump DAC assets were published: $dacNames"
     }
 
-    $depsPath = Join-Path $OutputPath 'PasswordManagerLocal.Windows.deps.json'
+    $depsPath = Join-Path $OutputPath 'PasswordManagerLocal.Windows.Frontend.deps.json'
     $depsText = Get-Content -LiteralPath $depsPath -Raw
     foreach ($excludedManifestEntry in @(
         'Avalonia.DesignerSupport.dll',
@@ -327,8 +327,8 @@ function Test-WindowsPublish {
 }
 
 function Publish-WindowsApp {
-    $project = Join-Path $script:Root 'PasswordManagerLocal\PasswordManagerLocal.Windows\PasswordManagerLocal.Windows.csproj'
-    $output = Join-Path $script:Root 'artifacts\publish\PasswordManagerLocal.Windows\win-x64'
+    $project = Join-Path $script:Root 'Windows\Frontend\PasswordManagerLocal.Windows.Frontend.csproj'
+    $output = Join-Path $script:Root 'artifacts\publish\PasswordManagerLocal.Windows.Frontend\win-x64'
 
     if (Test-Path $output) {
         Remove-Item -Path $output -Recurse -Force
@@ -367,7 +367,7 @@ function Publish-AndroidArchitecture {
         [string]$OutputRoot
     )
 
-    $targetBinRoot = Join-Path $script:Root "PasswordManagerLocal\PasswordManagerLocal.Android\bin\Release\$($script:AndroidTargetFramework)"
+    $targetBinRoot = Join-Path $script:Root "Android\Frontend\bin\Release\$($script:AndroidTargetFramework)"
     $architectureOutput = Join-Path $OutputRoot $Architecture.Abi
 
     if (Test-Path $targetBinRoot) {
@@ -430,8 +430,8 @@ function Publish-AndroidApp {
         [PSCustomObject]$Settings
     )
 
-    $project = Join-Path $script:Root 'PasswordManagerLocal\PasswordManagerLocal.Android\PasswordManagerLocal.Android.csproj'
-    $outputRoot = Join-Path $script:Root "artifacts\publish\PasswordManagerLocal.Android\android-$($Settings.Version)-plus"
+    $project = Join-Path $script:Root 'Android\Frontend\PasswordManagerLocal.Android.Frontend.csproj'
+    $outputRoot = Join-Path $script:Root "artifacts\publish\PasswordManagerLocal.Android.Frontend\android-$($Settings.Version)-plus"
 
     if (Test-Path $outputRoot) {
         Remove-Item -Path $outputRoot -Recurse -Force
