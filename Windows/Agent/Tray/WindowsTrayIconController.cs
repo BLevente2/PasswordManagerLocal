@@ -3,6 +3,8 @@ namespace PasswordManagerLocal.Windows.Agent.Tray;
 public sealed class WindowsTrayIconController : ITrayIconController
 {
     private readonly ITrayIconAdapter _adapter;
+    private readonly SemaphoreSlim _visibilityGate = new(1, 1);
+    private bool? _isVisible;
     private int _initialized;
     private int _disposed;
 
@@ -16,6 +18,7 @@ public sealed class WindowsTrayIconController : ITrayIconController
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         if (Interlocked.Exchange(ref _initialized, 1) != 0)
             throw new InvalidOperationException("The tray icon has already been initialized.");
 
@@ -33,11 +36,36 @@ public sealed class WindowsTrayIconController : ITrayIconController
         }
     }
 
+    public async Task SetVisibleAsync(
+        bool isVisible,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (Volatile.Read(ref _initialized) == 0)
+            throw new InvalidOperationException("The tray icon has not been initialized.");
+
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            if (_isVisible == isVisible)
+                return;
+
+            await _adapter.SetVisibleAsync(isVisible, cancellationToken);
+            _isVisible = isVisible;
+        }
+        finally
+        {
+            _visibilityGate.Release();
+        }
+    }
+
     public Task ShowExitFailureAsync(
         string safeMessage,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(safeMessage);
+        ThrowIfDisposed();
         return _adapter.ShowErrorAsync(safeMessage, cancellationToken);
     }
 
@@ -47,8 +75,16 @@ public sealed class WindowsTrayIconController : ITrayIconController
             return;
 
         DetachEvents();
-        await _adapter.HideAndDisposeAsync();
-        GC.SuppressFinalize(this);
+        await _visibilityGate.WaitAsync();
+        try
+        {
+            await _adapter.HideAndDisposeAsync();
+        }
+        finally
+        {
+            _visibilityGate.Release();
+            GC.SuppressFinalize(this);
+        }
     }
 
     private void HandleMouseClicked(object? sender, TrayIconMouseEventArgs args)
@@ -68,5 +104,11 @@ public sealed class WindowsTrayIconController : ITrayIconController
         _adapter.MouseClicked -= HandleMouseClicked;
         _adapter.OpenCommandSelected -= HandleOpenCommandSelected;
         _adapter.ExitCommandSelected -= HandleExitCommandSelected;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsTrayIconController));
     }
 }

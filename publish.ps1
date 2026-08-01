@@ -242,9 +242,9 @@ function Test-WindowsPublish {
 
     $requiredFiles = @(
         'PasswordManagerLocal.exe',
-        'PasswordManagerLocal.Windows.Frontend.dll',
-        'PasswordManagerLocal.Windows.Frontend.deps.json',
-        'PasswordManagerLocal.Windows.Frontend.runtimeconfig.json',
+        'PasswordManagerLocal.dll',
+        'PasswordManagerLocal.deps.json',
+        'PasswordManagerLocal.runtimeconfig.json',
         'coreclr.dll',
         'hostfxr.dll',
         'hostpolicy.dll',
@@ -285,7 +285,7 @@ function Test-WindowsPublish {
         throw "Windows publish validation failed. Crash-dump DAC assets were published: $dacNames"
     }
 
-    $depsPath = Join-Path $OutputPath 'PasswordManagerLocal.Windows.Frontend.deps.json'
+    $depsPath = Join-Path $OutputPath 'PasswordManagerLocal.deps.json'
     $depsText = Get-Content -LiteralPath $depsPath -Raw
     foreach ($excludedManifestEntry in @(
         'Avalonia.DesignerSupport.dll',

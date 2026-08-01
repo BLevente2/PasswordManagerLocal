@@ -7,6 +7,7 @@ public interface ITrayIconAdapter
     event EventHandler? ExitCommandSelected;
 
     Task InitializeAsync(CancellationToken cancellationToken = default);
+    Task SetVisibleAsync(bool isVisible, CancellationToken cancellationToken = default);
     Task ShowErrorAsync(string safeMessage, CancellationToken cancellationToken = default);
     Task HideAndDisposeAsync(CancellationToken cancellationToken = default);
 }

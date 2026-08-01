@@ -119,6 +119,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             Interlocked.Exchange(ref _backendStartupAttempted, 1);
             await _backendOwner.StartAsync(cancellationToken);
             await _backgroundSyncCoordinator.InitializeAsync(cancellationToken);
+            var initialBackgroundSyncState = await _backgroundSyncCoordinator.GetStateAsync(
+                cancellationToken);
             Interlocked.Exchange(ref _controlServerStartupAttempted, 1);
             await _controlServer.StartAsync(cancellationToken);
             EnsureBackendOwnerReadyForEndpointStart();
@@ -126,6 +128,9 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             await _endpointHost.StartAsync(cancellationToken);
             Interlocked.Exchange(ref _trayStartupAttempted, 1);
             await _trayIcon.InitializeAsync(cancellationToken);
+            await _trayIcon.SetVisibleAsync(
+                initialBackgroundSyncState.IsEnabled,
+                cancellationToken);
             if (Volatile.Read(ref _shutdownRequested) == 0 &&
                 Volatile.Read(ref _shutdownStarted) == 0)
             {

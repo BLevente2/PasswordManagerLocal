@@ -6,5 +6,6 @@ public interface ITrayIconController : IAsyncDisposable
     event EventHandler? ExitRequested;
 
     Task InitializeAsync(CancellationToken cancellationToken = default);
+    Task SetVisibleAsync(bool isVisible, CancellationToken cancellationToken = default);
     Task ShowExitFailureAsync(string safeMessage, CancellationToken cancellationToken = default);
 }

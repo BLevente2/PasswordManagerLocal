@@ -189,7 +189,7 @@ public sealed class Phase9ArchitectureGuardTests
     }
 
     [TestMethod]
-    public void WindowsFrontendProjectSeparatesManagedAssemblyAndNativeExecutableNames()
+    public void WindowsFrontendProjectProducesCanonicalExecutableNameDirectly()
     {
         var projectPath = Path.Combine(
             GetRepositoryRoot(),
@@ -199,23 +199,16 @@ public sealed class Phase9ArchitectureGuardTests
         var project = XDocument.Load(projectPath);
 
         Assert.AreEqual(
-            "PasswordManagerLocal.Windows.Frontend",
+            "PasswordManagerLocal",
             project.Descendants("AssemblyName").Single().Value);
         Assert.AreEqual(
             "PasswordManagerLocal.Windows.Frontend",
             project.Descendants("RootNamespace").Single().Value);
-        Assert.AreEqual(
-            "PasswordManagerLocal",
-            project.Descendants("WindowsFrontendExecutableName").Single().Value);
-        Assert.IsTrue(project.Descendants("Target").Any(target =>
-            string.Equals(
-                target.Attribute("Name")?.Value,
-                "RenameWindowsFrontendBuildAppHost",
-                StringComparison.Ordinal)));
-        Assert.IsTrue(project.Descendants("Target").Any(target =>
-            string.Equals(
-                target.Attribute("Name")?.Value,
-                "RenameWindowsFrontendPublishedAppHost",
+        Assert.IsFalse(project.Descendants("WindowsFrontendExecutableName").Any());
+        Assert.IsFalse(project.Descendants("WindowsFrontendExecutableFileName").Any());
+        Assert.IsFalse(project.Descendants("Target").Any(target =>
+            (target.Attribute("Name")?.Value ?? string.Empty).Contains(
+                "RenameWindowsFrontend",
                 StringComparison.Ordinal)));
 
         var executableNamesSource = File.ReadAllText(Path.Combine(
@@ -227,6 +220,40 @@ public sealed class Phase9ArchitectureGuardTests
         StringAssert.Contains(
             executableNamesSource,
             "UiExecutableFileName = \"PasswordManagerLocal.exe\"");
+    }
+
+    [TestMethod]
+    public void WindowsPublishToolingUsesCanonicalFrontendArtifactStem()
+    {
+        var root = GetRepositoryRoot();
+        var sources = new[]
+        {
+            File.ReadAllText(Path.Combine(root, "publish.ps1")),
+            File.ReadAllText(Path.Combine(root, "Tools", "OptimizeWindowsPublish.ps1")),
+            File.ReadAllText(Path.Combine(root, "Tools", "Windows", "VerifyWindowsPublishedLayout.ps1"))
+        };
+
+        Assert.IsTrue(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.exe",
+            StringComparison.Ordinal)));
+        Assert.IsTrue(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.dll",
+            StringComparison.Ordinal)));
+        Assert.IsTrue(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.deps.json",
+            StringComparison.Ordinal)));
+        Assert.IsTrue(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.runtimeconfig.json",
+            StringComparison.Ordinal)));
+        Assert.IsFalse(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.Windows.Frontend.dll",
+            StringComparison.Ordinal)));
+        Assert.IsFalse(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.Windows.Frontend.deps.json",
+            StringComparison.Ordinal)));
+        Assert.IsFalse(sources.Any(source => source.Contains(
+            "PasswordManagerLocal.Windows.Frontend.runtimeconfig.json",
+            StringComparison.Ordinal)));
     }
 
     [TestMethod]

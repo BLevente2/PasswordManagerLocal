@@ -669,6 +669,43 @@ public sealed class WindowsAgentHostTests
         Assert.IsTrue(operations.IndexOf("background-initialize") < operations.IndexOf("endpoint-start"));
     }
 
+
+    [TestMethod]
+    public async Task StartupShowsTrayOnlyWhenBackgroundSyncIsEnabled()
+    {
+        var enabledTray = new FakeTrayIconController();
+        await using (var enabledHost = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            enabledTray,
+            backgroundSync: new FakeWindowsBackgroundSyncCoordinator
+            {
+                State = FakeWindowsBackgroundSyncCoordinator.OperationalState()
+            }))
+        {
+            await enabledHost.StartAsync();
+            Assert.AreEqual(true, enabledTray.LastVisible);
+        }
+
+        var disabledTray = new FakeTrayIconController();
+        await using (var disabledHost = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            disabledTray,
+            backgroundSync: new FakeWindowsBackgroundSyncCoordinator
+            {
+                State = FakeWindowsBackgroundSyncCoordinator.DisabledState()
+            }))
+        {
+            await disabledHost.StartAsync();
+            Assert.AreEqual(false, disabledTray.LastVisible);
+        }
+    }
+
     [TestMethod]
     public async Task BackgroundRestorationFailureRollsBackStartupBeforeAdmissionOpens()
     {

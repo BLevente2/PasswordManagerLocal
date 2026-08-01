@@ -25,11 +25,11 @@ if (-not (Test-Path -LiteralPath $publish -PathType Container)) {
 
 $requiredFiles = @(
     'PasswordManagerLocal.exe',
-    'PasswordManagerLocal.Windows.Frontend.dll',
+    'PasswordManagerLocal.dll',
     'PasswordManagerLocal.Windows.Agent.exe',
     'PasswordManagerLocal.Windows.Agent.dll',
-    'PasswordManagerLocal.Windows.Frontend.deps.json',
-    'PasswordManagerLocal.Windows.Frontend.runtimeconfig.json',
+    'PasswordManagerLocal.deps.json',
+    'PasswordManagerLocal.runtimeconfig.json',
     'PasswordManagerLocal.Windows.Agent.deps.json',
     'PasswordManagerLocal.Windows.Agent.runtimeconfig.json',
     'PasswordManagerLocal.Common.Frontend.dll',

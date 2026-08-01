@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Background;
 using PasswordManagerLocal.Windows.Agent.Lifecycle;
+using PasswordManagerLocal.Windows.Agent.Native;
 using PasswordManagerLocal.Windows.Agent.Preferences;
 using PasswordManagerLocal.Common.Backend.Hosting;
 using PasswordManagerLocal.Common.Contracts.Preferences;
@@ -20,7 +21,6 @@ using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Server;
 using PasswordManagerLocal.Windows.Ipc.Transport;
 using PasswordManagerLocal.Windows.Ipc.Validation;
-using System.Windows.Forms;
 
 namespace PasswordManagerLocal.Windows.Agent;
 
@@ -29,6 +29,20 @@ internal sealed class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        var selectedLanguage = ApplicationPreferencesDefaults.Create().Language;
+        string applicationDataDirectory;
+        try
+        {
+            applicationDataDirectory = new WindowsApplicationDataPathProvider()
+                .GetApplicationDataDirectory();
+            selectedLanguage = ReadSelectedLanguage(applicationDataDirectory);
+        }
+        catch
+        {
+            ShowStartupFailure(selectedLanguage);
+            return (int)WindowsAgentExitCode.ShellFailure;
+        }
+
         WindowsAgentCommandLineOptions commandLine;
         try
         {
@@ -36,18 +50,14 @@ internal sealed class Program
         }
         catch
         {
-            ShowStartupFailure();
+            ShowStartupFailure(selectedLanguage);
             return (int)WindowsAgentExitCode.ShellFailure;
         }
 
-        ApplicationConfiguration.Initialize();
-        var applicationDataDirectory = new WindowsApplicationDataPathProvider()
-            .GetApplicationDataDirectory();
         var names = new WindowsInstanceNameProvider(
             "PasswordManagerLocal",
             applicationDataDirectory,
             new WindowsUserIdentityProvider()).GetNames();
-        var selectedLanguage = ReadSelectedLanguage(applicationDataDirectory);
 
         FileProcessInstanceLock processLock;
         try
@@ -56,7 +66,7 @@ internal sealed class Program
         }
         catch
         {
-            ShowStartupFailure();
+            ShowStartupFailure(selectedLanguage);
             return (int)WindowsAgentExitCode.OwnershipFailure;
         }
 
@@ -67,6 +77,7 @@ internal sealed class Program
         }
 
         WindowsAgentHost? host = null;
+        WindowsNativeApplicationLoop? applicationLoop = null;
         var exitCode = WindowsAgentExitCode.ShellFailure;
         try
         {
@@ -104,6 +115,14 @@ internal sealed class Program
                 stateStore,
                 admissionGate,
                 lifecycleTransitions);
+            applicationLoop = new WindowsNativeApplicationLoop();
+            var trayText = WindowsAgentTrayText.Create(selectedLanguage);
+            var trayController = new WindowsTrayIconController(
+                new WindowsNativeTrayIconAdapter(
+                    Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"),
+                    trayText,
+                    applicationLoop.MessageWindow,
+                    applicationLoop.Dispatcher));
             var endpointAdapter = new AgentInteractiveEndpointAdapter(backendOwner);
             var registrationResolver = new RegisteredUiEndpointRegistrationResolver(
                 uiCoordinator,
@@ -166,7 +185,8 @@ internal sealed class Program
                     admissionGate,
                     new SetBackgroundSyncEnabledWindowsIpcRequestHandler(
                         backgroundSyncCoordinator,
-                        validator))
+                        validator,
+                        trayController))
             };
             var dispatcher = new WindowsIpcRequestDispatcher(
                 handlers,
@@ -190,10 +210,6 @@ internal sealed class Program
                 new WindowsNamedPipeServer(names.ControlPipeName, new IpcFrameCodec()),
                 sessionFactory,
                 new WindowsIpcServerHostOptions(maximumActiveConnections: 8));
-            var trayController = new WindowsTrayIconController(
-                new WindowsFormsTrayIconAdapter(
-                    Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"),
-                    selectedLanguage));
             var uiProcessLockProbe = new FileProcessInstanceLockProbe(names.UiLockFilePath);
             var processLifetimeCoordinator = new WindowsAgentProcessLifetimeCoordinator(
                 commandLine.LaunchMode,
@@ -218,15 +234,14 @@ internal sealed class Program
                 stateStore,
                 processLifetimeCoordinator: processLifetimeCoordinator);
 
-            using var applicationContext = new WindowsAgentApplicationContext(host, stateStore);
-            Application.Run(applicationContext);
-            exitCode = applicationContext.ShellFailed
+            applicationLoop.Run(host, stateStore, trayText.StartupFailureMessage);
+            exitCode = applicationLoop.ShellFailed
                 ? WindowsAgentExitCode.ShellFailure
                 : WindowsAgentExitCode.Success;
         }
         catch
         {
-            ShowStartupFailure();
+            ShowStartupFailure(selectedLanguage);
             exitCode = WindowsAgentExitCode.ShellFailure;
         }
         finally
@@ -254,6 +269,15 @@ internal sealed class Program
                     exitCode = WindowsAgentExitCode.ShellFailure;
                 }
             }
+
+            try
+            {
+                applicationLoop?.Dispose();
+            }
+            catch
+            {
+                exitCode = WindowsAgentExitCode.ShellFailure;
+            }
         }
 
         return (int)exitCode;
@@ -276,12 +300,9 @@ internal sealed class Program
         }
     }
 
-    private static void ShowStartupFailure() =>
-        MessageBox.Show(
-            "The PasswordManagerLocal agent could not start.",
-            "PasswordManagerLocal",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Error);
+    private static void ShowStartupFailure(AppLanguage language) =>
+        WindowsNativeMessageBox.ShowError(
+            WindowsAgentTrayText.Create(language).StartupFailureMessage);
 
     private static void ShowShutdownFailure() =>
         System.Diagnostics.Trace.TraceError(

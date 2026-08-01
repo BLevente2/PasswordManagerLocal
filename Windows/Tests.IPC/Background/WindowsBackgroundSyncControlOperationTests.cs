@@ -47,4 +47,25 @@ public sealed class WindowsBackgroundSyncControlOperationTests
         Assert.AreEqual(true, coordinator.LastRequestedEnabled);
         Assert.AreEqual(WindowsBackgroundSyncConsistency.Operational, state.Consistency);
     }
+    [TestMethod]
+    public async Task SetBackgroundStateUpdatesTrayVisibilityFromFinalAuthoritativeState()
+    {
+        var coordinator = new FakeWindowsBackgroundSyncCoordinator();
+        var tray = new FakeTrayIconController();
+        await using var session = await IpcTestSession.CreateAsync(
+            new IWindowsIpcRequestHandler[]
+            {
+                new SetBackgroundSyncEnabledWindowsIpcRequestHandler(
+                    coordinator,
+                    trayIcon: tray)
+            });
+        var client = new WindowsIpcControlClient(session.Client, session.Serializer);
+
+        await client.SetBackgroundSyncEnabledAsync(
+            new SetBackgroundSyncEnabledRequestDto(true));
+
+        Assert.AreEqual(1, tray.SetVisibleCount);
+        Assert.AreEqual(true, tray.LastVisible);
+    }
+
 }

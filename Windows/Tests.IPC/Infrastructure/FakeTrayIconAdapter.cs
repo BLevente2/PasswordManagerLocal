@@ -10,6 +10,8 @@ internal sealed class FakeTrayIconAdapter : ITrayIconAdapter
 
     public int InitializeCount { get; private set; }
     public int HideAndDisposeCount { get; private set; }
+    public int SetVisibleCount { get; private set; }
+    public bool? LastVisible { get; private set; }
     public int ShowErrorCount { get; private set; }
     public string? LastErrorMessage { get; private set; }
 
@@ -17,6 +19,16 @@ internal sealed class FakeTrayIconAdapter : ITrayIconAdapter
     {
         cancellationToken.ThrowIfCancellationRequested();
         InitializeCount++;
+        return Task.CompletedTask;
+    }
+
+    public Task SetVisibleAsync(
+        bool isVisible,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SetVisibleCount++;
+        LastVisible = isVisible;
         return Task.CompletedTask;
     }
 

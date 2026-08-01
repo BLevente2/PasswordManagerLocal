@@ -56,6 +56,35 @@ public sealed class WindowsTrayIconControllerTests
         Assert.AreEqual(0, adapter.HideAndDisposeCount);
     }
 
+
+    [TestMethod]
+    public async Task DuplicateVisibilityRequestsAreCoalesced()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        await using var controller = new WindowsTrayIconController(adapter);
+        await controller.InitializeAsync();
+
+        await controller.SetVisibleAsync(true);
+        await controller.SetVisibleAsync(true);
+        await controller.SetVisibleAsync(false);
+        await controller.SetVisibleAsync(false);
+
+        Assert.AreEqual(2, adapter.SetVisibleCount);
+        Assert.AreEqual(false, adapter.LastVisible);
+    }
+
+    [TestMethod]
+    public async Task VisibilityRequestsAreRejectedAfterDisposal()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        var controller = new WindowsTrayIconController(adapter);
+        await controller.InitializeAsync();
+        await controller.DisposeAsync();
+
+        await Assert.ThrowsExactlyAsync<ObjectDisposedException>(
+            async () => await controller.SetVisibleAsync(true));
+    }
+
     [TestMethod]
     public async Task DisposalHidesAndDisposesIconAndIsIdempotent()
     {

@@ -9,6 +9,8 @@ internal sealed class FakeTrayIconController : ITrayIconController
 
     public int InitializeCount { get; private set; }
     public int DisposeCount { get; private set; }
+    public int SetVisibleCount { get; private set; }
+    public bool? LastVisible { get; private set; }
     public bool ThrowOnInitialize { get; set; }
     public Exception? DisposeFailure { get; set; }
     public TaskCompletionSource? InitializationRelease { get; set; }
@@ -25,6 +27,17 @@ internal sealed class FakeTrayIconController : ITrayIconController
             throw new InvalidOperationException("tray failed");
         if (InitializationRelease is not null)
             await InitializationRelease.Task.WaitAsync(cancellationToken);
+    }
+
+    public Task SetVisibleAsync(
+        bool isVisible,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SetVisibleCount++;
+        LastVisible = isVisible;
+        OperationLog?.Add(isVisible ? "tray-show" : "tray-hide");
+        return Task.CompletedTask;
     }
 
     public Task ShowExitFailureAsync(
