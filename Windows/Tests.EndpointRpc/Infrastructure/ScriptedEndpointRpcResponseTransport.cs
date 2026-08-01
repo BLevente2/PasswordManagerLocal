@@ -42,7 +42,8 @@ public sealed class ScriptedEndpointRpcResponseTransport : IEndpointRpcTransport
         try
         {
             encodedResponse = _responseFactory(correlationId);
-            return Task.FromResult(_codec.DecodeResponse(encodedResponse, correlationId));
+            return Task.FromResult(EndpointRpcClientResponseMapper.RequireSuccess(
+                _codec.DecodeResponse(encodedResponse, correlationId)));
         }
         catch (EndpointRpcRemoteException)
         {

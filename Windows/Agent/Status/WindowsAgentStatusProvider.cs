@@ -1,5 +1,7 @@
+using PasswordManagerLocal.Common.Backend.Constants;
 using PasswordManagerLocal.Common.Backend.Hosting;
 using PasswordManagerLocal.Common.Backend.Models;
+using PasswordManagerLocal.Common.Contracts.Errors;
 using PasswordManagerLocal.Common.Contracts.Runtime;
 using PasswordManagerLocal.Common.Contracts.BackgroundSync;
 using PasswordManagerLocal.Windows.Agent.Backend;
@@ -103,7 +105,8 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
                 BackendRuntimeFailureStatusKind.ShutdownFailure,
                 failure,
                 RequiresProcessRestart: true,
-                ChangedAtUtc: owner.ChangedAtUtc));
+                ChangedAtUtc: owner.ChangedAtUtc,
+                DatabaseCompatibility: null));
         }
 
         var ownerFailed = owner.State == WindowsAgentBackendOwnerState.Failed;
@@ -121,7 +124,10 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
             kind,
             failureDto,
             RequiresProcessRestart: false,
-            ChangedAtUtc: owner.Runtime.ChangedAtUtc));
+            ChangedAtUtc: owner.Runtime.ChangedAtUtc,
+            DatabaseCompatibility: CreateDatabaseCompatibilityStatus(
+                kind,
+                owner.Runtime.Failure)));
     }
 
     public Task<InteractiveSessionStatusDto> GetInteractiveSessionStatusAsync(
@@ -206,6 +212,44 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         BackendRuntimeFailureKind.ShutdownFailure => BackendRuntimeFailureStatusKind.ShutdownFailure,
         _ => BackendRuntimeFailureStatusKind.StartupFailure
     };
+
+    private static DatabaseCompatibilityStatusDto? CreateDatabaseCompatibilityStatus(
+        BackendRuntimeFailureStatusKind kind,
+        Exception? failure)
+    {
+        if (kind != BackendRuntimeFailureStatusKind.DatabaseCompatibility)
+            return null;
+
+        var compatibilityFailure = FindDatabaseCompatibilityFailure(failure);
+        return new DatabaseCompatibilityStatusDto(
+            compatibilityFailure?.DetectedVersion,
+            compatibilityFailure?.OldestSupportedVersion ?? DatabaseConstants.OldestSupportedDbVersion,
+            compatibilityFailure?.CurrentVersion ?? DatabaseConstants.CurrentDbVersion);
+    }
+
+    private static DatabaseVersionNotSupportedException? FindDatabaseCompatibilityFailure(
+        Exception? exception)
+    {
+        while (exception is not null)
+        {
+            if (exception is DatabaseVersionNotSupportedException compatibilityFailure)
+                return compatibilityFailure;
+
+            if (exception is AggregateException aggregateException)
+            {
+                foreach (var innerException in aggregateException.Flatten().InnerExceptions)
+                {
+                    var nestedFailure = FindDatabaseCompatibilityFailure(innerException);
+                    if (nestedFailure is not null)
+                        return nestedFailure;
+                }
+            }
+
+            exception = exception.InnerException;
+        }
+
+        return null;
+    }
 
     private static IpcFailureDto CreateRuntimeFailure(
         BackendRuntimeFailureStatusKind kind,

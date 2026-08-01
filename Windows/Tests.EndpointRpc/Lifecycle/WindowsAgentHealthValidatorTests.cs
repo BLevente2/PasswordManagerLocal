@@ -113,5 +113,8 @@ public sealed class WindowsAgentHealthValidatorTests
             failureKind,
             Failure: null,
             RequiresProcessRestart: requiresProcessRestart,
-            ChangedAtUtc: DateTimeOffset.UtcNow);
+            ChangedAtUtc: DateTimeOffset.UtcNow,
+            DatabaseCompatibility: failureKind == BackendRuntimeFailureStatusKind.DatabaseCompatibility
+                ? new DatabaseCompatibilityStatusDto(99, 12, 12)
+                : null);
 }

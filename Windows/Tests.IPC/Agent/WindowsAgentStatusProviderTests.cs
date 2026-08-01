@@ -228,6 +228,44 @@ public sealed class WindowsAgentStatusProviderTests
     }
 
     [TestMethod]
+    public async Task DatabaseCompatibilityStatusCarriesAuthoritativeAgentVersions()
+    {
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var owner = new FakeWindowsAgentBackendRuntimeOwner
+        {
+            Snapshot = FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(
+                ownerState: PasswordManagerLocal.Windows.Agent.Backend.WindowsAgentBackendOwnerState.Failed,
+                runtimeState: BackendRuntimeState.Failed,
+                runtimeFailureKind: BackendRuntimeFailureKind.DatabaseCompatibility,
+                failure: new PasswordManagerLocal.Common.Contracts.Errors.DatabaseVersionNotSupportedException(
+                    detectedVersion: 99,
+                    oldestSupportedVersion: 12,
+                    currentVersion: 12))
+        };
+        var endpointHost = new FakeWindowsAgentEndpointHost();
+        await using var adapter = new AgentInteractiveEndpointAdapter(owner);
+        var provider = new WindowsAgentStatusProvider(
+            state,
+            new WindowsAgentAdmissionGate(),
+            new SingleUiConnectionCoordinator(),
+            new FakeWindowsBackgroundSyncCoordinator(),
+            owner,
+            endpointHost,
+            adapter,
+            new FakeWindowsAgentDatabaseResetCoordinator());
+
+        var status = await provider.GetBackendRuntimeStatusAsync(CancellationToken.None);
+
+        Assert.AreEqual(BackendRuntimeFailureStatusKind.DatabaseCompatibility, status.FailureKind);
+        Assert.IsNotNull(status.DatabaseCompatibility);
+        Assert.AreEqual(99, status.DatabaseCompatibility.DetectedVersion);
+        Assert.AreEqual(12, status.DatabaseCompatibility.OldestSupportedVersion);
+        Assert.AreEqual(12, status.DatabaseCompatibility.CurrentVersion);
+        new WindowsIpcContractValidator().Validate(status);
+    }
+
+    [TestMethod]
     public async Task ShutdownCleanupFailureRequiresReplacementAndCannotReportReady()
     {
         var state = new WindowsAgentStateStore();

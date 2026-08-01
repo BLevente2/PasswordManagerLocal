@@ -5,10 +5,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using PasswordManagerLocal.Common.Frontend.Services;
-using PasswordManagerLocal.Common.Backend.Constants;
-using PasswordManagerLocal.Common.Backend.Utils;
-
-using PasswordManagerLocal.Common.Backend.Diagnostics;
+using PasswordManagerLocal.Common.Contracts.Sync;
+using PasswordManagerLocal.Windows.Frontend.Diagnostics;
+using PasswordManagerLocal.Windows.Ipc.Coordination;
 
 namespace PasswordManagerLocal.Windows.Frontend;
 
@@ -411,7 +410,7 @@ exit 0
 
         if (result.ExitCode == 0)
         {
-            BackendDebugLog.Info($"Windows Firewall effective-policy check succeeded. {details}");
+            WindowsFrontendDebugLog.Info($"Windows Firewall effective-policy check succeeded. {details}");
             return new FirewallPermissionCheckResult
             {
                 IsSupported = true,
@@ -421,7 +420,7 @@ exit 0
             };
         }
 
-        BackendDebugLog.Error($"Windows Firewall effective-policy check failed. {details}");
+        WindowsFrontendDebugLog.Error($"Windows Firewall effective-policy check failed. {details}");
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,
@@ -444,7 +443,7 @@ exit 0
         if (applyResult.ExitCode != 0)
         {
             var details = GetBestProcessDetails(applyResult);
-            BackendDebugLog.Error($"Windows Firewall configuration failed. {details}");
+            WindowsFrontendDebugLog.Error($"Windows Firewall configuration failed. {details}");
             return new FirewallPermissionCheckResult
             {
                 IsSupported = true,
@@ -464,7 +463,7 @@ exit 0
             if (verification.IsConfigured)
             {
                 var details = GetBestProcessDetails(applyResult);
-                BackendDebugLog.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
+                WindowsFrontendDebugLog.Info($"Windows Firewall configuration and effective-policy verification succeeded. {details}");
                 return new FirewallPermissionCheckResult
                 {
                     IsSupported = true,
@@ -481,7 +480,7 @@ exit 0
             ? $"{applyDetails} The firewall rules were created, but they are not present in the effective Windows Firewall policy."
             : $"{applyDetails} Effective-policy verification failed: {verificationDetails}";
 
-        BackendDebugLog.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
+        WindowsFrontendDebugLog.Error($"Windows Firewall rules were created but are not effective. {combinedDetails}");
         return new FirewallPermissionCheckResult
         {
             IsSupported = true,
@@ -491,17 +490,11 @@ exit 0
         };
     }
 
-    private static string? GetApplicationPath()
-    {
-        try
-        {
-            return Environment.ProcessPath;
-        }
-        catch
-        {
-            return Process.GetCurrentProcess().MainModule?.FileName;
-        }
-    }
+    private static string GetApplicationPath() =>
+        Path.Combine(
+            AppContext.BaseDirectory,
+            WindowsExecutableNames.AgentDeploymentDirectoryName,
+            WindowsExecutableNames.AgentExecutableFileName);
 
     private static string CreateCheckScript() =>
         CheckScriptTemplate
@@ -511,7 +504,7 @@ exit 0
             .Replace("%MDNS_APP_RULE_NAME%", MdnsAppRuleName, StringComparison.Ordinal)
             .Replace("%TCP_OUTBOUND_APP_RULE_NAME%", TcpOutboundAppRuleName, StringComparison.Ordinal)
             .Replace("%MDNS_OUTBOUND_APP_RULE_NAME%", MdnsOutboundAppRuleName, StringComparison.Ordinal)
-            .Replace("%SYNC_PORT%", SyncConstants.SyncPort.ToString(), StringComparison.Ordinal);
+            .Replace("%SYNC_PORT%", SyncProtocolDefaults.TcpPort.ToString(), StringComparison.Ordinal);
 
     private static string CreateApplyScript()
     {
@@ -529,7 +522,7 @@ exit 0
             .Replace("%MDNS_APP_RULE_NAME%", MdnsAppRuleName, StringComparison.Ordinal)
             .Replace("%TCP_OUTBOUND_APP_RULE_NAME%", TcpOutboundAppRuleName, StringComparison.Ordinal)
             .Replace("%MDNS_OUTBOUND_APP_RULE_NAME%", MdnsOutboundAppRuleName, StringComparison.Ordinal)
-            .Replace("%SYNC_PORT%", SyncConstants.SyncPort.ToString(), StringComparison.Ordinal);
+            .Replace("%SYNC_PORT%", SyncProtocolDefaults.TcpPort.ToString(), StringComparison.Ordinal);
     }
 
     private static IEnumerable<string> GetManagedFirewallRuleNames() =>

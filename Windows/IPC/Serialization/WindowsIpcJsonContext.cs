@@ -16,6 +16,7 @@ namespace PasswordManagerLocal.Windows.Ipc.Serialization;
 [JsonSerializable(typeof(IpcFailureDto))]
 [JsonSerializable(typeof(AgentStatusDto))]
 [JsonSerializable(typeof(BackendRuntimeStatusDto))]
+[JsonSerializable(typeof(DatabaseCompatibilityStatusDto))]
 [JsonSerializable(typeof(InteractiveSessionStatusDto))]
 [JsonSerializable(typeof(SynchronizationStatusDto))]
 [JsonSerializable(typeof(WindowsBackgroundSyncStateDto))]

@@ -38,6 +38,47 @@ public sealed class WindowsIpcControlOperationTests
     }
 
     [TestMethod]
+    public async Task DatabaseCompatibilityStatusRoundTripsThroughControlIpc()
+    {
+        var changedAt = DateTimeOffset.UtcNow;
+        var failure = new IpcFailureDto(
+            IpcFailureKind.Runtime,
+            "The local database version is not supported.",
+            changedAt,
+            IsRetryable: false,
+            RequiresProcessRestart: false);
+        var handler = new DelegateWindowsIpcRequestHandler(
+            IpcOperationId.GetBackendRuntimeStatus,
+            (context, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                context.EnsureNoPayload();
+                return Task.FromResult(context.Success(
+                    new BackendRuntimeStatusDto(
+                        BackendRuntimeStatusState.Failed,
+                        BackendRuntimeFailureStatusKind.DatabaseCompatibility,
+                        failure,
+                        RequiresProcessRestart: false,
+                        changedAt,
+                        new DatabaseCompatibilityStatusDto(
+                            DetectedVersion: 99,
+                            OldestSupportedVersion: 12,
+                            CurrentVersion: 12)),
+                    WindowsIpcJsonContext.Default.BackendRuntimeStatusDto));
+            });
+        await using var session = await IpcTestSession.CreateAsync([handler]);
+        var controlClient = new WindowsIpcControlClient(session.Client, session.Serializer);
+
+        var runtime = await controlClient.GetBackendRuntimeStatusAsync();
+
+        Assert.AreEqual(BackendRuntimeFailureStatusKind.DatabaseCompatibility, runtime.FailureKind);
+        Assert.IsNotNull(runtime.DatabaseCompatibility);
+        Assert.AreEqual(99, runtime.DatabaseCompatibility.DetectedVersion);
+        Assert.AreEqual(12, runtime.DatabaseCompatibility.OldestSupportedVersion);
+        Assert.AreEqual(12, runtime.DatabaseCompatibility.CurrentVersion);
+    }
+
+    [TestMethod]
     public async Task RuntimeAndAgentStatusRepresentProcessRestartRequirement()
     {
         var changedAt = DateTimeOffset.UtcNow;

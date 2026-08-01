@@ -20,7 +20,8 @@ public sealed class Phase6DependencyBoundaryTests
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Common.Backend"));
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Common.Backend.Hosting"));
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.Backend"));
-        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc.Server"));
+        Assert.IsFalse(references.Contains("PasswordManagerLocal.Windows.EndpointRpc.Client"));
         Assert.IsFalse(references.Any(name => name.StartsWith("Avalonia", StringComparison.Ordinal)));
         Assert.IsFalse(references.Contains("PasswordManagerLocal.Common.Frontend"));
     }
@@ -346,8 +347,10 @@ public sealed class Phase6DependencyBoundaryTests
 
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Common.Frontend"));
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Common.Contracts"));
-        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc"));
+        Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.EndpointRpc.Client"));
         Assert.IsTrue(references.Contains("PasswordManagerLocal.Windows.Ipc"));
+        Assert.IsFalse(references.Contains("PasswordManagerLocal.Windows.EndpointRpc.Server"));
+        Assert.IsFalse(references.Contains("PasswordManagerLocal.Common.Backend"));
         Assert.IsFalse(references.Contains("PasswordManagerLocal.Common.Backend.Hosting"));
         Assert.IsFalse(references.Contains("PasswordManagerLocal.Windows.Backend"));
     }

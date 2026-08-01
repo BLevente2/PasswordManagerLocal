@@ -98,9 +98,12 @@ public sealed class EndpointRpcLargeResultEndToEndTests
             CreateContext(connection, 202, codec.EncodeLargeResultChunkRequest(malformedChunkPayload)),
             CancellationToken.None);
 
+        var failureResponse = codec.DecodeResponse(malformedResponse.Result!, 202);
+        Assert.AreEqual(EndpointRpcResponseKind.Failure, failureResponse.ResponseKind);
+        Assert.AreEqual(EndpointRpcErrorCode.ValidationFailed, failureResponse.Error!.ErrorCode);
         var exception = Assert.ThrowsExactly<EndpointRpcRemoteException>(() =>
-            codec.DecodeResponse(malformedResponse.Result!, 202));
-        Assert.AreEqual(EndpointRpcErrorCode.ValidationFailed, exception.Error.ErrorCode);
+            EndpointRpcClientResponseMapper.RequireSuccess(failureResponse));
+        Assert.AreSame(failureResponse.Error, exception.Error);
         Assert.AreEqual(0, dispatcher.LargeResultTransferStore.Count);
         Array.Clear(publicRequestPayload);
         Array.Clear(malformedChunkPayload);

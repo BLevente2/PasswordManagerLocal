@@ -313,6 +313,39 @@ public sealed class WindowsIpcContractValidatorTests
     }
 
     [TestMethod]
+    public void DatabaseCompatibilityMetadataMustMatchFailureKindAndRange()
+    {
+        AssertInvalid(new BackendRuntimeStatusDto(
+            BackendRuntimeStatusState.Failed,
+            BackendRuntimeFailureStatusKind.DatabaseCompatibility,
+            Failure(IpcFailureKind.Runtime),
+            false,
+            DateTimeOffset.UtcNow));
+        AssertInvalid(new BackendRuntimeStatusDto(
+            BackendRuntimeStatusState.Failed,
+            BackendRuntimeFailureStatusKind.StartupFailure,
+            Failure(IpcFailureKind.Runtime),
+            false,
+            DateTimeOffset.UtcNow,
+            new DatabaseCompatibilityStatusDto(99, 12, 12)));
+        AssertInvalid(new BackendRuntimeStatusDto(
+            BackendRuntimeStatusState.Failed,
+            BackendRuntimeFailureStatusKind.DatabaseCompatibility,
+            Failure(IpcFailureKind.Runtime),
+            false,
+            DateTimeOffset.UtcNow,
+            new DatabaseCompatibilityStatusDto(99, 13, 12)));
+
+        _validator.Validate(new BackendRuntimeStatusDto(
+            BackendRuntimeStatusState.Failed,
+            BackendRuntimeFailureStatusKind.DatabaseCompatibility,
+            Failure(IpcFailureKind.Runtime),
+            false,
+            DateTimeOffset.UtcNow,
+            new DatabaseCompatibilityStatusDto(99, 12, 12)));
+    }
+
+    [TestMethod]
     public void ValidStatusDtosAreAccepted()
     {
         _validator.Validate(new AgentStatusDto(

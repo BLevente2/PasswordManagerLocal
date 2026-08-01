@@ -133,13 +133,13 @@ public sealed class EndpointRpcMessageCodec
         var error = _serializer.Deserialize(payload, EndpointRpcJsonContext.Default.EndpointRpcError);
         _validator.Validate(error);
         ValidateCorrelation(expectedCorrelationId, error.CorrelationId);
-        throw new Client.EndpointRpcRemoteException(error);
+        return EndpointRpcTransportResponse.Failure(error);
     }
 
     private static void ValidateCorrelation(long expectedCorrelationId, long nestedCorrelationId)
     {
         if (nestedCorrelationId != expectedCorrelationId)
-            throw new Client.EndpointRpcCorrelationMismatchException();
+            throw new EndpointRpcCorrelationMismatchException();
     }
 
     private static byte[] EncodeRequestCore(

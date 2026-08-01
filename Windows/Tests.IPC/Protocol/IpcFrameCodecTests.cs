@@ -9,9 +9,9 @@ namespace PasswordManagerLocal.Windows.Tests.IPC.Protocol;
 public sealed class IpcFrameCodecTests
 {
     [TestMethod]
-    public void ProtocolIdentifiersRemainStableForVersionTwo()
+    public void ProtocolIdentifiersRemainStableForVersionThree()
     {
-        Assert.AreEqual(2, WindowsIpcProtocol.CurrentVersion);
+        Assert.AreEqual(3, WindowsIpcProtocol.CurrentVersion);
         Assert.AreEqual(28, WindowsIpcProtocol.HeaderSize);
         Assert.AreEqual(1, (int)IpcMessageKind.HandshakeRequest);
         Assert.AreEqual(5, (int)IpcMessageKind.RequestCancellation);

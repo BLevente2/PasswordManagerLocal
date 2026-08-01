@@ -1,10 +1,12 @@
+using PasswordManagerLocal.Common.Contracts.Sync;
+
 namespace PasswordManagerLocal.Common.Backend.Constants;
 
 public static class SyncConstants
 {
     public const string PFXPassword = "";
 
-    public const int SyncPort = 26688;
+    public const int SyncPort = SyncProtocolDefaults.TcpPort;
     public const int SyncProtocolVersion = 12;
     public const string LocalDiscoveryMulticastAddress = "239.255.67.67";
     public const int LocalDiscoveryPort = 26689;

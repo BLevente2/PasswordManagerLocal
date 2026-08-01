@@ -336,6 +336,26 @@ public sealed class WindowsIpcContractValidator
             throw new IpcPayloadException("The IPC device-unlock state has an invalid failure kind.");
         }
 
+        var expectsDatabaseCompatibility =
+            status.FailureKind == BackendRuntimeFailureStatusKind.DatabaseCompatibility;
+        if ((status.DatabaseCompatibility is not null) != expectsDatabaseCompatibility)
+        {
+            throw new IpcPayloadException(
+                "The IPC database compatibility status is inconsistent with the backend failure kind.");
+        }
+
+        if (status.DatabaseCompatibility is not null)
+        {
+            var compatibility = status.DatabaseCompatibility;
+            if (compatibility.OldestSupportedVersion < 0 ||
+                compatibility.CurrentVersion < compatibility.OldestSupportedVersion ||
+                compatibility.DetectedVersion < 0)
+            {
+                throw new IpcPayloadException(
+                    "The IPC database compatibility version range is invalid.");
+            }
+        }
+
         if (status.Failure is not null)
         {
             Validate(status.Failure);

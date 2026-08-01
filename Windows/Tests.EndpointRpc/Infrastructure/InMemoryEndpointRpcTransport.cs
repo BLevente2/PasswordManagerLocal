@@ -103,7 +103,8 @@ public sealed class InMemoryEndpointRpcTransport : IEndpointRpcTransport
             var response = await _handler.HandleAsync(context, cancellationToken);
             if (!response.IsSuccess)
                 throw new InvalidOperationException("The in-memory IPC handler returned an outer transport failure.");
-            return _codec.DecodeResponse(response.Result!, correlationId);
+            return EndpointRpcClientResponseMapper.RequireSuccess(
+                _codec.DecodeResponse(response.Result!, correlationId));
         }
         finally
         {

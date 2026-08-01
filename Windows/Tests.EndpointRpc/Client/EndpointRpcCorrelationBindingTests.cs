@@ -17,11 +17,14 @@ public sealed class EndpointRpcCorrelationBindingTests
         var codec = CreateCodec();
         var encoded = codec.EncodeFailure(CreateError(41));
 
-        var exception = Assert.ThrowsExactly<EndpointRpcRemoteException>(() =>
-            codec.DecodeResponse(encoded, 41));
+        var response = codec.DecodeResponse(encoded, 41);
 
-        Assert.AreEqual(41, exception.Error.CorrelationId);
-        Assert.AreEqual(EndpointRpcErrorCode.Conflict, exception.Error.ErrorCode);
+        Assert.AreEqual(EndpointRpcResponseKind.Failure, response.ResponseKind);
+        Assert.AreEqual(41, response.Error!.CorrelationId);
+        Assert.AreEqual(EndpointRpcErrorCode.Conflict, response.Error.ErrorCode);
+        var exception = Assert.ThrowsExactly<EndpointRpcRemoteException>(() =>
+            EndpointRpcClientResponseMapper.RequireSuccess(response));
+        Assert.AreSame(response.Error, exception.Error);
         Array.Clear(encoded);
     }
 

@@ -19,9 +19,18 @@ public sealed class WindowsNamedPipeFrontendBackendClientRecoveryTests
             BackendStatus = new BackendRuntimeStatusDto(
                 BackendRuntimeStatusState.Failed,
                 BackendRuntimeFailureStatusKind.DatabaseCompatibility,
-                null,
+                new IpcFailureDto(
+                    IpcFailureKind.Runtime,
+                    "The local database version is not supported.",
+                    DateTimeOffset.UtcNow,
+                    IsRetryable: false,
+                    RequiresProcessRestart: false),
                 RequiresProcessRestart: false,
-                DateTimeOffset.UtcNow)
+                DateTimeOffset.UtcNow,
+                new DatabaseCompatibilityStatusDto(
+                    DetectedVersion: 99,
+                    OldestSupportedVersion: 12,
+                    CurrentVersion: 12))
         };
         var client = new WindowsNamedPipeFrontendBackendClient(
             agent,
@@ -34,7 +43,10 @@ public sealed class WindowsNamedPipeFrontendBackendClientRecoveryTests
 
         Assert.AreEqual(BackendRuntimeFailureKind.DatabaseCompatibility, client.Snapshot.FailureKind);
         Assert.AreEqual(WindowsEndpointClientConnectionState.Unavailable, client.ConnectionState);
-        Assert.IsInstanceOfType<DatabaseVersionNotSupportedException>(client.Snapshot.Failure);
+        var failure = Assert.IsInstanceOfType<DatabaseVersionNotSupportedException>(client.Snapshot.Failure);
+        Assert.AreEqual(99, failure.DetectedVersion);
+        Assert.AreEqual(12, failure.OldestSupportedVersion);
+        Assert.AreEqual(12, failure.CurrentVersion);
         await client.DisposeAsync();
     }
 

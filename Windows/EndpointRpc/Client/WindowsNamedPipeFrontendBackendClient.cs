@@ -1,5 +1,4 @@
 using PasswordManagerLocal.Common.Contracts.Endpoints;
-using PasswordManagerLocal.Common.Backend.Constants;
 using PasswordManagerLocal.Common.Contracts.Errors;
 using PasswordManagerLocal.Common.Contracts.Runtime;
 using PasswordManagerLocal.Common.Contracts.BackgroundSync;
@@ -811,11 +810,7 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
             return status.FailureKind switch
             {
                 BackendRuntimeFailureStatusKind.DatabaseCompatibility =>
-                    (new DatabaseVersionNotSupportedException(
-                        detectedVersion: null,
-                        oldestSupportedVersion: DatabaseConstants.OldestSupportedDbVersion,
-                        currentVersion: DatabaseConstants.CurrentDbVersion,
-                        innerException: original),
+                    (CreateDatabaseCompatibilityException(status, original),
                      BackendRuntimeFailureKind.DatabaseCompatibility),
                 BackendRuntimeFailureStatusKind.PlatformKeyUnavailable =>
                     (new KeyProtectorUnavailableException(
@@ -839,6 +834,22 @@ public sealed class WindowsNamedPipeFrontendBackendClient :
         {
             return (original, BackendRuntimeFailureKind.StartupFailure);
         }
+    }
+
+    private static DatabaseVersionNotSupportedException CreateDatabaseCompatibilityException(
+        BackendRuntimeStatusDto status,
+        Exception original)
+    {
+        var compatibility = status.DatabaseCompatibility
+            ?? throw new InvalidOperationException(
+                "The Windows agent omitted database compatibility details.",
+                original);
+
+        return new DatabaseVersionNotSupportedException(
+            compatibility.DetectedVersion,
+            compatibility.OldestSupportedVersion,
+            compatibility.CurrentVersion,
+            innerException: original);
     }
 
     private async Task EnsureAgentHealthyAsync(CancellationToken cancellationToken)

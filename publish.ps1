@@ -245,6 +245,12 @@ function Test-WindowsPublish {
         'PasswordManagerLocal.dll',
         'PasswordManagerLocal.deps.json',
         'PasswordManagerLocal.runtimeconfig.json',
+        'PasswordManagerLocal.Common.Frontend.dll',
+        'PasswordManagerLocal.Common.Contracts.dll',
+        'PasswordManagerLocal.Common.Preferences.dll',
+        'PasswordManagerLocal.Windows.Ipc.dll',
+        'PasswordManagerLocal.Windows.EndpointRpc.Contracts.dll',
+        'PasswordManagerLocal.Windows.EndpointRpc.Client.dll',
         'coreclr.dll',
         'hostfxr.dll',
         'hostpolicy.dll',
@@ -256,6 +262,43 @@ function Test-WindowsPublish {
     foreach ($requiredFile in $requiredFiles) {
         if (-not (Test-Path (Join-Path $OutputPath $requiredFile))) {
             throw "Windows publish validation failed. Required file is missing: $requiredFile"
+        }
+    }
+
+    $agentRuntimePath = Join-Path $OutputPath 'AgentRuntime'
+    $requiredAgentFiles = @(
+        'PasswordManagerLocal.Windows.Agent.exe',
+        'PasswordManagerLocal.Windows.Agent.dll',
+        'PasswordManagerLocal.Windows.Agent.deps.json',
+        'PasswordManagerLocal.Windows.Agent.runtimeconfig.json',
+        'PasswordManagerLocal.Common.Backend.dll',
+        'PasswordManagerLocal.Common.Backend.Hosting.dll',
+        'PasswordManagerLocal.Common.Preferences.dll',
+        'PasswordManagerLocal.Common.Contracts.dll',
+        'PasswordManagerLocal.Windows.Ipc.dll',
+        'PasswordManagerLocal.Windows.Backend.dll',
+        'PasswordManagerLocal.Windows.EndpointRpc.Contracts.dll',
+        'PasswordManagerLocal.Windows.EndpointRpc.Server.dll'
+    )
+    foreach ($requiredAgentFile in $requiredAgentFiles) {
+        if (-not (Test-Path (Join-Path $agentRuntimePath $requiredAgentFile))) {
+            throw "Windows publish validation failed. AgentRuntime file is missing: $requiredAgentFile"
+        }
+    }
+
+    foreach ($backendOnlyRootFile in @(
+        'PasswordManagerLocal.Common.Backend.dll',
+        'PasswordManagerLocal.Common.Backend.Hosting.dll',
+        'PasswordManagerLocal.Windows.Backend.dll',
+        'PasswordManagerLocal.Windows.EndpointRpc.Server.dll',
+        'Microsoft.EntityFrameworkCore.dll',
+        'Microsoft.EntityFrameworkCore.Relational.dll',
+        'Microsoft.EntityFrameworkCore.Sqlite.dll',
+        'Microsoft.Data.Sqlite.dll',
+        'SQLitePCLRaw.core.dll'
+    )) {
+        if (Test-Path (Join-Path $OutputPath $backendOnlyRootFile)) {
+            throw "Windows publish validation failed. Backend-only file is present in the frontend root: $backendOnlyRootFile"
         }
     }
 
@@ -304,6 +347,31 @@ function Test-WindowsPublish {
         throw 'Windows publish validation failed. The dependency manifest still contains a version-qualified crash-dump DAC asset.'
     }
 
+    foreach ($backendOnlyDependency in @(
+        'PasswordManagerLocal.Common.Backend',
+        'PasswordManagerLocal.Common.Backend.Hosting',
+        'PasswordManagerLocal.Windows.Backend',
+        'PasswordManagerLocal.Windows.EndpointRpc.Server',
+        'Microsoft.EntityFrameworkCore',
+        'Microsoft.Data.Sqlite',
+        'SQLitePCLRaw'
+    )) {
+        if ($depsText.Contains($backendOnlyDependency)) {
+            throw "Windows publish validation failed. Frontend dependency manifest contains backend-only dependency: $backendOnlyDependency"
+        }
+    }
+
+    $agentDepsPath = Join-Path $agentRuntimePath 'PasswordManagerLocal.Windows.Agent.deps.json'
+    $agentDepsText = Get-Content -LiteralPath $agentDepsPath -Raw
+    foreach ($requiredAgentDependency in @(
+        'PasswordManagerLocal.Common.Backend',
+        'PasswordManagerLocal.Windows.EndpointRpc.Server'
+    )) {
+        if (-not $agentDepsText.Contains($requiredAgentDependency)) {
+            throw "Windows publish validation failed. Agent dependency manifest is missing: $requiredAgentDependency"
+        }
+    }
+
     $publishedSymbols = Get-ChildItem -Path $OutputPath -Recurse -File -Filter '*.pdb'
     if ($publishedSymbols) {
         $symbolNames = ($publishedSymbols.Name | Sort-Object -Unique) -join ', '
@@ -322,6 +390,7 @@ function Test-WindowsPublish {
     if (Test-Path (Join-Path $OutputPath 'Avalonia.Metal.dll')) {
         Write-Host "Avalonia.Metal.dll is present as Avalonia's shared rendering abstraction (allowed)"
     }
+    Write-Host "Verified backend-only assemblies are confined to AgentRuntime"
     Write-Host "Verified release output contains no PDB files"
     Write-Host "Published files: $($files.Count), total size: $totalMiB MiB"
 }
@@ -347,6 +416,8 @@ function Publish-WindowsApp {
     Write-Host 'Validating Windows publish'
     Write-Host '--------------------------'
     Test-WindowsPublish -OutputPath $output
+    & (Join-Path $script:Root 'Tools\Windows\VerifyWindowsPublishedLayout.ps1') `
+        -PublishDirectory $output
 
     Write-Host ''
     Write-Host "Windows publish output: $output"

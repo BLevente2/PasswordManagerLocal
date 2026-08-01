@@ -5,4 +5,5 @@ public sealed record BackendRuntimeStatusDto(
     BackendRuntimeFailureStatusKind FailureKind,
     IpcFailureDto? Failure,
     bool RequiresProcessRestart,
-    DateTimeOffset ChangedAtUtc);
+    DateTimeOffset ChangedAtUtc,
+    DatabaseCompatibilityStatusDto? DatabaseCompatibility = null);

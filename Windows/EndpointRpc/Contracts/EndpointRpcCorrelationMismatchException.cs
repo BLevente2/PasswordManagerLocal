@@ -1,6 +1,4 @@
-using PasswordManagerLocal.Windows.EndpointRpc.Contracts;
-
-namespace PasswordManagerLocal.Windows.EndpointRpc.Client;
+namespace PasswordManagerLocal.Windows.EndpointRpc.Contracts;
 
 public sealed class EndpointRpcCorrelationMismatchException : Exception
 {
