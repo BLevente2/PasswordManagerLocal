@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Common.Backend.Hosting;
 using PasswordManagerLocal.Common.Contracts.Runtime;
 using PasswordManagerLocal.Common.Contracts.BackgroundSync;
@@ -17,6 +18,7 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
     private readonly WindowsAgentShutdownCoordinator _shutdownCoordinator;
     private readonly IWindowsBackgroundSyncCoordinator _backgroundSyncCoordinator;
     private readonly WindowsAgentLifecycleTransitionCoordinator _lifecycleTransitions;
+    private readonly IAgentLocalizer _localizer;
     private readonly SemaphoreSlim _resetGate = new(1, 1);
     private int _resetting;
 
@@ -25,7 +27,8 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
         IWindowsAgentBackendRuntimeOwner backendOwner,
         WindowsAgentShutdownCoordinator shutdownCoordinator,
         IWindowsBackgroundSyncCoordinator backgroundSyncCoordinator,
-        WindowsAgentLifecycleTransitionCoordinator lifecycleTransitions)
+        WindowsAgentLifecycleTransitionCoordinator lifecycleTransitions,
+        IAgentLocalizer localizer)
     {
         _endpointHost = endpointHost ?? throw new ArgumentNullException(nameof(endpointHost));
         _backendOwner = backendOwner ?? throw new ArgumentNullException(nameof(backendOwner));
@@ -34,6 +37,7 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
             ?? throw new ArgumentNullException(nameof(backgroundSyncCoordinator));
         _lifecycleTransitions = lifecycleTransitions
             ?? throw new ArgumentNullException(nameof(lifecycleTransitions));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
     }
 
     public bool IsResetting => Volatile.Read(ref _resetting) != 0;
@@ -46,7 +50,7 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
             return new DatabaseResetResultDto(
                 Completed: false,
                 RequiresProcessRestart: false,
-                SafeMessage: "A database reset is already in progress.");
+                SafeMessage: _localizer.GetString(AgentLocalizationKeys.DatabaseResetInProgress));
         }
 
         WindowsAgentLifecycleTransitionLease? transition = null;
@@ -65,8 +69,8 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
                     Completed: false,
                     RequiresProcessRestart: snapshot.RequiresProcessRestart,
                     SafeMessage: snapshot.RequiresProcessRestart
-                        ? "The Windows agent must restart before the database can be reset."
-                        : "The database reset is only available after a database compatibility failure.");
+                        ? _localizer.GetString(AgentLocalizationKeys.DatabaseRestartRequired)
+                        : _localizer.GetString(AgentLocalizationKeys.DatabaseCompatibilityRequired));
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -95,7 +99,7 @@ public sealed class WindowsAgentDatabaseResetCoordinator : IWindowsAgentDatabase
             return new DatabaseResetResultDto(
                 Completed: false,
                 RequiresProcessRestart: true,
-                SafeMessage: "The database reset could not complete safely. The agent must restart.");
+                SafeMessage: _localizer.GetString(AgentLocalizationKeys.DatabaseResetFailed));
         }
         finally
         {

@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Common.Backend.Constants;
 using PasswordManagerLocal.Common.Backend.Hosting;
 using PasswordManagerLocal.Common.Backend.Models;
@@ -25,6 +26,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
     private readonly IWindowsAgentEndpointHost _endpointHost;
     private readonly AgentInteractiveEndpointAdapter _endpointAdapter;
     private readonly IWindowsAgentDatabaseResetCoordinator _resetCoordinator;
+    private readonly IAgentLocalizer _localizer;
 
     public WindowsAgentStatusProvider(
         IWindowsAgentStateSource stateSource,
@@ -34,7 +36,8 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         IWindowsAgentBackendRuntimeOwner backendOwner,
         IWindowsAgentEndpointHost endpointHost,
         AgentInteractiveEndpointAdapter endpointAdapter,
-        IWindowsAgentDatabaseResetCoordinator resetCoordinator)
+        IWindowsAgentDatabaseResetCoordinator resetCoordinator,
+        IAgentLocalizer localizer)
     {
         _stateSource = stateSource ?? throw new ArgumentNullException(nameof(stateSource));
         _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
@@ -45,6 +48,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         _endpointHost = endpointHost ?? throw new ArgumentNullException(nameof(endpointHost));
         _endpointAdapter = endpointAdapter ?? throw new ArgumentNullException(nameof(endpointAdapter));
         _resetCoordinator = resetCoordinator ?? throw new ArgumentNullException(nameof(resetCoordinator));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
     }
 
     public async Task<AgentStatusDto> GetAgentStatusAsync(CancellationToken cancellationToken)
@@ -62,7 +66,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         var failure = owner.RequiresProcessRestart
             ? CreateFailure(
                 IpcFailureKind.Runtime,
-                "The Windows agent backend requires a clean process restart.",
+                _localizer.GetString(AgentLocalizationKeys.RuntimeBackendRestartRequired),
                 retryable: true,
                 requiresRestart: true)
             : _stateSource.LastFailure;
@@ -97,7 +101,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         {
             var failure = CreateFailure(
                 IpcFailureKind.Runtime,
-                "The Windows backend cannot be recreated safely in this agent process.",
+                _localizer.GetString(AgentLocalizationKeys.RuntimeBackendRecreationUnsafe),
                 retryable: true,
                 requiresRestart: true);
             return Task.FromResult(new BackendRuntimeStatusDto(
@@ -150,7 +154,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         var cleanupFailure = state == InteractiveSessionStatusState.CleanupFailed
             ? CreateFailure(
                 IpcFailureKind.InteractiveCleanup,
-                "The interactive backend session could not clean up safely.",
+                _localizer.GetString(AgentLocalizationKeys.RuntimeInteractiveCleanupFailed),
                 retryable: false,
                 requiresRestart: owner.RequiresProcessRestart)
             : null;
@@ -181,7 +185,7 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         var failure = state == SynchronizationStatusState.Degraded
             ? CreateFailure(
                 IpcFailureKind.Synchronization,
-                "Background synchronization is degraded.",
+                _localizer.GetString(AgentLocalizationKeys.RuntimeBackgroundSyncDegraded),
                 retryable: true,
                 requiresRestart: false)
             : null;
@@ -251,30 +255,30 @@ public sealed class WindowsAgentStatusProvider : IWindowsIpcStatusProvider
         return null;
     }
 
-    private static IpcFailureDto CreateRuntimeFailure(
+    private IpcFailureDto CreateRuntimeFailure(
         BackendRuntimeFailureStatusKind kind,
         bool requiresRestart) => kind switch
     {
         BackendRuntimeFailureStatusKind.PlatformKeyUnavailable => CreateFailure(
             IpcFailureKind.PlatformKey,
-            "The Windows platform key is unavailable until the device is unlocked.",
+            _localizer.GetString(AgentLocalizationKeys.RuntimePlatformKeyUnavailable),
             retryable: true,
             requiresRestart),
         BackendRuntimeFailureStatusKind.StorageUnavailable => CreateFailure(
             IpcFailureKind.Storage,
-            "Backend storage is unavailable.",
+            _localizer.GetString(AgentLocalizationKeys.RuntimeStorageUnavailable),
             retryable: true,
             requiresRestart),
         BackendRuntimeFailureStatusKind.InteractiveCleanupFailure => CreateFailure(
             IpcFailureKind.InteractiveCleanup,
-            "The interactive backend session could not clean up safely.",
+            _localizer.GetString(AgentLocalizationKeys.RuntimeInteractiveCleanupFailed),
             retryable: false,
             requiresRestart),
         _ => CreateFailure(
             IpcFailureKind.Runtime,
             kind == BackendRuntimeFailureStatusKind.DatabaseCompatibility
-                ? "The local database version is not supported."
-                : "The Windows backend runtime failed.",
+                ? _localizer.GetString(AgentLocalizationKeys.RuntimeDatabaseVersionUnsupported)
+                : _localizer.GetString(AgentLocalizationKeys.RuntimeBackendFailed),
             retryable: kind != BackendRuntimeFailureStatusKind.DatabaseCompatibility,
             requiresRestart)
     };

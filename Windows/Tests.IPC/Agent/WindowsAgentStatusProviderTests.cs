@@ -81,7 +81,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            reset);
+            reset,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var agent = await provider.GetAgentStatusAsync(CancellationToken.None);
         var backend = await provider.GetBackendRuntimeStatusAsync(CancellationToken.None);
@@ -126,7 +127,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            new FakeWindowsAgentDatabaseResetCoordinator());
+            new FakeWindowsAgentDatabaseResetCoordinator(),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var status = await provider.GetAgentStatusAsync(CancellationToken.None);
 
@@ -168,7 +170,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            new FakeWindowsAgentDatabaseResetCoordinator());
+            new FakeWindowsAgentDatabaseResetCoordinator(),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var agent = await provider.GetAgentStatusAsync(CancellationToken.None);
         var backend = await provider.GetBackendRuntimeStatusAsync(CancellationToken.None);
@@ -212,7 +215,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            new FakeWindowsAgentDatabaseResetCoordinator());
+            new FakeWindowsAgentDatabaseResetCoordinator(),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var agent = await provider.GetAgentStatusAsync(CancellationToken.None);
         var backend = await provider.GetBackendRuntimeStatusAsync(CancellationToken.None);
@@ -253,7 +257,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            new FakeWindowsAgentDatabaseResetCoordinator());
+            new FakeWindowsAgentDatabaseResetCoordinator(),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var status = await provider.GetBackendRuntimeStatusAsync(CancellationToken.None);
 
@@ -294,7 +299,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            new FakeWindowsAgentDatabaseResetCoordinator());
+            new FakeWindowsAgentDatabaseResetCoordinator(),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var status = await provider.GetAgentStatusAsync(CancellationToken.None);
 
@@ -328,7 +334,8 @@ public sealed class WindowsAgentStatusProviderTests
             owner,
             endpointHost,
             adapter,
-            reset);
+            reset,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var status = await provider.GetAgentStatusAsync(CancellationToken.None);
 

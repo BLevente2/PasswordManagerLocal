@@ -42,8 +42,33 @@ function Assert-RequiredFiles {
     }
 }
 
-$publish = [System.IO.Path]::TrimEndingDirectorySeparator(
-    [System.IO.Path]::GetFullPath($PublishDirectory))
+function Get-NormalizedFullPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $cleanPath = $Path.Trim().Trim([char]34)
+    if ([string]::IsNullOrWhiteSpace($cleanPath)) {
+        Fail-Layout 'The publish directory argument was empty.'
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($cleanPath)
+    $root = [System.IO.Path]::GetPathRoot($fullPath)
+    $directorySeparators = [char[]]@(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+
+    while ($fullPath.Length -gt $root.Length -and
+        $directorySeparators -contains $fullPath[$fullPath.Length - 1]) {
+        $fullPath = $fullPath.Substring(0, $fullPath.Length - 1)
+    }
+
+    return $fullPath
+}
+
+$publish = Get-NormalizedFullPath -Path $PublishDirectory
 if (-not (Test-Path -LiteralPath $publish -PathType Container)) {
     Fail-Layout "Publish directory does not exist: $publish"
 }

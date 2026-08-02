@@ -262,6 +262,25 @@ public sealed class WindowsAgentControlConnection : IWindowsAgentControlConnecti
         }
     }
 
+    public async Task<bool> ReloadApplicationPreferencesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _connectionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            if (_connection?.IsConnected != true)
+                return false;
+            var response = await _connection.ReloadApplicationPreferencesAsync(cancellationToken)
+                .ConfigureAwait(false);
+            return response.Accepted;
+        }
+        finally
+        {
+            _connectionGate.Release();
+        }
+    }
+
     public async Task<DatabaseResetResultDto> ResetDatabaseAsync(
         CancellationToken cancellationToken = default)
     {

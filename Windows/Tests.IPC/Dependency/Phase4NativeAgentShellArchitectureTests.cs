@@ -135,12 +135,18 @@ public sealed class Phase4NativeAgentShellArchitectureTests
             root, "Windows", "Agent", "Program.cs"));
         var text = File.ReadAllText(Path.Combine(
             root, "Windows", "Agent", "Tray", "WindowsAgentTrayText.cs"));
+        var english = File.ReadAllText(Path.Combine(
+            root, "Windows", "Agent", "Assets", "Localization", "en_us.json"));
+        var hungarian = File.ReadAllText(Path.Combine(
+            root, "Windows", "Agent", "Assets", "Localization", "hu.json"));
 
         StringAssert.Contains(reader, "preferences.Language");
         Assert.IsFalse(reader.Contains("Theme", StringComparison.Ordinal));
-        StringAssert.Contains(program, "ReadSelectedLanguage");
-        StringAssert.Contains(text, "PasswordManagerLocal megnyitása");
-        StringAssert.Contains(text, "Kilépés");
+        StringAssert.Contains(program, "ReadLanguageAsync");
+        StringAssert.Contains(text, "IAgentLocalizer");
+        StringAssert.Contains(english, "Open PasswordManagerLocal");
+        StringAssert.Contains(hungarian, "PasswordManagerLocal megnyitása");
+        StringAssert.Contains(hungarian, "Kilépés");
     }
 
     private static string ReadSources(string directory) =>

@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Windows.Ipc.Client;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 
@@ -9,15 +10,18 @@ public sealed class WindowsUiOpenService : IWindowsUiOpenService
     private readonly IWindowsUiLauncher _launcher;
     private readonly SemaphoreSlim _openGate = new(1, 1);
     private readonly TimeSpan _launchCoalescingWindow;
+    private readonly IAgentLocalizer _localizer;
     private DateTimeOffset? _lastLaunchRequestUtc;
 
     public WindowsUiOpenService(
         IWindowsUiActivationClient activationClient,
         IWindowsUiLauncher launcher,
+        IAgentLocalizer localizer,
         TimeSpan? launchCoalescingWindow = null)
     {
         _activationClient = activationClient ?? throw new ArgumentNullException(nameof(activationClient));
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         _launchCoalescingWindow = launchCoalescingWindow ?? TimeSpan.FromSeconds(5);
         if (_launchCoalescingWindow < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(launchCoalescingWindow));
@@ -34,18 +38,18 @@ public sealed class WindowsUiOpenService : IWindowsUiOpenService
                 new UiActivationRequestDto(reason, BringToForeground: true),
                 cancellationToken);
             if (activation.Kind == UiActivationResultKind.Activated)
-                return new UiOpenResult(UiOpenResultKind.Activated, activation.SafeMessage);
+                return new UiOpenResult(UiOpenResultKind.Activated, _localizer.GetString(AgentLocalizationKeys.UiActivated));
             if (activation.Kind == UiActivationResultKind.Rejected)
-                return new UiOpenResult(UiOpenResultKind.ActivationRejected, activation.SafeMessage);
+                return new UiOpenResult(UiOpenResultKind.ActivationRejected, _localizer.GetString(AgentLocalizationKeys.UiActivationRejected));
             if (activation.Kind == UiActivationResultKind.Failed)
-                return new UiOpenResult(UiOpenResultKind.ActivationFailed, activation.SafeMessage);
+                return new UiOpenResult(UiOpenResultKind.ActivationFailed, _localizer.GetString(AgentLocalizationKeys.UiActivationFailed));
 
             var now = DateTimeOffset.UtcNow;
             if (_lastLaunchRequestUtc is { } last && now - last < _launchCoalescingWindow)
             {
                 return new UiOpenResult(
                     UiOpenResultKind.LaunchRequested,
-                    "A PasswordManagerLocal UI launch is already in progress.");
+                    _localizer.GetString(AgentLocalizationKeys.UiLaunchAlreadyInProgress));
             }
 
             var launch = await _launcher.LaunchAsync(cancellationToken);

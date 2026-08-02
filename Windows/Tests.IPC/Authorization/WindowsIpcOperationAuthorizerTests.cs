@@ -71,7 +71,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
             IpcOperationId.UnregisterUiConnection,
             IpcOperationId.RequestAgentExit,
             IpcOperationId.ResetDatabase,
-            IpcOperationId.SetBackgroundSyncEnabled
+            IpcOperationId.SetBackgroundSyncEnabled,
+            IpcOperationId.ReloadApplicationPreferences
         })
         {
             Assert.IsTrue(authorizer.Authorize(CreateContext(registered.Connection.ConnectionId, IpcPeerRole.Ui, operation)).IsAuthorized);
@@ -94,7 +95,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
             state,
             gate,
             new FakeWindowsAgentBackendRuntimeOwner(),
-            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         foreach (var operation in StatusOperations)
         {
@@ -126,7 +128,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
             state,
             new WindowsAgentAdmissionGate(),
             new FakeWindowsAgentBackendRuntimeOwner(),
-            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         foreach (var operation in StatusOperations)
         {
@@ -164,7 +167,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
             state,
             gate,
             backend,
-            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         Assert.IsTrue(authorizer.Authorize(CreateContext(
             Guid.NewGuid(),
@@ -198,7 +202,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
             state,
             gate,
             backend,
-            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()));
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         Assert.IsTrue(authorizer.Authorize(CreateContext(
             Guid.NewGuid(),
@@ -229,7 +234,8 @@ public sealed class WindowsIpcOperationAuthorizerTests
             state,
             gate,
             backend,
-            new WindowsIpcOperationAuthorizer(coordinator));
+            new WindowsIpcOperationAuthorizer(coordinator),
+            AgentLocalizationTestFactory.CreateEnglish());
         var registration = CreateContext(
             Guid.NewGuid(),
             IpcPeerRole.Ui,
@@ -241,10 +247,56 @@ public sealed class WindowsIpcOperationAuthorizerTests
             registration.Connection.ConnectionId,
             IpcPeerRole.Ui,
             IpcOperationId.ResetDatabase)).IsAuthorized);
+        Assert.IsTrue(authorizer.Authorize(CreateContext(
+            registration.Connection.ConnectionId,
+            IpcPeerRole.Ui,
+            IpcOperationId.ReloadApplicationPreferences)).IsAuthorized);
         Assert.IsFalse(authorizer.Authorize(CreateContext(
             registration.Connection.ConnectionId,
             IpcPeerRole.Ui,
             IpcOperationId.RequestAgentExit)).IsAuthorized);
+    }
+
+
+    [TestMethod]
+    public void AgentBoundaryReplacesSharedAuthorizationMessagesWithLocalizedText()
+    {
+        var state = new WindowsAgentStateStore();
+        state.MarkRunning(DateTimeOffset.UtcNow);
+        var gate = new WindowsAgentAdmissionGate();
+        gate.Open();
+        var authorizer = new WindowsAgentOperationAuthorizer(
+            state,
+            gate,
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            new WindowsIpcOperationAuthorizer(new SingleUiConnectionCoordinator()),
+            AgentLocalizationTestFactory.CreateEnglish());
+
+        var registrationDenied = authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.TestClient,
+            IpcOperationId.RegisterUiConnection));
+        var registeredUiDenied = authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.Ui,
+            IpcOperationId.ReloadApplicationPreferences));
+        var unknownDenied = authorizer.Authorize(CreateContext(
+            Guid.NewGuid(),
+            IpcPeerRole.TestClient,
+            (IpcOperationId)ushort.MaxValue));
+
+        Assert.AreEqual(
+            AgentLocalizationTestFactory.CreateEnglish().GetString(
+                PasswordManagerLocal.Windows.Agent.Localization.AgentLocalizationKeys.IpcUiRegistrationRequired),
+            registrationDenied.SafeMessage);
+        Assert.AreEqual(
+            AgentLocalizationTestFactory.CreateEnglish().GetString(
+                PasswordManagerLocal.Windows.Agent.Localization.AgentLocalizationKeys.IpcRegisteredUiRequired),
+            registeredUiDenied.SafeMessage);
+        Assert.AreEqual(
+            AgentLocalizationTestFactory.CreateEnglish().GetString(
+                PasswordManagerLocal.Windows.Agent.Localization.AgentLocalizationKeys.IpcUnauthorizedOperation),
+            unknownDenied.SafeMessage);
     }
 
     private static readonly IpcOperationId[] StatusOperations =

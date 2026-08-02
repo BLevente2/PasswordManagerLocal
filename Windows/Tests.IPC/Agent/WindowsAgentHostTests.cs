@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Lifecycle;
 using PasswordManagerLocal.Windows.Agent.Hosting;
+using PasswordManagerLocal.Windows.Agent.Preferences;
 using PasswordManagerLocal.Windows.Agent.Ui;
 using PasswordManagerLocal.Common.Contracts.Runtime;
 using PasswordManagerLocal.Common.Contracts.BackgroundSync;
@@ -826,6 +827,35 @@ public sealed class WindowsAgentHostTests
         await Assert.ThrowsExactlyAsync<IOException>(() => host.DisposeAsync().AsTask());
     }
 
+    [TestMethod]
+    public async Task ShutdownStopsPreferenceReloadBeforeTrayDisposal()
+    {
+        var operations = new List<string>();
+        var tray = new FakeTrayIconController { OperationLog = operations };
+        var preferenceReload = new FakeAgentApplicationPreferencesReloadCoordinator
+        {
+            OperationLog = operations
+        };
+        var host = CreateHost(
+            new FakeProcessInstanceLock(),
+            new FakeWindowsIpcServerHost(),
+            new FakeWindowsAgentEndpointHost(),
+            new FakeWindowsAgentBackendRuntimeOwner(),
+            tray,
+            preferencesReloadCoordinator: preferenceReload);
+        await host.StartAsync();
+
+        var result = await host.RequestShutdownAsync(
+            WindowsAgentShutdownReason.ApplicationExit);
+
+        Assert.AreEqual(WindowsAgentShutdownResultKind.Completed, result.Kind);
+        Assert.AreEqual(1, preferenceReload.DisposeCount);
+        Assert.IsTrue(operations.IndexOf("localization-stop") >= 0);
+        Assert.IsTrue(operations.IndexOf("tray-dispose") > operations.IndexOf("localization-stop"));
+        await host.DisposeAsync();
+        Assert.AreEqual(1, preferenceReload.DisposeCount);
+    }
+
     private static WindowsAgentHost CreateHost(
         FakeProcessInstanceLock processLock,
         FakeWindowsIpcServerHost control,
@@ -842,7 +872,8 @@ public sealed class WindowsAgentHostTests
         TimeSpan? uiRegistrationPreflightTimeout = null,
         TimeSpan? uiRegistrationPollInterval = null,
         FakeWindowsBackgroundSyncCoordinator? backgroundSync = null,
-        WindowsAgentLifecycleTransitionCoordinator? lifecycleTransitions = null) =>
+        WindowsAgentLifecycleTransitionCoordinator? lifecycleTransitions = null,
+        IAgentApplicationPreferencesReloadCoordinator? preferencesReloadCoordinator = null) =>
         new(
             processLock,
             uiProcessLockProbe ?? new FakeProcessInstanceLockProbe(),
@@ -858,8 +889,10 @@ public sealed class WindowsAgentHostTests
             coordinator ?? new FakeUiConnectionCoordinator(),
             shutdownCoordinator ?? new WindowsAgentShutdownCoordinator(),
             state ?? new WindowsAgentStateStore(),
+            AgentLocalizationTestFactory.CreateEnglish(),
             uiRegistrationPreflightTimeout,
-            uiRegistrationPollInterval);
+            uiRegistrationPollInterval,
+            applicationPreferencesReloadCoordinator: preferencesReloadCoordinator);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

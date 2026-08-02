@@ -9,11 +9,15 @@ namespace PasswordManagerLocal.Common.Frontend.Services;
 public sealed class UiPreferencesService
 {
     private readonly IApplicationPreferencesStore _store;
+    private readonly IApplicationPreferencesChangeNotifier? _changeNotifier;
     private ApplicationPreferences _current;
 
-    public UiPreferencesService(IApplicationPreferencesStore store)
+    public UiPreferencesService(
+        IApplicationPreferencesStore store,
+        IApplicationPreferencesChangeNotifier? changeNotifier = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _changeNotifier = changeNotifier;
         _current = _store.ReadAsync().GetAwaiter().GetResult();
         ApplyTheme(_current.Theme);
     }
@@ -31,9 +35,16 @@ public sealed class UiPreferencesService
             var updated = _current with { Language = value };
             _store.WriteAsync(updated).GetAwaiter().GetResult();
             _current = updated;
-            PreferencesChanged?.Invoke(
-                this,
-                new UiPreferencesChangedEventArgs(true, false, value, _current.Theme));
+            try
+            {
+                PreferencesChanged?.Invoke(
+                    this,
+                    new UiPreferencesChangedEventArgs(true, false, value, _current.Theme));
+            }
+            finally
+            {
+                NotifyLanguagePersisted();
+            }
         }
     }
 
@@ -56,6 +67,19 @@ public sealed class UiPreferencesService
     }
 
     public string GetString(string key) => LocalizationManager.GetString(_current.Language, key);
+
+    private void NotifyLanguagePersisted()
+    {
+        try
+        {
+            _changeNotifier?.NotifyLanguagePersistedAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Trace.TraceError(
+                $"The persisted language change could not be signaled to the platform Agent: {exception.GetType().Name}");
+        }
+    }
 
     private static void ApplyTheme(AppThemeMode mode)
     {

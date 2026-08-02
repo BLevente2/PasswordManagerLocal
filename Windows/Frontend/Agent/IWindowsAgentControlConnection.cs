@@ -11,4 +11,5 @@ public interface IWindowsAgentControlConnection : IEndpointRpcAgentConnection
     Task<WindowsBackgroundSyncStateDto> SetBackgroundSyncEnabledAsync(
         bool isEnabled,
         CancellationToken cancellationToken = default);
+    Task<bool> ReloadApplicationPreferencesAsync(CancellationToken cancellationToken = default);
 }

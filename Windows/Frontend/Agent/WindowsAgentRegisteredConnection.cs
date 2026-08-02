@@ -66,6 +66,14 @@ public sealed class WindowsAgentRegisteredConnection : IWindowsAgentRegisteredCo
         }
     }
 
+    public Task<RequestAcceptedDto> ReloadApplicationPreferencesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(WindowsAgentRegisteredConnection));
+        return _controlClient.ReloadApplicationPreferencesAsync(cancellationToken);
+    }
+
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(
         CancellationToken cancellationToken = default)
     {

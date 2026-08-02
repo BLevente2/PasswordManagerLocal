@@ -42,6 +42,26 @@ public sealed class WindowsTrayIconControllerTests
     }
 
 
+
+    [TestMethod]
+    public async Task ContextMenuOpeningAndTextUpdatesAreForwarded()
+    {
+        var adapter = new FakeTrayIconAdapter();
+        await using var controller = new WindowsTrayIconController(adapter);
+        var openingCount = 0;
+        controller.ContextMenuOpening += (_, _) => openingCount++;
+        await controller.InitializeAsync();
+        var text = new WindowsAgentTrayText(
+            "tip", "open", "exit", "error", "start", "start-message", "stop", "stop-message");
+
+        adapter.RaiseContextMenuOpening();
+        await controller.UpdateTextAsync(text);
+
+        Assert.AreEqual(1, openingCount);
+        Assert.AreSame(text, adapter.LastText);
+        Assert.AreEqual(1, adapter.UpdateTextCount);
+    }
+
     [TestMethod]
     public async Task ExitFailureIsSurfacedWithoutDisposingTray()
     {

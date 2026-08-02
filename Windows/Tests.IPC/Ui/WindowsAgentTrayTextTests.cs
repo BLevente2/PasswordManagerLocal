@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using PasswordManagerLocal.Common.Contracts.Preferences;
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Windows.Agent.Tray;
 
 namespace PasswordManagerLocal.Windows.Tests.IPC.Ui;
@@ -8,9 +9,10 @@ namespace PasswordManagerLocal.Windows.Tests.IPC.Ui;
 public sealed class WindowsAgentTrayTextTests
 {
     [TestMethod]
-    public void EnglishTextPreservesExistingAgentLabels()
+    public async Task EnglishTextComesFromAgentResource()
     {
-        var text = WindowsAgentTrayText.Create(AppLanguage.English);
+        var localizer = await AgentLocalizer.CreateAsync(AppLanguage.English);
+        var text = WindowsAgentTrayText.Create(localizer);
 
         Assert.AreEqual("Open PasswordManagerLocal", text.OpenLabel);
         Assert.AreEqual("Exit", text.ExitLabel);
@@ -18,9 +20,10 @@ public sealed class WindowsAgentTrayTextTests
     }
 
     [TestMethod]
-    public void HungarianTextPreservesUnicodeAgentLabels()
+    public async Task HungarianTextComesFromAgentResourceAndPreservesUnicode()
     {
-        var text = WindowsAgentTrayText.Create(AppLanguage.Hungarian);
+        var localizer = await AgentLocalizer.CreateAsync(AppLanguage.Hungarian);
+        var text = WindowsAgentTrayText.Create(localizer);
 
         Assert.AreEqual("PasswordManagerLocal megnyitása", text.OpenLabel);
         Assert.AreEqual("Kilépés", text.ExitLabel);

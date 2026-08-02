@@ -6,6 +6,7 @@ using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Common.Contracts.Runtime;
 using PasswordManagerLocal.Common.Contracts.BackgroundSync;
+using PasswordManagerLocal.Windows.Agent.Localization;
 
 namespace PasswordManagerLocal.Windows.Agent.Hosting;
 
@@ -15,24 +16,27 @@ public sealed class WindowsAgentOperationAuthorizer : IWindowsIpcOperationAuthor
     private readonly IWindowsAgentAdmissionGate _admissionGate;
     private readonly IWindowsAgentBackendRuntimeOwner _backendOwner;
     private readonly IWindowsIpcOperationAuthorizer _innerAuthorizer;
+    private readonly IAgentLocalizer _localizer;
 
     public WindowsAgentOperationAuthorizer(
         IWindowsAgentStateSource stateSource,
         IWindowsAgentAdmissionGate admissionGate,
         IWindowsAgentBackendRuntimeOwner backendOwner,
-        IWindowsIpcOperationAuthorizer innerAuthorizer)
+        IWindowsIpcOperationAuthorizer innerAuthorizer,
+        IAgentLocalizer localizer)
     {
         _stateSource = stateSource ?? throw new ArgumentNullException(nameof(stateSource));
         _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _backendOwner = backendOwner ?? throw new ArgumentNullException(nameof(backendOwner));
         _innerAuthorizer = innerAuthorizer ?? throw new ArgumentNullException(nameof(innerAuthorizer));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
     }
 
     public IpcAuthorizationDecision Authorize(IpcRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (IsStatusOperation(context.Request.OperationId))
-            return _innerAuthorizer.Authorize(context);
+            return LocalizeInnerDecision(context, _innerAuthorizer.Authorize(context));
 
         var backend = _backendOwner.Snapshot;
         if (_stateSource.State != AgentState.Running ||
@@ -52,11 +56,31 @@ public sealed class WindowsAgentOperationAuthorizer : IWindowsIpcOperationAuthor
                     ? IpcErrorCode.AgentStopping
                     : IpcErrorCode.AgentUnavailable,
                 IpcErrorCategory.Availability,
-                "The Windows agent is unavailable for this operation.",
+                _localizer.GetString(AgentLocalizationKeys.IpcOperationUnavailable),
                 isRetryable: true);
         }
 
-        return _innerAuthorizer.Authorize(context);
+        return LocalizeInnerDecision(context, _innerAuthorizer.Authorize(context));
+    }
+
+    private IpcAuthorizationDecision LocalizeInnerDecision(
+        IpcRequestContext context,
+        IpcAuthorizationDecision decision)
+    {
+        if (decision.IsAuthorized)
+            return decision;
+
+        var messageKey = context.Request.OperationId == IpcOperationId.RegisterUiConnection &&
+            context.Connection.PeerRole != IpcPeerRole.Ui
+            ? AgentLocalizationKeys.IpcUiRegistrationRequired
+            : decision.ErrorCode == IpcErrorCode.UiNotRegistered
+                ? AgentLocalizationKeys.IpcRegisteredUiRequired
+                : AgentLocalizationKeys.IpcUnauthorizedOperation;
+        return IpcAuthorizationDecision.Denied(
+            decision.ErrorCode,
+            decision.ErrorCategory,
+            _localizer.GetString(messageKey),
+            decision.IsRetryable);
     }
 
     private static bool IsFailedBackendRecoveryOperation(IpcOperationId operationId) =>
@@ -64,7 +88,8 @@ public sealed class WindowsAgentOperationAuthorizer : IWindowsIpcOperationAuthor
             IpcOperationId.UnregisterUiConnection or
             IpcOperationId.ResetDatabase or
             IpcOperationId.RequestUiOpen or
-            IpcOperationId.RequestUiActivation;
+            IpcOperationId.RequestUiActivation or
+            IpcOperationId.ReloadApplicationPreferences;
 
     private static bool IsStatusOperation(IpcOperationId operationId) =>
         operationId is IpcOperationId.Ping or

@@ -1,3 +1,5 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
+using PasswordManagerLocal.Windows.Agent.Preferences;
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Background;
 using PasswordManagerLocal.Windows.Agent.Lifecycle;
@@ -31,6 +33,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
     private readonly WindowsAgentShutdownCoordinator _shutdownCoordinator;
     private readonly WindowsAgentStateStore _stateStore;
     private readonly WindowsAgentProcessLifetimeCoordinator? _processLifetimeCoordinator;
+    private readonly IAgentLocalizer _localizer;
+    private readonly IAgentApplicationPreferencesReloadCoordinator? _applicationPreferencesReloadCoordinator;
     private readonly TimeSpan _uiRegistrationPreflightTimeout;
     private readonly TimeSpan _uiRegistrationPollInterval;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
@@ -63,9 +67,11 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         IUiConnectionCoordinator uiConnectionCoordinator,
         WindowsAgentShutdownCoordinator shutdownCoordinator,
         WindowsAgentStateStore stateStore,
+        IAgentLocalizer localizer,
         TimeSpan? uiRegistrationPreflightTimeout = null,
         TimeSpan? uiRegistrationPollInterval = null,
-        WindowsAgentProcessLifetimeCoordinator? processLifetimeCoordinator = null)
+        WindowsAgentProcessLifetimeCoordinator? processLifetimeCoordinator = null,
+        IAgentApplicationPreferencesReloadCoordinator? applicationPreferencesReloadCoordinator = null)
     {
         _processLock = processLock ?? throw new ArgumentNullException(nameof(processLock));
         _uiProcessLockProbe = uiProcessLockProbe
@@ -85,7 +91,9 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             ?? throw new ArgumentNullException(nameof(uiConnectionCoordinator));
         _shutdownCoordinator = shutdownCoordinator ?? throw new ArgumentNullException(nameof(shutdownCoordinator));
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         _processLifetimeCoordinator = processLifetimeCoordinator;
+        _applicationPreferencesReloadCoordinator = applicationPreferencesReloadCoordinator;
         _uiRegistrationPreflightTimeout = uiRegistrationPreflightTimeout ?? TimeSpan.FromSeconds(2);
         _uiRegistrationPollInterval = uiRegistrationPollInterval ?? TimeSpan.FromMilliseconds(100);
         if (_uiRegistrationPreflightTimeout <= TimeSpan.Zero)
@@ -152,7 +160,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         catch (Exception exception)
         {
             _admissionGate.ClosePermanently();
-            _stateStore.MarkFailed("The Windows agent shell failed to start.");
+            _stateStore.MarkFailed(_localizer.GetString(AgentLocalizationKeys.RuntimeShellStartFailed));
             startupFailure = exception;
         }
         finally
@@ -285,7 +293,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                 {
                     return new WindowsAgentShutdownResult(
                         WindowsAgentShutdownResultKind.Rejected,
-                        "The Windows agent is not in a state that can accept Tray Exit.");
+                        _localizer.GetString(AgentLocalizationKeys.ExitNotAvailable));
                 }
             }
             else
@@ -300,7 +308,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                     {
                         return new WindowsAgentShutdownResult(
                             WindowsAgentShutdownResultKind.Rejected,
-                            "The Windows agent is no longer available for Tray Exit.");
+                            _localizer.GetString(AgentLocalizationKeys.ExitNoLongerAvailable));
                     }
                 }
                 else
@@ -316,7 +324,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
 
                     if (!_uiConnectionCoordinator.TryBeginIntentionalShutdown(out var registration))
                     {
-                        const string safeMessage = "The Windows agent is already coordinating an intentional exit.";
+                        var safeMessage = _localizer.GetString(AgentLocalizationKeys.ExitAlreadyInProgress);
                         await ShowExitFailureAsync(safeMessage);
                         return new WindowsAgentShutdownResult(
                             WindowsAgentShutdownResultKind.Rejected,
@@ -329,7 +337,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                         if (frozenProbe != ProcessInstanceLockProbeResult.Free)
                         {
                             _uiConnectionCoordinator.CancelIntentionalShutdown();
-                            const string safeMessage = "The UI is reconnecting. Close it and try again.";
+                            var safeMessage = _localizer.GetString(AgentLocalizationKeys.ExitUiReconnecting);
                             await ShowExitFailureAsync(safeMessage);
                             return new WindowsAgentShutdownResult(
                                 WindowsAgentShutdownResultKind.Rejected,
@@ -347,7 +355,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                         {
                             closeResult = new WindowsUiCloseResult(
                                 WindowsUiCloseResultKind.Failed,
-                                "The UI intentional-shutdown acknowledgement failed.");
+                                _localizer.GetString(AgentLocalizationKeys.ExitUiAcknowledgementFailed));
                             _uiConnectionCoordinator.CancelIntentionalShutdown();
                             await ShowExitFailureAsync(closeResult.SafeMessage);
                             return new WindowsAgentShutdownResult(
@@ -512,6 +520,12 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             if (Volatile.Read(ref _controlServerStartupAttempted) != 0)
                 await CaptureCriticalAsync(async () => await _controlServer.DisposeAsync());
 
+            if (_applicationPreferencesReloadCoordinator is not null)
+            {
+                await CaptureNoncriticalAsync(
+                    async () => await _applicationPreferencesReloadCoordinator.DisposeAsync());
+            }
+
             if (Volatile.Read(ref _trayStartupAttempted) != 0)
                 await CaptureNoncriticalAsync(async () => await _trayIcon.DisposeAsync());
 
@@ -549,8 +563,8 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
                 : new AggregateException(allFailures);
             _stateStore.MarkShutdownFailed(
                 criticalFailures.Count == 0
-                    ? "The Windows agent stopped backend ownership but could not finish shell cleanup."
-                    : "The Windows agent could not shut down all owned resources safely.",
+                    ? _localizer.GetString(AgentLocalizationKeys.RuntimeShutdownShellCleanupFailed)
+                    : _localizer.GetString(AgentLocalizationKeys.RuntimeShutdownResourcesFailed),
                 requiresProcessRestart: criticalFailures.Count != 0);
             return new WindowsAgentShutdownResult(
                 WindowsAgentShutdownResultKind.Failed,
@@ -585,7 +599,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             _controlServer.ListenerFailure is not null)
         {
             _admissionGate.ClosePermanently();
-            _stateStore.MarkFailed("The Windows agent control listener failed.");
+            _stateStore.MarkFailed(_localizer.GetString(AgentLocalizationKeys.RuntimeControlListenerFailed));
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
     }
@@ -597,7 +611,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             _endpointHost.Snapshot.State == WindowsAgentEndpointHostState.Failed)
         {
             _admissionGate.ClosePermanently();
-            _stateStore.MarkFailed("The Windows agent endpoint listener failed.");
+            _stateStore.MarkFailed(_localizer.GetString(AgentLocalizationKeys.RuntimeEndpointListenerFailed));
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
     }
@@ -618,7 +632,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             Volatile.Read(ref _shutdownStarted) == 0)
         {
             _admissionGate.ClosePermanently();
-            _stateStore.MarkFailed("The Windows agent backend runtime failed.");
+            _stateStore.MarkFailed(_localizer.GetString(AgentLocalizationKeys.RuntimeBackendFailed));
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
     }
@@ -629,7 +643,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
             Volatile.Read(ref _shutdownStarted) == 0)
         {
             _admissionGate.ClosePermanently();
-            _stateStore.MarkFailed("The Windows agent endpoint listener failed.");
+            _stateStore.MarkFailed(_localizer.GetString(AgentLocalizationKeys.RuntimeEndpointListenerFailed));
             _shutdownCoordinator.RequestShutdown(WindowsAgentShutdownReason.FatalLifecycleFailure);
         }
     }
@@ -687,7 +701,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         if (probe == ProcessInstanceLockProbeResult.Uncertain)
         {
             return TrayExitRegistrationPreflight.Reject(
-                "The UI presence could not be verified. Close it and try again.");
+                _localizer.GetString(AgentLocalizationKeys.ExitUiPresenceUnknown));
         }
         if (probe == ProcessInstanceLockProbeResult.Free)
             return TrayExitRegistrationPreflight.Proceed;
@@ -707,7 +721,7 @@ public sealed class WindowsAgentHost : IWindowsAgentHost
         catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
         {
             return TrayExitRegistrationPreflight.Reject(
-                "The UI is reconnecting. Close it and try again.");
+                _localizer.GetString(AgentLocalizationKeys.ExitUiReconnecting));
         }
     }
 

@@ -13,6 +13,7 @@ public sealed class WindowsTrayIconController : ITrayIconController
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
     }
 
+    public event EventHandler? ContextMenuOpening;
     public event EventHandler? OpenRequested;
     public event EventHandler? ExitRequested;
 
@@ -23,6 +24,7 @@ public sealed class WindowsTrayIconController : ITrayIconController
             throw new InvalidOperationException("The tray icon has already been initialized.");
 
         _adapter.MouseClicked += HandleMouseClicked;
+        _adapter.ContextMenuOpening += HandleContextMenuOpening;
         _adapter.OpenCommandSelected += HandleOpenCommandSelected;
         _adapter.ExitCommandSelected += HandleExitCommandSelected;
         try
@@ -60,6 +62,15 @@ public sealed class WindowsTrayIconController : ITrayIconController
         }
     }
 
+    public Task UpdateTextAsync(
+        WindowsAgentTrayText text,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ThrowIfDisposed();
+        return _adapter.UpdateTextAsync(text, cancellationToken);
+    }
+
     public Task ShowExitFailureAsync(
         string safeMessage,
         CancellationToken cancellationToken = default)
@@ -87,6 +98,9 @@ public sealed class WindowsTrayIconController : ITrayIconController
         }
     }
 
+    private void HandleContextMenuOpening(object? sender, EventArgs args) =>
+        ContextMenuOpening?.Invoke(this, EventArgs.Empty);
+
     private void HandleMouseClicked(object? sender, TrayIconMouseEventArgs args)
     {
         if (args.Button == TrayIconMouseButton.Left && args.Clicks == 1)
@@ -102,6 +116,7 @@ public sealed class WindowsTrayIconController : ITrayIconController
     private void DetachEvents()
     {
         _adapter.MouseClicked -= HandleMouseClicked;
+        _adapter.ContextMenuOpening -= HandleContextMenuOpening;
         _adapter.OpenCommandSelected -= HandleOpenCommandSelected;
         _adapter.ExitCommandSelected -= HandleExitCommandSelected;
     }

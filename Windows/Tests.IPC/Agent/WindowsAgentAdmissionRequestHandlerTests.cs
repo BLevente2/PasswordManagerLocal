@@ -5,6 +5,7 @@ using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Server;
+using PasswordManagerLocal.Windows.Tests.IPC.Infrastructure;
 
 namespace PasswordManagerLocal.Windows.Tests.IPC.Agent;
 
@@ -25,7 +26,8 @@ public sealed class WindowsAgentAdmissionRequestHandlerTests
                 {
                     invocationCount++;
                     return Task.FromResult(context.Success());
-                }));
+                }),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var response = await handler.HandleAsync(CreateContext(), CancellationToken.None);
 
@@ -48,7 +50,8 @@ public sealed class WindowsAgentAdmissionRequestHandlerTests
                 {
                     invocationCount++;
                     return Task.FromResult(context.Success());
-                }));
+                }),
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var response = await handler.HandleAsync(CreateContext(), CancellationToken.None);
 

@@ -34,6 +34,9 @@ internal sealed class FakeWindowsAgentRegisteredConnection : IWindowsAgentRegist
     public Exception? BackgroundSyncSetFailure { get; set; }
     public int BackgroundSyncSetCount { get; private set; }
     public bool? LastBackgroundSyncEnabled { get; private set; }
+    public int ReloadApplicationPreferencesCount { get; private set; }
+    public RequestAcceptedDto ReloadApplicationPreferencesResult { get; set; } = new(true);
+
     public DatabaseResetResultDto DatabaseResetResult { get; set; } = new(
         Completed: true,
         RequiresProcessRestart: false,
@@ -74,6 +77,15 @@ internal sealed class FakeWindowsAgentRegisteredConnection : IWindowsAgentRegist
             ? FakeWindowsBackgroundSyncCoordinator.OperationalState()
             : FakeWindowsBackgroundSyncCoordinator.DisabledState();
         return Task.FromResult(BackgroundSyncState);
+    }
+
+
+    public Task<RequestAcceptedDto> ReloadApplicationPreferencesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ReloadApplicationPreferencesCount++;
+        return Task.FromResult(ReloadApplicationPreferencesResult);
     }
 
     public Task<DatabaseResetResultDto> ResetDatabaseAsync(

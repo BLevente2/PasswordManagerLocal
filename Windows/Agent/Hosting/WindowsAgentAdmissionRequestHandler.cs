@@ -2,6 +2,7 @@ using PasswordManagerLocal.Windows.Ipc.Contracts;
 using PasswordManagerLocal.Windows.Ipc.Lifecycle;
 using PasswordManagerLocal.Windows.Ipc.Protocol;
 using PasswordManagerLocal.Windows.Ipc.Server;
+using PasswordManagerLocal.Windows.Agent.Localization;
 
 namespace PasswordManagerLocal.Windows.Agent.Hosting;
 
@@ -9,13 +10,16 @@ public sealed class WindowsAgentAdmissionRequestHandler : IWindowsIpcRequestHand
 {
     private readonly IWindowsAgentAdmissionGate _admissionGate;
     private readonly IWindowsIpcRequestHandler _inner;
+    private readonly IAgentLocalizer _localizer;
 
     public WindowsAgentAdmissionRequestHandler(
         IWindowsAgentAdmissionGate admissionGate,
-        IWindowsIpcRequestHandler inner)
+        IWindowsIpcRequestHandler inner,
+        IAgentLocalizer localizer)
     {
         _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
     }
 
     public IpcOperationId OperationId => _inner.OperationId;
@@ -33,7 +37,7 @@ public sealed class WindowsAgentAdmissionRequestHandler : IWindowsIpcRequestHand
                 new IpcError(
                     IpcErrorCode.AgentUnavailable,
                     IpcErrorCategory.Availability,
-                    "The agent is not accepting this operation.",
+                    _localizer.GetString(AgentLocalizationKeys.IpcAdmissionClosed),
                     context.Request.CorrelationId,
                     DateTimeOffset.UtcNow,
                     IsRetryable: true,

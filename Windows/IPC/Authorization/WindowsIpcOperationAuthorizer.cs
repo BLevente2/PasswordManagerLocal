@@ -31,7 +31,8 @@ public sealed class WindowsIpcOperationAuthorizer : IWindowsIpcOperationAuthoriz
             IpcOperationId.UnregisterUiConnection or
             IpcOperationId.RequestAgentExit or
             IpcOperationId.ResetDatabase or
-            IpcOperationId.SetBackgroundSyncEnabled => AuthorizeRegisteredUi(context),
+            IpcOperationId.SetBackgroundSyncEnabled or
+            IpcOperationId.ReloadApplicationPreferences => AuthorizeRegisteredUi(context),
             _ => IpcAuthorizationDecision.Denied(
                 IpcErrorCode.UnauthorizedOperation,
                 IpcErrorCategory.Validation,

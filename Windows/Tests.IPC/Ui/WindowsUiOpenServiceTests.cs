@@ -14,7 +14,7 @@ public sealed class WindowsUiOpenServiceTests
     {
         var activation = Activation(UiActivationResultKind.Activated);
         var launcher = new FakeWindowsUiLauncher();
-        var service = new WindowsUiOpenService(activation, launcher);
+        var service = new WindowsUiOpenService(activation, launcher, AgentLocalizationTestFactory.CreateEnglish());
 
         var result = await service.OpenAsync(UiActivationReason.UserLaunch);
 
@@ -28,7 +28,8 @@ public sealed class WindowsUiOpenServiceTests
         var launcher = new FakeWindowsUiLauncher();
         var service = new WindowsUiOpenService(
             Activation(UiActivationResultKind.Unavailable),
-            launcher);
+            launcher,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var result = await service.OpenAsync(UiActivationReason.TrayIcon);
 
@@ -42,7 +43,7 @@ public sealed class WindowsUiOpenServiceTests
         foreach (var kind in new[] { UiActivationResultKind.Rejected, UiActivationResultKind.Failed })
         {
             var launcher = new FakeWindowsUiLauncher();
-            var service = new WindowsUiOpenService(Activation(kind), launcher);
+            var service = new WindowsUiOpenService(Activation(kind), launcher, AgentLocalizationTestFactory.CreateEnglish());
 
             var result = await service.OpenAsync(UiActivationReason.UserLaunch);
 
@@ -58,6 +59,7 @@ public sealed class WindowsUiOpenServiceTests
         var service = new WindowsUiOpenService(
             Activation(UiActivationResultKind.Unavailable),
             launcher,
+            AgentLocalizationTestFactory.CreateEnglish(),
             launchCoalescingWindow: TimeSpan.FromMinutes(1));
 
         var results = await Task.WhenAll(
@@ -80,7 +82,8 @@ public sealed class WindowsUiOpenServiceTests
             var launcher = new FakeWindowsUiLauncher { Result = launchResult };
             var service = new WindowsUiOpenService(
                 Activation(UiActivationResultKind.Unavailable),
-                launcher);
+                launcher,
+                AgentLocalizationTestFactory.CreateEnglish());
 
             var result = await service.OpenAsync(UiActivationReason.UserLaunch);
 

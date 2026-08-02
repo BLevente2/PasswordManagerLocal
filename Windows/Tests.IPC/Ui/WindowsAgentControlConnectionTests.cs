@@ -189,10 +189,13 @@ public sealed class WindowsAgentControlConnectionTests
         var agentStatus = await connection.GetAgentStatusAsync();
         var status = await connection.GetBackendRuntimeStatusAsync();
         var reset = await connection.ResetDatabaseAsync();
+        var reloaded = await connection.ReloadApplicationPreferencesAsync();
 
         Assert.AreEqual(AgentState.Running, agentStatus.AgentState);
         Assert.AreEqual(BackendRuntimeStatusState.Ready, status.RuntimeState);
         Assert.IsTrue(reset.Completed);
+        Assert.IsTrue(reloaded);
+        Assert.AreEqual(1, registered.ReloadApplicationPreferencesCount);
         Assert.AreEqual(registered.AgentProcessId, connection.AgentProcessId);
     }
 

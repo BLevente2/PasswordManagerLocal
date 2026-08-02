@@ -23,6 +23,9 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
     public bool? LastRequestedEnabled { get; private set; }
     public bool MutateBeforeSetFailure { get; set; }
     public bool StallBackgroundRead { get; set; }
+    public int ReloadApplicationPreferencesCount { get; private set; }
+    public bool ReloadApplicationPreferencesResult { get; set; } = true;
+    public Exception? ReloadApplicationPreferencesFailure { get; set; }
 
     public Task<bool> EnsureConnectedAsync(CancellationToken cancellationToken = default)
     {
@@ -91,6 +94,17 @@ internal sealed class FakeWindowsAgentControlConnection : IWindowsAgentControlCo
             ? FakeWindowsBackgroundSyncCoordinator.OperationalState()
             : FakeWindowsBackgroundSyncCoordinator.DisabledState();
         return Task.FromResult(BackgroundState);
+    }
+
+
+    public Task<bool> ReloadApplicationPreferencesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ReloadApplicationPreferencesCount++;
+        return ReloadApplicationPreferencesFailure is null
+            ? Task.FromResult(ReloadApplicationPreferencesResult)
+            : Task.FromException<bool>(ReloadApplicationPreferencesFailure);
     }
 
     public Task<AgentStatusDto> GetAgentStatusAsync(

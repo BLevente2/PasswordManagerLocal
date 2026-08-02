@@ -1,32 +1,28 @@
-using PasswordManagerLocal.Common.Contracts.Preferences;
+using PasswordManagerLocal.Windows.Agent.Localization;
 
 namespace PasswordManagerLocal.Windows.Agent.Tray;
 
-internal sealed class WindowsAgentTrayText
+public sealed record WindowsAgentTrayText(
+    string ToolTip,
+    string OpenLabel,
+    string ExitLabel,
+    string ErrorTitle,
+    string StartupFailureTitle,
+    string StartupFailureMessage,
+    string ShutdownFailureTitle,
+    string ShutdownFailureMessage)
 {
-    private WindowsAgentTrayText(
-        string openLabel,
-        string exitLabel,
-        string startupFailureMessage)
+    public static WindowsAgentTrayText Create(IAgentLocalizer localizer)
     {
-        OpenLabel = openLabel;
-        ExitLabel = exitLabel;
-        StartupFailureMessage = startupFailureMessage;
+        ArgumentNullException.ThrowIfNull(localizer);
+        return new WindowsAgentTrayText(
+            localizer.GetString(AgentLocalizationKeys.TrayTooltip),
+            localizer.GetString(AgentLocalizationKeys.TrayOpen),
+            localizer.GetString(AgentLocalizationKeys.TrayExit),
+            localizer.GetString(AgentLocalizationKeys.TrayErrorTitle),
+            localizer.GetString(AgentLocalizationKeys.StartupFailureTitle),
+            localizer.GetString(AgentLocalizationKeys.StartupFailureMessage),
+            localizer.GetString(AgentLocalizationKeys.ShutdownFailureTitle),
+            localizer.GetString(AgentLocalizationKeys.ShutdownFailureMessage));
     }
-
-    internal string OpenLabel { get; }
-    internal string ExitLabel { get; }
-    internal string StartupFailureMessage { get; }
-    internal string ToolTip => "PasswordManagerLocal";
-
-    internal static WindowsAgentTrayText Create(AppLanguage language) =>
-        language == AppLanguage.Hungarian
-            ? new WindowsAgentTrayText(
-                "PasswordManagerLocal megnyitása",
-                "Kilépés",
-                "A PasswordManagerLocal háttérügynöke nem tudott elindulni.")
-            : new WindowsAgentTrayText(
-                "Open PasswordManagerLocal",
-                "Exit",
-                "The PasswordManagerLocal agent could not start.");
 }

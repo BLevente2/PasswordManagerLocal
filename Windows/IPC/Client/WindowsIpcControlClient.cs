@@ -123,6 +123,13 @@ public sealed class WindowsIpcControlClient
             WindowsIpcJsonContext.Default.WindowsBackgroundSyncStateDto,
             cancellationToken);
 
+    public Task<RequestAcceptedDto> ReloadApplicationPreferencesAsync(
+        CancellationToken cancellationToken = default) =>
+        SendForResultAsync(
+            IpcOperationId.ReloadApplicationPreferences,
+            WindowsIpcJsonContext.Default.RequestAcceptedDto,
+            cancellationToken);
+
     private async Task<TResponse> SendForResultAsync<TResponse>(
         IpcOperationId operationId,
         JsonTypeInfo<TResponse> responseTypeInfo,

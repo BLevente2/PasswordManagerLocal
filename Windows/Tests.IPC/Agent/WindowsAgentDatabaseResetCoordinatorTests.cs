@@ -32,7 +32,8 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             backend,
             new WindowsAgentShutdownCoordinator(),
             background,
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var result = await coordinator.ResetAsync();
 
@@ -144,7 +145,8 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             backend,
             shutdown,
             background,
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var result = await coordinator.ResetAsync();
 
@@ -178,7 +180,8 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             backend,
             shutdown,
             background,
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         var result = await coordinator.ResetAsync();
 
@@ -220,7 +223,8 @@ public sealed class WindowsAgentDatabaseResetCoordinatorTests
             backend,
             new WindowsAgentShutdownCoordinator(),
             background,
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
 
     private static PasswordManagerLocal.Windows.Agent.Backend.WindowsAgentBackendOwnerSnapshot CreateResettableSnapshot() =>
         FakeWindowsAgentBackendRuntimeOwner.CreateSnapshot(

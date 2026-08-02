@@ -405,7 +405,8 @@ public sealed class WindowsBackgroundSyncCoordinatorTests
             owner,
             state,
             admission,
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
 
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
             coordinator.SetEnabledAsync(true));
@@ -566,7 +567,8 @@ public sealed class WindowsBackgroundSyncCoordinatorTests
             owner,
             state,
             admission,
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
     }
 
     private static WindowsBackgroundSyncCoordinator CreateCoordinator(
@@ -580,5 +582,6 @@ public sealed class WindowsBackgroundSyncCoordinatorTests
             owner,
             new WindowsAgentStateStore(),
             new WindowsAgentAdmissionGate(),
-            transitions);
+            transitions,
+            AgentLocalizationTestFactory.CreateEnglish());
 }

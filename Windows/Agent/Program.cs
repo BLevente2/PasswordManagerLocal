@@ -1,6 +1,7 @@
 using PasswordManagerLocal.Windows.Agent.Backend;
 using PasswordManagerLocal.Windows.Agent.Background;
 using PasswordManagerLocal.Windows.Agent.Lifecycle;
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Windows.Agent.Native;
 using PasswordManagerLocal.Windows.Agent.Preferences;
 using PasswordManagerLocal.Common.Backend.Hosting;
@@ -21,6 +22,7 @@ using PasswordManagerLocal.Windows.Ipc.Serialization;
 using PasswordManagerLocal.Windows.Ipc.Server;
 using PasswordManagerLocal.Windows.Ipc.Transport;
 using PasswordManagerLocal.Windows.Ipc.Validation;
+using System.Diagnostics;
 
 namespace PasswordManagerLocal.Windows.Agent;
 
@@ -29,17 +31,42 @@ internal sealed class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        var selectedLanguage = ApplicationPreferencesDefaults.Create().Language;
+        AgentLocalizer? localizer = null;
+        var bootstrapLanguage = ApplicationPreferencesDefaults.Create().Language;
+        WindowsAgentApplicationPreferencesReader? applicationPreferencesReader = null;
+        IApplicationPreferencesFileStampProvider? preferenceStampProvider = null;
+        ApplicationPreferencesFileStamp initialPreferenceStamp = default;
         string applicationDataDirectory;
         try
         {
             applicationDataDirectory = new WindowsApplicationDataPathProvider()
                 .GetApplicationDataDirectory();
-            selectedLanguage = ReadSelectedLanguage(applicationDataDirectory);
+            var preferencesStore = new FileApplicationPreferencesStore(applicationDataDirectory);
+            applicationPreferencesReader = new WindowsAgentApplicationPreferencesReader(preferencesStore);
+            preferenceStampProvider = new PhysicalApplicationPreferencesFileStampProvider(
+                applicationDataDirectory);
+            initialPreferenceStamp = ApplicationPreferencesFileStamp.Unknown;
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                var stampBeforeRead = preferenceStampProvider.GetStamp();
+                bootstrapLanguage = applicationPreferencesReader.ReadLanguageAsync()
+                    .GetAwaiter()
+                    .GetResult();
+                localizer = AgentLocalizer.CreateAsync(bootstrapLanguage)
+                    .GetAwaiter()
+                    .GetResult();
+                var stampAfterRead = preferenceStampProvider.GetStamp();
+                if (stampBeforeRead == stampAfterRead)
+                {
+                    initialPreferenceStamp = stampAfterRead;
+                    break;
+                }
+            }
         }
-        catch
+        catch (Exception exception)
         {
-            ShowStartupFailure(selectedLanguage);
+            Trace.TraceError($"The Agent localization bootstrap failed: {exception.GetType().Name}");
+            TryShowStartupFailure(localizer, bootstrapLanguage);
             return (int)WindowsAgentExitCode.ShellFailure;
         }
 
@@ -48,9 +75,10 @@ internal sealed class Program
         {
             commandLine = new WindowsAgentCommandLineParser().Parse(args);
         }
-        catch
+        catch (Exception exception)
         {
-            ShowStartupFailure(selectedLanguage);
+            Trace.TraceError($"The Agent command line could not be parsed: {exception.GetType().Name}");
+            TryShowStartupFailure(localizer, bootstrapLanguage);
             return (int)WindowsAgentExitCode.ShellFailure;
         }
 
@@ -64,9 +92,10 @@ internal sealed class Program
         {
             processLock = new FileProcessInstanceLock(names.AgentLockFilePath);
         }
-        catch
+        catch (Exception exception)
         {
-            ShowStartupFailure(selectedLanguage);
+            Trace.TraceError($"The Agent process lock could not be acquired: {exception.GetType().Name}");
+            TryShowStartupFailure(localizer, bootstrapLanguage);
             return (int)WindowsAgentExitCode.OwnershipFailure;
         }
 
@@ -78,7 +107,23 @@ internal sealed class Program
 
         WindowsAgentHost? host = null;
         WindowsNativeApplicationLoop? applicationLoop = null;
+        AgentApplicationPreferencesReloadCoordinator? preferencesReloadCoordinator = null;
         var exitCode = WindowsAgentExitCode.ShellFailure;
+
+        void ShowShutdownFailure()
+        {
+            try
+            {
+                WindowsNativeMessageBox.ShowError(
+                    localizer!.GetString(AgentLocalizationKeys.ShutdownFailureTitle),
+                    localizer.GetString(AgentLocalizationKeys.ShutdownFailureMessage));
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceError($"The localized Agent shutdown failure could not be displayed: {exception.GetType().Name}");
+            }
+        }
+
         try
         {
             var stateStore = new WindowsAgentStateStore();
@@ -88,10 +133,16 @@ internal sealed class Program
             var activationClient = new WindowsUiActivationClient(
                 names.UiActivationPipeName,
                 IpcPeerRole.Agent);
+            var uiLauncher = new WindowsUiLauncher(
+                AppContext.BaseDirectory,
+                localizer!);
             var uiOpenService = new WindowsUiOpenService(
                 activationClient,
-                new WindowsUiLauncher(AppContext.BaseDirectory));
-            var uiCloseService = new WindowsUiCloseService(activationClient);
+                uiLauncher,
+                localizer!);
+            var uiCloseService = new WindowsUiCloseService(
+                activationClient,
+                localizer!);
 
             var backendOwner = new WindowsAgentBackendRuntimeOwner();
             var lifecycleTransitions = new WindowsAgentLifecycleTransitionCoordinator();
@@ -114,15 +165,22 @@ internal sealed class Program
                 backendOwner,
                 stateStore,
                 admissionGate,
-                lifecycleTransitions);
+                lifecycleTransitions,
+                localizer!);
             applicationLoop = new WindowsNativeApplicationLoop();
-            var trayText = WindowsAgentTrayText.Create(selectedLanguage);
+            var trayText = WindowsAgentTrayText.Create(localizer!);
             var trayController = new WindowsTrayIconController(
                 new WindowsNativeTrayIconAdapter(
                     Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"),
                     trayText,
                     applicationLoop.MessageWindow,
                     applicationLoop.Dispatcher));
+            preferencesReloadCoordinator = new AgentApplicationPreferencesReloadCoordinator(
+                applicationPreferencesReader!,
+                localizer!,
+                trayController,
+                preferenceStampProvider!,
+                initialPreferenceStamp);
             var endpointAdapter = new AgentInteractiveEndpointAdapter(backendOwner);
             var registrationResolver = new RegisteredUiEndpointRegistrationResolver(
                 uiCoordinator,
@@ -139,7 +197,8 @@ internal sealed class Program
                 backendOwner,
                 shutdownCoordinator,
                 backgroundSyncCoordinator,
-                lifecycleTransitions);
+                lifecycleTransitions,
+                localizer!);
             var statusProvider = new WindowsAgentStatusProvider(
                 stateStore,
                 admissionGate,
@@ -148,7 +207,8 @@ internal sealed class Program
                 backendOwner,
                 endpointHost,
                 endpointAdapter,
-                resetCoordinator);
+                resetCoordinator,
+                localizer!);
 
             var serializer = new WindowsIpcSerializer();
             var validator = new WindowsIpcContractValidator();
@@ -164,29 +224,41 @@ internal sealed class Program
                     validator),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
-                    new RegisterUiConnectionWindowsIpcRequestHandler(uiCoordinator)),
+                    new RegisterUiConnectionWindowsIpcRequestHandler(uiCoordinator),
+                    localizer!),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
-                    new UnregisterUiConnectionWindowsIpcRequestHandler(uiCoordinator)),
+                    new UnregisterUiConnectionWindowsIpcRequestHandler(uiCoordinator),
+                    localizer!),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
-                    new WindowsAgentRequestUiOpenHandler(uiOpenService)),
+                    new WindowsAgentRequestUiOpenHandler(uiOpenService),
+                    localizer!),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
-                    new WindowsAgentRequestUiActivationHandler(uiOpenService)),
+                    new WindowsAgentRequestUiActivationHandler(uiOpenService),
+                    localizer!),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
                     new RequestAgentExitWindowsIpcRequestHandler(
-                        new WindowsAgentExitRequestSink(shutdownCoordinator))),
+                        new WindowsAgentExitRequestSink(shutdownCoordinator)),
+                    localizer!),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
-                    new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator)),
+                    new ResetDatabaseWindowsIpcRequestHandler(resetCoordinator),
+                    localizer!),
                 new WindowsAgentAdmissionRequestHandler(
                     admissionGate,
                     new SetBackgroundSyncEnabledWindowsIpcRequestHandler(
                         backgroundSyncCoordinator,
                         validator,
-                        trayController))
+                        trayController),
+                    localizer!),
+                new WindowsAgentAdmissionRequestHandler(
+                    admissionGate,
+                    new ReloadApplicationPreferencesWindowsIpcRequestHandler(
+                        preferencesReloadCoordinator),
+                    localizer!)
             };
             var dispatcher = new WindowsIpcRequestDispatcher(
                 handlers,
@@ -195,7 +267,8 @@ internal sealed class Program
                     stateStore,
                     admissionGate,
                     backendOwner,
-                    new WindowsIpcOperationAuthorizer(uiCoordinator)));
+                    new WindowsIpcOperationAuthorizer(uiCoordinator),
+                    localizer!));
             var serverOptions = new WindowsIpcServerOptions(
                 IpcPeerRole.Agent,
                 new[] { IpcPeerRole.Ui, IpcPeerRole.TestClient },
@@ -232,28 +305,49 @@ internal sealed class Program
                 uiCoordinator,
                 shutdownCoordinator,
                 stateStore,
-                processLifetimeCoordinator: processLifetimeCoordinator);
+                localizer!,
+                processLifetimeCoordinator: processLifetimeCoordinator,
+                applicationPreferencesReloadCoordinator: preferencesReloadCoordinator);
 
-            applicationLoop.Run(host, stateStore, trayText.StartupFailureMessage);
+            applicationLoop.Run(
+                host,
+                stateStore,
+                trayText.StartupFailureTitle,
+                trayText.StartupFailureMessage);
             exitCode = applicationLoop.ShellFailed
                 ? WindowsAgentExitCode.ShellFailure
                 : WindowsAgentExitCode.Success;
         }
-        catch
+        catch (Exception exception)
         {
-            ShowStartupFailure(selectedLanguage);
+            Trace.TraceError($"The Agent composition root failed: {exception.GetType().Name}");
+            TryShowStartupFailure(localizer, bootstrapLanguage);
             exitCode = WindowsAgentExitCode.ShellFailure;
         }
         finally
         {
+            if (preferencesReloadCoordinator is not null)
+            {
+                try
+                {
+                    preferencesReloadCoordinator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                catch (Exception exception)
+                {
+                    Trace.TraceError($"The Agent preference reload coordinator could not stop: {exception.GetType().Name}");
+                    exitCode = WindowsAgentExitCode.ShellFailure;
+                }
+            }
+
             if (host is not null)
             {
                 try
                 {
                     host.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 }
-                catch
+                catch (Exception exception)
                 {
+                    Trace.TraceError($"The Agent host could not finish final disposal: {exception.GetType().Name}");
                     ShowShutdownFailure();
                     exitCode = WindowsAgentExitCode.ShellFailure;
                 }
@@ -264,8 +358,9 @@ internal sealed class Program
                 {
                     processLock.Dispose();
                 }
-                catch
+                catch (Exception exception)
                 {
+                    Trace.TraceError($"The Agent process lock could not be released: {exception.GetType().Name}");
                     exitCode = WindowsAgentExitCode.ShellFailure;
                 }
             }
@@ -274,8 +369,9 @@ internal sealed class Program
             {
                 applicationLoop?.Dispose();
             }
-            catch
+            catch (Exception exception)
             {
+                Trace.TraceError($"The Agent native loop could not be disposed: {exception.GetType().Name}");
                 exitCode = WindowsAgentExitCode.ShellFailure;
             }
         }
@@ -283,28 +379,34 @@ internal sealed class Program
         return (int)exitCode;
     }
 
-
-    private static AppLanguage ReadSelectedLanguage(string applicationDataDirectory)
+    private static void TryShowStartupFailure(
+        IAgentLocalizer? localizer,
+        AppLanguage selectedLanguage)
     {
         try
         {
-            return new WindowsAgentApplicationPreferencesReader(
-                new FileApplicationPreferencesStore(applicationDataDirectory))
-                .ReadLanguageAsync()
-                .GetAwaiter()
-                .GetResult();
+            if (localizer is null || localizer.CurrentLanguage != selectedLanguage)
+            {
+                try
+                {
+                    localizer = AgentLocalizer.CreateAsync(selectedLanguage)
+                        .GetAwaiter()
+                        .GetResult();
+                }
+                catch when (localizer is not null)
+                {
+                    // Keep the last fully validated bootstrap dictionary if the newly selected
+                    // resource cannot be loaded during an early-startup failure path.
+                }
+            }
+            WindowsNativeMessageBox.ShowError(
+                localizer!.GetString(AgentLocalizationKeys.StartupFailureTitle),
+                localizer.GetString(AgentLocalizationKeys.StartupFailureMessage));
         }
-        catch
+        catch (Exception exception)
         {
-            return ApplicationPreferencesDefaults.Create().Language;
+            Trace.TraceError($"The localized Agent startup failure could not be displayed: {exception.GetType().Name}");
         }
     }
 
-    private static void ShowStartupFailure(AppLanguage language) =>
-        WindowsNativeMessageBox.ShowError(
-            WindowsAgentTrayText.Create(language).StartupFailureMessage);
-
-    private static void ShowShutdownFailure() =>
-        System.Diagnostics.Trace.TraceError(
-            "The PasswordManagerLocal agent encountered an error during final shutdown.");
 }

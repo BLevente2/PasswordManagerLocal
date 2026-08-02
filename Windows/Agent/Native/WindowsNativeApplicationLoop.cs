@@ -15,6 +15,7 @@ internal sealed class WindowsNativeApplicationLoop : IDisposable
     private readonly WindowsNativeShellDispatcher _dispatcher;
     private IWindowsAgentHost? _host;
     private WindowsAgentStateStore? _stateStore;
+    private string _startupFailureTitle = string.Empty;
     private string _startupFailureMessage = string.Empty;
     private int _started;
     private int _startupCompleted;
@@ -40,16 +41,19 @@ internal sealed class WindowsNativeApplicationLoop : IDisposable
     internal void Run(
         IWindowsAgentHost host,
         WindowsAgentStateStore stateStore,
+        string startupFailureTitle,
         string startupFailureMessage)
     {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(stateStore);
+        ArgumentException.ThrowIfNullOrWhiteSpace(startupFailureTitle);
         ArgumentException.ThrowIfNullOrWhiteSpace(startupFailureMessage);
         if (Interlocked.Exchange(ref _started, 1) != 0)
             throw new InvalidOperationException("The native Windows agent loop has already run.");
 
         _host = host;
         _stateStore = stateStore;
+        _startupFailureTitle = startupFailureTitle;
         _startupFailureMessage = startupFailureMessage;
         _stateStore.StateChanged += HandleStateChanged;
         if (!_dispatcher.TryPost(() => _ = StartHostAsync()))
@@ -100,7 +104,7 @@ internal sealed class WindowsNativeApplicationLoop : IDisposable
             ShellFailed = true;
             if (!_dispatcher.TryPost(ShowStartupFailureAndClose))
             {
-                WindowsNativeMessageBox.ShowError(_startupFailureMessage);
+                WindowsNativeMessageBox.ShowError(_startupFailureTitle, _startupFailureMessage);
                 RequestClose();
             }
         }
@@ -109,6 +113,7 @@ internal sealed class WindowsNativeApplicationLoop : IDisposable
     private void ShowStartupFailureAndClose()
     {
         WindowsNativeMessageBox.ShowError(
+            _startupFailureTitle,
             _startupFailureMessage,
             _messageWindow.WindowHandle);
         RequestClose();

@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Common.Backend.Hosting;
 using PasswordManagerLocal.Common.Contracts.Runtime;
 using PasswordManagerLocal.Common.Contracts.BackgroundSync;
@@ -17,6 +18,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
     private readonly IWindowsAgentStateSource _agentState;
     private readonly IWindowsAgentAdmissionGate _admissionGate;
     private readonly WindowsAgentLifecycleTransitionCoordinator _lifecycleTransitions;
+    private readonly IAgentLocalizer _localizer;
     private readonly object _stateGate = new();
     private IBackendRuntimeLease? _backgroundLease;
     private WindowsBackgroundSyncFailureKind _lastFailureKind;
@@ -28,7 +30,8 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
         IWindowsAgentBackendRuntimeOwner backendOwner,
         IWindowsAgentStateSource agentState,
         IWindowsAgentAdmissionGate admissionGate,
-        WindowsAgentLifecycleTransitionCoordinator lifecycleTransitions)
+        WindowsAgentLifecycleTransitionCoordinator lifecycleTransitions,
+        IAgentLocalizer localizer)
     {
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _startupRegistration = startupRegistration
@@ -38,6 +41,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
         _admissionGate = admissionGate ?? throw new ArgumentNullException(nameof(admissionGate));
         _lifecycleTransitions = lifecycleTransitions
             ?? throw new ArgumentNullException(nameof(lifecycleTransitions));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -56,7 +60,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
         {
             SetFailure(
                 WindowsBackgroundSyncFailureKind.SettingRead,
-                "The background synchronization setting could not be read safely.",
+                _localizer.GetString(AgentLocalizationKeys.BackgroundReadFailed),
                 retryable: true,
                 requiresRestart: false);
             await BestEffortStartupAndLeaseCleanupAsync();
@@ -77,7 +81,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                     WindowsBackgroundSyncFailureKind.StartupRegistration,
                     CreateSafeMessage(
                         exception,
-                        "The disabled background synchronization startup registration could not be restored."),
+                        _localizer.GetString(AgentLocalizationKeys.BackgroundDisabledStartupRestoreFailed)),
                     retryable: true,
                     requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
             }
@@ -92,7 +96,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 {
                     SetFailure(
                         WindowsBackgroundSyncFailureKind.RuntimeLease,
-                        "The disabled background synchronization runtime lease could not be released.",
+                        _localizer.GetString(AgentLocalizationKeys.BackgroundDisabledLeaseReleaseFailed),
                         retryable: true,
                         requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
                 }
@@ -107,7 +111,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
             if (!registration.IsRegistered)
             {
                 throw new InvalidOperationException(
-                    "The automatic-startup registration could not be verified.");
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundStartupVerifyFailed));
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -116,7 +120,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 WindowsBackgroundSyncFailureKind.StartupRegistration,
                 CreateSafeMessage(
                     exception,
-                    "Background synchronization startup registration could not be restored."),
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundStartupRestoreFailed)),
                 retryable: true,
                 requiresRestart: false);
             return;
@@ -132,7 +136,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 WindowsBackgroundSyncFailureKind.RuntimeLease,
                 CreateSafeMessage(
                     exception,
-                    "Background synchronization could not start in the agent runtime."),
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundRuntimeStartFailed)),
                 retryable: true,
                 requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
         }
@@ -187,7 +191,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 WindowsBackgroundSyncFailureKind.RuntimeLease,
                 CreateSafeMessage(
                     exception,
-                    "Background synchronization could not be restored after database reset."),
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundResetRestoreFailed)),
                 retryable: true,
                 requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
             throw;
@@ -213,7 +217,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
             if (!registration.IsRegistered)
             {
                 throw new InvalidOperationException(
-                    "Automatic startup registration did not match the agent command.");
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundStartupCommandMismatch));
             }
 
             failureKind = WindowsBackgroundSyncFailureKind.SettingPersistence;
@@ -234,7 +238,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
             if (state.Consistency != WindowsBackgroundSyncConsistency.Operational)
             {
                 throw new InvalidOperationException(
-                    "Background synchronization did not reach an operational state.");
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundNotOperational));
             }
 
             ClearFailure();
@@ -253,8 +257,8 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 rollbackFailure is null
                     ? CreateSafeMessage(
                         exception,
-                        "Background synchronization could not be enabled. The previous setting was restored.")
-                    : "Background synchronization could not be enabled and rollback did not complete safely.",
+                        _localizer.GetString(AgentLocalizationKeys.BackgroundEnableRolledBack))
+                    : _localizer.GetString(AgentLocalizationKeys.BackgroundEnableRollbackFailed),
                 retryable: true,
                 requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
             return await ReadAuthoritativeStateAsync(
@@ -286,7 +290,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
             if (state.Consistency != WindowsBackgroundSyncConsistency.Disabled)
             {
                 throw new InvalidOperationException(
-                    "Background synchronization did not reach a disabled state.");
+                    _localizer.GetString(AgentLocalizationKeys.BackgroundDisableNotReached));
             }
 
             ClearFailure();
@@ -304,8 +308,8 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 rollbackFailure is null
                     ? CreateSafeMessage(
                         exception,
-                        "Background synchronization could not be disabled. The previous setting was restored.")
-                    : "Background synchronization could not be disabled and rollback did not complete safely.",
+                        _localizer.GetString(AgentLocalizationKeys.BackgroundDisableRolledBack))
+                    : _localizer.GetString(AgentLocalizationKeys.BackgroundDisableRollbackFailed),
                 retryable: true,
                 requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
             return await ReadAuthoritativeStateAsync(
@@ -396,7 +400,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             var failure = GetFailure() ?? CreateFailure(
-                "The background synchronization setting is unavailable.",
+                _localizer.GetString(AgentLocalizationKeys.BackgroundSettingUnavailable),
                 retryable: true,
                 requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart);
             return CreateState(
@@ -415,7 +419,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             var failure = GetFailure() ?? CreateFailure(
-                "Windows automatic startup registration is unavailable.",
+                _localizer.GetString(AgentLocalizationKeys.BackgroundStartupUnavailable),
                 retryable: true,
                 requiresRestart: false);
             return CreateState(
@@ -506,10 +510,10 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
             consistencyFailureKind,
             CreateFailure(
                 consistencyFailureKind == WindowsBackgroundSyncFailureKind.StartupRegistration
-                    ? "Windows automatic startup does not match the authoritative background synchronization setting."
+                    ? _localizer.GetString(AgentLocalizationKeys.BackgroundStartupStateMismatch)
                     : inconsistent
-                        ? "The persisted setting and runtime lease are inconsistent."
-                        : "Background synchronization is enabled but is not currently operational.",
+                        ? _localizer.GetString(AgentLocalizationKeys.BackgroundSettingLeaseMismatch)
+                        : _localizer.GetString(AgentLocalizationKeys.BackgroundEnabledNotOperational),
                 retryable: true,
                 requiresRestart: _backendOwner.Snapshot.RequiresProcessRestart));
     }
@@ -542,7 +546,7 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
                 WindowsAgentBackendOwnerState.Failed)
         {
             throw new InvalidOperationException(
-                "The Windows agent is not available for background synchronization changes.");
+                _localizer.GetString(AgentLocalizationKeys.BackgroundAgentUnavailable));
         }
     }
 
@@ -640,11 +644,11 @@ public sealed class WindowsBackgroundSyncCoordinator : IWindowsBackgroundSyncCoo
         BackendRuntimeState.Ready or
         BackendRuntimeState.WaitingForDeviceUnlock;
 
-    private static string CreateSafeMessage(Exception exception, string fallback) =>
+    private string CreateSafeMessage(Exception exception, string fallback) =>
         exception is UnauthorizedAccessException
-            ? "Windows automatic startup could not be changed for the current user."
+            ? _localizer.GetString(AgentLocalizationKeys.BackgroundStartupAccessDenied)
             : exception is InvalidDataException
-                ? "The background synchronization setting is invalid."
+                ? _localizer.GetString(AgentLocalizationKeys.BackgroundSettingInvalid)
                 : fallback;
 
     private static Exception? Combine(IReadOnlyCollection<Exception> failures) =>

@@ -46,7 +46,8 @@ public partial class App : Application
             endpoints,
             context.BackendClient,
             context.BackgroundSyncSettingsClient,
-            context.ApplicationPreferencesStore);
+            context.ApplicationPreferencesStore,
+            context.ApplicationPreferencesChangeNotifier);
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

@@ -257,6 +257,31 @@ public sealed class Phase9ArchitectureGuardTests
     }
 
     [TestMethod]
+    public void WindowsPublishToolingAvoidsRuntimeSpecificTrailingSeparatorApi()
+    {
+        var root = GetRepositoryRoot();
+        var verifier = File.ReadAllText(Path.Combine(
+            root,
+            "Tools",
+            "Windows",
+            "VerifyWindowsPublishedLayout.ps1"));
+        var frontendProject = File.ReadAllText(Path.Combine(
+            root,
+            "Windows",
+            "Frontend",
+            "PasswordManagerLocal.Windows.Frontend.csproj"));
+
+        Assert.IsFalse(verifier.Contains(
+            "TrimEndingDirectorySeparator",
+            StringComparison.Ordinal));
+        Assert.IsFalse(frontendProject.Contains(
+            "TrimEndingDirectorySeparator",
+            StringComparison.Ordinal));
+        StringAssert.Contains(verifier, "Get-NormalizedFullPath");
+        StringAssert.Contains(verifier, "GetPathRoot");
+    }
+
+    [TestMethod]
     public void WindowsProductionSourcesContainNoTestHostOrProductionTestModeReference()
     {
         var root = GetRepositoryRoot();

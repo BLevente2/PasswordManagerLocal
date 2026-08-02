@@ -15,6 +15,7 @@ public enum IpcOperationId
     ResetDatabase = 25,
     GetBackgroundSyncState = 30,
     SetBackgroundSyncEnabled = 31,
+    ReloadApplicationPreferences = 32,
     EndpointRpcRequest = 40,
     EndpointSessionReady = 41
 }

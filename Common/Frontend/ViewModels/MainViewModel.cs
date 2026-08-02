@@ -74,12 +74,13 @@ public sealed class MainViewModel : ViewModelBase
         IEndpoints endpoints,
         IBackendRuntimeClient backendClient,
         IBackgroundSyncSettingsClient backgroundSyncSettingsClient,
-        IApplicationPreferencesStore applicationPreferencesStore)
+        IApplicationPreferencesStore applicationPreferencesStore,
+        IApplicationPreferencesChangeNotifier? applicationPreferencesChangeNotifier = null)
         : this(
             endpoints,
             backendClient,
             App.AuthSessionRegistry,
-            new UiPreferencesService(applicationPreferencesStore),
+            new UiPreferencesService(applicationPreferencesStore, applicationPreferencesChangeNotifier),
             new DeviceAppPreferencesService(backgroundSyncSettingsClient))
     {
     }

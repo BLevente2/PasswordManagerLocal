@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Windows.Ipc.Coordination;
 using System.Diagnostics;
 
@@ -7,9 +8,11 @@ public sealed class WindowsUiLauncher : IWindowsUiLauncher
 {
     private readonly string _uiExecutablePath;
     private readonly IProcessLauncher _processLauncher;
+    private readonly IAgentLocalizer _localizer;
 
     public WindowsUiLauncher(
         string executableDirectory,
+        IAgentLocalizer localizer,
         IProcessLauncher? processLauncher = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(executableDirectory);
@@ -24,6 +27,7 @@ public sealed class WindowsUiLauncher : IWindowsUiLauncher
         _uiExecutablePath = Path.Combine(
             uiDirectory,
             WindowsExecutableNames.UiExecutableFileName);
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         _processLauncher = processLauncher ?? new WindowsProcessLauncher();
     }
 
@@ -35,7 +39,7 @@ public sealed class WindowsUiLauncher : IWindowsUiLauncher
         {
             return Task.FromResult(new UiLaunchResult(
                 UiLaunchResultKind.ExecutableNotFound,
-                "The PasswordManagerLocal UI executable was not found."));
+                _localizer.GetString(AgentLocalizationKeys.UiExecutableNotFound)));
         }
 
         try
@@ -49,16 +53,16 @@ public sealed class WindowsUiLauncher : IWindowsUiLauncher
             return Task.FromResult(started
                 ? new UiLaunchResult(
                     UiLaunchResultKind.LaunchRequested,
-                    "The PasswordManagerLocal UI launch was requested.")
+                    _localizer.GetString(AgentLocalizationKeys.UiLaunchRequested))
                 : new UiLaunchResult(
                     UiLaunchResultKind.LaunchFailed,
-                    "The PasswordManagerLocal UI could not be launched."));
+                    _localizer.GetString(AgentLocalizationKeys.UiLaunchFailed)));
         }
         catch
         {
             return Task.FromResult(new UiLaunchResult(
                 UiLaunchResultKind.LaunchFailed,
-                "The PasswordManagerLocal UI could not be launched."));
+                _localizer.GetString(AgentLocalizationKeys.UiLaunchFailed)));
         }
     }
 }

@@ -16,7 +16,7 @@ public sealed class WindowsUiLauncherTests
         Directory.CreateDirectory(directory);
         try
         {
-            var launcher = new WindowsUiLauncher(directory, new DelegateProcessLauncher(_ => true));
+            var launcher = new WindowsUiLauncher(directory, AgentLocalizationTestFactory.CreateEnglish(), new DelegateProcessLauncher(_ => true));
 
             var result = await launcher.LaunchAsync();
 
@@ -44,7 +44,7 @@ public sealed class WindowsUiLauncherTests
         });
         try
         {
-            var launcher = new WindowsUiLauncher(directory, processLauncher);
+            var launcher = new WindowsUiLauncher(directory, AgentLocalizationTestFactory.CreateEnglish(), processLauncher);
 
             var result = await launcher.LaunchAsync();
 
@@ -81,7 +81,7 @@ public sealed class WindowsUiLauncherTests
         });
         try
         {
-            var launcher = new WindowsUiLauncher(agentDirectory, processLauncher);
+            var launcher = new WindowsUiLauncher(agentDirectory, AgentLocalizationTestFactory.CreateEnglish(), processLauncher);
 
             var result = await launcher.LaunchAsync();
 
@@ -108,6 +108,7 @@ public sealed class WindowsUiLauncherTests
         {
             var launcher = new WindowsUiLauncher(
                 directory,
+                AgentLocalizationTestFactory.CreateEnglish(),
                 new DelegateProcessLauncher(_ => throw new InvalidOperationException("sensitive")));
 
             var result = await launcher.LaunchAsync();

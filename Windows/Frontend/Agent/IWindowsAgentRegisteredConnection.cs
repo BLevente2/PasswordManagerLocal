@@ -15,4 +15,5 @@ public interface IWindowsAgentRegisteredConnection : IAsyncDisposable
         SetBackgroundSyncEnabledRequestDto request,
         CancellationToken cancellationToken = default);
     Task<DatabaseResetResultDto> ResetDatabaseAsync(CancellationToken cancellationToken = default);
+    Task<RequestAcceptedDto> ReloadApplicationPreferencesAsync(CancellationToken cancellationToken = default);
 }

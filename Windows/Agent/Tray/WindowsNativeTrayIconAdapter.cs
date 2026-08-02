@@ -12,7 +12,7 @@ internal sealed class WindowsNativeTrayIconAdapter : ITrayIconAdapter
     private const uint ExitCommandId = 1002;
 
     private readonly string _iconPath;
-    private readonly WindowsAgentTrayText _text;
+    private WindowsAgentTrayText _text;
     private readonly WindowsNativeMessageWindow _messageWindow;
     private readonly WindowsNativeShellDispatcher _dispatcher;
     private WindowsNativeIcon? _icon;
@@ -38,6 +38,7 @@ internal sealed class WindowsNativeTrayIconAdapter : ITrayIconAdapter
     }
 
     public event EventHandler<TrayIconMouseEventArgs>? MouseClicked;
+    public event EventHandler? ContextMenuOpening;
     public event EventHandler? OpenCommandSelected;
     public event EventHandler? ExitCommandSelected;
 
@@ -82,6 +83,26 @@ internal sealed class WindowsNativeTrayIconAdapter : ITrayIconAdapter
                 RemoveIconIfNeeded(throwOnFailure: true);
         }, cancellationToken);
 
+
+    public Task UpdateTextAsync(
+        WindowsAgentTrayText text,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return _dispatcher.InvokeAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfDisposed();
+            _text = text;
+            if (!_isAdded)
+                return;
+
+            var data = CreateNotifyIconData(WindowsNativeMethods.NifTip);
+            if (!WindowsNativeMethods.ShellNotifyIcon(WindowsNativeMethods.NimModify, ref data))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }, cancellationToken);
+    }
+
     public Task ShowErrorAsync(
         string safeMessage,
         CancellationToken cancellationToken = default)
@@ -96,7 +117,7 @@ internal sealed class WindowsNativeTrayIconAdapter : ITrayIconAdapter
 
             var data = CreateNotifyIconData(WindowsNativeMethods.NifInfo);
             data.Info = Truncate(safeMessage, 255);
-            data.InfoTitle = "PasswordManagerLocal";
+            data.InfoTitle = Truncate(_text.ErrorTitle, 63);
             data.InfoFlags = WindowsNativeMethods.NiifError;
             data.TimeoutOrVersion = 4000;
             if (!WindowsNativeMethods.ShellNotifyIcon(WindowsNativeMethods.NimModify, ref data))
@@ -220,15 +241,17 @@ internal sealed class WindowsNativeTrayIconAdapter : ITrayIconAdapter
         if (!_isAdded)
             return;
 
+        Publish(ContextMenuOpening);
+        var text = _text;
         var menu = WindowsNativeMethods.CreatePopupMenu();
         if (menu == 0)
             throw new Win32Exception(Marshal.GetLastWin32Error());
 
         try
         {
-            AppendMenu(menu, WindowsNativeMethods.MfString, OpenCommandId, _text.OpenLabel);
+            AppendMenu(menu, WindowsNativeMethods.MfString, OpenCommandId, text.OpenLabel);
             AppendMenu(menu, WindowsNativeMethods.MfSeparator, 0, null);
-            AppendMenu(menu, WindowsNativeMethods.MfString, ExitCommandId, _text.ExitLabel);
+            AppendMenu(menu, WindowsNativeMethods.MfString, ExitCommandId, text.ExitLabel);
             var point = ResolveMenuPosition(callbackPosition);
 
             WindowsNativeMethods.SetForegroundWindow(_messageWindow.WindowHandle);

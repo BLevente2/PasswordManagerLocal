@@ -13,7 +13,8 @@ public sealed record FrontendApplicationContext
         IBackgroundSyncSettingsClient backgroundSyncSettingsClient,
         string applicationDataDirectory,
         Action? desktopExitRequested = null,
-        IApplicationPreferencesStore? applicationPreferencesStore = null)
+        IApplicationPreferencesStore? applicationPreferencesStore = null,
+        IApplicationPreferencesChangeNotifier? applicationPreferencesChangeNotifier = null)
     {
         BackendClient = backendClient ?? throw new ArgumentNullException(nameof(backendClient));
         BackgroundSyncSettingsClient = backgroundSyncSettingsClient
@@ -23,6 +24,7 @@ public sealed record FrontendApplicationContext
         DesktopExitRequested = desktopExitRequested;
         ApplicationPreferencesStore = applicationPreferencesStore ??
             new FileApplicationPreferencesStore(ApplicationDataDirectory);
+        ApplicationPreferencesChangeNotifier = applicationPreferencesChangeNotifier;
     }
 
     public IFrontendBackendClient<IEndpoints> BackendClient { get; }
@@ -30,4 +32,5 @@ public sealed record FrontendApplicationContext
     public string ApplicationDataDirectory { get; }
     public Action? DesktopExitRequested { get; }
     public IApplicationPreferencesStore ApplicationPreferencesStore { get; }
+    public IApplicationPreferencesChangeNotifier? ApplicationPreferencesChangeNotifier { get; }
 }

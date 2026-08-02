@@ -37,6 +37,31 @@ public sealed class WindowsIpcControlOperationTests
         Assert.AreEqual(request, observed);
     }
 
+
+    [TestMethod]
+    public async Task ReloadApplicationPreferencesUsesNoPayload()
+    {
+        var handled = false;
+        var handler = new DelegateWindowsIpcRequestHandler(
+            IpcOperationId.ReloadApplicationPreferences,
+            (context, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                context.EnsureNoPayload();
+                handled = true;
+                return Task.FromResult(context.Success(
+                    new RequestAcceptedDto(true),
+                    WindowsIpcJsonContext.Default.RequestAcceptedDto));
+            });
+        await using var session = await IpcTestSession.CreateAsync([handler]);
+        var controlClient = new WindowsIpcControlClient(session.Client, session.Serializer);
+
+        var response = await controlClient.ReloadApplicationPreferencesAsync();
+
+        Assert.IsTrue(handled);
+        Assert.IsTrue(response.Accepted);
+    }
+
     [TestMethod]
     public async Task DatabaseCompatibilityStatusRoundTripsThroughControlIpc()
     {

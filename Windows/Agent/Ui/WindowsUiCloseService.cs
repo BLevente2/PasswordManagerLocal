@@ -1,3 +1,4 @@
+using PasswordManagerLocal.Windows.Agent.Localization;
 using PasswordManagerLocal.Windows.Ipc.Client;
 using PasswordManagerLocal.Windows.Ipc.Contracts;
 
@@ -7,12 +8,15 @@ public sealed class WindowsUiCloseService : IWindowsUiCloseService
 {
     private readonly IWindowsUiActivationClient _activationClient;
     private readonly TimeSpan _acknowledgementTimeout;
+    private readonly IAgentLocalizer _localizer;
 
     public WindowsUiCloseService(
         IWindowsUiActivationClient activationClient,
+        IAgentLocalizer localizer,
         TimeSpan? acknowledgementTimeout = null)
     {
         _activationClient = activationClient ?? throw new ArgumentNullException(nameof(activationClient));
+        _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         _acknowledgementTimeout = acknowledgementTimeout ?? TimeSpan.FromSeconds(3);
         if (_acknowledgementTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(acknowledgementTimeout));
@@ -37,16 +41,16 @@ public sealed class WindowsUiCloseService : IWindowsUiCloseService
             {
                 UiActivationResultKind.Activated => new WindowsUiCloseResult(
                     WindowsUiCloseResultKind.Acknowledged,
-                    "The UI installed recovery suppression and scheduled shutdown."),
+                    _localizer.GetString(AgentLocalizationKeys.UiCloseAcknowledged)),
                 UiActivationResultKind.Rejected => new WindowsUiCloseResult(
                     WindowsUiCloseResultKind.Rejected,
-                    "The UI rejected the intentional shutdown request."),
+                    _localizer.GetString(AgentLocalizationKeys.UiCloseRejected)),
                 UiActivationResultKind.Unavailable => new WindowsUiCloseResult(
                     WindowsUiCloseResultKind.Unavailable,
-                    "The registered UI activation server is unavailable."),
+                    _localizer.GetString(AgentLocalizationKeys.UiActivationUnavailable)),
                 _ => new WindowsUiCloseResult(
                     WindowsUiCloseResultKind.Failed,
-                    "The UI did not acknowledge intentional shutdown safely.")
+                    _localizer.GetString(AgentLocalizationKeys.UiCloseNotAcknowledged))
             };
         }
         catch (OperationCanceledException) when (
@@ -55,7 +59,7 @@ public sealed class WindowsUiCloseService : IWindowsUiCloseService
         {
             return new WindowsUiCloseResult(
                 WindowsUiCloseResultKind.Failed,
-                "The UI intentional-shutdown acknowledgement timed out.");
+                _localizer.GetString(AgentLocalizationKeys.UiCloseTimedOut));
         }
     }
 }

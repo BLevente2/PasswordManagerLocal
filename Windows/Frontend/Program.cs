@@ -106,7 +106,8 @@ internal sealed class Program
                 backendClient,
                 new WindowsAgentBackgroundSyncSettingsClient(agentConnection),
                 applicationDataDirectory,
-                () => exitController.RequestExit());
+                () => exitController.RequestExit(),
+                applicationPreferencesChangeNotifier: new WindowsAgentApplicationPreferencesNotifier(agentConnection));
             exitCode = BuildAvaloniaApp(frontendContext)
                 .StartWithClassicDesktopLifetime(
                     args,

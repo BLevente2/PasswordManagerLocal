@@ -13,7 +13,7 @@ public sealed class WindowsUiCloseServiceTests
     public async Task AcknowledgedResultMeansIntentionalShutdownCommandWasAccepted()
     {
         var client = new FakeWindowsUiActivationClient();
-        var service = new WindowsUiCloseService(client, TimeSpan.FromSeconds(1));
+        var service = new WindowsUiCloseService(client, AgentLocalizationTestFactory.CreateEnglish(), TimeSpan.FromSeconds(1));
 
         var result = await service.RequestIntentionalShutdownAsync();
 
@@ -30,7 +30,7 @@ public sealed class WindowsUiCloseServiceTests
         {
             Result = new UiActivationResult(UiActivationResultKind.Rejected, "rejected")
         };
-        var service = new WindowsUiCloseService(client, TimeSpan.FromSeconds(1));
+        var service = new WindowsUiCloseService(client, AgentLocalizationTestFactory.CreateEnglish(), TimeSpan.FromSeconds(1));
 
         var result = await service.RequestIntentionalShutdownAsync();
 
@@ -46,7 +46,7 @@ public sealed class WindowsUiCloseServiceTests
             Completion = new TaskCompletionSource<UiActivationResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously)
         };
-        var service = new WindowsUiCloseService(client, TimeSpan.FromMilliseconds(25));
+        var service = new WindowsUiCloseService(client, AgentLocalizationTestFactory.CreateEnglish(), TimeSpan.FromMilliseconds(25));
 
         var result = await service.RequestIntentionalShutdownAsync();
 
@@ -62,7 +62,7 @@ public sealed class WindowsUiCloseServiceTests
             Completion = new TaskCompletionSource<UiActivationResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously)
         };
-        var service = new WindowsUiCloseService(client, TimeSpan.FromSeconds(1));
+        var service = new WindowsUiCloseService(client, AgentLocalizationTestFactory.CreateEnglish(), TimeSpan.FromSeconds(1));
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
